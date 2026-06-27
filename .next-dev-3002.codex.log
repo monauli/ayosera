@@ -1,0 +1,19 @@
+
+> middleware@1.0.0 dev
+> next dev --hostname 127.0.0.1 --port 3002
+
+   ▲ Next.js 15.5.19
+   - Local:        http://127.0.0.1:3002
+   - Network:      http://127.0.0.1:3002
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 5.7s
+ ○ Compiling /api/auth/login ...
+ ✓ Compiled /api/auth/login in 2.3s (906 modules)
+ POST /api/auth/login 200 in 4410ms
+ ○ Compiling /api/dashboard ...
+ ✓ Compiled /api/dashboard in 1193ms (910 modules)
+ GET /api/dashboard?start_date=2026-06-26&end_date=2026-06-26 200 in 2586ms
+ ✓ Compiled /api/transactions/export in 403ms (912 modules)
+ GET /api/transactions/export?start_date=2026-06-26&end_date=2026-06-26 200 in 1042ms

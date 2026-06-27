@@ -1,0 +1,59 @@
+import type { BookingDocument } from "@/lib/mongodb";
+
+export function buildBookingFilter(searchParams: URLSearchParams) {
+  const status = searchParams.get("status");
+  const date = searchParams.get("date");
+  const startDate = searchParams.get("start_date");
+  const endDate = searchParams.get("end_date");
+  const court = searchParams.get("branch");
+  const q = searchParams.get("q");
+  const filter: Record<string, unknown> = {};
+
+  if (status && status !== "all") {
+    const statusMap: Record<string, string[]> = {
+      Completed: ["SUCCESS", "FINISHED"],
+      Pending: ["PENDING"],
+      Cancelled: ["CANCELLED"],
+    };
+    filter.status = statusMap[status] ? { $in: statusMap[status] } : status;
+  }
+
+  if (date) filter.date = date;
+  if (!date && (startDate || endDate)) {
+    filter.date = {
+      ...(startDate ? { $gte: startDate } : {}),
+      ...(endDate ? { $lte: endDate } : {}),
+    };
+  }
+
+  if (court && court !== "all") {
+    filter.$and = [
+      ...((filter.$and as Record<string, unknown>[]) || []),
+      {
+        $or: [
+          { field_name: court },
+          { "raw.field_name": court },
+          { "raw.field.name": court },
+          { "raw.court_name": court },
+          { "raw.court.name": court },
+        ],
+      },
+    ];
+  }
+
+  if (q) {
+    filter.$or = [
+      { booking_id: { $regex: q, $options: "i" } },
+      { booker_name: { $regex: q, $options: "i" } },
+      { field_name: { $regex: q, $options: "i" } },
+    ];
+  }
+
+  return filter;
+}
+
+export function toCourtOptions(bookings: Array<Pick<BookingDocument, "field_name">>) {
+  return Array.from(new Set(bookings.map((booking) => booking.field_name).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => ({ label: name, value: name }));
+}
