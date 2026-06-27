@@ -61,7 +61,6 @@ export async function POST(request: Request) {
       ...filters,
       type: "manual",
       startedAt,
-      mirrorToMongo: true,
       logProgress: true,
     });
 

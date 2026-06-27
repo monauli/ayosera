@@ -43,23 +43,31 @@ Contoh response cron gagal (HTTP 500), atau 401 bila secret salah/kosong:
 { "success": false, "mode": "cron", "message": "Error detail" }
 ```
 
+## Penyimpanan: MongoDB saja
+
+Seluruh data (bookings, sync_logs, users, fields) disimpan **hanya di MongoDB**.
+SQLite sudah tidak dipakai (filesystem Vercel ephemeral/read-only). Function
+sync inti `upsertBookingItems()` (`lib/booking-sync.ts`) yang menulis ke Mongo,
+dipakai bersama oleh cron, manual, dan webhook.
+
 ## Anti-duplikat
 
-`booking_id` dipakai sebagai unique key:
+`booking_id` dipakai sebagai unique key (`lib/mongodb.ts` membuat unique index
+pada `booking_id`). `upsertBookingItems()` membandingkan isi (`raw` payload):
 
-- **SQLite** (`lib/sqlite.ts`): kolom `booking_id` adalah `PRIMARY KEY`. Jika
-  booking sudah ada → `UPDATE`, kalau belum → `INSERT`. Tidak ada row ganda.
-- **MongoDB** (`lib/booking-sync.ts`): `bulkWrite` dengan `updateOne` +
-  `upsert: true` di-filter pada `booking_id`.
+- belum ada di DB → **insert** (`upsert`)
+- sudah ada & isi identik → **duplicate** (di-skip, tidak ditulis ulang)
+- sudah ada & isi berbeda → **update**
+
+Tidak pernah ada row ganda untuk booking yang sama.
 
 ## Logging
 
-Setiap sync (cron maupun manual) mencatat log:
-
-- **SQLite** tabel `sync_logs`: waktu, type (`scheduled`/`manual`), status,
-  total diterima, inserted, updated, duplicate, error.
-- **MongoDB** koleksi `syncLogs`: type, status, recordsProcessed, message,
-  startedAt, finishedAt (atau errorMessage jika gagal).
+Setiap sync (cron/manual/webhook) menulis 1 dokumen ke koleksi **`sync_logs`**
+di MongoDB berisi: waktu (`startedAt`/`finishedAt`), `type`
+(`scheduled`/`manual`/`webhook`), `status` (`success`/`partial`/`failed`),
+`totalReceived`, `inserted`, `updated`, `duplicate`, `error`, dan `message`.
+Log terbaru muncul di panel aktivitas dashboard.
 
 ## Env yang wajib diisi di Vercel
 
@@ -75,8 +83,8 @@ Set di **Project Settings → Environment Variables** (jangan commit nilainya):
   - `AYO_API_TOKEN`
   - `AYO_PRIVATE_KEY`
 - Env database & auth yang sudah ada: `MONGODB_URI`, `MONGODB_DB`,
-  `SQLITE_DB_PATH`, `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `JWT_SECRET`,
-  dll (lihat `.env.example`).
+  `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `JWT_SECRET`, dll
+  (lihat `.env.example`).
 
-> Catatan: di Vercel (filesystem read-only/ephemeral), SQLite tidak persisten.
-> MongoDB adalah store utama untuk deployment. SQLite cocok untuk lokal/dev.
+> Catatan: gunakan MongoDB Atlas (atau Mongo yang bisa diakses dari Vercel)
+> karena filesystem Vercel tidak persisten. Semua data sync masuk ke MongoDB.

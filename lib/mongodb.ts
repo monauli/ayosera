@@ -1,11 +1,9 @@
-import "@/lib/mongodb-dns";
-import type { Db, MongoClient as MongoClientType } from "mongodb";
-
-const { MongoClient } = require("mongodb") as typeof import("mongodb");
+import "./mongodb-dns.ts";
+import { MongoClient, type Db } from "mongodb";
 
 declare global {
-  var __mongoClient: MongoClientType | undefined;
-  var __mongoClientPromise: Promise<MongoClientType> | undefined;
+  var __mongoClient: MongoClient | undefined;
+  var __mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
 const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
@@ -45,12 +43,19 @@ export type BookingDocument = {
 
 export type SyncLogDocument = {
   type: "manual" | "scheduled" | "webhook" | "fields";
-  status: "success" | "failed";
+  status: "success" | "partial" | "failed";
   recordsProcessed: number;
   message?: string;
   errorMessage?: string;
   startedAt: Date;
   finishedAt: Date;
+  inserted?: number;
+  updated?: number;
+  duplicate?: number;
+  error?: number;
+  totalReceived?: number;
+  totalDaysSynced?: number;
+  warningDays?: number;
 };
 
 export type FieldDocument = {

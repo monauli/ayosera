@@ -1,10 +1,17 @@
-import { normalizeBooking } from "@/lib/booking-mapper";
-import { collections, withMongo, type SyncLogDocument } from "@/lib/mongodb";
+import { normalizeBooking } from "./booking-mapper.ts";
+import { collections, withMongo, type SyncLogDocument } from "./mongodb.ts";
 
 type SyncBookingOptions = {
   type: SyncLogDocument["type"];
   message: string;
   startedAt?: Date;
+};
+
+export type BookingImportResult = {
+  inserted: number;
+  updated: number;
+  duplicate: number;
+  error: number;
 };
 
 export function extractBookingItems(payload: unknown): Record<string, unknown>[] {
@@ -39,36 +46,131 @@ export function extractBookingItems(payload: unknown): Record<string, unknown>[]
   return [payload];
 }
 
-export async function syncBookingItems(items: Record<string, unknown>[], options: SyncBookingOptions) {
-  const startedAt = options.startedAt ?? new Date();
-  const records = items.map(normalizeBooking).filter((booking) => booking.booking_id);
+/**
+ * Upsert booking ke MongoDB dengan dedup berbasis isi (raw payload).
+ *
+ * `booking_id` dipakai sebagai unique key (lihat index unik di lib/mongodb.ts):
+ * - belum ada di DB  -> insert
+ * - sudah ada & isi identik -> duplicate (di-skip, tidak menulis ulang)
+ * - sudah ada & isi berbeda -> update
+ *
+ * Tidak pernah membuat row ganda untuk booking yang sama.
+ */
+export async function upsertBookingItems(items: Record<string, unknown>[]): Promise<BookingImportResult> {
+  const result: BookingImportResult = { inserted: 0, updated: 0, duplicate: 0, error: 0 };
+  const normalized: ReturnType<typeof normalizeBooking>[] = [];
+
+  for (const item of items) {
+    const booking = normalizeBooking(item);
+    if (!booking.booking_id) {
+      result.error += 1;
+      continue;
+    }
+    normalized.push(booking);
+  }
+
+  if (!normalized.length) return result;
 
   await withMongo(async () => {
-    const { bookings, syncLogs } = await collections();
+    const { bookings } = await collections();
+    const ids = normalized.map((booking) => booking.booking_id);
+    const existing = await bookings
+      .find({ booking_id: { $in: ids } })
+      .project<{ booking_id: string; raw: Record<string, unknown> }>({ booking_id: 1, raw: 1 })
+      .toArray();
+    const existingHash = new Map(existing.map((doc) => [doc.booking_id, stableJson(doc.raw)]));
 
-    if (records.length) {
-      await bookings.bulkWrite(
-        records.map((booking) => ({
+    const operations = [];
+    for (const booking of normalized) {
+      const nextHash = stableJson(booking.raw);
+      const prevHash = existingHash.get(booking.booking_id);
+
+      if (prevHash === undefined) {
+        operations.push({
           updateOne: {
             filter: { booking_id: booking.booking_id },
             update: { $set: booking },
             upsert: true,
           },
-        })),
-      );
+        });
+        result.inserted += 1;
+      } else if (prevHash === nextHash) {
+        result.duplicate += 1;
+      } else {
+        operations.push({
+          updateOne: {
+            filter: { booking_id: booking.booking_id },
+            update: { $set: booking },
+          },
+        });
+        result.updated += 1;
+      }
     }
 
-    await syncLogs.insertOne({
-      type: options.type,
-      status: "success",
-      recordsProcessed: records.length,
-      message: options.message,
-      startedAt,
-      finishedAt: new Date(),
-    });
+    if (operations.length) {
+      await bookings.bulkWrite(operations, { ordered: false });
+    }
   });
 
-  return { recordsProcessed: records.length };
+  return result;
+}
+
+export async function syncBookingItems(items: Record<string, unknown>[], options: SyncBookingOptions) {
+  const startedAt = options.startedAt ?? new Date();
+  const counts = await upsertBookingItems(items);
+  const recordsProcessed = counts.inserted + counts.updated + counts.duplicate;
+
+  await writeMongoSyncLog({
+    type: options.type,
+    status: "success",
+    message: options.message,
+    recordsProcessed,
+    startedAt,
+    inserted: counts.inserted,
+    updated: counts.updated,
+    duplicate: counts.duplicate,
+    error: counts.error,
+    totalReceived: recordsProcessed + counts.error,
+    totalDaysSynced: 1,
+    warningDays: 0,
+  });
+
+  return { recordsProcessed, ...counts };
+}
+
+export async function writeMongoSyncLog(options: {
+  type: SyncLogDocument["type"];
+  status: SyncLogDocument["status"];
+  message?: string;
+  recordsProcessed: number;
+  startedAt: Date;
+  finishedAt?: Date;
+  inserted?: number;
+  updated?: number;
+  duplicate?: number;
+  error?: number;
+  totalReceived?: number;
+  totalDaysSynced?: number;
+  warningDays?: number;
+}) {
+  await withMongo(async () => {
+    const { syncLogs } = await collections();
+    await syncLogs.insertOne({
+      type: options.type,
+      status: options.status,
+      recordsProcessed: options.recordsProcessed,
+      message: options.message,
+      startedAt: options.startedAt,
+      finishedAt: options.finishedAt ?? new Date(),
+      inserted: options.inserted,
+      updated: options.updated,
+      duplicate: options.duplicate,
+      error: options.error,
+      totalReceived: options.totalReceived,
+      totalDaysSynced: options.totalDaysSynced,
+      warningDays: options.warningDays,
+    });
+  });
 }
 
 export async function logSyncFailure(options: {
@@ -87,6 +189,21 @@ export async function logSyncFailure(options: {
       finishedAt: new Date(),
     });
   }).catch(() => undefined);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => [key, sortJsonValue(nestedValue)]),
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

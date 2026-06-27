@@ -6,10 +6,10 @@ import {
   type AyoBookingPayload,
 } from "./ayo.ts";
 import {
-  syncSqliteBookingItems,
-  writeSqliteSyncLog,
-  type SqliteBookingImportResult,
-} from "./sqlite.ts";
+  upsertBookingItems,
+  writeMongoSyncLog,
+  type BookingImportResult,
+} from "./booking-sync.ts";
 
 const INCOMPLETE_DAY_WARNING = "Possible incomplete day because received count reached limit.";
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -41,7 +41,8 @@ export type ProductionSyncResult = {
 export type ProductionListBookingsSyncOptions = Omit<AyoBookingPayload, "token" | "signature"> & {
   startedAt?: Date;
   type?: "manual" | "scheduled";
-  mirrorToMongo?: boolean;
+  /** Tulis sample JSON respons API ke disk (lib lokal/dev). Default false karena
+   *  filesystem Vercel read-only. */
   saveSamples?: boolean;
   logProgress?: boolean;
 };
@@ -51,7 +52,6 @@ export async function syncProductionListBookings(options: ProductionListBookings
   const limit = normalizeLimit(options.limit);
   const dates = resolveSyncDates(options);
   const baseFilters = toDailyListBookingFilters(options, limit);
-  const allItems: Record<string, unknown>[] = [];
   const days: ProductionSyncDayResult[] = [];
   const totals = {
     total_received: 0,
@@ -85,16 +85,15 @@ export async function syncProductionListBookings(options: ProductionListBookings
         totals.warning_days += 1;
       }
 
-      if (options.saveSamples !== false) {
+      if (options.saveSamples === true) {
         await saveProductionListBookingsSample(date, response, {
           received: day.received,
           warning: day.warning,
         });
       }
 
-      const importResult = syncSqliteBookingItems(items);
+      const importResult = await upsertBookingItems(items);
       applyImportResult(day, totals, importResult);
-      allItems.push(...items);
     } catch (error) {
       day.error += 1;
       totals.error += 1;
@@ -112,23 +111,20 @@ export async function syncProductionListBookings(options: ProductionListBookings
     days,
   };
 
-  writeSqliteSyncLog({
+  await writeMongoSyncLog({
     type: options.type || "manual",
     status: totals.error ? "partial" : "success",
     message: result.message,
+    recordsProcessed: result.recordsProcessed,
     startedAt,
-    total_received: result.total_received,
     inserted: result.inserted,
     updated: result.updated,
     duplicate: result.duplicate,
     error: result.error,
-    total_days_synced: result.total_days_synced,
-    warning_days: result.warning_days,
+    totalReceived: result.total_received,
+    totalDaysSynced: result.total_days_synced,
+    warningDays: result.warning_days,
   });
-
-  if (options.mirrorToMongo) {
-    await mirrorBookingsToMongo(allItems, options.type || "manual", result.message, startedAt);
-  }
 
   return result;
 }
@@ -162,7 +158,7 @@ function toDailyListBookingFilters(options: ProductionListBookingsSyncOptions, l
 function applyImportResult(
   day: ProductionSyncDayResult,
   totals: Omit<ProductionSyncResult, "message" | "recordsProcessed" | "days">,
-  result: SqliteBookingImportResult,
+  result: BookingImportResult,
 ) {
   day.inserted += result.inserted;
   day.updated += result.updated;
@@ -263,20 +259,6 @@ function buildSyncMessage(totals: {
     `duplicate ${totals.duplicate}`,
     `warning days ${totals.warning_days}`,
   ].join("; ");
-}
-
-async function mirrorBookingsToMongo(
-  items: Record<string, unknown>[],
-  type: "manual" | "scheduled",
-  message: string,
-  startedAt: Date,
-) {
-  const { syncBookingItems } = await import("@/lib/booking-sync");
-  await syncBookingItems(items, {
-    type,
-    message,
-    startedAt,
-  });
 }
 
 function listDateRange(startDate: string, endDate: string) {

@@ -61,9 +61,7 @@ export async function GET(request: Request) {
       end_date,
       type: "scheduled",
       startedAt,
-      mirrorToMongo: true,
       logProgress: true,
-      saveSamples: false,
     });
 
     return NextResponse.json({

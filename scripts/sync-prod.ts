@@ -26,7 +26,6 @@ async function main() {
     end_date: options.end_date,
     limit: options.limit,
     type: "manual",
-    mirrorToMongo: false,
     logProgress: true,
     saveSamples: true,
   });

@@ -26,10 +26,10 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({
+      ...result,
       error: false,
       status_code: 200,
       message: "Success",
-      ...result,
     });
   } catch (error) {
     await logSyncFailure({ type: "webhook", startedAt, error });

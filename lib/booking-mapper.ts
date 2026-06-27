@@ -1,4 +1,4 @@
-import type { BookingDocument, FieldDocument } from "@/lib/mongodb";
+import type { BookingDocument, FieldDocument } from "./mongodb.ts";
 
 export function normalizeBooking(raw: Record<string, unknown>): BookingDocument {
   const now = new Date();

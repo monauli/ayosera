@@ -127,10 +127,10 @@ export async function GET(request: Request) {
           rate: fieldCount ? Math.min(98, Math.round((item.count / (fieldCount * 8)) * 100)) : 0,
         })),
         syncEvents: latestLogs.map((log) => ({
-          label: log.status === "success" ? "Sinkronisasi selesai" : "Sinkronisasi gagal",
+          label: log.status === "failed" ? "Sinkronisasi gagal" : "Sinkronisasi selesai",
           detail: log.errorMessage || log.message || `${log.recordsProcessed} data diproses`,
           time: log.finishedAt.toISOString(),
-          tone: log.status === "success" ? "text-teal-600" : "text-rose-600",
+          tone: log.status === "failed" ? "text-rose-600" : "text-teal-600",
         })),
         branchOptions: toCourtOptions(courtOptionBookings),
       };
