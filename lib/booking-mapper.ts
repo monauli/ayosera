@@ -56,6 +56,7 @@ export function toTransactionRow(booking: BookingDocument) {
       currency: "IDR",
       maximumFractionDigits: 0,
     }).format(booking.total_price),
+    amountValue: booking.total_price,
     payment: booking.booking_source === "reservation" ? "Reservation" : "AYO Order",
     bookingSource: booking.booking_source || "-",
     status: mapStatus(booking.status),
@@ -65,6 +66,9 @@ export function toTransactionRow(booking: BookingDocument) {
     createdAt: booking.created_at || "-",
     syncedAt: booking.syncedAt?.toISOString?.() || "-",
     note: booking.note || "-",
+    changeType: booking.changeType ?? null,
+    changedAt: booking.changedAt?.toISOString?.() || undefined,
+    previousSchedule: booking.previousSchedule,
   };
 }
 

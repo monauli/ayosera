@@ -14,6 +14,14 @@ export type BookingImportResult = {
   error: number;
 };
 
+type ExistingBookingProjection = {
+  booking_id: string;
+  raw: Record<string, unknown>;
+  date?: string;
+  start_time?: string;
+  end_time?: string;
+};
+
 export function extractBookingItems(payload: unknown): Record<string, unknown>[] {
   if (Array.isArray(payload)) {
     return payload.filter(isRecord);
@@ -76,16 +84,25 @@ export async function upsertBookingItems(items: Record<string, unknown>[]): Prom
     const ids = normalized.map((booking) => booking.booking_id);
     const existing = await bookings
       .find({ booking_id: { $in: ids } })
-      .project<{ booking_id: string; raw: Record<string, unknown> }>({ booking_id: 1, raw: 1 })
+      .project<ExistingBookingProjection>({
+        booking_id: 1,
+        raw: 1,
+        date: 1,
+        start_time: 1,
+        end_time: 1,
+      })
       .toArray();
-    const existingHash = new Map(existing.map((doc) => [doc.booking_id, stableJson(doc.raw)]));
+    const existingMap = new Map(existing.map((doc) => [doc.booking_id, doc]));
 
     const operations = [];
     for (const booking of normalized) {
       const nextHash = stableJson(booking.raw);
-      const prevHash = existingHash.get(booking.booking_id);
+      const prev = existingMap.get(booking.booking_id);
+      const prevHash = prev ? stableJson(prev.raw) : undefined;
 
       if (prevHash === undefined) {
+        booking.changeType = "new";
+        booking.changedAt = booking.syncedAt;
         operations.push({
           updateOne: {
             filter: { booking_id: booking.booking_id },
@@ -97,6 +114,19 @@ export async function upsertBookingItems(items: Record<string, unknown>[]): Prom
       } else if (prevHash === nextHash) {
         result.duplicate += 1;
       } else {
+        const rescheduled =
+          prev!.date !== booking.date ||
+          prev!.start_time !== booking.start_time ||
+          prev!.end_time !== booking.end_time;
+        booking.changeType = rescheduled ? "rescheduled" : "updated";
+        booking.changedAt = booking.syncedAt;
+        if (rescheduled) {
+          booking.previousSchedule = {
+            date: prev!.date ?? "",
+            start_time: prev!.start_time ?? "",
+            end_time: prev!.end_time ?? "",
+          };
+        }
         operations.push({
           updateOne: {
             filter: { booking_id: booking.booking_id },

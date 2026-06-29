@@ -3,12 +3,18 @@
 import { useEffect, useState, type ElementType } from "react";
 import {
   Activity,
+  ArrowDown,
   ArrowDownToLine,
+  ArrowUp,
+  ArrowUpDown,
   BadgeCheck,
   Bell,
+  CalendarClock,
   CalendarDays,
   CalendarRange,
   Check,
+  PencilLine,
+  Sparkles,
   CheckCircle2,
   ChevronDown,
   DatabaseZap,
@@ -64,6 +70,7 @@ type TransactionRow = {
   service: string;
   fieldId?: string;
   amount: string;
+  amountValue?: number;
   payment: string;
   bookingSource?: string;
   status: string;
@@ -73,11 +80,105 @@ type TransactionRow = {
   createdAt?: string;
   syncedAt?: string;
   note?: string;
+  changeType?: "new" | "updated" | "rescheduled" | null;
+  changedAt?: string;
+  previousSchedule?: { date: string; start_time: string; end_time: string };
 };
 type DatePreset = "today" | "week" | "month" | "lastMonth" | "custom";
 
+type TransactionSummary = {
+  totalRevenue: number;
+  totalCount: number;
+  filteredRevenue: number;
+  filteredCount: number;
+};
+
+function formatIdr(value: number) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(value || 0);
+}
+
+type SortKey = "date" | "id" | "customer" | "service" | "amount" | "status";
+type SortState = { key: SortKey; dir: "asc" | "desc" };
+
+function compareRows(a: TransactionRow, b: TransactionRow, sort: SortState) {
+  const dir = sort.dir === "asc" ? 1 : -1;
+  switch (sort.key) {
+    case "amount":
+      return ((a.amountValue ?? 0) - (b.amountValue ?? 0)) * dir;
+    case "customer":
+      return a.customer.localeCompare(b.customer) * dir;
+    case "service":
+      return a.service.localeCompare(b.service) * dir;
+    case "status":
+      return a.status.localeCompare(b.status) * dir;
+    case "id":
+      return a.id.localeCompare(b.id) * dir;
+    case "date":
+    default: {
+      const dateCmp = (a.date ?? "").localeCompare(b.date ?? "");
+      if (dateCmp !== 0) return dateCmp * dir;
+      return (a.time ?? "").localeCompare(b.time ?? "") * dir;
+    }
+  }
+}
+
+function isInternalRow(row: TransactionRow) {
+  return /internal/i.test(row.customer ?? "");
+}
+
+function matchesColumnFilters(row: TransactionRow, filters: Record<string, string>) {
+  const contains = (value: string | undefined, query: string) =>
+    !query.trim() || (value ?? "").toLowerCase().includes(query.trim().toLowerCase());
+  const idOk = !filters.id || (row.id ?? "").toUpperCase().startsWith(filters.id.toUpperCase());
+  const serviceOk = !filters.service || row.service === filters.service;
+  const statusOk = !filters.status || statusLabel(row.status) === filters.status;
+  return (
+    contains(row.date, filters.date) &&
+    idOk &&
+    contains(row.customer, filters.customer) &&
+    serviceOk &&
+    statusOk
+  );
+}
+
+function SortableHeader({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = "left",
+}: {
+  label: string;
+  sortKey: SortKey;
+  sort: SortState;
+  onSort: (key: SortKey) => void;
+  align?: "left" | "right";
+}) {
+  const active = sort.key === sortKey;
+  const Icon = active ? (sort.dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+  return (
+    <th className={`h-10 px-2 font-medium ${align === "right" ? "text-right" : ""}`}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 uppercase tracking-wide hover:text-slate-900 ${
+          align === "right" ? "flex-row-reverse" : ""
+        } ${active ? "text-slate-900" : ""}`}
+        title="Klik untuk mengurutkan"
+      >
+        {label}
+        <Icon className={`h-3 w-3 ${active ? "" : "opacity-40"}`} />
+      </button>
+    </th>
+  );
+}
+
 const navItems = [
-  { label: "Dasbor", icon: LayoutDashboard, active: true },
+  { label: "Dasbor", icon: LayoutDashboard },
   { label: "Transaksi", icon: Activity },
   { label: "Laporan", icon: FileDown },
   { label: "Log Sinkronisasi", icon: DatabaseZap },
@@ -106,6 +207,38 @@ function statusLabel(status: string) {
   if (status === "Pending") return "Tertunda";
   if (status === "Cancelled") return "Dibatalkan";
   return status;
+}
+
+function changeIndicator(row: TransactionRow) {
+  if (row.changeType === "rescheduled") {
+    const prev = row.previousSchedule;
+    const title = prev
+      ? `Jadwal diubah dari ${prev.date} ${prev.start_time?.slice(0, 5)}-${prev.end_time?.slice(0, 5)}`
+      : "Jadwal diubah (reschedule)";
+    return {
+      label: "Reschedule",
+      icon: CalendarClock,
+      className: "bg-amber-100 text-amber-800",
+      title,
+    };
+  }
+  if (row.changeType === "updated") {
+    return {
+      label: "Diperbarui",
+      icon: PencilLine,
+      className: "bg-sky-100 text-sky-800",
+      title: "Data diperbarui pada sinkronisasi terakhir",
+    };
+  }
+  if (row.changeType === "new") {
+    return {
+      label: "Baru",
+      icon: Sparkles,
+      className: "bg-emerald-100 text-emerald-800",
+      title: "Data baru ditarik dari AYO",
+    };
+  }
+  return null;
 }
 
 function formatJakartaDate(date: Date) {
@@ -212,6 +345,12 @@ export default function DashboardPage() {
   const currentMonth = today.slice(0, 7);
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [transactionRows, setTransactionRows] = useState<TransactionRow[]>([]);
+  const [summary, setSummary] = useState<TransactionSummary>({
+    totalRevenue: 0,
+    totalCount: 0,
+    filteredRevenue: 0,
+    filteredCount: 0,
+  });
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -230,6 +369,22 @@ export default function DashboardPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState("white");
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [activeNav, setActiveNav] = useState("Dasbor");
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportDate, setExportDate] = useState(today);
+  const [sort, setSort] = useState<SortState>({ key: "date", dir: "asc" });
+  const emptyColumnFilters = { date: today, id: "", customer: "", service: "", status: "" };
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>(emptyColumnFilters);
+
+  function handleSort(key: SortKey) {
+    setSort((prev) => (prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+    setPage(1);
+  }
+
+  function setColumnFilter(key: string, value: string) {
+    setColumnFilters((prev) => ({ ...prev, [key]: value }));
+    setPage(1);
+  }
 
   useEffect(() => {
     const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -258,7 +413,8 @@ export default function DashboardPage() {
     if (isInvalidDateRange(range.startDate, range.endDate)) return;
 
     const params = buildFilterParams(range);
-    const transactionPath = params.size ? `/api/transactions?${params.toString()}` : "/api/transactions";
+    // Transaksi selalu menarik semua data; penyaringan dilakukan lewat filter per-kolom di tabel.
+    const transactionPath = "/api/transactions";
     const dashboardPath = params.size ? `/api/dashboard?${params.toString()}` : "/api/dashboard";
 
     const [dashboardResponse, transactionsResponse] = await Promise.all([
@@ -273,8 +429,12 @@ export default function DashboardPage() {
 
     if (dashboardResponse.ok) setDashboard(await dashboardResponse.json());
     if (transactionsResponse.ok) {
-      const payload = (await transactionsResponse.json()) as { data: TransactionRow[] };
+      const payload = (await transactionsResponse.json()) as {
+        data: TransactionRow[];
+        summary?: TransactionSummary;
+      };
       setTransactionRows(payload.data);
+      if (payload.summary) setSummary(payload.summary);
     }
   }
 
@@ -322,14 +482,42 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleExportCsv() {
-    if (dateRangeInvalid) return;
-
+  async function handleExportHarian() {
+    if (!exportDate) return;
     setExporting(true);
     setSyncMessage("");
     try {
-      const params = buildFilterParams();
-      const response = await fetch(`/api/transactions/export?${params.toString()}`, { cache: "no-store" });
+      const response = await fetch(`/api/transactions/export/harian?date=${exportDate}`, { cache: "no-store" });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      if (!response.ok) {
+        setSyncMessage("Ekspor harian gagal.");
+        return;
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Omzet Harian ${exportDate}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setSyncMessage(`Ekspor harian ${exportDate} selesai.`);
+      setExportMenuOpen(false);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleExportCsv() {
+    setExporting(true);
+    setSyncMessage("");
+    try {
+      // Ekspor seluruh transaksi (sesuai tampilan tabel yang menampilkan semua data).
+      const response = await fetch("/api/transactions/export", { cache: "no-store" });
 
       if (response.status === 401) {
         await redirectToLogin();
@@ -379,11 +567,12 @@ export default function DashboardPage() {
   }
 
   async function handleSyncNow() {
-    setDatePreset("today");
-    setStartDate(today);
-    setEndDate(today);
+    const range = getDatePresetRange("month");
+    setDatePreset("month");
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
     closeSyncMenu();
-    await syncRange({ startDate: today, endDate: today });
+    await syncRange(range);
   }
 
   async function handleSyncRangeForm() {
@@ -415,6 +604,7 @@ export default function DashboardPage() {
     setDatePreset("today");
     setStartDate(range.startDate);
     setEndDate(range.endDate);
+    setColumnFilters(emptyColumnFilters);
   }
 
   useEffect(() => {
@@ -429,9 +619,15 @@ export default function DashboardPage() {
   const metrics = dashboard?.metrics;
   const dateRangeInvalid = isInvalidDateRange(startDate, endDate);
   const pageSize = 10;
-  const pageCount = Math.max(1, Math.ceil(transactionRows.length / pageSize));
+  const filteredRows = transactionRows.filter((row) => matchesColumnFilters(row, columnFilters));
+  const sortedRows = [...filteredRows].sort((a, b) => compareRows(a, b, sort));
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
-  const pagedRows = transactionRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const pagedRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const filteredRevenue = filteredRows.reduce((total, row) => total + (row.amountValue ?? 0), 0);
+  const serviceOptions = Array.from(new Set(transactionRows.map((row) => row.service).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b),
+  );
   const serviceRows = dashboard?.topServices ?? [];
   const paymentRows = dashboard?.paymentBreakdown ?? [];
   const eventRows = dashboard?.syncEvents ?? [];
@@ -440,6 +636,26 @@ export default function DashboardPage() {
   const latestEvent = eventRows[0];
   const syncStatusLabel = latestEvent ? (latestEvent.tone.includes("teal") ? "OK" : "Gagal") : "-";
   const lastCheckpoint = latestEvent ? formatEventTime(latestEvent.time) : "-";
+
+  const presetFilterRow = (
+    <div className="flex flex-wrap items-center gap-2">
+      {datePresetButtons.map((preset) => (
+        <Button
+          key={preset.value}
+          type="button"
+          variant={datePreset === preset.value ? "default" : "outline"}
+          onClick={() => handleRangePreset(preset.value)}
+        >
+          <CalendarRange className="h-4 w-4" />
+          {preset.label}
+        </Button>
+      ))}
+      <Button type="button" variant="ghost" onClick={handleResetFilters}>
+        <RotateCcw className="h-4 w-4" />
+        Reset
+      </Button>
+    </div>
+  );
 
   return (
     <main className="min-h-screen bg-[rgb(var(--background))] text-[rgb(var(--foreground))]">
@@ -469,10 +685,11 @@ export default function DashboardPage() {
             <button
               key={item.label}
               onClick={() => {
+                setActiveNav(item.label);
                 if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
               }}
               className={`flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors ${
-                item.active
+                activeNav === item.label
                   ? "bg-[rgb(var(--accent))] font-medium text-[rgb(var(--accent-foreground))]"
                   : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
               }`}
@@ -551,10 +768,14 @@ export default function DashboardPage() {
               <Menu className="h-5 w-5" />
             </Button>
             <div className="min-w-0 flex-1">
-              <h1 className="truncate text-lg font-semibold">Dasbor Transaksi Real-Time</h1>
-              <p className="hidden text-sm text-slate-500 sm:block">
-                Monitoring transaksi, pendapatan, sinkronisasi, dan integrasi AYO.
-              </p>
+              <h1 className="truncate text-lg font-semibold">
+                {activeNav === "Transaksi" ? "Transaksi AYO" : "Dasbor Transaksi Real-Time"}
+              </h1>
+              {activeNav !== "Transaksi" && (
+                <p className="hidden text-sm text-slate-500 sm:block">
+                  Monitoring transaksi, pendapatan, sinkronisasi, dan integrasi AYO.
+                </p>
+              )}
             </div>
             <Button variant="outline" size="icon" aria-label="Notifikasi">
               <Bell className="h-4 w-4" />
@@ -580,7 +801,7 @@ export default function DashboardPage() {
                       <div className="space-y-2">
                         <Button className="w-full justify-start" onClick={handleSyncNow} disabled={syncing}>
                           <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-                          Sinkron Sekarang (data terbaru)
+                          Sync Now
                         </Button>
                         <Button className="w-full justify-start" variant="outline" onClick={() => setSyncMode("range")}>
                           <CalendarRange className="h-4 w-4" />
@@ -670,6 +891,10 @@ export default function DashboardPage() {
         <div className="px-4 py-5 sm:px-6">
           {syncMessage && <p className="mb-4 text-sm text-slate-600">{syncMessage}</p>}
 
+          {activeNav === "Dasbor" && (
+          <>
+          <div className="mb-4">{presetFilterRow}</div>
+
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               title="Total Transaksi"
@@ -700,108 +925,170 @@ export default function DashboardPage() {
               accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
             />
           </section>
+          </>
+          )}
 
-          <section className="mt-4 space-y-3">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex flex-wrap items-center gap-2">
-                {datePresetButtons.map((preset) => (
-                  <Button
-                    key={preset.value}
-                    type="button"
-                    variant={datePreset === preset.value ? "default" : "outline"}
-                    onClick={() => handleRangePreset(preset.value)}
-                  >
-                    <CalendarRange className="h-4 w-4" />
-                    {preset.label}
-                  </Button>
-                ))}
-                <Button type="button" variant="ghost" onClick={handleResetFilters}>
-                  <RotateCcw className="h-4 w-4" />
-                  Reset
-                </Button>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-7 xl:w-[980px]">
-                <div className="relative sm:col-span-2 lg:col-span-2">
-                  <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                  <Input
-                    className="pl-9"
-                    placeholder="Cari transaksi atau pelanggan"
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                  />
-                </div>
-                <Select value={courtFilter} onValueChange={setCourtFilter}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Semua lapangan</SelectItem>
-                    {courtOptions.map((court) => (
-                      <SelectItem key={court.value} value={court.value}>
-                        {court.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  aria-label="Tanggal mulai"
-                  type="date"
-                  className="cursor-pointer"
-                  value={startDate}
-                  onClick={(event) => event.currentTarget.showPicker?.()}
-                  onChange={(event) => handleCustomStartDate(event.target.value)}
-                />
-                <Input
-                  aria-label="Tanggal akhir"
-                  type="date"
-                  className="cursor-pointer"
-                  value={endDate}
-                  onClick={(event) => event.currentTarget.showPicker?.()}
-                  onChange={(event) => handleCustomEndDate(event.target.value)}
-                />
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Semua status</SelectItem>
-                    <SelectItem value="Completed">Selesai</SelectItem>
-                    <SelectItem value="Pending">Tertunda</SelectItem>
-                    <SelectItem value="Cancelled">Dibatalkan</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" onClick={handleExportCsv} disabled={dateRangeInvalid || exporting}>
-                  <ArrowDownToLine className="h-4 w-4" />
-                  {exporting ? "Mengekspor" : "Ekspor CSV"}
-                </Button>
-              </div>
-            </div>
-            {dateRangeInvalid && (
-              <p className="text-sm text-rose-600">
-                Tanggal mulai tidak boleh lebih besar dari tanggal akhir.
-              </p>
-            )}
-
+          {activeNav === "Transaksi" && (
+          <section className="space-y-3">
             <Card className="flex flex-col">
               <CardHeader>
-                <CardTitle>Penjelajah Transaksi</CardTitle>
-                <CardDescription>Default hari ini, dengan detail booking yang sudah tersimpan dari AYO</CardDescription>
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] shadow-sm">
+                      <Activity className="h-7 w-7" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-3xl font-bold tracking-tight">Transaksi AYO</CardTitle>
+                      <p className="mt-1 text-sm text-slate-500">Semua transaksi tersinkron dari AYO</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+                    <div className="rounded-xl border bg-slate-50 px-6 py-5 shadow-sm">
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <BadgeCheck className="h-6 w-6" />
+                        <p className="text-base font-medium">Total Pendapatan</p>
+                      </div>
+                      <p className="mt-2 text-3xl font-bold tracking-tight">{formatIdr(summary.totalRevenue)}</p>
+                      <p className="mt-1 text-sm text-slate-400">{summary.totalCount} transaksi</p>
+                    </div>
+                    <div className="rounded-xl bg-[rgb(var(--accent))] px-6 py-5 text-[rgb(var(--accent-foreground))] shadow-sm">
+                      <div className="flex items-center gap-2 opacity-80">
+                        <CalendarRange className="h-6 w-6" />
+                        <p className="text-base font-medium">Pendapatan Difilter</p>
+                      </div>
+                      <p className="mt-2 text-3xl font-bold tracking-tight">{formatIdr(filteredRevenue)}</p>
+                      <p className="mt-1 text-sm opacity-70">{filteredRows.length} transaksi</p>
+                    </div>
+                    <div className="relative">
+                      <Button
+                        variant="outline"
+                        onClick={() => setExportMenuOpen((open) => !open)}
+                        disabled={exporting}
+                        aria-expanded={exportMenuOpen}
+                        className="h-full min-h-[96px] flex-col gap-1 rounded-xl px-6 py-5 text-base"
+                      >
+                        <ArrowDownToLine className="h-6 w-6" />
+                        {exporting ? "Mengekspor" : "Ekspor"}
+                        <ChevronDown className={`h-4 w-4 transition-transform ${exportMenuOpen ? "rotate-180" : ""}`} />
+                      </Button>
+                      {exportMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setExportMenuOpen(false)} />
+                          <div className="absolute right-0 z-50 mt-2 w-72 rounded-md border bg-white p-4 text-left shadow-lg">
+                            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+                              Ekspor Harian (.xlsx)
+                            </p>
+                            <Input
+                              type="date"
+                              aria-label="Tanggal ekspor harian"
+                              value={exportDate}
+                              className="mb-2 cursor-pointer"
+                              onClick={(event) => event.currentTarget.showPicker?.()}
+                              onChange={(event) => setExportDate(event.target.value)}
+                            />
+                            <Button className="w-full" onClick={handleExportHarian} disabled={exporting || !exportDate}>
+                              <ArrowDownToLine className="h-4 w-4" />
+                              {exporting ? "Mengekspor" : "Unduh Harian"}
+                            </Button>
+                            <div className="mt-3 space-y-2 border-t pt-3">
+                              <Button variant="outline" className="w-full justify-between" disabled>
+                                <span className="flex items-center gap-2">
+                                  <CalendarRange className="h-4 w-4" />
+                                  Range Tanggal
+                                </span>
+                                <span className="text-xs text-slate-400">Segera</span>
+                              </Button>
+                              <Button variant="outline" className="w-full justify-between" disabled>
+                                <span className="flex items-center gap-2">
+                                  <CalendarDays className="h-4 w-4" />
+                                  Bulanan
+                                </span>
+                                <span className="text-xs text-slate-400">Segera</span>
+                              </Button>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] text-sm">
+                  <table className="w-full min-w-[1000px] text-sm">
                     <thead className="bg-white">
                       <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
-                        <th className="h-10 px-2 font-medium">Tanggal</th>
+                        <SortableHeader label="Tanggal" sortKey="date" sort={sort} onSort={handleSort} />
                         <th className="h-10 px-2 font-medium">Jam</th>
-                        <th className="h-10 px-2 font-medium">ID Booking</th>
-                        <th className="h-10 px-2 font-medium">Pelanggan</th>
+                        <SortableHeader label="ID Booking" sortKey="id" sort={sort} onSort={handleSort} />
+                        <SortableHeader label="Pelanggan" sortKey="customer" sort={sort} onSort={handleSort} />
                         <th className="h-10 px-2 font-medium">Telepon</th>
-                        <th className="h-10 px-2 font-medium">Lapangan</th>
-                        <th className="h-10 px-2 font-medium">Sumber</th>
-                        <th className="h-10 px-2 text-right font-medium">Nominal</th>
-                        <th className="h-10 px-2 font-medium">Status</th>
-                        <th className="h-10 px-2 font-medium">Dibuat</th>
+                        <SortableHeader label="Lapangan" sortKey="service" sort={sort} onSort={handleSort} />
+                        <SortableHeader label="Nominal" sortKey="amount" sort={sort} onSort={handleSort} align="right" />
+                        <SortableHeader label="Status" sortKey="status" sort={sort} onSort={handleSort} />
+                        <th className="h-10 px-2 font-medium">Perubahan</th>
+                      </tr>
+                      <tr className="border-b">
+                        <th className="px-2 pb-2">
+                          <select
+                            value={columnFilters.date}
+                            onChange={(event) => setColumnFilter("date", event.target.value)}
+                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
+                          >
+                            <option value={today}>Hari ini</option>
+                            <option value={currentMonth}>Bulan ini</option>
+                            <option value="">Semua</option>
+                          </select>
+                        </th>
+                        <th className="px-2 pb-2" />
+                        <th className="px-2 pb-2">
+                          <select
+                            value={columnFilters.id}
+                            onChange={(event) => setColumnFilter("id", event.target.value)}
+                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
+                          >
+                            <option value="">Semua</option>
+                            <option value="BK">BK</option>
+                            <option value="MN">MN</option>
+                          </select>
+                        </th>
+                        <th className="px-2 pb-2">
+                          <input
+                            value={columnFilters.customer}
+                            onChange={(event) => setColumnFilter("customer", event.target.value)}
+                            placeholder="Filter nama"
+                            className="h-7 w-full rounded border px-2 text-xs font-normal normal-case text-slate-700"
+                          />
+                        </th>
+                        <th className="px-2 pb-2" />
+                        <th className="px-2 pb-2">
+                          <select
+                            value={columnFilters.service}
+                            onChange={(event) => setColumnFilter("service", event.target.value)}
+                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
+                          >
+                            <option value="">Semua</option>
+                            {serviceOptions.map((service) => (
+                              <option key={service} value={service}>
+                                {service}
+                              </option>
+                            ))}
+                          </select>
+                        </th>
+                        <th className="px-2 pb-2" />
+                        <th className="px-2 pb-2">
+                          <select
+                            value={columnFilters.status}
+                            onChange={(event) => setColumnFilter("status", event.target.value)}
+                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
+                          >
+                            <option value="">Semua</option>
+                            <option value="Selesai">Selesai</option>
+                            <option value="Tertunda">Tertunda</option>
+                            <option value="Dibatalkan">Dibatalkan</option>
+                          </select>
+                        </th>
+                        <th className="px-2 pb-2" />
                       </tr>
                     </thead>
                     <tbody>
@@ -813,25 +1100,46 @@ export default function DashboardPage() {
                               {transaction.time} - {transaction.endTime || "-"}
                             </td>
                             <td className="px-2 py-2">
-                              <p className="max-w-[150px] truncate font-medium">{transaction.id}</p>
+                              <p className="whitespace-nowrap font-medium">{transaction.id}</p>
                               {transaction.note && transaction.note !== "-" && (
-                                <p className="max-w-[150px] truncate text-xs text-slate-500">{transaction.note}</p>
+                                <p className="max-w-[240px] truncate text-xs text-slate-500">{transaction.note}</p>
                               )}
                             </td>
-                            <td className="max-w-[150px] truncate px-2 py-2">{transaction.customer}</td>
+                            <td className="px-2 py-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="max-w-[150px] truncate">{transaction.customer}</span>
+                                {isInternalRow(transaction) && (
+                                  <Badge className="shrink-0 bg-violet-100 text-violet-700">Internal</Badge>
+                                )}
+                              </div>
+                            </td>
                             <td className="max-w-[130px] truncate px-2 py-2">{transaction.phone}</td>
                             <td className="max-w-[180px] truncate px-2 py-2">{transaction.service}</td>
-                            <td className="px-2 py-2">{transaction.bookingSource || transaction.payment}</td>
                             <td className="px-2 py-2 text-right font-medium">{transaction.amount}</td>
                             <td className="px-2 py-2">
                               <Badge variant={statusVariant(transaction.status)}>{statusLabel(transaction.status)}</Badge>
                             </td>
-                            <td className="max-w-[170px] truncate px-2 py-2">{transaction.createdAt}</td>
+                            <td className="px-2 py-2">
+                              {(() => {
+                                const indicator = changeIndicator(transaction);
+                                if (!indicator) return <span className="text-slate-300">—</span>;
+                                const Icon = indicator.icon;
+                                return (
+                                  <span
+                                    title={indicator.title}
+                                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${indicator.className}`}
+                                  >
+                                    <Icon className="h-3.5 w-3.5" />
+                                    {indicator.label}
+                                  </span>
+                                );
+                              })()}
+                            </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={10} className="h-[360px] text-center text-sm text-slate-500">
+                          <td colSpan={9} className="h-[360px] text-center text-sm text-slate-500">
                             Tidak ada transaksi ditemukan
                           </td>
                         </tr>
@@ -841,11 +1149,11 @@ export default function DashboardPage() {
                 </div>
                 <div className="mt-4 flex flex-col items-center justify-between gap-3 border-t pt-4 text-sm sm:flex-row">
                   <span className="text-slate-500">
-                    {transactionRows.length
+                    {sortedRows.length
                       ? `Menampilkan ${(currentPage - 1) * pageSize + 1}–${Math.min(
                           currentPage * pageSize,
-                          transactionRows.length,
-                        )} dari ${transactionRows.length} transaksi`
+                          sortedRows.length,
+                        )} dari ${sortedRows.length} transaksi`
                       : "0 transaksi"}
                   </span>
                   <div className="flex items-center gap-3">
@@ -873,7 +1181,10 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </section>
+          )}
 
+          {activeNav === "Dasbor" && (
+          <>
           <section className="mt-4 grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader>
@@ -945,6 +1256,8 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </section>
+          </>
+          )}
         </div>
       </section>
     </main>

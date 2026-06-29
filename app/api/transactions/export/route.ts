@@ -25,7 +25,23 @@ const headers = [
   "Created At",
   "Synced At",
   "Note",
+  "Perubahan",
+  "Jadwal Sebelumnya",
 ];
+
+function changeLabel(changeType: BookingDocument["changeType"]) {
+  if (changeType === "rescheduled") return "Reschedule";
+  if (changeType === "updated") return "Diperbarui";
+  if (changeType === "new") return "Baru";
+  return "";
+}
+
+function previousScheduleText(previous: BookingDocument["previousSchedule"]) {
+  if (!previous) return "";
+  const start = previous.start_time?.slice(0, 5) || "";
+  const end = previous.end_time?.slice(0, 5) || "";
+  return `${previous.date} ${start}-${end}`.trim();
+}
 
 export async function GET(request: Request) {
   try {
@@ -81,6 +97,8 @@ function toCsv(bookings: BookingDocument[]) {
         row.createdAt,
         row.syncedAt,
         row.note,
+        changeLabel(booking.changeType),
+        previousScheduleText(booking.previousSchedule),
       ];
     }),
   ];

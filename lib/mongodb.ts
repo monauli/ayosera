@@ -39,6 +39,12 @@ export type BookingDocument = {
   raw: Record<string, unknown>;
   syncedAt: Date;
   updatedAt: Date;
+  /** Jenis perubahan terakhir yang terdeteksi saat sinkronisasi. */
+  changeType?: "new" | "updated" | "rescheduled" | null;
+  /** Kapan perubahan terakhir terdeteksi. */
+  changedAt?: Date;
+  /** Jadwal sebelumnya, hanya diisi saat terjadi reschedule. */
+  previousSchedule?: { date: string; start_time: string; end_time: string };
 };
 
 export type SyncLogDocument = {

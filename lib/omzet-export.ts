@@ -1,0 +1,534 @@
+import ExcelJS from "exceljs";
+import type { BookingDocument } from "./mongodb.ts";
+
+/**
+ * Generator workbook "Omzet Harian" mengikuti template contoh
+ * (doc export/Contoh Omest Ayo harian.xlsx): 4 sheet — Summary, Walk In, AYO, ALL.
+ *
+ * Catatan sumber data: API AYO (list-bookings) hanya mengembalikan 17 field, jadi
+ * banyak kolom template (Payment Method, Discount, Booking Oleh, Pembatalan, dll)
+ * tidak punya sumber dan diisi default (0 / "-") sesuai keputusan. Kolom agregat
+ * (TOTAL, subtotal, Average) ditulis sebagai FORMULA Excel persis seperti template.
+ */
+
+const MONTHS_ID = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
+const MONEY_FMT = "#,##0";
+const HEADER_FILL = "FFF2F2F2";
+const ORANGE = "FFFFC000"; // penanda kolom Revenue Venue (header)
+const ORANGE_LIGHT = "FFFCE4D6"; // tint sel data Revenue Venue
+const YELLOW = "FFFFFF00"; // highlight baris total/subtotal
+
+function solidFill(argb: string): ExcelJS.FillPattern {
+  return { type: "pattern", pattern: "solid", fgColor: { argb } };
+}
+
+export type OmzetExportInput = {
+  date: string; // YYYY-MM-DD (hari yang diekspor)
+  venueName: string;
+  dayBookings: BookingDocument[]; // booking pada tanggal tsb
+  monthBookings: BookingDocument[]; // semua booking di bulan tanggal tsb (untuk Summary)
+  sportByFieldId?: Map<number, string>;
+};
+
+function colLetter(n: number) {
+  let s = "";
+  while (n > 0) {
+    const m = (n - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+function isPickle(fieldName: string) {
+  return /pickle/i.test(fieldName);
+}
+
+function courtLabel(fieldName: string) {
+  if (isPickle(fieldName)) return "Pickle Court";
+  const m = fieldName.match(/no\.?\s*(\d+)/i);
+  if (m) return `Court ${m[1]}`;
+  return fieldName;
+}
+
+function isAyoSource(b: BookingDocument) {
+  return (b.booking_source || "order") === "order";
+}
+
+function sessionLength(b: BookingDocument) {
+  const toMin = (t?: string) => {
+    if (!t) return null;
+    const [h, m] = t.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return null;
+    return h * 60 + m;
+  };
+  const start = toMin(b.start_time);
+  const end = toMin(b.end_time);
+  if (start == null || end == null) return "-";
+  const diff = end - start + (end < start ? 24 * 60 : 0);
+  return `${diff} Minute(s)`;
+}
+
+function fmtTimestamp(value?: string | Date) {
+  if (!value) return "-";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return typeof value === "string" ? value : "-";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+}
+
+function num(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// ---- Kolom detail (urutan persis template) -------------------------------
+
+type ColumnDef = {
+  header: string;
+  get: (b: BookingDocument, ctx: OmzetExportInput) => string | number;
+  money?: boolean;
+  width?: number;
+};
+
+function sportOf(b: BookingDocument, ctx: OmzetExportInput) {
+  const fromMap = ctx.sportByFieldId?.get(b.field_id);
+  if (fromMap) return fromMap;
+  return isPickle(b.field_name) ? "Pickleball" : "Padel";
+}
+
+// Kolom dari "Booking ID" .. "Note" (dipakai Walk In; basis untuk AYO & ALL).
+const BASE_COLUMNS: ColumnDef[] = [
+  { header: "Booking ID", get: (b) => b.booking_id || "-", width: 24 },
+  { header: "Venue", get: (b, c) => b.branch_name || c.venueName, width: 16 },
+  { header: "Court", get: (b) => b.field_name || "-", width: 14 },
+  { header: "Court ID", get: (b) => b.field_id || "-", width: 9 },
+  { header: "Sports \nCategory", get: (b, c) => sportOf(b, c), width: 11 },
+  { header: "Customer\nName", get: (b) => b.booker_name || "-", width: 18 },
+  { header: "Customer Email", get: (b) => b.booker_email || "", width: 22 },
+  { header: "Customer Phone", get: (b) => b.booker_phone || "", width: 16 },
+  { header: "Username Customer", get: () => "-", width: 14 },
+  { header: "Date of \nBooking", get: (b) => b.date || "-", width: 12 },
+  { header: "Booking Period \nStart Time", get: (b) => b.start_time || "-", width: 11 },
+  { header: "Booking Period End Time", get: (b) => b.end_time || "-", width: 11 },
+  { header: "Session \nLength", get: (b) => sessionLength(b), width: 12 },
+  { header: "Price", get: (b) => num(b.total_price), money: true, width: 12 },
+  { header: "Payment ID", get: () => "-", width: 12 },
+  { header: "Payment \nMethod", get: () => "-", width: 14 },
+  { header: "Total Booking \nAmount", get: (b) => num(b.total_price), money: true, width: 13 },
+  { header: "Discount", get: () => 0, money: true, width: 10 },
+  { header: "Ayo Discount", get: () => 0, money: true, width: 10 },
+  { header: "Voucher", get: () => "-", width: 9 },
+  { header: "Net Booking \nAmount", get: (b) => num(b.total_price), money: true, width: 13 },
+  { header: "First/Down \nPayment", get: () => 0, money: true, width: 11 },
+  { header: "Pelunasan Online", get: () => 0, money: true, width: 11 },
+  { header: "Pelunasan Offline", get: () => 0, money: true, width: 11 },
+  { header: "Status", get: (b) => b.status || "-", width: 11 },
+  { header: "Revenue \nVenue", get: (b) => num(b.total_price), money: true, width: 12 },
+  { header: "Date Revenue \nProcessed", get: () => "-", width: 16 },
+  { header: "Note", get: (b) => b.note || "-", width: 14 },
+];
+
+// Kolom meta booking (AYO & ALL). Sebagian terisi (created_at, reschedule terdeteksi).
+const META_COLUMNS: ColumnDef[] = [
+  { header: "Booking Oleh", get: () => "-", width: 14 },
+  { header: "Tanggal dan \nWaktu Booking", get: (b) => fmtTimestamp(b.created_at), width: 18 },
+  { header: "Reschedule Oleh", get: () => "-", width: 14 },
+  {
+    header: "Tanggal dan \nWaktu Reschedule",
+    get: (b) => (b.changeType === "rescheduled" && b.changedAt ? fmtTimestamp(b.changedAt) : "-"),
+    width: 18,
+  },
+  { header: "Dibatalkan Oleh", get: () => "-", width: 14 },
+  { header: "Tanggal dan Waktu \nPembatalan", get: () => "-", width: 18 },
+  { header: "Alasan Pembatalan", get: () => "-", width: 16 },
+];
+
+// ---- Styling helpers -----------------------------------------------------
+
+function styleTitle(cell: ExcelJS.Cell) {
+  cell.font = { bold: true, size: 14 };
+  cell.alignment = { vertical: "middle", horizontal: "left" };
+}
+
+function styleHeaderCell(cell: ExcelJS.Cell) {
+  cell.font = { bold: true, size: 10 };
+  cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_FILL } };
+  cell.border = thinBorder();
+}
+
+function thinBorder(): Partial<ExcelJS.Borders> {
+  const side = { style: "thin" as const };
+  return { top: side, left: side, bottom: side, right: side };
+}
+
+// ---- Detail sheet builder (Walk In / AYO / ALL) --------------------------
+
+function writeDetailHeader(
+  ws: ExcelJS.Worksheet,
+  title: string,
+  periodText: string,
+  columns: ColumnDef[],
+  extraLegend?: { reschedule: string; paymentFail: string },
+) {
+  // Catatan: judul sheet detail TIDAK di-merge (sesuai template).
+  styleTitle(ws.getCell("A1"));
+  ws.getCell("A1").value = title;
+
+  if (extraLegend) {
+    ws.getCell("D1").value = extraLegend.reschedule;
+    ws.getCell("E1").value = extraLegend.paymentFail;
+  }
+
+  ws.getCell("A2").value = periodText;
+  ws.getCell("A2").font = { italic: true, size: 10 };
+
+  const headerRow = ws.getRow(4);
+  columns.forEach((col, i) => {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = col.header;
+    styleHeaderCell(cell);
+    if (col.header.startsWith("Revenue")) cell.fill = solidFill(ORANGE);
+    ws.getColumn(i + 1).width = col.width ?? 12;
+  });
+  headerRow.height = 30;
+}
+
+function writeDataRow(
+  ws: ExcelJS.Worksheet,
+  rowIndex: number,
+  columns: ColumnDef[],
+  values: (string | number)[],
+) {
+  const row = ws.getRow(rowIndex);
+  values.forEach((value, i) => {
+    const cell = row.getCell(i + 1);
+    cell.value = value;
+    cell.border = thinBorder();
+    if (columns[i].money) cell.numFmt = MONEY_FMT;
+    if (columns[i].header.startsWith("Revenue")) cell.fill = solidFill(ORANGE_LIGHT);
+    cell.font = { size: 10 };
+  });
+}
+
+/** Tulis baris SUM untuk kolom Price..Revenue (sesuai template). */
+function writeSumRow(
+  ws: ExcelJS.Worksheet,
+  rowIndex: number,
+  columns: ColumnDef[],
+  fromRow: number,
+  toRow: number,
+) {
+  const priceIdx = columns.findIndex((c) => c.header === "Price");
+  const revenueIdx = columns.findIndex((c) => c.header.startsWith("Revenue"));
+  const row = ws.getRow(rowIndex);
+  for (let i = priceIdx; i <= revenueIdx; i++) {
+    const letter = colLetter(i + 1);
+    const cell = row.getCell(i + 1);
+    cell.value = { formula: `SUM(${letter}${fromRow}:${letter}${toRow})` };
+    cell.numFmt = MONEY_FMT;
+    cell.font = { bold: true, size: 10 };
+    cell.fill = solidFill(YELLOW);
+    cell.border = thinBorder();
+  }
+}
+
+function buildWalkInSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
+  const ws = wb.addWorksheet("Walk In");
+  const columns = BASE_COLUMNS;
+  writeDetailHeader(ws, "OMSET SEWA LAPANGAN (Walk In)", periodTextDay(input.date), columns);
+
+  const rows = input.dayBookings.filter((b) => !isAyoSource(b));
+  let r = 5;
+  for (const b of rows) {
+    writeDataRow(ws, r, columns, columns.map((c) => c.get(b, input)));
+    r++;
+  }
+  if (rows.length) writeSumRow(ws, r, columns, 5, r - 1);
+}
+
+function buildAyoSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
+  const ws = wb.addWorksheet("AYO");
+  const columns: ColumnDef[] = [
+    { header: "No", get: () => "", width: 6 },
+    ...BASE_COLUMNS,
+    ...META_COLUMNS,
+  ];
+  writeDetailHeader(ws, "OMSET SEWA LAPANGAN (AYO)", periodTextDay(input.date), columns, {
+    reschedule: "Reschedule",
+    paymentFail: "Payment Fail",
+  });
+
+  const rows = input.dayBookings.filter((b) => isAyoSource(b));
+  let r = 5;
+  rows.forEach((b, i) => {
+    const values = [i + 1, ...BASE_COLUMNS.map((c) => c.get(b, input)), ...META_COLUMNS.map((c) => c.get(b, input))];
+    writeDataRow(ws, r, columns, values);
+    r++;
+  });
+  if (rows.length) writeSumRow(ws, r, columns, 5, r - 1);
+}
+
+function buildAllSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
+  const ws = wb.addWorksheet("ALL");
+  // ALL: kolom "Tanggal" memimpin (di-merge), tanpa "Date of Booking" di tengah.
+  const baseWithoutDate = BASE_COLUMNS.filter((c) => !c.header.startsWith("Date of"));
+  const columns: ColumnDef[] = [
+    { header: "Tanggal", get: (b) => b.date || "-", width: 12 },
+    ...baseWithoutDate,
+    ...META_COLUMNS,
+  ];
+  writeDetailHeader(ws, "OMSET SEWA LAPANGAN (ALL)", periodTextDay(input.date), columns);
+
+  // urutkan per court (padel dulu lalu pickle), dalam court urut jam mulai
+  const courts = distinctCourts(input.dayBookings);
+  const firstDataRow = 5;
+  let r = firstDataRow;
+  const subtotalRows: number[] = [];
+
+  for (const court of courts) {
+    const group = input.dayBookings
+      .filter((b) => b.field_name === court)
+      .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+    if (!group.length) continue;
+    const groupStart = r;
+    for (const b of group) {
+      const values = columns.map((c) => c.get(b, input));
+      writeDataRow(ws, r, columns, values);
+      r++;
+    }
+    writeSumRow(ws, r, columns, groupStart, r - 1);
+    subtotalRows.push(r);
+    r++;
+  }
+
+  // grand total = jumlah semua subtotal
+  if (subtotalRows.length) {
+    const priceIdx = columns.findIndex((c) => c.header === "Price");
+    const revenueIdx = columns.findIndex((c) => c.header.startsWith("Revenue"));
+    const grandRow = ws.getRow(r);
+    for (let i = priceIdx; i <= revenueIdx; i++) {
+      const letter = colLetter(i + 1);
+      const cell = grandRow.getCell(i + 1);
+      cell.value = { formula: subtotalRows.map((sr) => `${letter}${sr}`).join("+") };
+      cell.numFmt = MONEY_FMT;
+      cell.font = { bold: true, size: 10 };
+      cell.fill = solidFill(YELLOW);
+      cell.border = thinBorder();
+    }
+    // merge kolom Tanggal untuk seluruh blok data (termasuk baris grand total)
+    ws.mergeCells(`A${firstDataRow}:A${r}`);
+    const a = ws.getCell(`A${firstDataRow}`);
+    a.value = input.date;
+    a.alignment = { vertical: "middle", horizontal: "center" };
+    // label TOTAL di area B:M (sebelum kolom Price), seperti template
+    ws.mergeCells(`B${r}:M${r}`);
+    const label = ws.getCell(`B${r}`);
+    label.value = "TOTAL";
+    label.font = { bold: true, size: 10 };
+    label.alignment = { horizontal: "right" };
+  }
+}
+
+function distinctCourts(bookings: BookingDocument[]) {
+  const set = Array.from(new Set(bookings.map((b) => b.field_name).filter(Boolean)));
+  return set.sort((a, b) => {
+    const pa = isPickle(a) ? 1 : 0;
+    const pb = isPickle(b) ? 1 : 0;
+    if (pa !== pb) return pa - pb;
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
+}
+
+function periodTextDay(date: string) {
+  const [y, m, d] = date.split("-").map(Number);
+  if (!y || !m || !d) return `Laporan Periode ${date}`;
+  return `Laporan Periode ${d} ${MONTHS_ID[m - 1]} ${y}`;
+}
+
+// ---- Summary sheet (pivot bulanan) ---------------------------------------
+
+function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
+  const [year, month] = input.date.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const monthLabel = `${MONTHS_ID[month - 1].toUpperCase()} ${year}`;
+  const ws = wb.addWorksheet(`Summary ${MONTHS_ID[month - 1]}'${String(year).slice(2)}`);
+
+  const courts = distinctCourtsForSummary(input.monthBookings);
+  // setiap court -> 2 kolom (AYO, Walk In), mulai kolom B
+  const courtCols = courts.map((court, idx) => {
+    const ayoCol = 2 + idx * 2; // B, D, F, ...
+    const walkCol = ayoCol + 1; // C, E, G, ...
+    return { court, ayoCol, walkCol, pickle: isPickle(court) };
+  });
+  const totalCol = (courtCols.at(-1)?.walkCol ?? 1) + 1;
+  const lastColLetter = colLetter(totalCol);
+
+  // Judul
+  ws.mergeCells(`A1:${lastColLetter}1`);
+  ws.getCell("A1").value = "SUMMARY LAPANGAN PADEL & PICKLE";
+  styleTitle(ws.getCell("A1"));
+  ws.getCell("A1").alignment = { horizontal: "center" };
+  ws.mergeCells(`A2:${lastColLetter}2`);
+  ws.getCell("A2").value = `Bulan: ${monthLabel}`;
+  ws.getCell("A2").font = { bold: true, size: 11 };
+  ws.getCell("A2").alignment = { horizontal: "center" };
+
+  // Header dua baris (row 4-5)
+  ws.mergeCells("A4:A5");
+  ws.getCell("A4").value = "Date of \nBooking";
+  styleHeaderCell(ws.getCell("A4"));
+  ws.getColumn(1).width = 14;
+
+  for (const c of courtCols) {
+    ws.mergeCells(4, c.ayoCol, 4, c.walkCol);
+    const head = ws.getCell(4, c.ayoCol);
+    head.value = courtLabel(c.court);
+    styleHeaderCell(head);
+    const ayo = ws.getCell(5, c.ayoCol);
+    ayo.value = "AYO";
+    styleHeaderCell(ayo);
+    const walk = ws.getCell(5, c.walkCol);
+    walk.value = "Walk In";
+    styleHeaderCell(walk);
+    ws.getColumn(c.ayoCol).width = 12;
+    ws.getColumn(c.walkCol).width = 12;
+  }
+  ws.mergeCells(4, totalCol, 5, totalCol);
+  ws.getCell(4, totalCol).value = "TOTAL";
+  styleHeaderCell(ws.getCell(4, totalCol));
+  ws.getCell(4, totalCol).fill = solidFill(ORANGE);
+  ws.getColumn(totalCol).width = 14;
+
+  // Agregasi HANYA tanggal yang diekspor → hanya baris tanggal itu yang terisi.
+  const agg = new Map<string, number>(); // key `${day}|${col}`
+  for (const b of input.dayBookings) {
+    const day = Number((b.date || "").slice(8, 10));
+    if (!day) continue;
+    const ci = courtCols.find((c) => c.court === b.field_name);
+    if (!ci) continue;
+    const col = isAyoSource(b) ? ci.ayoCol : ci.walkCol;
+    const key = `${day}|${col}`;
+    agg.set(key, (agg.get(key) ?? 0) + num(b.total_price));
+  }
+
+  const firstDataRow = 6;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const rowIdx = firstDataRow + (d - 1);
+    const row = ws.getRow(rowIdx);
+    // kolom A: tanggal (A6 literal, sisanya =A(prev)+1)
+    const aCell = row.getCell(1);
+    if (d === 1) aCell.value = new Date(Date.UTC(year, month - 1, 1));
+    else aCell.value = { formula: `A${rowIdx - 1}+1` };
+    aCell.numFmt = "dd/mm/yyyy";
+    aCell.border = thinBorder();
+
+    for (const c of courtCols) {
+      for (const col of [c.ayoCol, c.walkCol]) {
+        const cell = row.getCell(col);
+        const v = agg.get(`${d}|${col}`);
+        if (v) cell.value = v;
+        cell.numFmt = MONEY_FMT;
+        cell.border = thinBorder();
+      }
+    }
+    // TOTAL kolom = SUM(B:K) baris itu
+    const tcell = row.getCell(totalCol);
+    tcell.value = { formula: `SUM(${colLetter(2)}${rowIdx}:${colLetter(totalCol - 1)}${rowIdx})` };
+    tcell.numFmt = MONEY_FMT;
+    tcell.fill = solidFill(ORANGE_LIGHT);
+    tcell.border = thinBorder();
+  }
+
+  // Baris TOTAL bawah
+  const totalRow = firstDataRow + daysInMonth; // mis. 36
+  const trow = ws.getRow(totalRow);
+  trow.getCell(1).value = "TOTAL";
+  trow.getCell(1).font = { bold: true };
+  trow.getCell(1).fill = solidFill(YELLOW);
+  trow.getCell(1).border = thinBorder();
+  for (let col = 2; col <= totalCol; col++) {
+    const letter = colLetter(col);
+    const cell = trow.getCell(col);
+    cell.value = { formula: `SUM(${letter}${firstDataRow}:${letter}${totalRow - 1})` };
+    cell.numFmt = MONEY_FMT;
+    cell.font = { bold: true };
+    cell.fill = solidFill(YELLOW);
+    cell.border = thinBorder();
+  }
+
+  // Blok ringkasan bawah (PADEL / PICKLE / TOTAL / Average)
+  const padelAyo = courtCols.filter((c) => !c.pickle).map((c) => `${colLetter(c.ayoCol)}${totalRow}`);
+  const padelWalk = courtCols.filter((c) => !c.pickle).map((c) => `${colLetter(c.walkCol)}${totalRow}`);
+  const pickleAyo = courtCols.filter((c) => c.pickle).map((c) => `${colLetter(c.ayoCol)}${totalRow}`);
+  const pickleWalk = courtCols.filter((c) => c.pickle).map((c) => `${colLetter(c.walkCol)}${totalRow}`);
+
+  const base = totalRow + 2; // baris header blok
+  ws.getCell(base, 8).value = "PADEL"; // H
+  ws.getCell(base, 9).value = "PICKLE"; // I
+  ws.getCell(base, 10).value = "TOTAL"; // J
+  ws.getCell(base, 11).value = "Selisih OLSERA - AYO"; // K
+  ws.getCell(base, 13).value = "Olsera"; // M
+  for (const col of [8, 9, 10]) ws.getCell(base, col).font = { bold: true };
+
+  const sumOrZero = (cells: string[]) => (cells.length ? cells.join("+") : "0");
+
+  // AYO
+  ws.getCell(base + 1, 7).value = "AYO";
+  ws.getCell(base + 1, 8).value = { formula: sumOrZero(padelAyo) };
+  ws.getCell(base + 1, 9).value = { formula: sumOrZero(pickleAyo) };
+  ws.getCell(base + 1, 10).value = { formula: `SUM(H${base + 1}:I${base + 1})` };
+  // WALK IN
+  ws.getCell(base + 2, 7).value = "WALK IN";
+  ws.getCell(base + 2, 8).value = { formula: sumOrZero(padelWalk) };
+  ws.getCell(base + 2, 9).value = { formula: sumOrZero(pickleWalk) };
+  ws.getCell(base + 2, 10).value = { formula: `SUM(H${base + 2}:I${base + 2})` };
+  // TOTAL
+  ws.getCell(base + 3, 7).value = "TOTAL";
+  ws.getCell(base + 3, 8).value = { formula: `SUM(H${base + 1}:H${base + 2})` };
+  ws.getCell(base + 3, 9).value = { formula: `SUM(I${base + 1}:I${base + 2})` };
+  ws.getCell(base + 3, 10).value = { formula: `SUM(H${base + 3}:I${base + 3})` };
+  // Average
+  ws.getCell(base + 4, 7).value = "Average";
+  ws.getCell(base + 4, 8).value = { formula: `H${base + 3}/${daysInMonth}` };
+  ws.getCell(base + 4, 9).value = { formula: `I${base + 3}/${daysInMonth}` };
+
+  for (let rr = base + 1; rr <= base + 4; rr++) {
+    for (const col of [8, 9, 10]) ws.getCell(rr, col).numFmt = MONEY_FMT;
+    ws.getCell(rr, 7).font = { bold: true };
+  }
+}
+
+function distinctCourtsForSummary(bookings: BookingDocument[]) {
+  const set = Array.from(new Set(bookings.map((b) => b.field_name).filter(Boolean)));
+  if (!set.length) return ["Court No 1", "Court No 2", "Court No 3", "Court No 4", "Pickleball Court No 1"];
+  return set.sort((a, b) => {
+    const pa = isPickle(a) ? 1 : 0;
+    const pb = isPickle(b) ? 1 : 0;
+    if (pa !== pb) return pa - pb;
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
+}
+
+export async function buildOmzetHarianWorkbook(input: OmzetExportInput): Promise<Uint8Array> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "AYO Integration";
+  wb.created = new Date();
+
+  buildSummarySheet(wb, input);
+  buildWalkInSheet(wb, input);
+  buildAyoSheet(wb, input);
+  buildAllSheet(wb, input);
+
+  const arrayBuffer = await wb.xlsx.writeBuffer();
+  return new Uint8Array(arrayBuffer as ArrayBuffer);
+}
