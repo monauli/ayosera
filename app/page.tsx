@@ -35,6 +35,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { getRevenueAmount } from "@/lib/revenue";
 
 type HourlyPoint = { time: string; transactions: number; revenue: number };
 type ServicePoint = { name: string; branch: string; revenue: string; count: number; progress: number };
@@ -624,7 +625,7 @@ export default function DashboardPage() {
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pagedRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const filteredRevenue = filteredRows.reduce((total, row) => total + (row.amountValue ?? 0), 0);
+  const filteredRevenue = filteredRows.reduce((total, row) => total + getRevenueAmount(row), 0);
   const serviceOptions = Array.from(new Set(transactionRows.map((row) => row.service).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b),
   );

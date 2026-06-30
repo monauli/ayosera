@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { buildBookingFilter } from "@/lib/booking-query";
-import { mapStatus, toTransactionRow } from "@/lib/booking-mapper";
+import { toTransactionRow } from "@/lib/booking-mapper";
 import { collections, type BookingDocument, withMongo } from "@/lib/mongodb";
+import { getRevenueAmount } from "@/lib/revenue";
 
 const EXPORT_LIMIT = 5000;
 
@@ -21,6 +22,7 @@ const headers = [
   "Status",
   "Raw Status",
   "Total Price",
+  "Revenue Amount",
   "Amount",
   "Created At",
   "Synced At",
@@ -90,9 +92,10 @@ function toCsv(bookings: BookingDocument[]) {
         row.branch,
         row.service,
         row.bookingSource,
-        mapStatus(booking.status),
+        row.status,
         booking.status,
         booking.total_price,
+        getRevenueAmount(booking),
         row.amount,
         row.createdAt,
         row.syncedAt,

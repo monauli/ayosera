@@ -3,6 +3,12 @@ import { requireUser } from "@/lib/auth";
 import { buildBookingFilter, toCourtOptions } from "@/lib/booking-query";
 import { mapStatus } from "@/lib/booking-mapper";
 import { collections, type BookingDocument, withMongo } from "@/lib/mongodb";
+import {
+  getRevenueAmount,
+  isCancelledTransaction,
+  isRevenueEligibleTransaction,
+  sumRevenue,
+} from "@/lib/revenue";
 
 function toIdrFull(value: number) {
   return new Intl.NumberFormat("id-ID", {
@@ -36,17 +42,16 @@ export async function GET(request: Request) {
     const data = await withMongo(async () => {
       const { bookings, syncLogs, fields } = await collections();
       const [filteredBookings, courtOptionBookings, todayBookings, latestLogs, fieldCount] = await Promise.all([
-        bookings.find(dashboardFilter).sort({ date: -1, start_time: -1 }).limit(5000).toArray(),
+        bookings.find(dashboardFilter).sort({ date: -1, start_time: -1 }).toArray(),
         bookings.find(courtOptionFilter).project<BookingDocument>({ field_name: 1 }).limit(5000).toArray(),
-        bookings.find({ date: today }).sort({ start_time: 1 }).limit(5000).toArray(),
+        bookings.find({ date: today }).sort({ start_time: 1 }).toArray(),
         syncLogs.find({}).sort({ startedAt: -1 }).limit(5).toArray(),
         fields.countDocuments({ status: "ACTIVE" }),
       ]);
 
-      const completedToday = todayBookings.filter((booking) => mapStatus(booking.status) === "Completed");
-      const completedFiltered = filteredBookings.filter((booking) => mapStatus(booking.status) === "Completed");
-      const revenueToday = completedToday.reduce((sum, booking) => sum + booking.total_price, 0);
-      const revenueFiltered = completedFiltered.reduce((sum, booking) => sum + booking.total_price, 0);
+      const revenueEligibleFiltered = filteredBookings.filter(isRevenueEligibleTransaction);
+      const revenueToday = sumRevenue(todayBookings);
+      const revenueFiltered = sumRevenue(filteredBookings);
 
       const hourly = Array.from({ length: 16 }, (_, index) => {
         const hour = index + 6;
@@ -55,12 +60,12 @@ export async function GET(request: Request) {
         return {
           time: label,
           transactions: bookingsInHour.length,
-          revenue: Math.round(bookingsInHour.reduce((sum, booking) => sum + booking.total_price, 0) / 1_000_000),
+          revenue: Math.round(sumRevenue(bookingsInHour) / 1_000_000),
         };
       });
 
       const services = Object.values(
-        completedFiltered.reduce<Record<string, { name: string; branch: string; revenueValue: number; revenue: string; count: number; progress: number }>>(
+        revenueEligibleFiltered.reduce<Record<string, { name: string; branch: string; revenueValue: number; revenue: string; count: number; progress: number }>>(
           (acc, booking) => {
             acc[booking.field_name] ||= {
               name: booking.field_name,
@@ -70,7 +75,7 @@ export async function GET(request: Request) {
               count: 0,
               progress: 0,
             };
-            acc[booking.field_name].revenueValue += booking.total_price;
+            acc[booking.field_name].revenueValue += getRevenueAmount(booking);
             acc[booking.field_name].count += 1;
             return acc;
           },
@@ -91,7 +96,7 @@ export async function GET(request: Request) {
         { name: "Reservation", value: filteredBookings.filter((booking) => booking.booking_source === "reservation").length, color: "#ec4899" },
         { name: "AYO Order", value: filteredBookings.filter((booking) => booking.booking_source === "order").length, color: "#f9a8c2" },
         { name: "Pending", value: filteredBookings.filter((booking) => mapStatus(booking.status) === "Pending").length, color: "#f59e0b" },
-        { name: "Cancelled", value: filteredBookings.filter((booking) => booking.status === "CANCELLED").length, color: "#e11d48" },
+        { name: "Cancelled", value: filteredBookings.filter(isCancelledTransaction).length, color: "#e11d48" },
       ];
       const totalBreakdown = paymentBreakdown.reduce((sum, item) => sum + item.value, 0) || 1;
 
@@ -110,9 +115,9 @@ export async function GET(request: Request) {
         })),
         revenueTrend: Array.from({ length: 6 }, (_, index) => {
           const day = String((index + 1) * 4).padStart(2, "0");
-          const amount = completedFiltered
+          const amount = filteredBookings
             .filter((booking) => Number(booking.date.slice(8, 10)) <= Number(day))
-            .reduce((sum, booking) => sum + booking.total_price, 0);
+            .reduce((sum, booking) => sum + getRevenueAmount(booking), 0);
           return { day, amount: Math.round(amount / 1_000_000) };
         }),
         occupancy: Object.values(

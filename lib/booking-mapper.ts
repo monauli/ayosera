@@ -1,4 +1,5 @@
 import type { BookingDocument, FieldDocument } from "./mongodb.ts";
+import { isCancelledTransaction } from "./revenue.ts";
 
 export function normalizeBooking(raw: Record<string, unknown>): BookingDocument {
   const now = new Date();
@@ -59,7 +60,7 @@ export function toTransactionRow(booking: BookingDocument) {
     amountValue: booking.total_price,
     payment: booking.booking_source === "reservation" ? "Reservation" : "AYO Order",
     bookingSource: booking.booking_source || "-",
-    status: mapStatus(booking.status),
+    status: isCancelledTransaction(booking) ? "Cancelled" : mapStatus(booking.status),
     time: booking.start_time?.slice(0, 5) || "-",
     endTime: booking.end_time?.slice(0, 5) || "-",
     rawStatus: booking.status,
