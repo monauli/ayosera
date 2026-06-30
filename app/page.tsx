@@ -18,15 +18,12 @@ import {
   CheckCircle2,
   ChevronDown,
   DatabaseZap,
-  FileDown,
   LayoutDashboard,
   Menu,
   RefreshCw,
   Search,
-  ShieldCheck,
   RotateCcw,
   Users,
-  Webhook,
 } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Badge } from "@/components/ui/badge";
@@ -127,20 +124,19 @@ function compareRows(a: TransactionRow, b: TransactionRow, sort: SortState) {
   }
 }
 
-function isInternalRow(row: TransactionRow) {
-  return /internal/i.test(row.customer ?? "");
-}
-
 function matchesColumnFilters(row: TransactionRow, filters: Record<string, string>) {
   const contains = (value: string | undefined, query: string) =>
     !query.trim() || (value ?? "").toLowerCase().includes(query.trim().toLowerCase());
-  const idOk = !filters.id || (row.id ?? "").toUpperCase().startsWith(filters.id.toUpperCase());
+  const idOk = contains(row.id, filters.id);
+  const customerOk =
+    !filters.customer.trim() ||
+    [row.customer, row.phone, row.id].some((value) => contains(value, filters.customer));
   const serviceOk = !filters.service || row.service === filters.service;
   const statusOk = !filters.status || statusLabel(row.status) === filters.status;
   return (
     contains(row.date, filters.date) &&
     idOk &&
-    contains(row.customer, filters.customer) &&
+    customerOk &&
     serviceOk &&
     statusOk
   );
@@ -181,10 +177,6 @@ function SortableHeader({
 const navItems = [
   { label: "Dasbor", icon: LayoutDashboard },
   { label: "Transaksi", icon: Activity },
-  { label: "Laporan", icon: FileDown },
-  { label: "Log Sinkronisasi", icon: DatabaseZap },
-  { label: "Webhook", icon: Webhook },
-  { label: "Keamanan", icon: ShieldCheck },
 ];
 
 const THEME_STORAGE_KEY = "ayo-theme";
@@ -373,6 +365,9 @@ export default function DashboardPage() {
   const [activeNav, setActiveNav] = useState("Dasbor");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
+  const [exportStart, setExportStart] = useState(today);
+  const [exportEnd, setExportEnd] = useState(today);
+  const [exportMonth, setExportMonth] = useState(currentMonth);
   const [sort, setSort] = useState<SortState>({ key: "date", dir: "asc" });
   const emptyColumnFilters = { date: today, id: "", customer: "", service: "", status: "" };
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>(emptyColumnFilters);
@@ -511,6 +506,58 @@ export default function DashboardPage() {
     } finally {
       setExporting(false);
     }
+  }
+
+  async function downloadExcelExport(url: string, fallbackName: string) {
+    setExporting(true);
+    setSyncMessage("");
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return false;
+      }
+      if (!response.ok) return false;
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
+      link.download = match?.[1] || fallbackName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      return true;
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleExportRange() {
+    if (!exportStart || !exportEnd) return;
+    if (exportStart > exportEnd) {
+      setSyncMessage("Tanggal awal harus sebelum atau sama dengan tanggal akhir.");
+      return;
+    }
+    const fallback =
+      exportStart === exportEnd ? `Omzet ${exportStart}.xlsx` : `Omzet ${exportStart} sd ${exportEnd}.xlsx`;
+    const ok = await downloadExcelExport(
+      `/api/transactions/export/range?start=${exportStart}&end=${exportEnd}`,
+      fallback,
+    );
+    setSyncMessage(ok ? `Ekspor range ${exportStart} sd ${exportEnd} selesai.` : "Ekspor range gagal.");
+    if (ok) setExportMenuOpen(false);
+  }
+
+  async function handleExportBulanan() {
+    if (!exportMonth) return;
+    const ok = await downloadExcelExport(
+      `/api/transactions/export/bulanan?month=${exportMonth}`,
+      `Omzet Bulanan ${exportMonth}.xlsx`,
+    );
+    setSyncMessage(ok ? `Ekspor bulanan ${exportMonth} selesai.` : "Ekspor bulanan gagal.");
+    if (ok) setExportMenuOpen(false);
   }
 
   async function handleExportCsv() {
@@ -992,19 +1039,57 @@ export default function DashboardPage() {
                               {exporting ? "Mengekspor" : "Unduh Harian"}
                             </Button>
                             <div className="mt-3 space-y-2 border-t pt-3">
-                              <Button variant="outline" className="w-full justify-between" disabled>
-                                <span className="flex items-center gap-2">
-                                  <CalendarRange className="h-4 w-4" />
-                                  Range Tanggal
-                                </span>
-                                <span className="text-xs text-slate-400">Segera</span>
+                              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                Ekspor Range Tanggal (.xlsx)
+                              </p>
+                              <div className="flex gap-2">
+                                <Input
+                                  type="date"
+                                  aria-label="Tanggal awal ekspor range"
+                                  value={exportStart}
+                                  className="cursor-pointer"
+                                  onClick={(event) => event.currentTarget.showPicker?.()}
+                                  onChange={(event) => setExportStart(event.target.value)}
+                                />
+                                <Input
+                                  type="date"
+                                  aria-label="Tanggal akhir ekspor range"
+                                  value={exportEnd}
+                                  className="cursor-pointer"
+                                  onClick={(event) => event.currentTarget.showPicker?.()}
+                                  onChange={(event) => setExportEnd(event.target.value)}
+                                />
+                              </div>
+                              <Button
+                                variant="outline"
+                                className="w-full justify-start"
+                                onClick={handleExportRange}
+                                disabled={exporting || !exportStart || !exportEnd}
+                              >
+                                <CalendarRange className="h-4 w-4" />
+                                {exporting ? "Mengekspor" : "Unduh Range"}
                               </Button>
-                              <Button variant="outline" className="w-full justify-between" disabled>
-                                <span className="flex items-center gap-2">
-                                  <CalendarDays className="h-4 w-4" />
-                                  Bulanan
-                                </span>
-                                <span className="text-xs text-slate-400">Segera</span>
+                            </div>
+                            <div className="mt-3 space-y-2 border-t pt-3">
+                              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                Ekspor Bulanan (.xlsx)
+                              </p>
+                              <Input
+                                type="month"
+                                aria-label="Bulan ekspor"
+                                value={exportMonth}
+                                className="cursor-pointer"
+                                onClick={(event) => event.currentTarget.showPicker?.()}
+                                onChange={(event) => setExportMonth(event.target.value)}
+                              />
+                              <Button
+                                variant="outline"
+                                className="w-full justify-start"
+                                onClick={handleExportBulanan}
+                                disabled={exporting || !exportMonth}
+                              >
+                                <CalendarDays className="h-4 w-4" />
+                                {exporting ? "Mengekspor" : "Unduh Bulanan"}
                               </Button>
                             </div>
                           </div>
@@ -1043,21 +1128,18 @@ export default function DashboardPage() {
                         </th>
                         <th className="px-2 pb-2" />
                         <th className="px-2 pb-2">
-                          <select
+                          <input
                             value={columnFilters.id}
                             onChange={(event) => setColumnFilter("id", event.target.value)}
-                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
-                          >
-                            <option value="">Semua</option>
-                            <option value="BK">BK</option>
-                            <option value="MN">MN</option>
-                          </select>
+                            placeholder="Cari ID Booking"
+                            className="h-7 w-full rounded border bg-white px-2 text-xs font-normal normal-case text-slate-700"
+                          />
                         </th>
                         <th className="px-2 pb-2">
                           <input
                             value={columnFilters.customer}
                             onChange={(event) => setColumnFilter("customer", event.target.value)}
-                            placeholder="Filter nama"
+                            placeholder="Nama, telepon, atau ID"
                             className="h-7 w-full rounded border px-2 text-xs font-normal normal-case text-slate-700"
                           />
                         </th>
@@ -1106,14 +1188,7 @@ export default function DashboardPage() {
                                 <p className="max-w-[240px] truncate text-xs text-slate-500">{transaction.note}</p>
                               )}
                             </td>
-                            <td className="px-2 py-2">
-                              <div className="flex items-center gap-1.5">
-                                <span className="max-w-[150px] truncate">{transaction.customer}</span>
-                                {isInternalRow(transaction) && (
-                                  <Badge className="shrink-0 bg-violet-100 text-violet-700">Internal</Badge>
-                                )}
-                              </div>
-                            </td>
+                            <td className="max-w-[150px] truncate px-2 py-2">{transaction.customer}</td>
                             <td className="max-w-[130px] truncate px-2 py-2">{transaction.phone}</td>
                             <td className="max-w-[180px] truncate px-2 py-2">{transaction.service}</td>
                             <td className="px-2 py-2 text-right font-medium">{transaction.amount}</td>

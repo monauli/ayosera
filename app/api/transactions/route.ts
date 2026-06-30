@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { buildBookingFilter } from "@/lib/booking-query";
 import { toTransactionRow } from "@/lib/booking-mapper";
 import { collections, type BookingDocument, withMongo } from "@/lib/mongodb";
-import { sumRevenue } from "@/lib/revenue";
+import { isDisplayEligibleTransaction, sumRevenue } from "@/lib/revenue";
 
 export async function GET(request: Request) {
   try {
@@ -13,23 +13,30 @@ export async function GET(request: Request) {
     const { data, summary } = await withMongo(async () => {
       const { bookings } = await collections();
       const filter = buildBookingFilter(searchParams);
-      const [rows, allRevenueRows, totalCount] = await Promise.all([
+      const [rows, allRevenueRows] = await Promise.all([
         bookings.find(filter).sort({ date: 1, start_time: 1 }).toArray(),
         bookings
           .find({})
-          .project<Pick<BookingDocument, "status" | "raw" | "total_price">>({ status: 1, raw: 1, total_price: 1 })
+          .project<Pick<BookingDocument, "status" | "raw" | "total_price" | "booker_name" | "note">>({
+            status: 1,
+            raw: 1,
+            total_price: 1,
+            booker_name: 1,
+            note: 1,
+          })
           .toArray(),
-        bookings.countDocuments({}),
       ]);
-      const filteredRevenue = sumRevenue(rows);
+      const displayRows = rows.filter(isDisplayEligibleTransaction);
+      const allDisplayRows = allRevenueRows.filter(isDisplayEligibleTransaction);
+      const filteredRevenue = sumRevenue(displayRows);
 
       return {
-        data: rows.map(toTransactionRow),
+        data: displayRows.map(toTransactionRow),
         summary: {
-          totalRevenue: sumRevenue(allRevenueRows),
-          totalCount,
+          totalRevenue: sumRevenue(allDisplayRows),
+          totalCount: allDisplayRows.length,
           filteredRevenue,
-          filteredCount: rows.length,
+          filteredCount: displayRows.length,
         },
       };
     });

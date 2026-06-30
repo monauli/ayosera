@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { buildBookingFilter } from "@/lib/booking-query";
 import { toTransactionRow } from "@/lib/booking-mapper";
 import { collections, type BookingDocument, withMongo } from "@/lib/mongodb";
-import { getRevenueAmount } from "@/lib/revenue";
+import { getRevenueAmount, isDisplayEligibleTransaction } from "@/lib/revenue";
 
 const EXPORT_LIMIT = 5000;
 
@@ -59,7 +59,7 @@ export async function GET(request: Request) {
         .toArray();
     });
 
-    const csv = toCsv(rows);
+    const csv = toCsv(rows.filter(isDisplayEligibleTransaction));
     const filename = buildFilename(searchParams);
 
     return new NextResponse(csv, {

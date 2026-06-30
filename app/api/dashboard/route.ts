@@ -6,6 +6,7 @@ import { collections, type BookingDocument, withMongo } from "@/lib/mongodb";
 import {
   getRevenueAmount,
   isCancelledTransaction,
+  isDisplayEligibleTransaction,
   isRevenueEligibleTransaction,
   sumRevenue,
 } from "@/lib/revenue";
@@ -49,14 +50,18 @@ export async function GET(request: Request) {
         fields.countDocuments({ status: "ACTIVE" }),
       ]);
 
-      const revenueEligibleFiltered = filteredBookings.filter(isRevenueEligibleTransaction);
-      const revenueToday = sumRevenue(todayBookings);
-      const revenueFiltered = sumRevenue(filteredBookings);
+      const displayFilteredBookings = filteredBookings.filter(isDisplayEligibleTransaction);
+      const displayTodayBookings = todayBookings.filter(isDisplayEligibleTransaction);
+      const revenueEligibleFiltered = displayFilteredBookings.filter(isRevenueEligibleTransaction);
+      const revenueToday = sumRevenue(displayTodayBookings);
+      const revenueFiltered = sumRevenue(displayFilteredBookings);
 
       const hourly = Array.from({ length: 16 }, (_, index) => {
         const hour = index + 6;
         const label = `${String(hour).padStart(2, "0")}:00`;
-        const bookingsInHour = todayBookings.filter((booking) => booking.start_time?.startsWith(String(hour).padStart(2, "0")));
+        const bookingsInHour = displayTodayBookings.filter((booking) =>
+          booking.start_time?.startsWith(String(hour).padStart(2, "0")),
+        );
         return {
           time: label,
           transactions: bookingsInHour.length,
@@ -93,19 +98,19 @@ export async function GET(request: Request) {
       }));
 
       const paymentBreakdown = [
-        { name: "Reservation", value: filteredBookings.filter((booking) => booking.booking_source === "reservation").length, color: "#ec4899" },
-        { name: "AYO Order", value: filteredBookings.filter((booking) => booking.booking_source === "order").length, color: "#f9a8c2" },
-        { name: "Pending", value: filteredBookings.filter((booking) => mapStatus(booking.status) === "Pending").length, color: "#f59e0b" },
-        { name: "Cancelled", value: filteredBookings.filter(isCancelledTransaction).length, color: "#e11d48" },
+        { name: "Reservation", value: displayFilteredBookings.filter((booking) => booking.booking_source === "reservation").length, color: "#ec4899" },
+        { name: "AYO Order", value: displayFilteredBookings.filter((booking) => booking.booking_source === "order").length, color: "#f9a8c2" },
+        { name: "Pending", value: displayFilteredBookings.filter((booking) => mapStatus(booking.status) === "Pending").length, color: "#f59e0b" },
+        { name: "Cancelled", value: displayFilteredBookings.filter(isCancelledTransaction).length, color: "#e11d48" },
       ];
       const totalBreakdown = paymentBreakdown.reduce((sum, item) => sum + item.value, 0) || 1;
 
       return {
         metrics: {
-          totalTransactions: filteredBookings.length,
+          totalTransactions: displayFilteredBookings.length,
           revenueToday: toIdrFull(revenueToday),
           revenueMonth: toIdrFull(revenueFiltered),
-          activeCustomers: new Set(filteredBookings.map((booking) => booking.booker_phone || booking.booker_email || booking.booker_name)).size,
+          activeCustomers: new Set(displayFilteredBookings.map((booking) => booking.booker_phone || booking.booker_email || booking.booker_name)).size,
         },
         hourlyTransactions: hourly,
         topServices,
@@ -115,7 +120,7 @@ export async function GET(request: Request) {
         })),
         revenueTrend: Array.from({ length: 6 }, (_, index) => {
           const day = String((index + 1) * 4).padStart(2, "0");
-          const amount = filteredBookings
+          const amount = displayFilteredBookings
             .filter((booking) => Number(booking.date.slice(8, 10)) <= Number(day))
             .reduce((sum, booking) => sum + getRevenueAmount(booking), 0);
           return { day, amount: Math.round(amount / 1_000_000) };

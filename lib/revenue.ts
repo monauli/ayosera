@@ -20,6 +20,21 @@ type RevenueTransaction = {
   total_price?: unknown;
   totalPrice?: unknown;
   amountValue?: unknown;
+  nominal?: unknown;
+  amount?: unknown;
+  total?: unknown;
+  payment_amount?: unknown;
+  paymentAmount?: unknown;
+  customer_name?: unknown;
+  customer?: unknown;
+  name?: unknown;
+  booking_name?: unknown;
+  booker_name?: unknown;
+  note?: unknown;
+  label?: unknown;
+  type?: unknown;
+  source_type?: unknown;
+  tags?: unknown;
 };
 
 const STATUS_FIELD_KEYS = new Set([
@@ -31,6 +46,19 @@ const STATUS_FIELD_KEYS = new Set([
 ]);
 
 const CANCELLED_STATUS_PATTERN = new RegExp(CANCELLED_STATUS_PATTERN_SOURCE, "i");
+const INTERNAL_PATTERN = /internal/i;
+const INTERNAL_FIELD_KEYS = new Set([
+  "customername",
+  "customer",
+  "name",
+  "bookingname",
+  "bookername",
+  "note",
+  "label",
+  "type",
+  "sourcetype",
+  "tags",
+]);
 
 /**
  * Menentukan pembatalan dari status normalisasi maupun status mentah provider.
@@ -45,20 +73,77 @@ export function isCancelledTransaction(transaction: RevenueTransaction | null | 
   return values.some((value) => CANCELLED_STATUS_PATTERN.test(value));
 }
 
-export function isRevenueEligibleTransaction(transaction: RevenueTransaction | null | undefined) {
-  return Boolean(transaction) && !isCancelledTransaction(transaction);
+export function getTransactionAmount(transaction: RevenueTransaction | null | undefined) {
+  if (!transaction) return 0;
+
+  return (
+    firstFiniteNumber(
+      transaction.total_price,
+      transaction.totalPrice,
+      transaction.amountValue,
+      transaction.nominal,
+      transaction.payment_amount,
+      transaction.paymentAmount,
+      transaction.total,
+      transaction.amount,
+    ) ?? 0
+  );
 }
 
-/** Nominal asli tidak diubah; cancelled hanya menghasilkan revenue 0. */
+export function isZeroAmountTransaction(transaction: RevenueTransaction | null | undefined) {
+  return getTransactionAmount(transaction) === 0;
+}
+
+export function isInternalUseTransaction(transaction: RevenueTransaction | null | undefined) {
+  if (!transaction || typeof transaction !== "object") return false;
+
+  const values: string[] = [];
+  collectInternalValues(transaction, values, new Set<object>(), true);
+  return values.some((value) => INTERNAL_PATTERN.test(value));
+}
+
+export function isDisplayEligibleTransaction(transaction: RevenueTransaction | null | undefined) {
+  return Boolean(transaction) && !isZeroAmountTransaction(transaction) && !isInternalUseTransaction(transaction);
+}
+
+export function isRevenueEligibleTransaction(transaction: RevenueTransaction | null | undefined) {
+  return isDisplayEligibleTransaction(transaction) && !isCancelledTransaction(transaction);
+}
+
+/** Nominal asli tidak diubah; cancelled, internal, dan Rp0 menghasilkan revenue 0. */
 export function getRevenueAmount(transaction: RevenueTransaction | null | undefined) {
   if (!isRevenueEligibleTransaction(transaction)) return 0;
+  return getTransactionAmount(transaction);
+}
 
-  const amount = firstFiniteNumber(
-    transaction?.total_price,
-    transaction?.totalPrice,
-    transaction?.amountValue,
-  );
-  return amount ?? 0;
+function collectInternalValues(
+  value: unknown,
+  result: string[],
+  seen: Set<object>,
+  isRoot = false,
+) {
+  if (!value || typeof value !== "object") return;
+  if (seen.has(value as object)) return;
+  seen.add(value as object);
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectInternalValues(item, result, seen);
+    return;
+  }
+
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (INTERNAL_FIELD_KEYS.has(normalizedKey)) {
+      collectPrimitiveValues(nestedValue, result, new Set<object>());
+    }
+
+    // Raw payload provider diperiksa penuh karena nama field AYO/Osera dapat bervariasi.
+    if (isRoot && normalizedKey === "raw") {
+      collectPrimitiveValues(nestedValue, result, new Set<object>());
+    } else if (nestedValue && typeof nestedValue === "object") {
+      collectInternalValues(nestedValue, result, seen);
+    }
+  }
 }
 
 export function sumRevenue(transactions: Iterable<RevenueTransaction>) {
@@ -103,6 +188,7 @@ function collectPrimitiveValues(value: unknown, result: string[], seen: Set<obje
 
 function firstFiniteNumber(...values: unknown[]) {
   for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
     const parsed = typeof value === "number" ? value : Number(value);
     if (Number.isFinite(parsed)) return parsed;
   }

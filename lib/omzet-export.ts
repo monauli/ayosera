@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import type { BookingDocument } from "./mongodb.ts";
-import { getRevenueAmount, isCancelledTransaction } from "./revenue.ts";
+import { getRevenueAmount, isCancelledTransaction, isDisplayEligibleTransaction } from "./revenue.ts";
 
 /**
  * Generator workbook "Omzet Harian" mengikuti template contoh
@@ -530,14 +530,15 @@ function distinctCourtsForSummary(bookings: BookingDocument[]) {
 }
 
 export async function buildOmzetHarianWorkbook(input: OmzetExportInput): Promise<Uint8Array> {
+  const eligibleInput = displayEligibleInput(input);
   const wb = new ExcelJS.Workbook();
   wb.creator = "AYO Integration";
   wb.created = new Date();
 
-  buildSummarySheet(wb, input);
-  buildWalkInSheet(wb, input);
-  buildAyoSheet(wb, input);
-  buildAllSheet(wb, input);
+  buildSummarySheet(wb, eligibleInput);
+  buildWalkInSheet(wb, eligibleInput);
+  buildAyoSheet(wb, eligibleInput);
+  buildAllSheet(wb, eligibleInput);
 
   const arrayBuffer = await wb.xlsx.writeBuffer();
   return new Uint8Array(arrayBuffer as ArrayBuffer);
@@ -798,15 +799,24 @@ function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
 }
 
 export async function buildOmzetPeriodWorkbook(input: OmzetExportInput): Promise<Uint8Array> {
+  const eligibleInput = displayEligibleInput(input);
   const wb = new ExcelJS.Workbook();
   wb.creator = "AYO Integration";
   wb.created = new Date();
 
-  buildSummarySheetPeriod(wb, input);
-  buildWalkInSheet(wb, input); // reuse: dayBookings = seluruh booking periode
-  buildAyoSheet(wb, input);
-  buildAllSheetPeriod(wb, input);
+  buildSummarySheetPeriod(wb, eligibleInput);
+  buildWalkInSheet(wb, eligibleInput); // reuse: dayBookings = seluruh booking periode
+  buildAyoSheet(wb, eligibleInput);
+  buildAllSheetPeriod(wb, eligibleInput);
 
   const arrayBuffer = await wb.xlsx.writeBuffer();
   return new Uint8Array(arrayBuffer as ArrayBuffer);
+}
+
+function displayEligibleInput(input: OmzetExportInput): OmzetExportInput {
+  return {
+    ...input,
+    dayBookings: input.dayBookings.filter(isDisplayEligibleTransaction),
+    monthBookings: input.monthBookings.filter(isDisplayEligibleTransaction),
+  };
 }
