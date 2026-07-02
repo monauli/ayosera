@@ -85,13 +85,6 @@ type TransactionRow = {
 };
 type DatePreset = "today" | "month" | "lastMonth" | "custom" | "manualMonth";
 
-type TransactionSummary = {
-  totalRevenue: number;
-  totalCount: number;
-  filteredRevenue: number;
-  filteredCount: number;
-};
-
 type WebhookLogRow = {
   receivedAt: string;
   method: string;
@@ -111,46 +104,6 @@ type WebhookPayload = {
 
 type SortKey = "date" | "id" | "customer" | "service" | "amount" | "status";
 type SortState = { key: SortKey; dir: "asc" | "desc" };
-
-function compareRows(a: TransactionRow, b: TransactionRow, sort: SortState) {
-  const dir = sort.dir === "asc" ? 1 : -1;
-  switch (sort.key) {
-    case "amount":
-      return ((a.amountValue ?? 0) - (b.amountValue ?? 0)) * dir;
-    case "customer":
-      return a.customer.localeCompare(b.customer) * dir;
-    case "service":
-      return a.service.localeCompare(b.service) * dir;
-    case "status":
-      return a.status.localeCompare(b.status) * dir;
-    case "id":
-      return a.id.localeCompare(b.id) * dir;
-    case "date":
-    default: {
-      const dateCmp = (a.date ?? "").localeCompare(b.date ?? "");
-      if (dateCmp !== 0) return dateCmp * dir;
-      return (a.time ?? "").localeCompare(b.time ?? "") * dir;
-    }
-  }
-}
-
-function matchesColumnFilters(row: TransactionRow, filters: Record<string, string>) {
-  const contains = (value: string | undefined, query: string) =>
-    !query.trim() || (value ?? "").toLowerCase().includes(query.trim().toLowerCase());
-  const idOk = contains(row.id, filters.id);
-  const customerOk =
-    !filters.customer.trim() ||
-    [row.customer, row.phone, row.id].some((value) => contains(value, filters.customer));
-  const serviceOk = !filters.service || row.service === filters.service;
-  const statusOk = !filters.status || statusLabel(row.status) === filters.status;
-  return (
-    contains(row.date, filters.date) &&
-    idOk &&
-    customerOk &&
-    serviceOk &&
-    statusOk
-  );
-}
 
 function SortableHeader({
   label,
@@ -352,13 +305,9 @@ export default function DashboardPage() {
   const currentMonth = today.slice(0, 7);
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [transactionRows, setTransactionRows] = useState<TransactionRow[]>([]);
-  const [summary, setSummary] = useState<TransactionSummary>({
-    totalRevenue: 0,
-    totalCount: 0,
-    filteredRevenue: 0,
-    filteredCount: 0,
-  });
+  const [txnMeta, setTxnMeta] = useState<{ total: number; totalPages: number }>({ total: 0, totalPages: 1 });
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(50);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [courtFilter, setCourtFilter] = useState("all");
@@ -429,9 +378,24 @@ export default function DashboardPage() {
     if (isInvalidDateRange(range.startDate, range.endDate)) return;
 
     const params = buildFilterParams(range);
-    // Transaksi selalu menarik semua data; penyaringan dilakukan lewat filter per-kolom di tabel.
-    const transactionPath = "/api/transactions";
-    const dashboardPath = params.size ? `/api/dashboard?${params.toString()}` : "/api/dashboard";
+    // Cache buster: pastikan browser/CDN tidak mengembalikan data lama.
+    params.set("_t", String(Date.now()));
+    const dashboardPath = `/api/dashboard?${params.toString()}`;
+
+    // Transaksi diambil per-halaman (server-side pagination + filter).
+    const txnParams = new URLSearchParams();
+    if (range.startDate) txnParams.set("start_date", range.startDate);
+    if (range.endDate) txnParams.set("end_date", range.endDate);
+    txnParams.set("page", String(page));
+    txnParams.set("limit", String(limit));
+    txnParams.set("sort", sort.key);
+    txnParams.set("dir", sort.dir);
+    if (columnFilters.id.trim()) txnParams.set("bookingId", columnFilters.id.trim());
+    if (columnFilters.customer.trim()) txnParams.set("search", columnFilters.customer.trim());
+    if (columnFilters.service) txnParams.set("court", columnFilters.service);
+    if (columnFilters.status) txnParams.set("status", columnFilters.status);
+    txnParams.set("_t", String(Date.now()));
+    const transactionPath = `/api/transactions?${txnParams.toString()}`;
 
     const [dashboardResponse, transactionsResponse] = await Promise.all([
       fetch(dashboardPath, { cache: "no-store" }),
@@ -447,10 +411,14 @@ export default function DashboardPage() {
     if (transactionsResponse.ok) {
       const payload = (await transactionsResponse.json()) as {
         data: TransactionRow[];
-        summary?: TransactionSummary;
+        page: number;
+        total: number;
+        totalPages: number;
       };
       setTransactionRows(payload.data);
-      if (payload.summary) setSummary(payload.summary);
+      setTxnMeta({ total: payload.total, totalPages: payload.totalPages });
+      // Server mengoreksi halaman bila melebihi total; sinkronkan agar UI konsisten.
+      if (payload.page !== page) setPage(payload.page);
     }
   }
 
@@ -632,6 +600,7 @@ export default function DashboardPage() {
     setDatePreset(value);
     setStartDate(range.startDate);
     setEndDate(range.endDate);
+    setPage(1);
   }
 
   function handleMonthFilter(value: string) {
@@ -641,6 +610,7 @@ export default function DashboardPage() {
     const range = monthRangeFromValue(value);
     setStartDate(range.startDate);
     setEndDate(range.endDate);
+    setPage(1);
   }
 
   function handleCustomStartDate(value: string) {
@@ -698,16 +668,18 @@ export default function DashboardPage() {
     setEndDate(range.endDate);
     setFilterMonth(currentMonth);
     setColumnFilters(emptyColumnFilters);
+    setPage(1);
   }
 
   useEffect(() => {
-    setPage(1);
+    // Debounce 350ms: mencegah request bertubi-tubi saat mengetik pencarian.
     const timeout = window.setTimeout(() => {
       loadData().catch(() => undefined);
-    }, 250);
+    }, 350);
 
     return () => window.clearTimeout(timeout);
-  }, [searchTerm, statusFilter, courtFilter, startDate, endDate]);
+    // columnFilters & sort adalah objek — perubahannya (referensi baru) memicu fetch ulang.
+  }, [searchTerm, statusFilter, courtFilter, startDate, endDate, page, limit, sort, columnFilters]);
 
   useEffect(() => {
     if (activeNav !== "Webhook") return;
@@ -717,8 +689,8 @@ export default function DashboardPage() {
       setWebhookLoading(true);
       try {
         const [healthResponse, logsResponse] = await Promise.all([
-          fetch("/api/webhooks/ayo", { cache: "no-store" }),
-          fetch("/api/webhooks/logs", { cache: "no-store" }),
+          fetch(`/api/webhooks/ayo?_t=${Date.now()}`, { cache: "no-store" }),
+          fetch(`/api/webhooks/logs?_t=${Date.now()}`, { cache: "no-store" }),
         ]);
 
         if (logsResponse.status === 401) {
@@ -754,15 +726,11 @@ export default function DashboardPage() {
 
   const metrics = dashboard?.metrics;
   const dateRangeInvalid = isInvalidDateRange(startDate, endDate);
-  const pageSize = 10;
-  const filteredRows = transactionRows.filter((row) => matchesColumnFilters(row, columnFilters));
-  const sortedRows = [...filteredRows].sort((a, b) => compareRows(a, b, sort));
-  const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  // Pagination & filtering kini dilakukan di server; transactionRows hanya berisi halaman aktif.
+  const pagedRows = transactionRows;
+  const pageCount = Math.max(1, txnMeta.totalPages);
   const currentPage = Math.min(page, pageCount);
-  const pagedRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const serviceOptions = Array.from(new Set(transactionRows.map((row) => row.service).filter(Boolean))).sort((a, b) =>
-    a.localeCompare(b),
-  );
+  const serviceOptions = (dashboard?.branchOptions ?? []).map((option) => option.value);
   const serviceRows = dashboard?.topServices ?? [];
   const paymentRows = dashboard?.paymentBreakdown ?? [];
   const eventRows = dashboard?.syncEvents ?? [];
@@ -1234,17 +1202,7 @@ export default function DashboardPage() {
                         <th className="h-10 px-2 font-medium">Perubahan</th>
                       </tr>
                       <tr className="border-b">
-                        <th className="px-2 pb-2">
-                          <select
-                            value={columnFilters.date}
-                            onChange={(event) => setColumnFilter("date", event.target.value)}
-                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
-                          >
-                            <option value={today}>Hari ini</option>
-                            <option value={currentMonth}>Bulan ini</option>
-                            <option value="">Semua</option>
-                          </select>
-                        </th>
+                        <th className="px-2 pb-2" />
                         <th className="px-2 pb-2" />
                         <th className="px-2 pb-2">
                           <input
@@ -1285,9 +1243,9 @@ export default function DashboardPage() {
                             className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
                           >
                             <option value="">Semua</option>
-                            <option value="Selesai">Selesai</option>
-                            <option value="Tertunda">Tertunda</option>
-                            <option value="Dibatalkan">Dibatalkan</option>
+                            <option value="Completed">Selesai</option>
+                            <option value="Pending">Tertunda</option>
+                            <option value="Cancelled">Dibatalkan</option>
                           </select>
                         </th>
                         <th className="px-2 pb-2" />
@@ -1343,14 +1301,29 @@ export default function DashboardPage() {
                   </table>
                 </div>
                 <div className="mt-4 flex flex-col items-center justify-between gap-3 border-t pt-4 text-sm sm:flex-row">
-                  <span className="text-slate-500">
-                    {sortedRows.length
-                      ? `Menampilkan ${(currentPage - 1) * pageSize + 1}–${Math.min(
-                          currentPage * pageSize,
-                          sortedRows.length,
-                        )} dari ${sortedRows.length} transaksi`
-                      : "0 transaksi"}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-slate-500">
+                      {txnMeta.total
+                        ? `Menampilkan ${(currentPage - 1) * limit + 1}–${Math.min(
+                            currentPage * limit,
+                            txnMeta.total,
+                          )} dari ${txnMeta.total} transaksi`
+                        : "0 transaksi"}
+                    </span>
+                    <select
+                      value={limit}
+                      onChange={(event) => {
+                        setLimit(Number(event.target.value));
+                        setPage(1);
+                      }}
+                      aria-label="Jumlah baris per halaman"
+                      className="h-8 rounded border bg-white px-2 text-xs text-slate-700"
+                    >
+                      <option value={50}>50 / halaman</option>
+                      <option value={100}>100 / halaman</option>
+                      <option value={200}>200 / halaman</option>
+                    </select>
+                  </div>
                   <div className="flex items-center gap-3">
                     <Button
                       type="button"

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { collections, withMongo } from "@/lib/mongodb";
+import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+
+// Monitoring webhook selalu realtime: nonaktifkan cache Next.js/Vercel.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET() {
   try {
@@ -29,10 +34,10 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json(data);
+    return NextResponse.json(data, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     console.error(error);
-    return NextResponse.json({ error: "Unable to load webhook logs" }, { status: 500 });
+    return NextResponse.json({ error: "Unable to load webhook logs" }, { status: 500, headers: NO_CACHE_HEADERS });
   }
 }

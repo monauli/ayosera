@@ -6,6 +6,11 @@ import {
   writeMongoSyncLog,
 } from "@/lib/booking-sync";
 import { collections, withMongo, type WebhookLogDocument } from "@/lib/mongodb";
+import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+
+// Endpoint webhook selalu realtime: nonaktifkan cache Next.js/Vercel.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 // Batasi ukuran potongan payload yang disimpan agar dokumen tetap ringan.
 const BODY_PREVIEW_LIMIT = 6000;
@@ -29,7 +34,10 @@ const ID_KEYS = ["booking_id", "reservation_id", "order_id", "order_detail_id"] 
  * GET https://ayosera.vercel.app/api/webhooks/ayo
  */
 export async function GET() {
-  return NextResponse.json({ ok: true, route: ROUTE_PATH, status: "ready" });
+  return NextResponse.json(
+    { ok: true, route: ROUTE_PATH, status: "ready" },
+    { headers: NO_CACHE_HEADERS },
+  );
 }
 
 /**
@@ -66,7 +74,10 @@ export async function POST(request: Request) {
       bodyPreview: rawBody.slice(0, BODY_PREVIEW_LIMIT),
     });
     // Balas JSON error yang rapi, tetap HTTP 200 agar AYO tidak menganggap gagal kirim.
-    return NextResponse.json({ ok: false, received: false, error: "Invalid JSON payload" });
+    return NextResponse.json(
+      { ok: false, received: false, error: "Invalid JSON payload" },
+      { headers: NO_CACHE_HEADERS },
+    );
   }
 
   const ids = collectIds(payload.value);
@@ -114,7 +125,7 @@ export async function POST(request: Request) {
     bodyPreview: rawBody.slice(0, BODY_PREVIEW_LIMIT),
   });
 
-  return NextResponse.json({ ok: true, received: true });
+  return NextResponse.json({ ok: true, received: true }, { headers: NO_CACHE_HEADERS });
 }
 
 /** Simpan log webhook untuk monitoring. Aman: kegagalan simpan tidak meng-crash webhook. */

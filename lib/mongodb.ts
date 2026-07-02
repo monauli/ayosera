@@ -151,7 +151,23 @@ export async function collections() {
   };
 }
 
+// Index cukup dipastikan sekali per proses. Sebelumnya ensureIndexes() dipanggil
+// pada SETIAP operasi DB (lewat withMongo) sehingga menambah banyak round-trip
+// createIndex yang tidak perlu di tiap request.
+let indexesEnsured: Promise<void> | null = null;
+
 export async function ensureIndexes() {
+  if (!indexesEnsured) {
+    indexesEnsured = createIndexes().catch((error) => {
+      // Jangan cache kegagalan; biarkan percobaan berikutnya mencoba lagi.
+      indexesEnsured = null;
+      throw error;
+    });
+  }
+  return indexesEnsured;
+}
+
+async function createIndexes() {
   const { users, bookings, syncLogs, fields, webhookLogs } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -161,6 +177,10 @@ export async function ensureIndexes() {
     bookings.createIndex({ status: 1 }),
     bookings.createIndex({ branch_name: 1 }),
     bookings.createIndex({ field_name: 1 }),
+    bookings.createIndex({ booker_name: 1 }),
+    bookings.createIndex({ booker_phone: 1 }),
+    bookings.createIndex({ updatedAt: -1 }),
+    bookings.createIndex({ syncedAt: -1 }),
     syncLogs.createIndex({ startedAt: -1 }),
     fields.createIndex({ id: 1 }, { unique: true }),
   ]);

@@ -75,7 +75,7 @@ export function buildBookingFilter(searchParams: URLSearchParams) {
   return filter;
 }
 
-function appendAnd(filter: Record<string, unknown>, condition: Record<string, unknown>) {
+export function appendAnd(filter: Record<string, unknown>, condition: Record<string, unknown>) {
   filter.$and = [...((filter.$and as Record<string, unknown>[]) || []), condition];
 }
 

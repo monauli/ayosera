@@ -1,15 +1,33 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { buildBookingFilter, toCourtOptions } from "@/lib/booking-query";
+import { buildBookingFilter } from "@/lib/booking-query";
 import { mapStatus } from "@/lib/booking-mapper";
 import { collections, type BookingDocument, withMongo } from "@/lib/mongodb";
 import {
-  getRevenueAmount,
+  getTransactionAmount,
   isCancelledTransaction,
   isDisplayEligibleTransaction,
-  isRevenueEligibleTransaction,
-  sumRevenue,
 } from "@/lib/revenue";
+import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+
+/**
+ * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
+ * Sebelumnya isDisplayEligible/isCancelled/getRevenueAmount dipanggil terpisah
+ * berkali-kali sehingga tiap booking di-traversal (deteksi internal/cancelled)
+ * hingga 4-5x. Rule tetap identik: revenue = tampil & bukan cancelled.
+ */
+type AnalyzedBooking = { booking: BookingDocument; display: boolean; cancelled: boolean; revenue: number };
+
+function analyzeBooking(booking: BookingDocument): AnalyzedBooking {
+  const display = isDisplayEligibleTransaction(booking);
+  const cancelled = isCancelledTransaction(booking);
+  const revenue = display && !cancelled ? getTransactionAmount(booking) : 0;
+  return { booking, display, cancelled, revenue };
+}
+
+// Data dashboard selalu realtime: nonaktifkan cache Next.js/Vercel.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function toIdrFull(value: number) {
   return new Intl.NumberFormat("id-ID", {
@@ -31,6 +49,7 @@ function todayJakarta() {
 }
 
 export async function GET(request: Request) {
+  const startedAt = Date.now();
   try {
     await requireUser();
     const { searchParams } = new URL(request.url);
@@ -42,46 +61,42 @@ export async function GET(request: Request) {
 
     const data = await withMongo(async () => {
       const { bookings, syncLogs, fields } = await collections();
-      const [filteredBookings, courtOptionBookings, todayBookings, latestLogs, fieldCount] = await Promise.all([
+      const [filteredBookings, courtNames, todayBookings, latestLogs, fieldCount] = await Promise.all([
         bookings.find(dashboardFilter).sort({ date: -1, start_time: -1 }).toArray(),
-        bookings.find(courtOptionFilter).project<BookingDocument>({ field_name: 1 }).limit(5000).toArray(),
+        // distinct jauh lebih ringan daripada menarik s.d. 5000 dokumen hanya untuk daftar lapangan.
+        bookings.distinct("field_name", courtOptionFilter),
         bookings.find({ date: today }).sort({ start_time: 1 }).toArray(),
         syncLogs.find({}).sort({ startedAt: -1 }).limit(5).toArray(),
         fields.countDocuments({ status: "ACTIVE" }),
       ]);
 
-      const displayFilteredBookings = filteredBookings.filter(isDisplayEligibleTransaction);
-      const displayTodayBookings = todayBookings.filter(isDisplayEligibleTransaction);
-      const revenueEligibleFiltered = displayFilteredBookings.filter(isRevenueEligibleTransaction);
-      const revenueToday = sumRevenue(displayTodayBookings);
-      const revenueFiltered = sumRevenue(displayFilteredBookings);
+      // Analisis rule revenue sekali per booking, lalu dipakai ulang di semua widget.
+      const analyzedFiltered = filteredBookings.map(analyzeBooking);
+      const displayFiltered = analyzedFiltered.filter((item) => item.display);
+      const revenueEligible = displayFiltered.filter((item) => !item.cancelled);
+      const revenueFiltered = displayFiltered.reduce((sum, item) => sum + item.revenue, 0);
+
+      const analyzedToday = todayBookings.map(analyzeBooking);
+      const displayToday = analyzedToday.filter((item) => item.display);
+      const revenueToday = displayToday.reduce((sum, item) => sum + item.revenue, 0);
 
       const hourly = Array.from({ length: 16 }, (_, index) => {
-        const hour = index + 6;
-        const label = `${String(hour).padStart(2, "0")}:00`;
-        const bookingsInHour = displayTodayBookings.filter((booking) =>
-          booking.start_time?.startsWith(String(hour).padStart(2, "0")),
-        );
+        const hour = String(index + 6).padStart(2, "0");
+        const inHour = displayToday.filter((item) => item.booking.start_time?.startsWith(hour));
         return {
-          time: label,
-          transactions: bookingsInHour.length,
-          revenue: Math.round(sumRevenue(bookingsInHour) / 1_000_000),
+          time: `${hour}:00`,
+          transactions: inHour.length,
+          revenue: Math.round(inHour.reduce((sum, item) => sum + item.revenue, 0) / 1_000_000),
         };
       });
 
       const services = Object.values(
-        revenueEligibleFiltered.reduce<Record<string, { name: string; branch: string; revenueValue: number; revenue: string; count: number; progress: number }>>(
-          (acc, booking) => {
-            acc[booking.field_name] ||= {
-              name: booking.field_name,
-              branch: booking.field_name,
-              revenueValue: 0,
-              revenue: "Rp 0",
-              count: 0,
-              progress: 0,
-            };
-            acc[booking.field_name].revenueValue += getRevenueAmount(booking);
-            acc[booking.field_name].count += 1;
+        revenueEligible.reduce<Record<string, { name: string; branch: string; revenueValue: number; revenue: string; count: number; progress: number }>>(
+          (acc, item) => {
+            const name = item.booking.field_name;
+            acc[name] ||= { name, branch: name, revenueValue: 0, revenue: "Rp 0", count: 0, progress: 0 };
+            acc[name].revenueValue += item.revenue;
+            acc[name].count += 1;
             return acc;
           },
           {},
@@ -98,19 +113,21 @@ export async function GET(request: Request) {
       }));
 
       const paymentBreakdown = [
-        { name: "Reservation", value: displayFilteredBookings.filter((booking) => booking.booking_source === "reservation").length, color: "#ec4899" },
-        { name: "AYO Order", value: displayFilteredBookings.filter((booking) => booking.booking_source === "order").length, color: "#f9a8c2" },
-        { name: "Pending", value: displayFilteredBookings.filter((booking) => mapStatus(booking.status) === "Pending").length, color: "#f59e0b" },
-        { name: "Cancelled", value: displayFilteredBookings.filter(isCancelledTransaction).length, color: "#e11d48" },
+        { name: "Reservation", value: displayFiltered.filter((item) => item.booking.booking_source === "reservation").length, color: "#ec4899" },
+        { name: "AYO Order", value: displayFiltered.filter((item) => item.booking.booking_source === "order").length, color: "#f9a8c2" },
+        { name: "Pending", value: displayFiltered.filter((item) => mapStatus(item.booking.status) === "Pending").length, color: "#f59e0b" },
+        { name: "Cancelled", value: displayFiltered.filter((item) => item.cancelled).length, color: "#e11d48" },
       ];
       const totalBreakdown = paymentBreakdown.reduce((sum, item) => sum + item.value, 0) || 1;
 
       return {
         metrics: {
-          totalTransactions: displayFilteredBookings.length,
+          totalTransactions: displayFiltered.length,
           revenueToday: toIdrFull(revenueToday),
           revenueMonth: toIdrFull(revenueFiltered),
-          activeCustomers: new Set(displayFilteredBookings.map((booking) => booking.booker_phone || booking.booker_email || booking.booker_name)).size,
+          activeCustomers: new Set(
+            displayFiltered.map((item) => item.booking.booker_phone || item.booking.booker_email || item.booking.booker_name),
+          ).size,
         },
         hourlyTransactions: hourly,
         topServices,
@@ -119,11 +136,11 @@ export async function GET(request: Request) {
           value: Math.round((item.value / totalBreakdown) * 100),
         })),
         revenueTrend: Array.from({ length: 6 }, (_, index) => {
-          const day = String((index + 1) * 4).padStart(2, "0");
-          const amount = displayFilteredBookings
-            .filter((booking) => Number(booking.date.slice(8, 10)) <= Number(day))
-            .reduce((sum, booking) => sum + getRevenueAmount(booking), 0);
-          return { day, amount: Math.round(amount / 1_000_000) };
+          const day = (index + 1) * 4;
+          const amount = displayFiltered
+            .filter((item) => Number(item.booking.date.slice(8, 10)) <= day)
+            .reduce((sum, item) => sum + item.revenue, 0);
+          return { day: String(day).padStart(2, "0"), amount: Math.round(amount / 1_000_000) };
         }),
         occupancy: Object.values(
           todayBookings.reduce<Record<string, { branch: string; count: number }>>((acc, booking) => {
@@ -142,14 +159,19 @@ export async function GET(request: Request) {
           time: log.finishedAt.toISOString(),
           tone: log.status === "failed" ? "text-rose-600" : "text-teal-600",
         })),
-        branchOptions: toCourtOptions(courtOptionBookings),
+        branchOptions: courtNames
+          .filter((name): name is string => Boolean(name))
+          .sort((a, b) => a.localeCompare(b))
+          .map((name) => ({ label: name, value: name })),
+        _meta: { processed: filteredBookings.length },
       };
     });
 
-    return NextResponse.json(data);
+    console.log(`[dashboard-api] ${Date.now() - startedAt}ms, processed ${data._meta.processed} bookings`);
+    return NextResponse.json(data, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     console.error(error);
-    return NextResponse.json({ error: "Unable to load dashboard" }, { status: 500 });
+    return NextResponse.json({ error: "Unable to load dashboard" }, { status: 500, headers: NO_CACHE_HEADERS });
   }
 }
