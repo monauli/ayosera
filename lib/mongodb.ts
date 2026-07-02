@@ -64,6 +64,17 @@ export type SyncLogDocument = {
   warningDays?: number;
 };
 
+export type WebhookLogDocument = {
+  receivedAt: Date;
+  method: string;
+  ok: boolean;
+  status: "received" | "invalid" | "error";
+  ids: Record<string, string[]>;
+  itemCount: number;
+  message?: string;
+  bodyPreview: string;
+};
+
 export type FieldDocument = {
   id: number;
   name: string;
@@ -136,12 +147,14 @@ export async function collections() {
     bookings: db.collection<BookingDocument>("bookings"),
     syncLogs: db.collection<SyncLogDocument>("sync_logs"),
     fields: db.collection<FieldDocument>("fields"),
+    webhookLogs: db.collection<WebhookLogDocument>("webhook_logs"),
   };
 }
 
 export async function ensureIndexes() {
-  const { users, bookings, syncLogs, fields } = await collections();
+  const { users, bookings, syncLogs, fields, webhookLogs } = await collections();
   await Promise.all([
+    webhookLogs.createIndex({ receivedAt: -1 }),
     users.createIndex({ email: 1 }, { unique: true }),
     bookings.createIndex({ booking_id: 1 }, { unique: true }),
     bookings.createIndex({ date: -1, start_time: -1 }),

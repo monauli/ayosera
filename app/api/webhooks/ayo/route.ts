@@ -1,109 +1,178 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
-import { createAyoSignature } from "@/lib/ayo";
-import { extractBookingItems, logSyncFailure, syncBookingItems } from "@/lib/booking-sync";
+import {
+  extractBookingItems,
+  logSyncFailure,
+  syncBookingItems,
+  writeMongoSyncLog,
+} from "@/lib/booking-sync";
+import { collections, withMongo, type WebhookLogDocument } from "@/lib/mongodb";
 
+// Batasi ukuran potongan payload yang disimpan agar dokumen tetap ringan.
+const BODY_PREVIEW_LIMIT = 6000;
+
+const ROUTE_PATH = "/api/webhooks/ayo";
+
+// Header yang berguna untuk debugging webhook. Nilai secret sengaja TIDAK dilog.
+const IMPORTANT_HEADERS = [
+  "content-type",
+  "user-agent",
+  "x-ayo-event",
+  "x-ayo-signature",
+  "x-forwarded-for",
+] as const;
+
+// ID yang menarik untuk ditelusuri jika payload membawanya.
+const ID_KEYS = ["booking_id", "reservation_id", "order_id", "order_detail_id"] as const;
+
+/**
+ * Health check dari browser.
+ * GET https://ayosera.vercel.app/api/webhooks/ayo
+ */
+export async function GET() {
+  return NextResponse.json({ ok: true, route: ROUTE_PATH, status: "ready" });
+}
+
+/**
+ * Receiver webhook AYO (tahap 1: receiver/log listener).
+ *
+ * Prinsip: selalu balas cepat dan tidak pernah menggagalkan pengiriman webhook
+ * hanya karena bentuk payload belum dipetakan. Semua kerja berat (sync ke DB)
+ * dibungkus try/catch agar error hanya tercatat, bukan meng-crash respons.
+ */
 export async function POST(request: Request) {
   const startedAt = new Date();
-  try {
-    const rawBody = await request.text();
-    const payload = parseJsonBody(rawBody);
-    const authError = validateWebhookRequest(request.headers, payload);
+  const rawBody = await request.text().catch(() => "");
+  const payload = parseJsonBody(rawBody);
 
-    if (authError) {
-      await logSyncFailure({ type: "webhook", startedAt, error: new Error(authError) });
-      return NextResponse.json(
-        { error: true, status_code: 401, message: authError },
-        { status: 401 },
-      );
-    }
+  // Log utama supaya mudah dicari di console/Vercel logs.
+  console.log("AYO WEBHOOK RECEIVED", {
+    method: request.method,
+    timestamp: startedAt.toISOString(),
+    headers: pickHeaders(request.headers),
+    body: payload.ok ? payload.value : rawBody,
+  });
 
-    const items = extractBookingItems(payload);
-    const result = await syncBookingItems(items, {
-      type: "webhook",
-      message: "AYO webhook accepted",
-      startedAt,
+  if (!payload.ok) {
+    console.error("AYO WEBHOOK: body bukan JSON valid", payload.error);
+    await logSyncFailure({ type: "webhook", startedAt, error: new Error("Invalid JSON payload") });
+    await saveWebhookLog({
+      receivedAt: startedAt,
+      method: request.method,
+      ok: false,
+      status: "invalid",
+      ids: {},
+      itemCount: 0,
+      message: "Body bukan JSON valid",
+      bodyPreview: rawBody.slice(0, BODY_PREVIEW_LIMIT),
     });
+    // Balas JSON error yang rapi, tetap HTTP 200 agar AYO tidak menganggap gagal kirim.
+    return NextResponse.json({ ok: false, received: false, error: "Invalid JSON payload" });
+  }
 
-    return NextResponse.json({
-      ...result,
-      error: false,
-      status_code: 200,
-      message: "Success",
+  const ids = collectIds(payload.value);
+  if (Object.values(ids).some((list) => list.length)) {
+    console.log("AYO WEBHOOK IDs", ids);
+  }
+
+  // Reuse pipeline sync yang sudah ada, tapi aman: kegagalan tidak menggagalkan webhook.
+  const items = extractBookingItems(payload.value);
+  let logStatus: WebhookLogDocument["status"] = "received";
+  let logMessage = items.length ? `Diterima ${items.length} item booking` : "Diterima (tanpa item booking)";
+  try {
+    if (items.length) {
+      const result = await syncBookingItems(items, {
+        type: "webhook",
+        message: "AYO webhook received",
+        startedAt,
+      });
+      console.log("AYO WEBHOOK SYNC OK", result);
+    } else {
+      // Tidak ada item booking yang bisa dipetakan; cukup catat event-nya.
+      await writeMongoSyncLog({
+        type: "webhook",
+        status: "success",
+        message: "AYO webhook received (tanpa item booking)",
+        recordsProcessed: 0,
+        startedAt,
+      });
+    }
+  } catch (error) {
+    console.error("AYO WEBHOOK SYNC FAILED", error);
+    logStatus = "error";
+    logMessage = error instanceof Error ? error.message : "Sync gagal";
+    await logSyncFailure({ type: "webhook", startedAt, error });
+  }
+
+  await saveWebhookLog({
+    receivedAt: startedAt,
+    method: request.method,
+    ok: logStatus !== "error",
+    status: logStatus,
+    ids,
+    itemCount: items.length,
+    message: logMessage,
+    bodyPreview: rawBody.slice(0, BODY_PREVIEW_LIMIT),
+  });
+
+  return NextResponse.json({ ok: true, received: true });
+}
+
+/** Simpan log webhook untuk monitoring. Aman: kegagalan simpan tidak meng-crash webhook. */
+async function saveWebhookLog(doc: WebhookLogDocument) {
+  try {
+    await withMongo(async () => {
+      const { webhookLogs } = await collections();
+      await webhookLogs.insertOne(doc);
     });
   } catch (error) {
-    await logSyncFailure({ type: "webhook", startedAt, error });
-    console.error(error);
-    return NextResponse.json(
-      { error: true, status_code: 500, message: "Webhook ingest failed" },
-      { status: 500 },
-    );
+    console.error("AYO WEBHOOK: gagal menyimpan log webhook", error);
   }
 }
 
-export async function GET() {
-  return NextResponse.json({
-    error: false,
-    status_code: 200,
-    message: "AYO webhook endpoint is ready",
-  });
-}
+type ParsedBody = { ok: true; value: unknown } | { ok: false; error: string };
 
-function parseJsonBody(rawBody: string) {
+function parseJsonBody(rawBody: string): ParsedBody {
+  if (!rawBody.trim()) return { ok: true, value: {} };
   try {
-    return rawBody ? JSON.parse(rawBody) : {};
-  } catch {
-    throw new Error("Invalid webhook JSON payload");
+    return { ok: true, value: JSON.parse(rawBody) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Unknown parse error" };
   }
 }
 
-function validateWebhookRequest(headers: Headers, payload: unknown) {
-  const expectedSecret = process.env.AYO_WEBHOOK_SECRET;
-  if (expectedSecret) {
-    const suppliedSecret =
-      headers.get("x-ayo-webhook-secret") ||
-      headers.get("x-webhook-secret") ||
-      headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+function pickHeaders(headers: Headers) {
+  const picked: Record<string, string> = {};
+  for (const key of IMPORTANT_HEADERS) {
+    const value = headers.get(key);
+    if (value) picked[key] = value;
+  }
+  return picked;
+}
 
-    if (!suppliedSecret || !safeCompare(suppliedSecret, expectedSecret)) {
-      return "Invalid webhook secret";
+/** Telusuri payload (termasuk nested/array) untuk mengumpulkan ID yang dikenal. */
+function collectIds(payload: unknown) {
+  const found: Record<string, Set<string>> = Object.fromEntries(ID_KEYS.map((key) => [key, new Set<string>()]));
+  const seen = new Set<object>();
+
+  const walk = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value as object)) return;
+    seen.add(value as object);
+
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+      return;
     }
-  }
 
-  const suppliedSignature = getWebhookSignature(headers, payload);
-  if (suppliedSignature && process.env.AYO_PRIVATE_KEY && isRecord(payload)) {
-    const expectedSignature = createAyoSignature(payload, process.env.AYO_PRIVATE_KEY);
-    if (!safeCompare(suppliedSignature, expectedSignature)) {
-      return "Invalid webhook signature";
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      const normalizedKey = key.toLowerCase();
+      if (normalizedKey in found && (typeof nested === "string" || typeof nested === "number")) {
+        found[normalizedKey].add(String(nested));
+      }
+      if (nested && typeof nested === "object") walk(nested);
     }
-  }
+  };
 
-  return null;
-}
-
-function getWebhookSignature(headers: Headers, payload: unknown) {
-  const headerSignature = headers.get("x-ayo-signature") || headers.get("x-signature");
-  if (headerSignature) return headerSignature;
-
-  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-    const signature = (payload as Record<string, unknown>).signature;
-    if (typeof signature === "string") return signature;
-  }
-
-  return null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function safeCompare(left: string, right: string) {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+  walk(payload);
+  return Object.fromEntries(Object.entries(found).map(([key, set]) => [key, [...set]]));
 }

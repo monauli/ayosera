@@ -23,7 +23,9 @@ import {
   RefreshCw,
   Search,
   RotateCcw,
-  Users,
+  Webhook,
+  Copy,
+  Clock,
 } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +34,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getRevenueAmount } from "@/lib/revenue";
 
 type HourlyPoint = { time: string; transactions: number; revenue: number };
 type ServicePoint = { name: string; branch: string; revenue: string; count: number; progress: number };
@@ -82,7 +83,7 @@ type TransactionRow = {
   changedAt?: string;
   previousSchedule?: { date: string; start_time: string; end_time: string };
 };
-type DatePreset = "today" | "week" | "month" | "lastMonth" | "custom";
+type DatePreset = "today" | "month" | "lastMonth" | "custom" | "manualMonth";
 
 type TransactionSummary = {
   totalRevenue: number;
@@ -91,13 +92,22 @@ type TransactionSummary = {
   filteredCount: number;
 };
 
-function formatIdr(value: number) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(value || 0);
-}
+type WebhookLogRow = {
+  receivedAt: string;
+  method: string;
+  status: "received" | "invalid" | "error";
+  ok: boolean;
+  itemCount: number;
+  ids: Record<string, string[]>;
+  message: string;
+  bodyPreview: string;
+};
+
+type WebhookPayload = {
+  total: number;
+  lastReceivedAt: string | null;
+  logs: WebhookLogRow[];
+};
 
 type SortKey = "date" | "id" | "customer" | "service" | "amount" | "status";
 type SortState = { key: SortKey; dir: "asc" | "desc" };
@@ -177,7 +187,10 @@ function SortableHeader({
 const navItems = [
   { label: "Dasbor", icon: LayoutDashboard },
   { label: "Transaksi", icon: Activity },
+  { label: "Webhook", icon: Webhook },
 ];
+
+const WEBHOOK_URL = "https://ayosera.vercel.app/api/webhooks/ayo";
 
 const THEME_STORAGE_KEY = "ayo-theme";
 const themeOptions = [
@@ -243,12 +256,6 @@ function formatJakartaDate(date: Date) {
   }).format(date);
 }
 
-function addDays(date: Date, days: number) {
-  const nextDate = new Date(date);
-  nextDate.setDate(nextDate.getDate() + days);
-  return nextDate;
-}
-
 function monthStartJakarta() {
   const today = formatJakartaDate(new Date());
   return `${today.slice(0, 7)}-01`;
@@ -279,10 +286,6 @@ function getDatePresetRange(value: DatePreset) {
     return { startDate: currentDate, endDate: currentDate };
   }
 
-  if (value === "week") {
-    return { startDate: formatJakartaDate(addDays(now, -6)), endDate: currentDate };
-  }
-
   if (value === "lastMonth") {
     return monthRangeFromValue(previousMonthValue());
   }
@@ -306,18 +309,29 @@ function formatDisplayDate(value: string) {
   }).format(new Date(Date.UTC(year, month - 1, day)));
 }
 
+function formatMonthLabel(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) return value || "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
 function getRevenueFilterDetail(preset: DatePreset, startDate: string, endDate: string) {
   if (preset === "today") return `Hari ini (${formatDisplayDate(startDate)})`;
-  if (preset === "week") return `7 hari (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
   if (preset === "month") return `Bulan ini (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
   if (preset === "lastMonth") return `Bulan lalu (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
+  if (preset === "manualMonth")
+    return `${formatMonthLabel(startDate.slice(0, 7))} (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
   if (startDate === endDate) return `Filter tanggal ${formatDisplayDate(startDate)}`;
   return `Filter ${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`;
 }
 
 const datePresetButtons: { label: string; value: DatePreset }[] = [
   { label: "Hari ini", value: "today" },
-  { label: "7 hari", value: "week" },
   { label: "Bulan ini", value: "month" },
   { label: "Bulan lalu", value: "lastMonth" },
 ];
@@ -351,6 +365,7 @@ export default function DashboardPage() {
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [datePreset, setDatePreset] = useState<DatePreset>("today");
+  const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [syncMonth, setSyncMonth] = useState(currentMonth);
   const [syncRangeStart, setSyncRangeStart] = useState(today);
   const [syncRangeEnd, setSyncRangeEnd] = useState(today);
@@ -363,6 +378,11 @@ export default function DashboardPage() {
   const [theme, setTheme] = useState("white");
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Dasbor");
+  const [webhookData, setWebhookData] = useState<WebhookPayload | null>(null);
+  const [webhookStatus, setWebhookStatus] = useState<"unknown" | "active" | "inactive">("unknown");
+  const [webhookLoading, setWebhookLoading] = useState(false);
+  const [webhookCopied, setWebhookCopied] = useState(false);
+  const [webhookRefresh, setWebhookRefresh] = useState(0);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
   const [exportStart, setExportStart] = useState(today);
@@ -560,6 +580,21 @@ export default function DashboardPage() {
     if (ok) setExportMenuOpen(false);
   }
 
+  // Ekspor mengikuti filter atas yang sedang aktif (Hari ini / Bulan ini / Bulan lalu / bulan manual).
+  async function handleExportFilter() {
+    if (isInvalidDateRange(startDate, endDate)) return;
+    const fallback =
+      startDate === endDate ? `Omzet ${startDate}.xlsx` : `Omzet ${startDate} sd ${endDate}.xlsx`;
+    const ok = await downloadExcelExport(
+      `/api/transactions/export/range?start=${startDate}&end=${endDate}`,
+      fallback,
+    );
+    setSyncMessage(
+      ok ? `Ekspor sesuai filter (${startDate} sd ${endDate}) selesai.` : "Ekspor sesuai filter gagal.",
+    );
+    if (ok) setExportMenuOpen(false);
+  }
+
   async function handleExportCsv() {
     setExporting(true);
     setSyncMessage("");
@@ -595,6 +630,15 @@ export default function DashboardPage() {
   function handleRangePreset(value: DatePreset) {
     const range = getDatePresetRange(value);
     setDatePreset(value);
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
+  }
+
+  function handleMonthFilter(value: string) {
+    if (!value) return;
+    setFilterMonth(value);
+    setDatePreset("manualMonth");
+    const range = monthRangeFromValue(value);
     setStartDate(range.startDate);
     setEndDate(range.endDate);
   }
@@ -652,6 +696,7 @@ export default function DashboardPage() {
     setDatePreset("today");
     setStartDate(range.startDate);
     setEndDate(range.endDate);
+    setFilterMonth(currentMonth);
     setColumnFilters(emptyColumnFilters);
   }
 
@@ -664,6 +709,49 @@ export default function DashboardPage() {
     return () => window.clearTimeout(timeout);
   }, [searchTerm, statusFilter, courtFilter, startDate, endDate]);
 
+  useEffect(() => {
+    if (activeNav !== "Webhook") return;
+    let cancelled = false;
+
+    async function loadWebhook() {
+      setWebhookLoading(true);
+      try {
+        const [healthResponse, logsResponse] = await Promise.all([
+          fetch("/api/webhooks/ayo", { cache: "no-store" }),
+          fetch("/api/webhooks/logs", { cache: "no-store" }),
+        ]);
+
+        if (logsResponse.status === 401) {
+          await redirectToLogin();
+          return;
+        }
+
+        if (cancelled) return;
+        setWebhookStatus(healthResponse.ok ? "active" : "inactive");
+        if (logsResponse.ok) setWebhookData(await logsResponse.json());
+      } catch {
+        if (!cancelled) setWebhookStatus("inactive");
+      } finally {
+        if (!cancelled) setWebhookLoading(false);
+      }
+    }
+
+    loadWebhook().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeNav, webhookRefresh]);
+
+  async function handleCopyWebhookUrl() {
+    try {
+      await navigator.clipboard.writeText(WEBHOOK_URL);
+      setWebhookCopied(true);
+      window.setTimeout(() => setWebhookCopied(false), 2000);
+    } catch {
+      // Abaikan jika clipboard tidak tersedia.
+    }
+  }
+
   const metrics = dashboard?.metrics;
   const dateRangeInvalid = isInvalidDateRange(startDate, endDate);
   const pageSize = 10;
@@ -672,7 +760,6 @@ export default function DashboardPage() {
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pagedRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const filteredRevenue = filteredRows.reduce((total, row) => total + getRevenueAmount(row), 0);
   const serviceOptions = Array.from(new Set(transactionRows.map((row) => row.service).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b),
   );
@@ -698,6 +785,23 @@ export default function DashboardPage() {
           {preset.label}
         </Button>
       ))}
+      <div
+        className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
+          datePreset === "manualMonth"
+            ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            : "bg-white"
+        }`}
+      >
+        <CalendarDays className="h-4 w-4 text-slate-500" />
+        <Input
+          type="month"
+          aria-label="Filter bulan tertentu"
+          value={filterMonth}
+          className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+          onClick={(event) => event.currentTarget.showPicker?.()}
+          onChange={(event) => handleMonthFilter(event.target.value)}
+        />
+      </div>
       <Button type="button" variant="ghost" onClick={handleResetFilters}>
         <RotateCcw className="h-4 w-4" />
         Reset
@@ -817,9 +921,13 @@ export default function DashboardPage() {
             </Button>
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-lg font-semibold">
-                {activeNav === "Transaksi" ? "Transaksi AYO" : "Dasbor Transaksi Real-Time"}
+                {activeNav === "Transaksi"
+                  ? "Transaksi AYO"
+                  : activeNav === "Webhook"
+                    ? "Monitoring Webhook AYO"
+                    : "Dasbor Transaksi Real-Time"}
               </h1>
-              {activeNav !== "Transaksi" && (
+              {activeNav === "Dasbor" && (
                 <p className="hidden text-sm text-slate-500 sm:block">
                   Monitoring transaksi, pendapatan, sinkronisasi, dan integrasi AYO.
                 </p>
@@ -943,6 +1051,36 @@ export default function DashboardPage() {
           <>
           <div className="mb-4">{presetFilterRow}</div>
 
+          <section className="grid gap-4 md:grid-cols-3">
+            <MetricCard
+              title="Total Transaksi"
+              value={String(metrics?.totalTransactions ?? 0)}
+              detail={getRevenueFilterDetail(datePreset, startDate, endDate)}
+              icon={Activity}
+              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            />
+            <MetricCard
+              title="Pendapatan Hari Ini"
+              value={metrics?.revenueToday ?? "Rp 0"}
+              detail={`Hari ini (${formatDisplayDate(today)})`}
+              icon={BadgeCheck}
+              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            />
+            <MetricCard
+              title="Pendapatan (Filter)"
+              value={metrics?.revenueMonth ?? "Rp 0"}
+              detail={getRevenueFilterDetail(datePreset, startDate, endDate)}
+              icon={CalendarDays}
+              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            />
+          </section>
+          </>
+          )}
+
+          {activeNav === "Transaksi" && (
+          <>
+          <div className="mb-4">{presetFilterRow}</div>
+
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               title="Total Transaksi"
@@ -965,65 +1103,43 @@ export default function DashboardPage() {
               icon={CalendarDays}
               accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
             />
-            <MetricCard
-              title="Pelanggan Aktif"
-              value={String(metrics?.activeCustomers ?? 0)}
-              detail="Pelanggan unik di filter"
-              icon={Users}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
-            />
-          </section>
-          </>
-          )}
-
-          {activeNav === "Transaksi" && (
-          <section className="space-y-3">
-            <Card className="flex flex-col">
-              <CardHeader>
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] shadow-sm">
-                      <Activity className="h-7 w-7" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-3xl font-bold tracking-tight">Transaksi AYO</CardTitle>
-                      <p className="mt-1 text-sm text-slate-500">Semua transaksi tersinkron dari AYO</p>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
-                    <div className="rounded-xl border bg-slate-50 px-6 py-5 shadow-sm">
-                      <div className="flex items-center gap-2 text-slate-500">
-                        <BadgeCheck className="h-6 w-6" />
-                        <p className="text-base font-medium">Total Pendapatan</p>
-                      </div>
-                      <p className="mt-2 text-3xl font-bold tracking-tight">{formatIdr(summary.totalRevenue)}</p>
-                      <p className="mt-1 text-sm text-slate-400">{summary.totalCount} transaksi</p>
-                    </div>
-                    <div className="rounded-xl bg-[rgb(var(--accent))] px-6 py-5 text-[rgb(var(--accent-foreground))] shadow-sm">
-                      <div className="flex items-center gap-2 opacity-80">
-                        <CalendarRange className="h-6 w-6" />
-                        <p className="text-base font-medium">Pendapatan Difilter</p>
-                      </div>
-                      <p className="mt-2 text-3xl font-bold tracking-tight">{formatIdr(filteredRevenue)}</p>
-                      <p className="mt-1 text-sm opacity-70">{filteredRows.length} transaksi</p>
-                    </div>
-                    <div className="relative">
-                      <Button
-                        variant="outline"
-                        onClick={() => setExportMenuOpen((open) => !open)}
-                        disabled={exporting}
-                        aria-expanded={exportMenuOpen}
-                        className="h-full min-h-[96px] flex-col gap-1 rounded-xl px-6 py-5 text-base"
-                      >
-                        <ArrowDownToLine className="h-6 w-6" />
-                        {exporting ? "Mengekspor" : "Ekspor"}
-                        <ChevronDown className={`h-4 w-4 transition-transform ${exportMenuOpen ? "rotate-180" : ""}`} />
-                      </Button>
+            <Card>
+              <CardContent className="relative flex h-full items-center justify-between gap-4 p-5">
+                <div className="min-w-0">
+                  <p className="text-sm text-slate-500">Ekspor</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-normal">Excel</p>
+                  <p className="mt-1 text-xs text-slate-500">Ikut filter aktif</p>
+                </div>
+                <div className="relative shrink-0">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setExportMenuOpen((open) => !open)}
+                    disabled={exporting}
+                    aria-expanded={exportMenuOpen}
+                    className="h-11 w-11"
+                  >
+                    <ArrowDownToLine className="h-5 w-5" />
+                  </Button>
                       {exportMenuOpen && (
                         <>
                           <div className="fixed inset-0 z-40" onClick={() => setExportMenuOpen(false)} />
                           <div className="absolute right-0 z-50 mt-2 w-72 rounded-md border bg-white p-4 text-left shadow-lg">
-                            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+                            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+                              Ekspor Sesuai Filter (.xlsx)
+                            </p>
+                            <p className="mb-2 text-xs text-slate-500">
+                              {getRevenueFilterDetail(datePreset, startDate, endDate)}
+                            </p>
+                            <Button
+                              className="w-full"
+                              onClick={handleExportFilter}
+                              disabled={exporting || dateRangeInvalid}
+                            >
+                              <ArrowDownToLine className="h-4 w-4" />
+                              {exporting ? "Mengekspor" : "Unduh Sesuai Filter"}
+                            </Button>
+                            <p className="mb-2 mt-3 border-t pt-3 text-xs font-medium uppercase tracking-wide text-slate-500">
                               Ekspor Harian (.xlsx)
                             </p>
                             <Input
@@ -1095,10 +1211,13 @@ export default function DashboardPage() {
                           </div>
                         </>
                       )}
-                    </div>
-                  </div>
                 </div>
-              </CardHeader>
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="mt-4">
+            <Card>
               <CardContent>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[1000px] text-sm">
@@ -1257,6 +1376,133 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </section>
+          </>
+          )}
+
+          {activeNav === "Webhook" && (
+          <>
+          <section className="grid gap-4 md:grid-cols-3">
+            <MetricCard
+              title="Status Route"
+              value={webhookStatus === "active" ? "Aktif" : webhookStatus === "inactive" ? "Tidak Aktif" : "Memeriksa…"}
+              detail="GET /api/webhooks/ayo"
+              icon={Webhook}
+              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            />
+            <MetricCard
+              title="Total Webhook Diterima"
+              value={String(webhookData?.total ?? 0)}
+              detail="Sejak awal pencatatan"
+              icon={DatabaseZap}
+              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            />
+            <MetricCard
+              title="Webhook Terakhir"
+              value={formatWebhookTime(webhookData?.lastReceivedAt)}
+              detail="Waktu Asia/Jakarta"
+              icon={Clock}
+              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            />
+          </section>
+
+          <section className="mt-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Webhook URL Produksi</CardTitle>
+                <CardDescription>Berikan URL ini ke pihak AYO</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <code className="flex-1 break-all rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    {WEBHOOK_URL}
+                  </code>
+                  <Button variant="outline" onClick={handleCopyWebhookUrl}>
+                    <Copy className="h-4 w-4" />
+                    {webhookCopied ? "Tersalin" : "Salin URL"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="mt-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>Log Webhook Terbaru</CardTitle>
+                    <CardDescription>20 payload terakhir yang diterima dari AYO</CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setWebhookRefresh((value) => value + 1)}
+                    disabled={webhookLoading}
+                    aria-label="Muat ulang log webhook"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${webhookLoading ? "animate-spin" : ""}`} />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[900px] text-sm">
+                    <thead className="bg-white">
+                      <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
+                        <th className="h-10 px-2 font-medium">Waktu</th>
+                        <th className="h-10 px-2 font-medium">Status</th>
+                        <th className="h-10 px-2 font-medium">Item</th>
+                        <th className="h-10 px-2 font-medium">ID Terdeteksi</th>
+                        <th className="h-10 px-2 font-medium">Pesan</th>
+                        <th className="h-10 px-2 font-medium">Payload</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(webhookData?.logs ?? []).length ? (
+                        (webhookData?.logs ?? []).map((log, index) => {
+                          const style = webhookStatusStyle(log.status);
+                          const idText = Object.entries(log.ids)
+                            .flatMap(([key, list]) => list.map((value) => `${key}: ${value}`))
+                            .join(", ");
+                          return (
+                            <tr key={`${log.receivedAt}-${index}`} className="border-b align-top last:border-0">
+                              <td className="whitespace-nowrap px-2 py-2">{formatWebhookTime(log.receivedAt)}</td>
+                              <td className="px-2 py-2">
+                                <span
+                                  className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ${style.className}`}
+                                >
+                                  {style.label}
+                                </span>
+                              </td>
+                              <td className="px-2 py-2">{log.itemCount}</td>
+                              <td className="max-w-[200px] truncate px-2 py-2" title={idText}>
+                                {idText || "—"}
+                              </td>
+                              <td className="max-w-[220px] truncate px-2 py-2" title={log.message}>
+                                {log.message || "—"}
+                              </td>
+                              <td className="px-2 py-2">
+                                <pre className="max-h-24 max-w-[280px] overflow-auto rounded bg-slate-50 p-2 text-xs text-slate-600">
+                                  {log.bodyPreview || "—"}
+                                </pre>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="h-[200px] text-center text-sm text-slate-500">
+                            {webhookLoading ? "Memuat…" : "Belum ada webhook yang diterima"}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+          </>
           )}
 
           {activeNav === "Dasbor" && (
@@ -1295,7 +1541,7 @@ export default function DashboardPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Layanan Terlaris</CardTitle>
-                <CardDescription>Diurutkan berdasarkan pendapatan hari ini</CardDescription>
+                <CardDescription>Diurutkan berdasarkan pendapatan pada filter</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {serviceRows.map((service) => (
@@ -1369,6 +1615,24 @@ function MetricCard({
       </CardContent>
     </Card>
   );
+}
+
+function formatWebhookTime(value: string | null | undefined) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function webhookStatusStyle(status: WebhookLogRow["status"]) {
+  if (status === "received") return { label: "Diterima", className: "bg-emerald-100 text-emerald-800" };
+  if (status === "invalid") return { label: "JSON Invalid", className: "bg-amber-100 text-amber-800" };
+  return { label: "Error", className: "bg-rose-100 text-rose-800" };
 }
 
 function formatEventTime(value: string) {
