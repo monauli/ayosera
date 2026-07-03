@@ -563,38 +563,6 @@ export default function DashboardPage() {
     if (ok) setExportMenuOpen(false);
   }
 
-  async function handleExportCsv() {
-    setExporting(true);
-    setSyncMessage("");
-    try {
-      // Ekspor seluruh transaksi (sesuai tampilan tabel yang menampilkan semua data).
-      const response = await fetch("/api/transactions/export", { cache: "no-store" });
-
-      if (response.status === 401) {
-        await redirectToLogin();
-        return;
-      }
-
-      if (!response.ok) {
-        setSyncMessage("Ekspor transaksi gagal.");
-        return;
-      }
-
-      const blob = await response.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.download = getExportFilename(response.headers.get("content-disposition"), startDate, endDate);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
-      setSyncMessage("Ekspor transaksi selesai.");
-    } finally {
-      setExporting(false);
-    }
-  }
-
   function handleRangePreset(value: DatePreset) {
     const range = getDatePresetRange(value);
     setDatePreset(value);
@@ -1615,12 +1583,4 @@ function formatEventTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
-}
-
-function getExportFilename(contentDisposition: string | null, startDate: string, endDate: string) {
-  const match = contentDisposition?.match(/filename="([^"]+)"/);
-  if (match?.[1]) return match[1];
-
-  const suffix = startDate === endDate ? startDate : `${startDate}_to_${endDate}`;
-  return `ayo-transactions-${suffix}.csv`;
 }

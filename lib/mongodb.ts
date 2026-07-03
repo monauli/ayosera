@@ -73,6 +73,8 @@ export type WebhookLogDocument = {
   itemCount: number;
   message?: string;
   bodyPreview: string;
+  // Membedakan asal webhook. Opsional agar dokumen produksi lama (tanpa field ini) tetap valid.
+  source?: "production" | "sandbox";
 };
 
 export type FieldDocument = {

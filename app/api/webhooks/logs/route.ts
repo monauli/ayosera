@@ -30,6 +30,7 @@ export async function GET() {
           ids: log.ids ?? {},
           message: log.message ?? "",
           bodyPreview: log.bodyPreview ?? "",
+          source: log.source ?? "production",
         })),
       };
     });
