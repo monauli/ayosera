@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Search,
   RotateCcw,
+  Store,
   Webhook,
   Copy,
   Clock,
@@ -140,6 +141,7 @@ function SortableHeader({
 const navItems = [
   { label: "Dasbor", icon: LayoutDashboard },
   { label: "Transaksi", icon: Activity },
+  { label: "Olsera", icon: Store },
   { label: "Webhook", icon: Webhook },
 ];
 
@@ -283,6 +285,16 @@ function getRevenueFilterDetail(preset: DatePreset, startDate: string, endDate: 
   return `Filter ${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`;
 }
 
+function formatRupiah(value: number) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  })
+    .format(value)
+    .replace(/\s/g, "");
+}
+
 const datePresetButtons: { label: string; value: DatePreset }[] = [
   { label: "Hari ini", value: "today" },
   { label: "Bulan ini", value: "month" },
@@ -332,6 +344,14 @@ export default function DashboardPage() {
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookCopied, setWebhookCopied] = useState(false);
   const [webhookRefresh, setWebhookRefresh] = useState(0);
+  const olseraMonthRange = getDatePresetRange("month");
+  const [olseraPreset, setOlseraPreset] = useState<DatePreset>("month");
+  const [olseraStart, setOlseraStart] = useState(olseraMonthRange.startDate);
+  const [olseraEnd, setOlseraEnd] = useState(olseraMonthRange.endDate);
+  const [olseraFilterMonth, setOlseraFilterMonth] = useState(currentMonth);
+  const [olseraRows, setOlseraRows] = useState<{ kategori: string; totalPenjualan: number }[]>([]);
+  const [olseraLoading, setOlseraLoading] = useState(false);
+  const [olseraError, setOlseraError] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
   const [exportStart, setExportStart] = useState(today);
@@ -682,6 +702,75 @@ export default function DashboardPage() {
     };
   }, [activeNav, webhookRefresh]);
 
+  // Halaman Olsera: viewer live ke API Olsera (tanpa sync/tulis database).
+  useEffect(() => {
+    if (activeNav !== "Olsera") return;
+    if (isInvalidDateRange(olseraStart, olseraEnd)) return;
+    let cancelled = false;
+
+    async function loadOlsera() {
+      setOlseraLoading(true);
+      setOlseraError("");
+      try {
+        const params = new URLSearchParams({ from: olseraStart, to: olseraEnd, _t: String(Date.now()) });
+        const response = await fetch(`/api/olsera/sales-by-category?${params.toString()}`, { cache: "no-store" });
+
+        if (response.status === 401) {
+          await redirectToLogin();
+          return;
+        }
+
+        const payload = (await response.json().catch(() => null)) as
+          | { data?: { kategori: string; totalPenjualan: number }[]; error?: string }
+          | null;
+
+        if (cancelled) return;
+        if (!response.ok || !payload || !Array.isArray(payload.data)) {
+          setOlseraRows([]);
+          setOlseraError(payload?.error || "Gagal memuat data penjualan Olsera.");
+          return;
+        }
+        setOlseraRows(payload.data);
+      } catch {
+        if (!cancelled) {
+          setOlseraRows([]);
+          setOlseraError("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
+        }
+      } finally {
+        if (!cancelled) setOlseraLoading(false);
+      }
+    }
+
+    loadOlsera().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeNav, olseraStart, olseraEnd]);
+
+  function handleOlseraPreset(value: DatePreset) {
+    const range = getDatePresetRange(value);
+    setOlseraPreset(value);
+    setOlseraStart(range.startDate);
+    setOlseraEnd(range.endDate);
+  }
+
+  function handleOlseraMonthFilter(value: string) {
+    if (!value) return;
+    const range = monthRangeFromValue(value);
+    setOlseraFilterMonth(value);
+    setOlseraPreset("manualMonth");
+    setOlseraStart(range.startDate);
+    setOlseraEnd(range.endDate);
+  }
+
+  function handleOlseraResetFilters() {
+    const range = getDatePresetRange("month");
+    setOlseraPreset("month");
+    setOlseraStart(range.startDate);
+    setOlseraEnd(range.endDate);
+    setOlseraFilterMonth(currentMonth);
+  }
+
   async function handleCopyWebhookUrl() {
     try {
       await navigator.clipboard.writeText(WEBHOOK_URL);
@@ -859,9 +948,11 @@ export default function DashboardPage() {
               <h1 className="truncate text-lg font-semibold">
                 {activeNav === "Transaksi"
                   ? "Transaksi AYO"
-                  : activeNav === "Webhook"
-                    ? "Monitoring Webhook AYO"
-                    : "Dasbor Transaksi Real-Time"}
+                  : activeNav === "Olsera"
+                    ? "Penjualan Olsera"
+                    : activeNav === "Webhook"
+                      ? "Monitoring Webhook AYO"
+                      : "Dasbor Transaksi Real-Time"}
               </h1>
               {activeNav === "Dasbor" && (
                 <p className="hidden text-sm text-slate-500 sm:block">
@@ -1314,6 +1405,107 @@ export default function DashboardPage() {
                     </Button>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          </section>
+          </>
+          )}
+
+          {activeNav === "Olsera" && (
+          <>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {datePresetButtons.map((preset) => (
+              <Button
+                key={preset.value}
+                type="button"
+                variant={olseraPreset === preset.value ? "default" : "outline"}
+                onClick={() => handleOlseraPreset(preset.value)}
+              >
+                <CalendarRange className="h-4 w-4" />
+                {preset.label}
+              </Button>
+            ))}
+            <div
+              className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
+                olseraPreset === "manualMonth"
+                  ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+                  : "bg-white"
+              }`}
+            >
+              <CalendarDays className="h-4 w-4 text-slate-500" />
+              <Input
+                type="month"
+                aria-label="Filter bulan tertentu (Olsera)"
+                value={olseraFilterMonth}
+                className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                onClick={(event) => event.currentTarget.showPicker?.()}
+                onChange={(event) => handleOlseraMonthFilter(event.target.value)}
+              />
+            </div>
+            <Button type="button" variant="ghost" onClick={handleOlseraResetFilters}>
+              <RotateCcw className="h-4 w-4" />
+              Reset
+            </Button>
+          </div>
+
+          <section>
+            <Card>
+              <CardHeader>
+                <CardTitle>Penjualan per Kategori</CardTitle>
+                <CardDescription>
+                  Data live dari Olsera — {getRevenueFilterDetail(olseraPreset, olseraStart, olseraEnd)}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {olseraLoading ? (
+                  <div className="flex items-center gap-2 py-10 text-sm text-slate-500">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Memuat data penjualan Olsera...
+                  </div>
+                ) : olseraError ? (
+                  <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                    {olseraError}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[400px] text-sm">
+                      <thead className="bg-white">
+                        <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
+                          <th className="h-10 px-2 font-medium">Kategori</th>
+                          <th className="h-10 px-2 text-right font-medium">Total Penjualan</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {olseraRows.length ? (
+                          olseraRows.map((row) => (
+                            <tr key={row.kategori} className="border-b last:border-0">
+                              <td className="px-2 py-3">{row.kategori}</td>
+                              <td className="whitespace-nowrap px-2 py-3 text-right">
+                                {formatRupiah(row.totalPenjualan)}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={2} className="px-2 py-10 text-center text-slate-500">
+                              Tidak ada data penjualan pada rentang tanggal ini.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                      {olseraRows.length > 0 && (
+                        <tfoot>
+                          <tr className="border-t bg-[rgb(var(--accent))]">
+                            <td className="px-2 py-3 font-semibold">Total</td>
+                            <td className="whitespace-nowrap px-2 py-3 text-right font-semibold">
+                              {formatRupiah(olseraRows.reduce((sum, row) => sum + row.totalPenjualan, 0))}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </section>
