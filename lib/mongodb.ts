@@ -88,6 +88,36 @@ export type FieldDocument = {
   syncedAt: Date;
 };
 
+export type OlseraSalesByCategoryDocument = {
+  /** Tanggal order (YYYY-MM-DD, WIB). */
+  date: string;
+  /** Nama klasifikasi Olsera yang sudah dinormalisasi. */
+  category: string;
+  qty: number;
+  totalAmount: number;
+  syncedAt: Date;
+};
+
+export type OlseraSyncLogDocument = {
+  startDate: string;
+  endDate: string;
+  status: "success" | "partial" | "failed";
+  /** Jumlah order dari Close+Open List (setelah dedup). */
+  expectedOrderCount: number;
+  /** Jumlah order yang detail-nya berhasil ditarik. */
+  processedOrderCount: number;
+  errorMessage: string | null;
+  startedAt: Date;
+  finishedAt: Date | null;
+};
+
+export type OlseraSyncStateDocument = {
+  _id: "olsera";
+  /** Tanggal terakhir yang sync-nya tuntas penuh (expected = processed). */
+  lastFullySyncedDate: string | null;
+  updatedAt: Date;
+};
+
 function parseDirectHosts(value: string | undefined) {
   return (
     value
@@ -150,6 +180,9 @@ export async function collections() {
     syncLogs: db.collection<SyncLogDocument>("sync_logs"),
     fields: db.collection<FieldDocument>("fields"),
     webhookLogs: db.collection<WebhookLogDocument>("webhook_logs"),
+    olseraSalesByCategory: db.collection<OlseraSalesByCategoryDocument>("olsera_sales_by_category"),
+    olseraSyncLog: db.collection<OlseraSyncLogDocument>("olsera_sync_log"),
+    olseraSyncState: db.collection<OlseraSyncStateDocument>("olsera_sync_state"),
   };
 }
 
@@ -170,7 +203,8 @@ export async function ensureIndexes() {
 }
 
 async function createIndexes() {
-  const { users, bookings, syncLogs, fields, webhookLogs } = await collections();
+  const { users, bookings, syncLogs, fields, webhookLogs, olseraSalesByCategory, olseraSyncLog } =
+    await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
     users.createIndex({ email: 1 }, { unique: true }),
@@ -185,6 +219,8 @@ async function createIndexes() {
     bookings.createIndex({ syncedAt: -1 }),
     syncLogs.createIndex({ startedAt: -1 }),
     fields.createIndex({ id: 1 }, { unique: true }),
+    olseraSalesByCategory.createIndex({ date: 1, category: 1 }, { unique: true }),
+    olseraSyncLog.createIndex({ startedAt: -1 }),
   ]);
 }
 

@@ -1,0 +1,80 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+import {
+  addDays,
+  getOlseraSyncStatus,
+  syncOlseraSalesByCategory,
+  todayJakarta,
+} from "@/lib/olsera-sync";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+// Sync per hari memanggil detail tiap order dengan jeda 350ms — beri waktu lega.
+export const maxDuration = 300;
+
+const syncSchema = z.object({
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+export async function GET() {
+  try {
+    await requireUser();
+    const status = await getOlseraSyncStatus();
+    return NextResponse.json(status, { headers: NO_CACHE_HEADERS });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    console.error(error);
+    return NextResponse.json({ error: "Gagal memuat status sync Olsera." }, { status: 500, headers: NO_CACHE_HEADERS });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await requireUser();
+    if (user.role !== "admin") {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
+    const body = syncSchema.parse(await request.json().catch(() => ({})));
+
+    let startDate = body.start_date;
+    if (!startDate) {
+      const status = await getOlseraSyncStatus();
+      if (!status.lastFullySyncedDate) {
+        return NextResponse.json(
+          { error: "Sync pertama kali: start_date wajib dikirim eksplisit (belum ada lastFullySyncedDate)." },
+          { status: 400 },
+        );
+      }
+      startDate = addDays(status.lastFullySyncedDate, 1);
+    }
+    const today = todayJakarta();
+    const endDate = body.end_date ?? today;
+
+    if (endDate > today) {
+      return NextResponse.json(
+        { error: `end_date (${endDate}) tidak boleh melewati hari ini (${today}).` },
+        { status: 400 },
+      );
+    }
+    if (startDate > endDate) {
+      return NextResponse.json(
+        { error: `start_date (${startDate}) lebih besar dari end_date (${endDate}). Data sudah up to date?` },
+        { status: 400 },
+      );
+    }
+
+    const result = await syncOlseraSalesByCategory(startDate, endDate);
+    return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: "Payload sync Olsera tidak valid" }, { status: 400 });
+    }
+    console.error(error);
+    return NextResponse.json({ error: "Sync Olsera gagal" }, { status: 500 });
+  }
+}

@@ -97,6 +97,21 @@ type WebhookLogRow = {
   bodyPreview: string;
 };
 
+type OlseraSyncStatus = {
+  lastFullySyncedDate: string | null;
+  firstSyncedDate: string | null;
+  lastSync: {
+    status: "success" | "partial" | "failed";
+    startDate: string;
+    endDate: string;
+    expectedOrderCount: number;
+    processedOrderCount: number;
+    errorMessage: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+  } | null;
+};
+
 type WebhookPayload = {
   total: number;
   lastReceivedAt: string | null;
@@ -252,6 +267,16 @@ function isInvalidDateRange(startDate: string, endDate: string) {
   return Boolean(startDate && endDate && startDate > endDate);
 }
 
+function addDaysISO(date: string, days: number) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function daysBetweenISO(startDate: string, endDate: string) {
+  return Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000);
+}
+
 function formatDisplayDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   if (!year || !month || !day) return value || "-";
@@ -344,14 +369,24 @@ export default function DashboardPage() {
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookCopied, setWebhookCopied] = useState(false);
   const [webhookRefresh, setWebhookRefresh] = useState(0);
-  const olseraMonthRange = getDatePresetRange("month");
-  const [olseraPreset, setOlseraPreset] = useState<DatePreset>("month");
-  const [olseraStart, setOlseraStart] = useState(olseraMonthRange.startDate);
-  const [olseraEnd, setOlseraEnd] = useState(olseraMonthRange.endDate);
+  // Filter tampilan halaman Olsera: default "Kemarin" (data hari ini sering belum lengkap).
+  const olseraYesterday = addDaysISO(today, -1);
+  const [olseraFilterMode, setOlseraFilterMode] = useState<"yesterday" | "month" | "range">("yesterday");
+  const [olseraStart, setOlseraStart] = useState(olseraYesterday);
+  const [olseraEnd, setOlseraEnd] = useState(olseraYesterday);
   const [olseraFilterMonth, setOlseraFilterMonth] = useState(currentMonth);
-  const [olseraRows, setOlseraRows] = useState<{ kategori: string; totalPenjualan: number }[]>([]);
+  const [olseraRangeStart, setOlseraRangeStart] = useState(olseraYesterday);
+  const [olseraRangeEnd, setOlseraRangeEnd] = useState(olseraYesterday);
+  const [olseraRows, setOlseraRows] = useState<{ kategori: string; qty?: number; totalPenjualan: number }[]>([]);
   const [olseraLoading, setOlseraLoading] = useState(false);
   const [olseraError, setOlseraError] = useState("");
+  const [olseraSyncStatus, setOlseraSyncStatus] = useState<OlseraSyncStatus | null>(null);
+  const [olseraSyncing, setOlseraSyncing] = useState(false);
+  const [olseraSyncMessage, setOlseraSyncMessage] = useState("");
+  const [olseraSyncStart, setOlseraSyncStart] = useState("");
+  const [olseraSyncEnd, setOlseraSyncEnd] = useState("");
+  const [olseraSyncValidationError, setOlseraSyncValidationError] = useState("");
+  const [olseraSyncRefresh, setOlseraSyncRefresh] = useState(0);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
   const [exportStart, setExportStart] = useState(today);
@@ -745,30 +780,124 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeNav, olseraStart, olseraEnd]);
+  }, [activeNav, olseraStart, olseraEnd, olseraSyncRefresh]);
 
-  function handleOlseraPreset(value: DatePreset) {
-    const range = getDatePresetRange(value);
-    setOlseraPreset(value);
-    setOlseraStart(range.startDate);
-    setOlseraEnd(range.endDate);
+  // Status sync Olsera (checkpoint + log terakhir) — terpisah total dari sync AYO.
+  useEffect(() => {
+    if (activeNav !== "Olsera") return;
+    let cancelled = false;
+
+    fetch(`/api/olsera/sync?_t=${Date.now()}`, { cache: "no-store" })
+      .then(async (response) => {
+        if (response.status === 401) {
+          await redirectToLogin();
+          return null;
+        }
+        return (await response.json().catch(() => null)) as OlseraSyncStatus | null;
+      })
+      .then((payload) => {
+        if (cancelled || !payload || !("lastFullySyncedDate" in payload)) return;
+        setOlseraSyncStatus(payload);
+        // Pre-fill: sync lanjutan mulai dari checkpoint+1 s/d hari ini (boleh diubah user).
+        if (payload.lastFullySyncedDate) {
+          setOlseraSyncStart(addDaysISO(payload.lastFullySyncedDate, 1));
+          setOlseraSyncEnd(today);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeNav, olseraSyncRefresh]);
+
+  async function handleOlseraSync() {
+    if (!olseraSyncStart || !olseraSyncEnd) return;
+
+    setOlseraSyncValidationError("");
+    if (olseraSyncEnd < olseraSyncStart) {
+      setOlseraSyncValidationError("Tanggal selesai tidak boleh sebelum tanggal mulai.");
+      return;
+    }
+    if (olseraSyncEnd > today) {
+      setOlseraSyncValidationError("Tanggal selesai tidak boleh melewati hari ini.");
+      return;
+    }
+
+    setOlseraSyncing(true);
+    setOlseraSyncMessage("");
+    try {
+      // Kirim rentang persis yang dipilih user — jangan diam-diam meluas sampai hari ini.
+      const response = await fetch("/api/olsera/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_date: olseraSyncStart, end_date: olseraSyncEnd }),
+      });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      const payload = (await response.json().catch(() => null)) as
+        | { status?: string; expectedOrderCount?: number; processedOrderCount?: number; error?: string }
+        | null;
+      if (!response.ok || !payload || payload.error) {
+        setOlseraSyncMessage(payload?.error || "Sync Olsera gagal.");
+        return;
+      }
+      setOlseraSyncMessage(
+        `Sync ${payload.status === "success" ? "berhasil" : payload.status === "partial" ? "sebagian" : "gagal"}: ` +
+          `${payload.processedOrderCount ?? 0}/${payload.expectedOrderCount ?? 0} order diproses.`,
+      );
+    } catch {
+      setOlseraSyncMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
+    } finally {
+      setOlseraSyncing(false);
+      setOlseraSyncRefresh((value) => value + 1);
+    }
+  }
+
+  function handleOlseraYesterday() {
+    setOlseraFilterMode("yesterday");
+    setOlseraStart(olseraYesterday);
+    setOlseraEnd(olseraYesterday);
   }
 
   function handleOlseraMonthFilter(value: string) {
     if (!value) return;
     const range = monthRangeFromValue(value);
     setOlseraFilterMonth(value);
-    setOlseraPreset("manualMonth");
+    setOlseraFilterMode("month");
     setOlseraStart(range.startDate);
     setOlseraEnd(range.endDate);
   }
 
+  function handleOlseraRangeChange(startDate: string, endDate: string) {
+    setOlseraRangeStart(startDate);
+    setOlseraRangeEnd(endDate);
+    setOlseraFilterMode("range");
+    // Terapkan hanya kalau kedua tanggal terisi dan urutannya valid;
+    // kalau belum, data terakhir tetap tampil sampai rentang valid.
+    if (startDate && endDate && startDate <= endDate) {
+      setOlseraStart(startDate);
+      setOlseraEnd(endDate);
+    }
+  }
+
   function handleOlseraResetFilters() {
-    const range = getDatePresetRange("month");
-    setOlseraPreset("month");
-    setOlseraStart(range.startDate);
-    setOlseraEnd(range.endDate);
+    setOlseraFilterMode("yesterday");
+    setOlseraStart(olseraYesterday);
+    setOlseraEnd(olseraYesterday);
     setOlseraFilterMonth(currentMonth);
+    setOlseraRangeStart(olseraYesterday);
+    setOlseraRangeEnd(olseraYesterday);
+  }
+
+  function getOlseraFilterDetail() {
+    if (olseraFilterMode === "yesterday") return `Kemarin (${formatDisplayDate(olseraStart)})`;
+    if (olseraFilterMode === "month")
+      return `${formatMonthLabel(olseraFilterMonth)} (${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)})`;
+    if (olseraStart === olseraEnd) return `Filter tanggal ${formatDisplayDate(olseraStart)}`;
+    return `Filter ${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)}`;
   }
 
   async function handleCopyWebhookUrl() {
@@ -963,6 +1092,8 @@ export default function DashboardPage() {
             <Button variant="outline" size="icon" aria-label="Notifikasi">
               <Bell className="h-4 w-4" />
             </Button>
+            {/* Tombol sync AYO disembunyikan khusus di halaman Olsera (punya tombol sync sendiri). */}
+            {activeNav !== "Olsera" && (
             <div className="relative">
               <Button
                 onClick={() => {
@@ -1068,6 +1199,7 @@ export default function DashboardPage() {
                 </>
               )}
             </div>
+            )}
           </div>
         </header>
 
@@ -1413,21 +1545,105 @@ export default function DashboardPage() {
 
           {activeNav === "Olsera" && (
           <>
+          <section className="mb-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Sinkronisasi Olsera</CardTitle>
+                <CardDescription>
+                  {olseraSyncStatus?.lastFullySyncedDate ? (
+                    <>
+                      Data tersinkron:{" "}
+                      <span className="font-medium">
+                        {formatDisplayDate(olseraSyncStatus.firstSyncedDate ?? olseraSyncStatus.lastFullySyncedDate)}
+                        {" - "}
+                        {formatDisplayDate(olseraSyncStatus.lastFullySyncedDate)}
+                      </span>
+                      {olseraSyncStatus.lastSync && (
+                        <>
+                          {" "}— terakhir sync{" "}
+                          {olseraSyncStatus.lastSync.finishedAt
+                            ? new Date(olseraSyncStatus.lastSync.finishedAt).toLocaleString("id-ID", {
+                                timeZone: "Asia/Jakarta",
+                              })
+                            : "-"}
+                          , status{" "}
+                          <span
+                            className={
+                              olseraSyncStatus.lastSync.status === "success"
+                                ? "font-medium text-emerald-600"
+                                : olseraSyncStatus.lastSync.status === "partial"
+                                  ? "font-medium text-amber-600"
+                                  : "font-medium text-red-600"
+                            }
+                          >
+                            {olseraSyncStatus.lastSync.status}
+                          </span>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    "Belum pernah sync — isi tanggal mulai dan selesai untuk sync pertama kali."
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    type="date"
+                    aria-label="Tanggal mulai sync Olsera"
+                    value={olseraSyncStart}
+                    max={today}
+                    className="h-10 w-[170px] cursor-pointer"
+                    onClick={(event) => event.currentTarget.showPicker?.()}
+                    onChange={(event) => {
+                      setOlseraSyncStart(event.target.value);
+                      setOlseraSyncValidationError("");
+                    }}
+                  />
+                  <span className="text-sm text-slate-500">s/d</span>
+                  <Input
+                    type="date"
+                    aria-label="Tanggal selesai sync Olsera"
+                    value={olseraSyncEnd}
+                    max={today}
+                    className="h-10 w-[170px] cursor-pointer"
+                    onClick={(event) => event.currentTarget.showPicker?.()}
+                    onChange={(event) => {
+                      setOlseraSyncEnd(event.target.value);
+                      setOlseraSyncValidationError("");
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleOlseraSync}
+                    disabled={olseraSyncing || !olseraSyncStart || !olseraSyncEnd}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${olseraSyncing ? "animate-spin" : ""}`} />
+                    Sinkronkan Olsera
+                  </Button>
+                  {olseraSyncMessage && <span className="text-sm text-slate-600">{olseraSyncMessage}</span>}
+                </div>
+                {olseraSyncValidationError && (
+                  <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    {olseraSyncValidationError}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </section>
+
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            {datePresetButtons.map((preset) => (
-              <Button
-                key={preset.value}
-                type="button"
-                variant={olseraPreset === preset.value ? "default" : "outline"}
-                onClick={() => handleOlseraPreset(preset.value)}
-              >
-                <CalendarRange className="h-4 w-4" />
-                {preset.label}
-              </Button>
-            ))}
+            <Button
+              type="button"
+              variant={olseraFilterMode === "yesterday" ? "default" : "outline"}
+              onClick={handleOlseraYesterday}
+            >
+              <CalendarRange className="h-4 w-4" />
+              Kemarin
+            </Button>
             <div
               className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
-                olseraPreset === "manualMonth"
+                olseraFilterMode === "month"
                   ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
                   : "bg-white"
               }`}
@@ -1442,10 +1658,39 @@ export default function DashboardPage() {
                 onChange={(event) => handleOlseraMonthFilter(event.target.value)}
               />
             </div>
+            <div
+              className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
+                olseraFilterMode === "range"
+                  ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+                  : "bg-white"
+              }`}
+            >
+              <CalendarRange className="h-4 w-4 text-slate-500" />
+              <Input
+                type="date"
+                aria-label="Tanggal mulai filter Olsera"
+                value={olseraRangeStart}
+                className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                onClick={(event) => event.currentTarget.showPicker?.()}
+                onChange={(event) => handleOlseraRangeChange(event.target.value, olseraRangeEnd)}
+              />
+              <span className="text-xs text-slate-500">s/d</span>
+              <Input
+                type="date"
+                aria-label="Tanggal selesai filter Olsera"
+                value={olseraRangeEnd}
+                className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                onClick={(event) => event.currentTarget.showPicker?.()}
+                onChange={(event) => handleOlseraRangeChange(olseraRangeStart, event.target.value)}
+              />
+            </div>
             <Button type="button" variant="ghost" onClick={handleOlseraResetFilters}>
               <RotateCcw className="h-4 w-4" />
               Reset
             </Button>
+            {olseraFilterMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
+              <span className="text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
+            )}
           </div>
 
           <section>
@@ -1453,10 +1698,24 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardTitle>Penjualan per Kategori</CardTitle>
                 <CardDescription>
-                  Data live dari Olsera — {getRevenueFilterDetail(olseraPreset, olseraStart, olseraEnd)}
+                  Data hasil sync dari MongoDB — {getOlseraFilterDetail()}
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                {olseraSyncStatus?.lastFullySyncedDate && olseraEnd > olseraSyncStatus.lastFullySyncedDate && (
+                  <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    ⚠️ Data hanya lengkap sampai{" "}
+                    <span className="font-medium">{formatDisplayDate(olseraSyncStatus.lastFullySyncedDate)}</span> —{" "}
+                    {daysBetweenISO(
+                      olseraStart > olseraSyncStatus.lastFullySyncedDate
+                        ? olseraStart
+                        : addDaysISO(olseraSyncStatus.lastFullySyncedDate, 1),
+                      olseraEnd,
+                    ) + 1}{" "}
+                    hari tersisa dalam rentang ini belum disinkron. Total di bawah HANYA mencerminkan hari yang sudah
+                    disync.
+                  </div>
+                )}
                 {olseraLoading ? (
                   <div className="flex items-center gap-2 py-10 text-sm text-slate-500">
                     <RefreshCw className="h-4 w-4 animate-spin" />
@@ -1472,6 +1731,7 @@ export default function DashboardPage() {
                       <thead className="bg-white">
                         <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
                           <th className="h-10 px-2 font-medium">Kategori</th>
+                          <th className="h-10 px-2 text-right font-medium">Qty</th>
                           <th className="h-10 px-2 text-right font-medium">Total Penjualan</th>
                         </tr>
                       </thead>
@@ -1480,6 +1740,7 @@ export default function DashboardPage() {
                           olseraRows.map((row) => (
                             <tr key={row.kategori} className="border-b last:border-0">
                               <td className="px-2 py-3">{row.kategori}</td>
+                              <td className="whitespace-nowrap px-2 py-3 text-right">{row.qty ?? "-"}</td>
                               <td className="whitespace-nowrap px-2 py-3 text-right">
                                 {formatRupiah(row.totalPenjualan)}
                               </td>
@@ -1487,8 +1748,8 @@ export default function DashboardPage() {
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={2} className="px-2 py-10 text-center text-slate-500">
-                              Tidak ada data penjualan pada rentang tanggal ini.
+                            <td colSpan={3} className="px-2 py-10 text-center text-slate-500">
+                              Tidak ada data penjualan pada rentang tanggal ini. Jalankan sinkronisasi terlebih dahulu.
                             </td>
                           </tr>
                         )}
@@ -1497,6 +1758,9 @@ export default function DashboardPage() {
                         <tfoot>
                           <tr className="border-t bg-[rgb(var(--accent))]">
                             <td className="px-2 py-3 font-semibold">Total</td>
+                            <td className="whitespace-nowrap px-2 py-3 text-right font-semibold">
+                              {olseraRows.reduce((sum, row) => sum + (row.qty ?? 0), 0)}
+                            </td>
                             <td className="whitespace-nowrap px-2 py-3 text-right font-semibold">
                               {formatRupiah(olseraRows.reduce((sum, row) => sum + row.totalPenjualan, 0))}
                             </td>
@@ -1509,6 +1773,7 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </section>
+
           </>
           )}
 

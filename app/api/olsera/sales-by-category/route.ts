@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { getSalesItemsPerGroup } from "@/lib/olsera";
+import { collections, withMongo } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 
-// Data diambil live dari API Olsera setiap request: jangan di-cache.
+// Data dibaca dari MongoDB (hasil sync olsera_sales_by_category), bukan live API Olsera.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -38,12 +38,19 @@ export async function GET(request: Request) {
       );
     }
 
-    const result = await getSalesItemsPerGroup(from, to);
-    if (!result.ok) {
-      return NextResponse.json({ error: result.error, from, to }, { status: 502, headers: NO_CACHE_HEADERS });
-    }
+    const data = await withMongo(async () => {
+      const { olseraSalesByCategory } = await collections();
+      const rows = await olseraSalesByCategory
+        .aggregate<{ _id: string; qty: number; totalAmount: number }>([
+          { $match: { date: { $gte: from, $lte: to } } },
+          { $group: { _id: "$category", qty: { $sum: "$qty" }, totalAmount: { $sum: "$totalAmount" } } },
+          { $sort: { totalAmount: -1 } },
+        ])
+        .toArray();
+      return rows.map((row) => ({ kategori: row._id, qty: row.qty, totalPenjualan: row.totalAmount }));
+    });
 
-    return NextResponse.json({ data: result.data, from, to }, { headers: NO_CACHE_HEADERS });
+    return NextResponse.json({ data, from, to }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     console.error(error);

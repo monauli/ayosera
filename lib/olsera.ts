@@ -20,7 +20,7 @@ export type OlseraSalesResult =
   | { ok: true; data: OlseraSalesCategory[] }
   | { ok: false; error: string };
 
-async function getAccessToken(): Promise<{ token: string } | { error: string }> {
+export async function getAccessToken(): Promise<{ token: string } | { error: string }> {
   const appId = process.env.OLSERA_APP_ID;
   const secretKey = process.env.OLSERA_SECRET_KEY;
   if (!appId || !secretKey) {
