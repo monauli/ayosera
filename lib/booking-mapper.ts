@@ -70,6 +70,7 @@ export function toTransactionRow(booking: BookingDocument) {
     changeType: booking.changeType ?? null,
     changedAt: booking.changedAt?.toISOString?.() || undefined,
     previousSchedule: booking.previousSchedule,
+    fieldChanges: booking.fieldChanges,
   };
 }
 

@@ -20,7 +20,50 @@ type ExistingBookingProjection = {
   date?: string;
   start_time?: string;
   end_time?: string;
+  total_price?: number;
+  status?: string;
+  booker_name?: string;
+  booker_phone?: string;
+  booker_email?: string;
+  note?: string;
 };
+
+// Field non-jadwal yang dilacak rinciannya saat booking berubah (changeType "updated").
+const TRACKED_FIELDS: { key: keyof TrackedFieldValues; label: string }[] = [
+  { key: "total_price", label: "Harga" },
+  { key: "status", label: "Status" },
+  { key: "booker_name", label: "Nama Pemesan" },
+  { key: "booker_phone", label: "Telepon" },
+  { key: "booker_email", label: "Email" },
+  { key: "note", label: "Catatan" },
+];
+
+type TrackedFieldValues = Pick<
+  ExistingBookingProjection,
+  "total_price" | "status" | "booker_name" | "booker_phone" | "booker_email" | "note"
+>;
+
+function formatTrackedValue(key: keyof TrackedFieldValues, value: string | number | undefined) {
+  if (key === "total_price") {
+    return new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(Number(value || 0));
+  }
+  const text = value === undefined || value === null ? "" : String(value);
+  return text.trim() ? text : "-";
+}
+
+function diffTrackedFields(prev: TrackedFieldValues, next: TrackedFieldValues) {
+  const changes: { field: string; from: string; to: string }[] = [];
+  for (const { key, label } of TRACKED_FIELDS) {
+    const before = formatTrackedValue(key, prev[key]);
+    const after = formatTrackedValue(key, next[key]);
+    if (before !== after) changes.push({ field: label, from: before, to: after });
+  }
+  return changes;
+}
 
 export function extractBookingItems(payload: unknown): Record<string, unknown>[] {
   if (Array.isArray(payload)) {
@@ -90,6 +133,12 @@ export async function upsertBookingItems(items: Record<string, unknown>[]): Prom
         date: 1,
         start_time: 1,
         end_time: 1,
+        total_price: 1,
+        status: 1,
+        booker_name: 1,
+        booker_phone: 1,
+        booker_email: 1,
+        note: 1,
       })
       .toArray();
     const existingMap = new Map(existing.map((doc) => [doc.booking_id, doc]));
@@ -126,6 +175,8 @@ export async function upsertBookingItems(items: Record<string, unknown>[]): Prom
             start_time: prev!.start_time ?? "",
             end_time: prev!.end_time ?? "",
           };
+        } else {
+          booking.fieldChanges = diffTrackedFields(prev!, booking);
         }
         operations.push({
           updateOne: {

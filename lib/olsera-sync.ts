@@ -10,8 +10,13 @@ import { getAccessToken } from "@/lib/olsera";
 
 const BASE_URL = "https://api-open.olsera.co.id";
 const API_PREFIX = "/api/open-api/v1/id";
-const DETAIL_DELAY_MS = 350;
-const LIST_DELAY_MS = 250;
+const DETAIL_DELAY_MS = 100;
+const LIST_DELAY_MS = 100;
+// Jumlah request detail order yang berjalan paralel. Rate limit Olsera
+// ditangani lewat retry-backoff pada getJson, bukan jeda panjang.
+const DETAIL_CONCURRENCY = 4;
+// Cache daftar produk lintas pemanggilan (module-level, tahan selama proses hidup).
+const PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const UNKNOWN_CATEGORY = "Tidak Diketahui";
 
@@ -26,8 +31,13 @@ export type OlseraSyncResult = {
   expectedOrderCount: number;
   processedOrderCount: number;
   lastFullySyncedDate: string | null;
-  days: { date: string; expected: number; processed: number; success: boolean }[];
+  days: { date: string; expected: number; processed: number; success: boolean; skipped?: boolean }[];
   errorMessage: string | null;
+};
+
+export type OlseraSyncOptions = {
+  /** true = sync ulang hari yang sudah tercatat tuntas (default: dilewati). */
+  force?: boolean;
 };
 
 // Normalisasi nama klasifikasi (identik dengan skrip validasi): trim, collapse
@@ -77,17 +87,41 @@ async function getJson(
   const url = new URL(BASE_URL + pathName);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
-  const response = await fetch(url.toString(), {
-    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-  // 404 pada endpoint order Olsera berarti "tidak ada data", bukan error.
-  if (response.status === 404 && allow404) return null;
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`HTTP ${response.status} untuk ${pathName}: ${raw.slice(0, 200)}`);
+  // Jeda antar-request dipendekkan; kompensasinya: retry dengan backoff saat
+  // Olsera menjawab 429/5xx.
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(url.toString(), {
+      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    // 404 pada endpoint order Olsera berarti "tidak ada data", bukan error.
+    if (response.status === 404 && allow404) return null;
+    if ((response.status === 429 || response.status >= 500) && attempt < 4) {
+      const retryAfter = Number(response.headers.get("retry-after"));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** (attempt - 1);
+      await sleep(Math.min(waitMs, 10_000));
+      continue;
+    }
+    if (!response.ok) {
+      const raw = await response.text();
+      throw new Error(`HTTP ${response.status} untuk ${pathName}: ${raw.slice(0, 200)}`);
+    }
+    return (await response.json()) as Record<string, unknown>;
   }
-  return (await response.json()) as Record<string, unknown>;
+}
+
+let productCache: { map: Map<string, ProductInfo>; fetchedAt: number } | null = null;
+
+// Peta produk di-cache per proses: daftar produk jarang berubah dan penarikannya
+// (paging 100/halaman) adalah biaya tetap terbesar di awal setiap sync.
+// Map yang sama dipakai ulang sehingga hasil resolveKlasifikasi ikut terawetkan.
+async function getProductMap(token: string): Promise<Map<string, ProductInfo>> {
+  if (productCache && Date.now() - productCache.fetchedAt < PRODUCT_CACHE_TTL_MS) {
+    return productCache.map;
+  }
+  const map = await fetchAllProducts(token);
+  productCache = { map, fetchedAt: Date.now() };
+  return map;
 }
 
 async function fetchAllProducts(token: string): Promise<Map<string, ProductInfo>> {
@@ -211,7 +245,11 @@ async function resolveKlasifikasi(
   return normalizeKlasifikasi(info?.klasifikasi ?? UNKNOWN_CATEGORY);
 }
 
-export async function syncOlseraSalesByCategory(startDate: string, endDate: string): Promise<OlseraSyncResult> {
+export async function syncOlseraSalesByCategory(
+  startDate: string,
+  endDate: string,
+  options: OlseraSyncOptions = {},
+): Promise<OlseraSyncResult> {
   const startedAt = new Date();
   const result: OlseraSyncResult = {
     status: "failed",
@@ -229,11 +267,29 @@ export async function syncOlseraSalesByCategory(startDate: string, endDate: stri
     if ("error" in auth) throw new Error(auth.error);
     const token = auth.token;
 
-    const productMap = await fetchAllProducts(token);
+    const productMap = await getProductMap(token);
+
+    // Hari yang sudah pernah tuntas dilewati (kecuali force) — sync ulang
+    // rentang lebar jadi hanya mengerjakan hari yang benar-benar kurang.
+    const alreadySynced = new Set<string>();
+    if (!options.force) {
+      await withMongo(async () => {
+        const { olseraSyncedDays } = await collections();
+        const docs = await olseraSyncedDays
+          .find({ _id: { $gte: startDate, $lte: endDate } }, { projection: { _id: 1 } })
+          .toArray();
+        for (const doc of docs) alreadySynced.add(doc._id);
+      });
+    }
 
     for (const date of eachDay(startDate, endDate)) {
-      const day = { date, expected: 0, processed: 0, success: false };
+      const day = { date, expected: 0, processed: 0, success: false, skipped: false };
       result.days.push(day);
+      if (alreadySynced.has(date)) {
+        day.success = true;
+        day.skipped = true;
+        continue;
+      }
       try {
         // Langkah 1-3: Close + Open paid, dedup by order id.
         const closeIds = await fetchOrderIds(token, "closeorder", date);
@@ -248,31 +304,40 @@ export async function syncOlseraSalesByCategory(startDate: string, endDate: stri
         result.expectedOrderCount += orders.length;
 
         // Langkah 4-7: detail per order → agregasi per klasifikasi.
+        // Detail ditarik paralel (pool DETAIL_CONCURRENCY worker) — agregasi
+        // Map aman karena JS single-threaded.
         const byCategory = new Map<string, Aggregate>();
-        for (const order of orders) {
-          await sleep(DETAIL_DELAY_MS);
-          let items: OrderItem[];
-          try {
-            items = await fetchOrderDetail(token, order);
-          } catch (error) {
-            console.error(`Olsera sync: gagal detail order ${order.id} (${date})`, error);
-            continue;
+        let cursor = 0;
+        const worker = async () => {
+          for (;;) {
+            const index = cursor++;
+            if (index >= orders.length) return;
+            const order = orders[index];
+            await sleep(DETAIL_DELAY_MS);
+            let items: OrderItem[];
+            try {
+              items = await fetchOrderDetail(token, order);
+            } catch (error) {
+              console.error(`Olsera sync: gagal detail order ${order.id} (${date})`, error);
+              continue;
+            }
+            for (const item of items) {
+              const category = await resolveKlasifikasi(
+                token,
+                String(item.product_id),
+                String(item.product_name ?? ""),
+                productMap,
+              );
+              const entry = byCategory.get(category) ?? { qty: 0, amount: 0 };
+              entry.qty += toNumber(item.qty);
+              entry.amount += toNumber(item.amount);
+              byCategory.set(category, entry);
+            }
+            day.processed++;
+            result.processedOrderCount++;
           }
-          for (const item of items) {
-            const category = await resolveKlasifikasi(
-              token,
-              String(item.product_id),
-              String(item.product_name ?? ""),
-              productMap,
-            );
-            const entry = byCategory.get(category) ?? { qty: 0, amount: 0 };
-            entry.qty += toNumber(item.qty);
-            entry.amount += toNumber(item.amount);
-            byCategory.set(category, entry);
-          }
-          day.processed++;
-          result.processedOrderCount++;
-        }
+        };
+        await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker));
 
         day.success = day.processed === day.expected;
 
@@ -280,7 +345,7 @@ export async function syncOlseraSalesByCategory(startDate: string, endDate: stri
         // data lama yang benar dengan angka yang kurang.
         if (day.success) {
           await withMongo(async () => {
-            const { olseraSalesByCategory } = await collections();
+            const { olseraSalesByCategory, olseraSyncedDays } = await collections();
             const syncedAt = new Date();
             if (byCategory.size) {
               await olseraSalesByCategory.bulkWrite(
@@ -295,6 +360,13 @@ export async function syncOlseraSalesByCategory(startDate: string, endDate: stri
             }
             // Buang kategori lama yang tidak muncul lagi pada sync ulang hari ini.
             await olseraSalesByCategory.deleteMany({ date, syncedAt: { $lt: syncedAt } });
+            // Tandai hari ini tuntas agar sync berikutnya (rentang tumpang tindih)
+            // bisa langsung dilewati tanpa menarik ulang order+detail.
+            await olseraSyncedDays.updateOne(
+              { _id: date },
+              { $set: { expectedOrderCount: day.expected, syncedAt } },
+              { upsert: true },
+            );
           });
         }
       } catch (error) {

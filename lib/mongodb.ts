@@ -45,6 +45,8 @@ export type BookingDocument = {
   changedAt?: Date;
   /** Jadwal sebelumnya, hanya diisi saat terjadi reschedule. */
   previousSchedule?: { date: string; start_time: string; end_time: string };
+  /** Rincian field non-jadwal yang berubah saat changeType "updated" (nilai sudah human-readable). */
+  fieldChanges?: { field: string; from: string; to: string }[];
 };
 
 export type SyncLogDocument = {
@@ -109,6 +111,14 @@ export type OlseraSyncLogDocument = {
   errorMessage: string | null;
   startedAt: Date;
   finishedAt: Date | null;
+};
+
+export type OlseraSyncedDayDocument = {
+  /** Tanggal (YYYY-MM-DD, WIB) yang sudah tuntas disync penuh. */
+  _id: string;
+  /** Jumlah order (Close+Open dedup) saat hari ini dituntaskan. */
+  expectedOrderCount: number;
+  syncedAt: Date;
 };
 
 export type OlseraSyncStateDocument = {
@@ -183,6 +193,7 @@ export async function collections() {
     olseraSalesByCategory: db.collection<OlseraSalesByCategoryDocument>("olsera_sales_by_category"),
     olseraSyncLog: db.collection<OlseraSyncLogDocument>("olsera_sync_log"),
     olseraSyncState: db.collection<OlseraSyncStateDocument>("olsera_sync_state"),
+    olseraSyncedDays: db.collection<OlseraSyncedDayDocument>("olsera_synced_days"),
   };
 }
 
@@ -203,7 +214,7 @@ export async function ensureIndexes() {
 }
 
 async function createIndexes() {
-  const { users, bookings, syncLogs, fields, webhookLogs, olseraSalesByCategory, olseraSyncLog } =
+  const { users, bookings, syncLogs, fields, webhookLogs, olseraSalesByCategory, olseraSyncLog, olseraSyncedDays } =
     await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -221,6 +232,7 @@ async function createIndexes() {
     fields.createIndex({ id: 1 }, { unique: true }),
     olseraSalesByCategory.createIndex({ date: 1, category: 1 }, { unique: true }),
     olseraSyncLog.createIndex({ startedAt: -1 }),
+    olseraSyncedDays.createIndex({ syncedAt: -1 }),
   ]);
 }
 

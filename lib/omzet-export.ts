@@ -118,7 +118,6 @@ function sportOf(b: BookingDocument, ctx: OmzetExportInput) {
 // Kolom dari "Booking ID" .. "Note" (dipakai Walk In; basis untuk AYO & ALL).
 const BASE_COLUMNS: ColumnDef[] = [
   { header: "Booking ID", get: (b) => b.booking_id || "-", width: 24 },
-  { header: "Venue", get: (b, c) => b.branch_name || c.venueName, width: 16 },
   { header: "Court", get: (b) => b.field_name || "-", width: 14 },
   { header: "Court ID", get: (b) => b.field_id || "-", width: 9 },
   { header: "Sports \nCategory", get: (b, c) => sportOf(b, c), width: 11 },
@@ -252,18 +251,30 @@ function writeSumRow(
   }
 }
 
+/** Tanggal unik (urut naik) dari kumpulan booking; tanggal kosong ikut sebagai grup "". */
+function distinctDates(bookings: BookingDocument[]) {
+  return Array.from(new Set(bookings.map((b) => b.date || ""))).sort();
+}
+
 function buildWalkInSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const ws = wb.addWorksheet("Walk In");
   const columns = BASE_COLUMNS;
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (Walk In)", periodText(input), columns);
 
   const rows = input.dayBookings.filter((b) => !isAyoSource(b));
+  // Dikelompokkan per tanggal (urut naik); tiap tanggal ditutup 1 baris subtotal.
+  // Tanpa grand total di akhir (sesuai referensi; beda dengan sheet ALL).
   let r = 5;
-  for (const b of rows) {
-    writeDataRow(ws, r, columns, columns.map((c) => c.get(b, input)));
+  for (const date of distinctDates(rows)) {
+    const group = rows.filter((b) => (b.date || "") === date);
+    const groupStart = r;
+    for (const b of group) {
+      writeDataRow(ws, r, columns, columns.map((c) => c.get(b, input)));
+      r++;
+    }
+    writeSumRow(ws, r, columns, groupStart, r - 1);
     r++;
   }
-  if (rows.length) writeSumRow(ws, r, columns, 5, r - 1);
 }
 
 function buildAyoSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
@@ -279,13 +290,22 @@ function buildAyoSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   });
 
   const rows = input.dayBookings.filter((b) => isAyoSource(b));
+  // Pola sama dengan Walk In: subtotal per tanggal, tanpa grand total.
+  // Nomor urut ("No") berjalan menerus lintas tanggal.
   let r = 5;
-  rows.forEach((b, i) => {
-    const values = [i + 1, ...BASE_COLUMNS.map((c) => c.get(b, input)), ...META_COLUMNS.map((c) => c.get(b, input))];
-    writeDataRow(ws, r, columns, values);
+  let no = 0;
+  for (const date of distinctDates(rows)) {
+    const group = rows.filter((b) => (b.date || "") === date);
+    const groupStart = r;
+    for (const b of group) {
+      no++;
+      const values = [no, ...BASE_COLUMNS.map((c) => c.get(b, input)), ...META_COLUMNS.map((c) => c.get(b, input))];
+      writeDataRow(ws, r, columns, values);
+      r++;
+    }
+    writeSumRow(ws, r, columns, groupStart, r - 1);
     r++;
-  });
-  if (rows.length) writeSumRow(ws, r, columns, 5, r - 1);
+  }
 }
 
 function buildAllSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
@@ -340,8 +360,8 @@ function buildAllSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     const a = ws.getCell(`A${firstDataRow}`);
     a.value = input.date;
     a.alignment = { vertical: "middle", horizontal: "center" };
-    // label TOTAL di area B:M (sebelum kolom Price), seperti template
-    ws.mergeCells(`B${r}:M${r}`);
+    // label TOTAL di area B..kolom sebelum Price, seperti template
+    ws.mergeCells(`B${r}:${colLetter(priceIdx)}${r}`);
     const label = ws.getCell(`B${r}`);
     label.value = "TOTAL";
     label.font = { bold: true, size: 10 };
@@ -729,7 +749,10 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   }
 }
 
-/** ALL versi periode: dikelompokkan per TANGGAL (subtotal per hari + grand total). */
+/**
+ * ALL versi periode, mengikuti referensi:
+ * per TANGGAL → per COURT (subtotal court) → total tanggal → grand total keseluruhan.
+ */
 function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const ws = wb.addWorksheet("ALL");
   const baseWithoutDate = BASE_COLUMNS.filter((c) => !c.header.startsWith("Date of"));
@@ -744,7 +767,26 @@ function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const revenueIdx = columns.findIndex((c) => c.header.startsWith("Revenue"));
   const firstDataRow = 5;
   let r = firstDataRow;
-  const subtotalRows: number[] = [];
+  const dateTotalRows: number[] = [];
+
+  /** Baris total (kuning, bold) berisi penjumlahan baris-baris subtotal lain. */
+  function writeTotalOfRows(rowIndex: number, sourceRows: number[], label: string) {
+    const row = ws.getRow(rowIndex);
+    for (let i = priceIdx; i <= revenueIdx; i++) {
+      const letter = colLetter(i + 1);
+      const cell = row.getCell(i + 1);
+      cell.value = { formula: sourceRows.map((sr) => `${letter}${sr}`).join("+") };
+      cell.numFmt = MONEY_FMT;
+      cell.font = { bold: true, size: 10 };
+      cell.fill = solidFill(YELLOW);
+      cell.border = thinBorder();
+    }
+    ws.mergeCells(`B${rowIndex}:${colLetter(priceIdx)}${rowIndex}`);
+    const labelCell = ws.getCell(`B${rowIndex}`);
+    labelCell.value = label;
+    labelCell.font = { bold: true, size: 10 };
+    labelCell.alignment = { horizontal: "right" };
+  }
 
   // hanya tanggal yang punya booking, urut sesuai dateList
   const dates = (input.dateList ?? []).filter((d) =>
@@ -752,50 +794,41 @@ function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   );
 
   for (const date of dates) {
-    const group = input.dayBookings
-      .filter((b) => b.date === date)
-      .sort((a, b) => {
-        const pa = isPickle(a.field_name) ? 1 : 0;
-        const pb = isPickle(b.field_name) ? 1 : 0;
-        if (pa !== pb) return pa - pb;
-        const byCourt = (a.field_name || "").localeCompare(b.field_name || "", undefined, { numeric: true });
-        if (byCourt !== 0) return byCourt;
-        return (a.start_time || "").localeCompare(b.start_time || "");
-      });
-    if (!group.length) continue;
-    const groupStart = r;
-    for (const b of group) {
-      writeDataRow(ws, r, columns, columns.map((c) => c.get(b, input)));
+    const dayRows = input.dayBookings.filter((b) => b.date === date);
+    if (!dayRows.length) continue;
+    const dateStart = r;
+    const courtSubtotalRows: number[] = [];
+
+    // di dalam tanggal: per court (padel dulu lalu pickle) dengan subtotal per court
+    for (const court of distinctCourts(dayRows)) {
+      const group = dayRows
+        .filter((b) => b.field_name === court)
+        .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+      if (!group.length) continue;
+      const groupStart = r;
+      for (const b of group) {
+        writeDataRow(ws, r, columns, columns.map((c) => c.get(b, input)));
+        r++;
+      }
+      writeSumRow(ws, r, columns, groupStart, r - 1);
+      courtSubtotalRows.push(r);
       r++;
     }
-    writeSumRow(ws, r, columns, groupStart, r - 1);
-    // merge kolom Tanggal untuk blok hari ini (data + subtotal)
-    ws.mergeCells(`A${groupStart}:A${r}`);
-    const a = ws.getCell(`A${groupStart}`);
+
+    // total tanggal = jumlah subtotal court pada tanggal itu
+    writeTotalOfRows(r, courtSubtotalRows, "TOTAL");
+    // merge kolom Tanggal untuk blok hari ini (data + subtotal court + total tanggal)
+    ws.mergeCells(`A${dateStart}:A${r}`);
+    const a = ws.getCell(`A${dateStart}`);
     a.value = date;
     a.alignment = { vertical: "middle", horizontal: "center" };
     a.border = thinBorder();
-    subtotalRows.push(r);
+    dateTotalRows.push(r);
     r++;
   }
 
-  if (subtotalRows.length) {
-    const grandRow = ws.getRow(r);
-    for (let i = priceIdx; i <= revenueIdx; i++) {
-      const letter = colLetter(i + 1);
-      const cell = grandRow.getCell(i + 1);
-      cell.value = { formula: subtotalRows.map((sr) => `${letter}${sr}`).join("+") };
-      cell.numFmt = MONEY_FMT;
-      cell.font = { bold: true, size: 10 };
-      cell.fill = solidFill(YELLOW);
-      cell.border = thinBorder();
-    }
-    ws.mergeCells(`B${r}:M${r}`);
-    const label = ws.getCell(`B${r}`);
-    label.value = "TOTAL";
-    label.font = { bold: true, size: 10 };
-    label.alignment = { horizontal: "right" };
-  }
+  // grand total keseluruhan = jumlah total tanggal
+  if (dateTotalRows.length) writeTotalOfRows(r, dateTotalRows, "GRAND TOTAL");
 }
 
 export async function buildOmzetPeriodWorkbook(input: OmzetExportInput): Promise<Uint8Array> {

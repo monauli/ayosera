@@ -9,8 +9,11 @@ const badgeVariants = cva(
       variant: {
         default: "bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]",
         secondary: "bg-slate-100 text-slate-700",
-        warning: "bg-amber-50 text-amber-700",
-        danger: "bg-rose-50 text-rose-700",
+        // success/warning/danger sengaja TIDAK ikut variabel tema supaya
+        // hijau/kuning/merah selalu jelas berbeda di semua pilihan tema.
+        success: "bg-emerald-100 text-emerald-800",
+        warning: "bg-amber-100 text-amber-800",
+        danger: "bg-red-100 text-red-700",
         info: "bg-sky-50 text-sky-700",
       },
     },

@@ -13,8 +13,6 @@ import {
   CalendarDays,
   CalendarRange,
   Check,
-  PencilLine,
-  Sparkles,
   CheckCircle2,
   ChevronDown,
   DatabaseZap,
@@ -83,8 +81,9 @@ type TransactionRow = {
   changeType?: "new" | "updated" | "rescheduled" | null;
   changedAt?: string;
   previousSchedule?: { date: string; start_time: string; end_time: string };
+  fieldChanges?: { field: string; from: string; to: string }[];
 };
-type DatePreset = "today" | "month" | "lastMonth" | "custom" | "manualMonth";
+type DatePreset = "today" | "yesterday" | "month" | "lastMonth" | "custom" | "manualMonth";
 
 type WebhookLogRow = {
   receivedAt: string;
@@ -173,14 +172,14 @@ const themeOptions = [
 ];
 
 function statusVariant(status: string) {
-  if (status === "Completed") return "default";
+  if (status === "Completed") return "success";
   if (status === "Pending") return "warning";
   return "danger";
 }
 
 function statusLabel(status: string) {
   if (status === "Completed") return "Selesai";
-  if (status === "Pending") return "Tertunda";
+  if (status === "Pending") return "Belum Bayar";
   if (status === "Cancelled") return "Dibatalkan";
   return status;
 }
@@ -198,22 +197,8 @@ function changeIndicator(row: TransactionRow) {
       title,
     };
   }
-  if (row.changeType === "updated") {
-    return {
-      label: "Diperbarui",
-      icon: PencilLine,
-      className: "bg-sky-100 text-sky-800",
-      title: "Data diperbarui pada sinkronisasi terakhir",
-    };
-  }
-  if (row.changeType === "new") {
-    return {
-      label: "Baru",
-      icon: Sparkles,
-      className: "bg-emerald-100 text-emerald-800",
-      title: "Data baru ditarik dari AYO",
-    };
-  }
+  // changeType "new"/"updated" sengaja tidak diberi badge (tampil "—" seperti tanpa perubahan);
+  // datanya (changeType/changedAt/fieldChanges) tetap tersimpan di database.
   return null;
 }
 
@@ -254,6 +239,11 @@ function getDatePresetRange(value: DatePreset) {
 
   if (value === "today") {
     return { startDate: currentDate, endDate: currentDate };
+  }
+
+  if (value === "yesterday") {
+    const yesterday = addDaysISO(currentDate, -1);
+    return { startDate: yesterday, endDate: yesterday };
   }
 
   if (value === "lastMonth") {
@@ -302,6 +292,7 @@ function formatMonthLabel(value: string) {
 
 function getRevenueFilterDetail(preset: DatePreset, startDate: string, endDate: string) {
   if (preset === "today") return `Hari ini (${formatDisplayDate(startDate)})`;
+  if (preset === "yesterday") return `Kemarin (${formatDisplayDate(startDate)})`;
   if (preset === "month") return `Bulan ini (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
   if (preset === "lastMonth") return `Bulan lalu (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
   if (preset === "manualMonth")
@@ -322,6 +313,7 @@ function formatRupiah(value: number) {
 
 const datePresetButtons: { label: string; value: DatePreset }[] = [
   { label: "Hari ini", value: "today" },
+  { label: "Kemarin", value: "yesterday" },
   { label: "Bulan ini", value: "month" },
   { label: "Bulan lalu", value: "lastMonth" },
 ];
@@ -352,6 +344,9 @@ export default function DashboardPage() {
   const [endDate, setEndDate] = useState(today);
   const [datePreset, setDatePreset] = useState<DatePreset>("today");
   const [filterMonth, setFilterMonth] = useState(currentMonth);
+  // Input custom range terpisah dari startDate/endDate: baru diterapkan saat kedua tanggal valid.
+  const [customRangeStart, setCustomRangeStart] = useState(today);
+  const [customRangeEnd, setCustomRangeEnd] = useState(today);
   const [syncMonth, setSyncMonth] = useState(currentMonth);
   const [syncRangeStart, setSyncRangeStart] = useState(today);
   const [syncRangeEnd, setSyncRangeEnd] = useState(today);
@@ -393,7 +388,7 @@ export default function DashboardPage() {
   const [exportEnd, setExportEnd] = useState(today);
   const [exportMonth, setExportMonth] = useState(currentMonth);
   const [sort, setSort] = useState<SortState>({ key: "date", dir: "asc" });
-  const emptyColumnFilters = { date: today, id: "", customer: "", service: "", status: "" };
+  const emptyColumnFilters = { date: today, id: "", customer: "", service: "", status: "", change: "" };
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>(emptyColumnFilters);
 
   function handleSort(key: SortKey) {
@@ -449,6 +444,7 @@ export default function DashboardPage() {
     if (columnFilters.customer.trim()) txnParams.set("search", columnFilters.customer.trim());
     if (columnFilters.service) txnParams.set("court", columnFilters.service);
     if (columnFilters.status) txnParams.set("status", columnFilters.status);
+    if (columnFilters.change) txnParams.set("change", columnFilters.change);
     txnParams.set("_t", String(Date.now()));
     const transactionPath = `/api/transactions?${txnParams.toString()}`;
 
@@ -636,14 +632,17 @@ export default function DashboardPage() {
     setPage(1);
   }
 
-  function handleCustomStartDate(value: string) {
+  function handleCustomRangeChange(rangeStart: string, rangeEnd: string) {
+    setCustomRangeStart(rangeStart);
+    setCustomRangeEnd(rangeEnd);
     setDatePreset("custom");
-    setStartDate(value);
-  }
-
-  function handleCustomEndDate(value: string) {
-    setDatePreset("custom");
-    setEndDate(value);
+    // Terapkan hanya kalau kedua tanggal terisi dan urutannya valid;
+    // kalau belum, data terakhir tetap tampil sampai rentang valid.
+    if (rangeStart && rangeEnd && rangeStart <= rangeEnd) {
+      setStartDate(rangeStart);
+      setEndDate(rangeEnd);
+      setPage(1);
+    }
   }
 
   function closeSyncMenu() {
@@ -690,6 +689,8 @@ export default function DashboardPage() {
     setStartDate(range.startDate);
     setEndDate(range.endDate);
     setFilterMonth(currentMonth);
+    setCustomRangeStart(range.startDate);
+    setCustomRangeEnd(range.endDate);
     setColumnFilters(emptyColumnFilters);
     setPage(1);
   }
@@ -956,10 +957,39 @@ export default function DashboardPage() {
           onChange={(event) => handleMonthFilter(event.target.value)}
         />
       </div>
+      <div
+        className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
+          datePreset === "custom"
+            ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            : "bg-white"
+        }`}
+      >
+        <CalendarRange className="h-4 w-4 text-slate-500" />
+        <Input
+          type="date"
+          aria-label="Tanggal mulai filter custom"
+          value={customRangeStart}
+          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+          onClick={(event) => event.currentTarget.showPicker?.()}
+          onChange={(event) => handleCustomRangeChange(event.target.value, customRangeEnd)}
+        />
+        <span className="text-xs text-slate-500">s/d</span>
+        <Input
+          type="date"
+          aria-label="Tanggal selesai filter custom"
+          value={customRangeEnd}
+          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+          onClick={(event) => event.currentTarget.showPicker?.()}
+          onChange={(event) => handleCustomRangeChange(customRangeStart, event.target.value)}
+        />
+      </div>
       <Button type="button" variant="ghost" onClick={handleResetFilters}>
         <RotateCcw className="h-4 w-4" />
         Reset
       </Button>
+      {datePreset === "custom" && isInvalidDateRange(customRangeStart, customRangeEnd) && (
+        <span className="text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
+      )}
     </div>
   );
 
@@ -1435,11 +1465,20 @@ export default function DashboardPage() {
                           >
                             <option value="">Semua</option>
                             <option value="Completed">Selesai</option>
-                            <option value="Pending">Tertunda</option>
+                            <option value="Pending">Belum Bayar</option>
                             <option value="Cancelled">Dibatalkan</option>
                           </select>
                         </th>
-                        <th className="px-2 pb-2" />
+                        <th className="px-2 pb-2">
+                          <select
+                            value={columnFilters.change}
+                            onChange={(event) => setColumnFilter("change", event.target.value)}
+                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
+                          >
+                            <option value="">Semua</option>
+                            <option value="rescheduled">Reschedule</option>
+                          </select>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1852,7 +1891,6 @@ export default function DashboardPage() {
                         <th className="h-10 px-2 font-medium">Item</th>
                         <th className="h-10 px-2 font-medium">ID Terdeteksi</th>
                         <th className="h-10 px-2 font-medium">Pesan</th>
-                        <th className="h-10 px-2 font-medium">Payload</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1879,17 +1917,12 @@ export default function DashboardPage() {
                               <td className="max-w-[220px] truncate px-2 py-2" title={log.message}>
                                 {log.message || "—"}
                               </td>
-                              <td className="px-2 py-2">
-                                <pre className="max-h-24 max-w-[280px] overflow-auto rounded bg-slate-50 p-2 text-xs text-slate-600">
-                                  {log.bodyPreview || "—"}
-                                </pre>
-                              </td>
                             </tr>
                           );
                         })
                       ) : (
                         <tr>
-                          <td colSpan={6} className="h-[200px] text-center text-sm text-slate-500">
+                          <td colSpan={5} className="h-[200px] text-center text-sm text-slate-500">
                             {webhookLoading ? "Memuat…" : "Belum ada webhook yang diterima"}
                           </td>
                         </tr>

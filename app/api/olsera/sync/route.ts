@@ -17,6 +17,7 @@ export const maxDuration = 300;
 const syncSchema = z.object({
   start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  force: z.boolean().optional(),
 });
 
 export async function GET() {
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await syncOlseraSalesByCategory(startDate, endDate);
+    const result = await syncOlseraSalesByCategory(startDate, endDate, { force: body.force });
     return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;

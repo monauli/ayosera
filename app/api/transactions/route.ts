@@ -61,6 +61,16 @@ export async function GET(request: Request) {
       appendAnd(filter, { $or: [{ booker_name: rx }, { booker_phone: rx }, { booking_id: rx }] });
     }
 
+    // Filter kolom "Perubahan"; "none" berarti tidak ada perubahan tercatat (termasuk dokumen lama).
+    const change = searchParams.get("change")?.trim();
+    if (change) {
+      if (change === "none") {
+        appendAnd(filter, { $or: [{ changeType: { $exists: false } }, { changeType: null }] });
+      } else {
+        appendAnd(filter, { changeType: change });
+      }
+    }
+
     const sortSpec = buildSort(searchParams.get("sort"), searchParams.get("dir"));
 
     const result = await withMongo(async () => {
