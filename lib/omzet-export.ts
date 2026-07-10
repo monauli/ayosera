@@ -58,7 +58,7 @@ function isPickle(fieldName: string) {
 }
 
 function courtLabel(fieldName: string) {
-  if (isPickle(fieldName)) return "pickleball 1";
+  if (isPickle(fieldName)) return `pickleball ${pickleCourtNumber(fieldName)}`;
   const m = fieldName.match(/no\.?\s*(\d+)/i);
   if (m) return `Court ${m[1]}`;
   return fieldName;
@@ -118,7 +118,7 @@ function sportOf(b: BookingDocument, ctx: OmzetExportInput) {
 // Kolom dari "Booking ID" .. "Note" (dipakai Walk In; basis untuk AYO & ALL).
 const BASE_COLUMNS: ColumnDef[] = [
   { header: "Booking ID", get: (b) => b.booking_id || "-", width: 24 },
-  { header: "Court", get: (b) => b.field_name || "-", width: 14 },
+  { header: "Court", get: (b) => (b.field_name ? courtLabel(b.field_name) : "-"), width: 14 },
   { header: "Court ID", get: (b) => b.field_id || "-", width: 9 },
   { header: "Sports \nCategory", get: (b, c) => sportOf(b, c), width: 11 },
   { header: "Customer\nName", get: (b) => b.booker_name || "-", width: 18 },
@@ -327,7 +327,7 @@ function buildAllSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
 
   for (const court of courts) {
     const group = input.dayBookings
-      .filter((b) => b.field_name === court)
+      .filter((b) => matchesCourtColumn(court, b.field_name))
       .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
     if (!group.length) continue;
     const groupStart = r;
@@ -370,7 +370,14 @@ function buildAllSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
 }
 
 function distinctCourts(bookings: BookingDocument[]) {
-  const set = Array.from(new Set(bookings.map((b) => b.field_name).filter(Boolean)));
+  const set = Array.from(
+    new Set(
+      bookings
+        .map((b) => b.field_name)
+        .filter(Boolean)
+        .map((fieldName) => (isPickle(fieldName) ? `Pickleball Court No ${pickleCourtNumber(fieldName)}` : fieldName)),
+    ),
+  );
   return set.sort((a, b) => {
     const pa = isPickle(a) ? 1 : 0;
     const pb = isPickle(b) ? 1 : 0;
@@ -540,15 +547,20 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
 
 // Nama lapangan Pickleball di data punya beberapa variasi persis
 // ("Pickleball 1", "Pickleball 2", "Pickleball Court No 1", "Pickleball Court No 2", dst)
-// walau venue cuma punya 1 lapangan Pickleball fisik. Semua variasi digabung jadi
-// SATU entri representatif di sini supaya Summary sheet cuma render 1 kolom "pickleball 1".
-const PICKLE_CANONICAL = "Pickleball Court No 1";
+// Data booking dapat memakai beberapa variasi nama, tetapi venue memiliki dua
+// lapangan pickleball yang harus tetap menjadi dua kolom terpisah di export.
+const PICKLE_CANONICAL_1 = "Pickleball Court No 1";
+const PICKLE_CANONICAL_2 = "Pickleball Court No 2";
+
+function pickleCourtNumber(fieldName: string) {
+  return /(?:no\.?|court|pickleball)\s*2\b/i.test(fieldName) ? 2 : 1;
+}
 
 function distinctCourtsForSummary(bookings: BookingDocument[]) {
   const padel = Array.from(new Set(bookings.map((b) => b.field_name).filter((f) => f && !isPickle(f))));
   const hasPickle = bookings.some((b) => b.field_name && isPickle(b.field_name));
-  const set = hasPickle ? [...padel, PICKLE_CANONICAL] : padel;
-  if (!set.length) return ["Court No 1", "Court No 2", "Court No 3", "Court No 4", PICKLE_CANONICAL];
+  const set = hasPickle ? [...padel, PICKLE_CANONICAL_1, PICKLE_CANONICAL_2] : padel;
+  if (!set.length) return ["Court No 1", "Court No 2", "Court No 3", "Court No 4", PICKLE_CANONICAL_1, PICKLE_CANONICAL_2];
   return set.sort((a, b) => {
     const pa = isPickle(a) ? 1 : 0;
     const pb = isPickle(b) ? 1 : 0;
@@ -557,9 +569,11 @@ function distinctCourtsForSummary(bookings: BookingDocument[]) {
   });
 }
 
-/** Cocokkan booking ke entri court Summary: Padel by field_name persis, Pickle by isPickle() (semua variasi nama). */
+/** Cocokkan booking ke entri Summary; pickleball dipisahkan berdasarkan nomor lapangan. */
 function matchesCourtColumn(court: string, fieldName: string) {
-  return isPickle(court) ? isPickle(fieldName) : court === fieldName;
+  return isPickle(court)
+    ? isPickle(fieldName) && pickleCourtNumber(court) === pickleCourtNumber(fieldName)
+    : court === fieldName;
 }
 
 export async function buildOmzetHarianWorkbook(input: OmzetExportInput): Promise<Uint8Array> {
@@ -815,7 +829,7 @@ function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     // di dalam tanggal: per court (padel dulu lalu pickle) dengan subtotal per court
     for (const court of distinctCourts(dayRows)) {
       const group = dayRows
-        .filter((b) => b.field_name === court)
+        .filter((b) => matchesCourtColumn(court, b.field_name))
         .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
       if (!group.length) continue;
       const groupStart = r;

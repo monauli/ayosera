@@ -51,13 +51,17 @@ export function buildBookingFilter(searchParams: URLSearchParams) {
   }
 
   if (court && court !== "all") {
+    const pickleNumber = court.match(/^Pickleball Court No ([12])$/i)?.[1];
+    const courtCondition = pickleNumber
+      ? { $regex: `pickleball.*(?:no\\.?\\s*)?${pickleNumber}\\b`, $options: "i" }
+      : court;
     appendAnd(filter, {
       $or: [
-        { field_name: court },
-        { "raw.field_name": court },
-        { "raw.field.name": court },
-        { "raw.court_name": court },
-        { "raw.court.name": court },
+        { field_name: courtCondition },
+        { "raw.field_name": courtCondition },
+        { "raw.field.name": courtCondition },
+        { "raw.court_name": courtCondition },
+        { "raw.court.name": courtCondition },
       ],
     });
   }

@@ -970,7 +970,15 @@ export default function DashboardPage() {
   const pagedRows = transactionRows;
   const pageCount = Math.max(1, txnMeta.totalPages);
   const currentPage = Math.min(page, pageCount);
-  const serviceOptions = (dashboard?.branchOptions ?? []).map((option) => option.value);
+  const serviceOptions = Array.from(
+    new Map(
+      [
+        ...(dashboard?.branchOptions ?? []),
+        { label: "pickleball 1", value: "Pickleball Court No 1" },
+        { label: "pickleball 2", value: "Pickleball Court No 2" },
+      ].map((option) => [option.value, option] as const),
+    ).values(),
+  );
   const serviceRows = dashboard?.topServices ?? [];
   const paymentRows = dashboard?.paymentBreakdown ?? [];
   const eventRows = dashboard?.syncEvents ?? [];
@@ -1533,8 +1541,8 @@ export default function DashboardPage() {
                           >
                             <option value="">Semua</option>
                             {serviceOptions.map((service) => (
-                              <option key={service} value={service}>
-                                {service}
+                              <option key={service.value} value={service.value}>
+                                {service.label}
                               </option>
                             ))}
                           </select>
