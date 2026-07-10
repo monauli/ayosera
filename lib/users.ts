@@ -1,5 +1,5 @@
 import type { ObjectId } from "mongodb";
-import { APP_MODULES } from "@/lib/auth";
+import { APP_MODULES, SUPERVISOR_EMAIL } from "@/lib/auth";
 
 export type UserDoc = {
   _id: ObjectId;
@@ -12,7 +12,9 @@ export type UserDoc = {
 };
 
 export function toPublicUser(doc: UserDoc) {
-  const role = doc.role === "admin" || doc.role === "supervisor" ? "supervisor" : "user";
+  const role = doc.email.toLowerCase() === SUPERVISOR_EMAIL && (doc.role === "admin" || doc.role === "supervisor")
+    ? "supervisor"
+    : "user";
   return {
     id: doc._id.toHexString(),
     email: doc.email,

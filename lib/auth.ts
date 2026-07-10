@@ -5,8 +5,9 @@ import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { nextCookies } from "better-auth/next-js";
 import { getDb, getMongoDb, mongoClient } from "@/lib/mongodb";
 
-// Role efektif di aplikasi. Data lama di MongoDB bisa berisi "admin"/"viewer";
-// keduanya dinormalisasi saat sesi dibaca (admin → supervisor) tanpa mengubah dokumen.
+// Hanya akun ini yang boleh memiliki hak supervisor.
+export const SUPERVISOR_EMAIL = "timunemas@ayo.local";
+
 export type AppRole = "supervisor" | "user";
 
 export const APP_MODULES = ["dasbor", "transaksi", "olsera", "webhook"] as const;
@@ -70,9 +71,10 @@ export const auth = betterAuth({
   plugins: [nextCookies()],
 });
 
-function normalizeRole(role: unknown): AppRole {
-  // Akun admin lama otomatis dianggap supervisor tanpa migrasi data.
-  return role === "admin" || role === "supervisor" ? "supervisor" : "user";
+function normalizeRole(email: string, role: unknown): AppRole {
+  return email.toLowerCase() === SUPERVISOR_EMAIL && (role === "admin" || role === "supervisor")
+    ? "supervisor"
+    : "user";
 }
 
 function normalizeModules(role: AppRole, modules: unknown): AppModule[] {
@@ -89,7 +91,7 @@ function toSessionUser(user: {
   role?: unknown;
   allowedModules?: unknown;
 }): SessionUser {
-  const role = normalizeRole(user.role);
+  const role = normalizeRole(user.email, user.role);
   return {
     id: user.id,
     email: user.email,
@@ -121,7 +123,8 @@ export async function ensureDefaultAdmin() {
     { email },
     {
       $set: {
-        role: "admin",
+        role: "user",
+        allowedModules: [...APP_MODULES],
         emailVerified: true,
         updatedAt: new Date(),
       },
@@ -132,7 +135,7 @@ export async function ensureDefaultAdmin() {
 // Seed akun supervisor dari env — idempotent, mengikuti pola ensureDefaultAdmin.
 // Tanpa env SUPERVISOR_EMAIL/SUPERVISOR_PASSWORD, seeding dilewati.
 export async function ensureSupervisorAccount() {
-  const email = (process.env.SUPERVISOR_EMAIL || "").trim().toLowerCase();
+  const email = SUPERVISOR_EMAIL;
   const password = process.env.SUPERVISOR_PASSWORD || "";
   if (!email || !password) return;
 

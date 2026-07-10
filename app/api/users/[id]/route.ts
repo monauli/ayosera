@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { z } from "zod";
-import { APP_MODULES, auth, requireSupervisor } from "@/lib/auth";
+import { APP_MODULES, auth, requireSupervisor, SUPERVISOR_EMAIL } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
 import { toPublicUser, type UserDoc } from "@/lib/users";
 
@@ -43,7 +43,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!target) return NextResponse.json({ error: "Pengguna tidak ditemukan." }, { status: 404 });
 
     const isSelf = id === supervisor.id;
-    const targetIsSupervisor = target.role === "admin" || target.role === "supervisor";
+    const targetIsSupervisor = target.email.toLowerCase() === SUPERVISOR_EMAIL;
 
     if (body.disabled === true && (isSelf || targetIsSupervisor)) {
       return NextResponse.json(
@@ -101,7 +101,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     const users = db.collection<UserDoc>("user");
     const target = await users.findOne({ _id: oid });
     if (!target) return NextResponse.json({ error: "Pengguna tidak ditemukan." }, { status: 404 });
-    if (target.role === "admin" || target.role === "supervisor") {
+    if (target.email.toLowerCase() === SUPERVISOR_EMAIL) {
       return NextResponse.json({ error: "Akun supervisor tidak dapat dihapus dari sini." }, { status: 400 });
     }
 

@@ -58,7 +58,7 @@ function isPickle(fieldName: string) {
 }
 
 function courtLabel(fieldName: string) {
-  if (isPickle(fieldName)) return "Pickle Court";
+  if (isPickle(fieldName)) return "pickleball 1";
   const m = fieldName.match(/no\.?\s*(\d+)/i);
   if (m) return `Court ${m[1]}`;
   return fieldName;
@@ -541,7 +541,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
 // Nama lapangan Pickleball di data punya beberapa variasi persis
 // ("Pickleball 1", "Pickleball 2", "Pickleball Court No 1", "Pickleball Court No 2", dst)
 // walau venue cuma punya 1 lapangan Pickleball fisik. Semua variasi digabung jadi
-// SATU entri representatif di sini supaya Summary sheet cuma render 1 kolom "Pickle Court".
+// SATU entri representatif di sini supaya Summary sheet cuma render 1 kolom "pickleball 1".
 const PICKLE_CANONICAL = "Pickleball Court No 1";
 
 function distinctCourtsForSummary(bookings: BookingDocument[]) {
