@@ -444,7 +444,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   for (const b of input.dayBookings) {
     const day = Number((b.date || "").slice(8, 10));
     if (!day) continue;
-    const ci = courtCols.find((c) => c.court === b.field_name);
+    const ci = courtCols.find((c) => matchesCourtColumn(c.court, b.field_name));
     if (!ci) continue;
     const col = isAyoSource(b) ? ci.ayoCol : ci.walkCol;
     const key = `${day}|${col}`;
@@ -538,15 +538,28 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   }
 }
 
+// Nama lapangan Pickleball di data punya beberapa variasi persis
+// ("Pickleball 1", "Pickleball 2", "Pickleball Court No 1", "Pickleball Court No 2", dst)
+// walau venue cuma punya 1 lapangan Pickleball fisik. Semua variasi digabung jadi
+// SATU entri representatif di sini supaya Summary sheet cuma render 1 kolom "Pickle Court".
+const PICKLE_CANONICAL = "Pickleball Court No 1";
+
 function distinctCourtsForSummary(bookings: BookingDocument[]) {
-  const set = Array.from(new Set(bookings.map((b) => b.field_name).filter(Boolean)));
-  if (!set.length) return ["Court No 1", "Court No 2", "Court No 3", "Court No 4", "Pickleball Court No 1"];
+  const padel = Array.from(new Set(bookings.map((b) => b.field_name).filter((f) => f && !isPickle(f))));
+  const hasPickle = bookings.some((b) => b.field_name && isPickle(b.field_name));
+  const set = hasPickle ? [...padel, PICKLE_CANONICAL] : padel;
+  if (!set.length) return ["Court No 1", "Court No 2", "Court No 3", "Court No 4", PICKLE_CANONICAL];
   return set.sort((a, b) => {
     const pa = isPickle(a) ? 1 : 0;
     const pb = isPickle(b) ? 1 : 0;
     if (pa !== pb) return pa - pb;
     return a.localeCompare(b, undefined, { numeric: true });
   });
+}
+
+/** Cocokkan booking ke entri court Summary: Padel by field_name persis, Pickle by isPickle() (semua variasi nama). */
+function matchesCourtColumn(court: string, fieldName: string) {
+  return isPickle(court) ? isPickle(fieldName) : court === fieldName;
 }
 
 export async function buildOmzetHarianWorkbook(input: OmzetExportInput): Promise<Uint8Array> {
@@ -661,7 +674,7 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   // Agregasi seluruh booking periode → key `${date}|${col}`.
   const agg = new Map<string, number>();
   for (const b of input.dayBookings) {
-    const ci = courtCols.find((c) => c.court === b.field_name);
+    const ci = courtCols.find((c) => matchesCourtColumn(c.court, b.field_name));
     if (!ci) continue;
     const col = isAyoSource(b) ? ci.ayoCol : ci.walkCol;
     const key = `${b.date}|${col}`;
