@@ -17,6 +17,7 @@ import {
   ChevronDown,
   DatabaseZap,
   LayoutDashboard,
+  LogOut,
   Menu,
   RefreshCw,
   Search,
@@ -1175,6 +1176,15 @@ export default function DashboardPage() {
             </div>
             <Button variant="outline" size="icon" aria-label="Notifikasi">
               <Bell className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void redirectToLogin()}
+              aria-label="Logout"
+              title="Logout"
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">Logout</span>
             </Button>
             {/* Tombol sync AYO hanya untuk supervisor; disembunyikan juga di halaman Olsera (punya tombol sync sendiri). */}
             {isSupervisor && activeNav !== "Olsera" && activeNav !== "Pengguna" && (
