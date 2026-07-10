@@ -22,6 +22,7 @@ import {
   Search,
   RotateCcw,
   Store,
+  Users,
   Webhook,
   Copy,
   Clock,
@@ -33,6 +34,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { UsersPanel } from "@/components/users-panel";
 
 type HourlyPoint = { time: string; transactions: number; revenue: number };
 type ServicePoint = { name: string; branch: string; revenue: string; count: number; progress: number };
@@ -153,11 +155,19 @@ function SortableHeader({
 }
 
 const navItems = [
-  { label: "Dasbor", icon: LayoutDashboard },
-  { label: "Transaksi", icon: Activity },
-  { label: "Olsera", icon: Store },
-  { label: "Webhook", icon: Webhook },
+  { label: "Dasbor", icon: LayoutDashboard, module: "dasbor" },
+  { label: "Transaksi", icon: Activity, module: "transaksi" },
+  { label: "Olsera", icon: Store, module: "olsera" },
+  { label: "Webhook", icon: Webhook, module: "webhook" },
 ];
+
+type SessionUserInfo = {
+  id: string;
+  email: string;
+  name: string;
+  role: "supervisor" | "user";
+  allowedModules: string[];
+};
 
 const WEBHOOK_URL = "https://ayosera.vercel.app/api/webhooks/ayo";
 
@@ -359,6 +369,7 @@ export default function DashboardPage() {
   const [theme, setTheme] = useState("white");
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Dasbor");
+  const [sessionUser, setSessionUser] = useState<SessionUserInfo | null>(null);
   const [webhookData, setWebhookData] = useState<WebhookPayload | null>(null);
   const [webhookStatus, setWebhookStatus] = useState<"unknown" | "active" | "inactive">("unknown");
   const [webhookLoading, setWebhookLoading] = useState(false);
@@ -400,6 +411,36 @@ export default function DashboardPage() {
     setColumnFilters((prev) => ({ ...prev, [key]: value }));
     setPage(1);
   }
+
+  // Muat info sesi (role + modul yang diizinkan) untuk mengatur nav & tombol sync.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/auth/me?_t=${Date.now()}`, { cache: "no-store" })
+      .then(async (response) => {
+        if (response.status === 401) {
+          await redirectToLogin();
+          return null;
+        }
+        return (await response.json().catch(() => null)) as { user?: SessionUserInfo } | null;
+      })
+      .then((payload) => {
+        if (cancelled || !payload?.user) return;
+        setSessionUser(payload.user);
+        // User biasa yang tidak punya akses "Dasbor" diarahkan ke modul pertama miliknya.
+        if (payload.user.role !== "supervisor") {
+          const allowedLabels = navItems
+            .filter((item) => payload.user!.allowedModules.includes(item.module))
+            .map((item) => item.label);
+          if (!allowedLabels.includes("Dasbor")) {
+            setActiveNav(allowedLabels[0] ?? "");
+          }
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -911,6 +952,17 @@ export default function DashboardPage() {
     }
   }
 
+  const isSupervisor = sessionUser?.role === "supervisor";
+  const visibleNavItems = sessionUser
+    ? isSupervisor
+      ? navItems
+      : navItems.filter((item) => sessionUser.allowedModules.includes(item.module))
+    : [];
+  const activeNavAllowed =
+    activeNav === "Pengguna"
+      ? isSupervisor
+      : Boolean(sessionUser) && visibleNavItems.some((item) => item.label === activeNav);
+
   const metrics = dashboard?.metrics;
   const dateRangeInvalid = isInvalidDateRange(startDate, endDate);
   // Pagination & filtering kini dilakukan di server; transactionRows hanya berisi halaman aktif.
@@ -1017,7 +1069,7 @@ export default function DashboardPage() {
           </div>
         </div>
         <nav className="space-y-1 px-3 py-4">
-          {navItems.map((item) => (
+          {[...visibleNavItems, ...(isSupervisor ? [{ label: "Pengguna", icon: Users, module: "" }] : [])].map((item) => (
             <button
               key={item.label}
               onClick={() => {
@@ -1111,7 +1163,9 @@ export default function DashboardPage() {
                     ? "Penjualan Olsera"
                     : activeNav === "Webhook"
                       ? "Monitoring Webhook AYO"
-                      : "Dasbor Transaksi Real-Time"}
+                      : activeNav === "Pengguna"
+                        ? "Manajemen Pengguna"
+                        : "Dasbor Transaksi Real-Time"}
               </h1>
               {activeNav === "Dasbor" && (
                 <p className="hidden text-sm text-slate-500 sm:block">
@@ -1122,8 +1176,8 @@ export default function DashboardPage() {
             <Button variant="outline" size="icon" aria-label="Notifikasi">
               <Bell className="h-4 w-4" />
             </Button>
-            {/* Tombol sync AYO disembunyikan khusus di halaman Olsera (punya tombol sync sendiri). */}
-            {activeNav !== "Olsera" && (
+            {/* Tombol sync AYO hanya untuk supervisor; disembunyikan juga di halaman Olsera (punya tombol sync sendiri). */}
+            {isSupervisor && activeNav !== "Olsera" && activeNav !== "Pengguna" && (
             <div className="relative">
               <Button
                 onClick={() => {
@@ -1236,7 +1290,26 @@ export default function DashboardPage() {
         <div className="px-4 py-5 sm:px-6">
           {syncMessage && <p className="mb-4 text-sm text-slate-600">{syncMessage}</p>}
 
-          {activeNav === "Dasbor" && (
+          {!sessionUser && (
+            <p className="py-10 text-center text-sm text-slate-500">Memuat sesi…</p>
+          )}
+
+          {sessionUser && !activeNavAllowed && (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <p className="text-sm font-medium text-slate-700">Akses ditolak</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Anda tidak memiliki izin untuk modul ini. Hubungi supervisor untuk meminta akses.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {activeNavAllowed && activeNav === "Pengguna" && isSupervisor && (
+            <UsersPanel currentUserId={sessionUser!.id} />
+          )}
+
+          {activeNavAllowed && activeNav === "Dasbor" && (
           <>
           <div className="mb-4">{presetFilterRow}</div>
 
@@ -1266,7 +1339,7 @@ export default function DashboardPage() {
           </>
           )}
 
-          {activeNav === "Transaksi" && (
+          {activeNavAllowed && activeNav === "Transaksi" && (
           <>
           <div className="mb-4">{presetFilterRow}</div>
 
@@ -1582,8 +1655,10 @@ export default function DashboardPage() {
           </>
           )}
 
-          {activeNav === "Olsera" && (
+          {activeNavAllowed && activeNav === "Olsera" && (
           <>
+          {/* Kartu sinkronisasi Olsera hanya untuk supervisor. */}
+          {isSupervisor && (
           <section className="mb-4">
             <Card>
               <CardHeader>
@@ -1670,6 +1745,7 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </section>
+          )}
 
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <Button
@@ -1816,7 +1892,7 @@ export default function DashboardPage() {
           </>
           )}
 
-          {activeNav === "Webhook" && (
+          {activeNavAllowed && activeNav === "Webhook" && (
           <>
           <section className="grid gap-4 md:grid-cols-3">
             <MetricCard
@@ -1936,7 +2012,7 @@ export default function DashboardPage() {
           </>
           )}
 
-          {activeNav === "Dasbor" && (
+          {activeNavAllowed && activeNav === "Dasbor" && (
           <>
           <section className="mt-4 grid gap-4 xl:grid-cols-2">
             <Card>

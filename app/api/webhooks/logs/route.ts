@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/auth";
 import { collections, withMongo } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 
@@ -9,7 +9,7 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    await requireUser();
+    await requireModule("webhook");
 
     const data = await withMongo(async () => {
       const { webhookLogs } = await collections();

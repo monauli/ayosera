@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/auth";
 import { buildBookingFilter } from "@/lib/booking-query";
 import { mapStatus } from "@/lib/booking-mapper";
 import { collections, type BookingDocument, withMongo } from "@/lib/mongodb";
@@ -51,7 +51,7 @@ function todayJakarta() {
 export async function GET(request: Request) {
   const startedAt = Date.now();
   try {
-    await requireUser();
+    await requireModule("dasbor");
     const { searchParams } = new URL(request.url);
     const today = todayJakarta();
     const dashboardFilter = buildBookingFilter(searchParams);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/auth";
 import { appendAnd, buildBookingFilter } from "@/lib/booking-query";
 import { toTransactionRow } from "@/lib/booking-mapper";
 import { collections, withMongo } from "@/lib/mongodb";
@@ -38,7 +38,7 @@ function buildSort(key: string | null, dir: string | null): Record<string, 1 | -
 export async function GET(request: Request) {
   const startedAt = Date.now();
   try {
-    await requireUser();
+    await requireModule("transaksi");
     const searchParams = new URL(request.url).searchParams;
 
     const page = Math.max(1, Math.floor(Number(searchParams.get("page")) || 1));

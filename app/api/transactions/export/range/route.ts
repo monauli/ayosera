@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { buildOmzetPeriodWorkbook, dateRange, periodLabelRange } from "@/lib/omzet-export";
 
@@ -9,7 +9,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function GET(request: Request) {
   try {
-    await requireUser();
+    await requireModule("transaksi");
     const { searchParams } = new URL(request.url);
     const start = searchParams.get("start") || "";
     const end = searchParams.get("end") || start;

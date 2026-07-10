@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { buildOmzetHarianWorkbook } from "@/lib/omzet-export";
 
@@ -18,7 +18,7 @@ function todayJakarta() {
 
 export async function GET(request: Request) {
   try {
-    await requireUser();
+    await requireModule("transaksi");
     const { searchParams } = new URL(request.url);
     const date = searchParams.get("date") || todayJakarta();
     if (!DATE_PATTERN.test(date)) {

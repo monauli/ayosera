@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth, ensureDefaultAdmin } from "@/lib/auth";
+import { auth, ensureDefaultAdmin, ensureSupervisorAccount } from "@/lib/auth";
+import { getDb } from "@/lib/mongodb";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -11,6 +12,16 @@ export async function POST(request: Request) {
   try {
     const body = loginSchema.parse(await request.json());
     await ensureDefaultAdmin();
+    await ensureSupervisorAccount();
+
+    // Akun yang dinonaktifkan supervisor tidak boleh login sama sekali.
+    const db = await getDb();
+    const existing = await db
+      .collection<{ email: string; disabled?: boolean }>("user")
+      .findOne({ email: body.email.toLowerCase() });
+    if (existing?.disabled) {
+      return NextResponse.json({ error: "Akun dinonaktifkan. Hubungi supervisor." }, { status: 403 });
+    }
 
     return auth.api.signInEmail({
       body: {

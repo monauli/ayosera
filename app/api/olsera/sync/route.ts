@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUser } from "@/lib/auth";
+import { requireModule, requireSupervisor } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import {
   addDays,
@@ -22,7 +22,7 @@ const syncSchema = z.object({
 
 export async function GET() {
   try {
-    await requireUser();
+    await requireModule("olsera");
     const status = await getOlseraSyncStatus();
     return NextResponse.json(status, { headers: NO_CACHE_HEADERS });
   } catch (error) {
@@ -34,10 +34,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
-    if (user.role !== "admin") {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
-    }
+    await requireSupervisor();
 
     const body = syncSchema.parse(await request.json().catch(() => ({})));
 

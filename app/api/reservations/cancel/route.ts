@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { cancelAyoReservation } from "@/lib/ayo";
-import { requireUser } from "@/lib/auth";
+import { requireSupervisor } from "@/lib/auth";
 import { collections, withMongo } from "@/lib/mongodb";
 
 const cancelSchema = z.object({
@@ -12,10 +12,7 @@ export async function POST(request: Request) {
   const startedAt = new Date();
 
   try {
-    const user = await requireUser();
-    if (user.role !== "admin") {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
-    }
+    await requireSupervisor();
 
     const body = cancelSchema.parse(await request.json());
     const response = await cancelAyoReservation(body.order_detail_id);

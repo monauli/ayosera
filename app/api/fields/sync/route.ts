@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server";
 import { fetchAyoFields } from "@/lib/ayo";
-import { requireUser } from "@/lib/auth";
+import { requireSupervisor } from "@/lib/auth";
 import { normalizeField } from "@/lib/booking-mapper";
 import { collections, withMongo } from "@/lib/mongodb";
 
 export async function POST() {
   const startedAt = new Date();
   try {
-    const user = await requireUser();
-    if (user.role !== "admin") {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
-    }
+    await requireSupervisor();
 
     const response = await fetchAyoFields();
     const records = response.data.map(normalizeField).filter((field) => field.id);

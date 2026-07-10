@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/auth";
 import { collections, withMongo } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 
@@ -20,7 +20,7 @@ function todayJakarta() {
 
 export async function GET(request: Request) {
   try {
-    await requireUser();
+    await requireModule("olsera");
 
     const { searchParams } = new URL(request.url);
     const today = todayJakarta();

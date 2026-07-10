@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 90 npm run sync:auto)"
+    ]
+  }
+}

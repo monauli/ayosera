@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUser } from "@/lib/auth";
+import { requireSupervisor } from "@/lib/auth";
 import { logSyncFailure } from "@/lib/booking-sync";
 import { syncProductionListBookings } from "@/lib/production-sync";
 
@@ -36,10 +36,7 @@ function monthStartJakarta() {
 export async function POST(request: Request) {
   const startedAt = new Date();
   try {
-    const user = await requireUser();
-    if (user.role !== "admin") {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
-    }
+    await requireSupervisor();
 
     const body = syncSchema.parse(await request.json().catch(() => ({})));
     const shouldUseDefaultRange = !body.date && !body.start_date && !body.end_date && !body.booking_id;

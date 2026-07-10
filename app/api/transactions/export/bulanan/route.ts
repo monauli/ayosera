@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { buildOmzetPeriodWorkbook, dateRange, periodLabelMonth } from "@/lib/omzet-export";
 
@@ -21,7 +21,7 @@ function monthJakarta() {
 
 export async function GET(request: Request) {
   try {
-    await requireUser();
+    await requireModule("transaksi");
     const { searchParams } = new URL(request.url);
     const month = searchParams.get("month") || monthJakarta();
     if (!MONTH_PATTERN.test(month)) {
