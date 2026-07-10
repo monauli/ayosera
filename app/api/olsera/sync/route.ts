@@ -11,7 +11,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Sync per hari memanggil detail tiap order dengan jeda 350ms — beri waktu lega.
+// Sync per hari memanggil detail tiap order (2 worker × jeda 200ms + retry 429) — beri waktu lega.
 export const maxDuration = 300;
 
 const syncSchema = z.object({

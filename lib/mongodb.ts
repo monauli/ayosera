@@ -109,6 +109,8 @@ export type OlseraSyncLogDocument = {
   /** Jumlah order yang detail-nya berhasil ditarik. */
   processedOrderCount: number;
   errorMessage: string | null;
+  /** Order yang tetap gagal setelah putaran retry akhir (order_id + alasan) — untuk investigasi tanpa membongkar Vercel logs. */
+  failedOrders?: { date: string; orderId: number; reason: string }[];
   startedAt: Date;
   finishedAt: Date | null;
 };

@@ -10,11 +10,14 @@ import { getAccessToken } from "@/lib/olsera";
 
 const BASE_URL = "https://api-open.olsera.co.id";
 const API_PREFIX = "/api/open-api/v1/id";
-const DETAIL_DELAY_MS = 100;
+// 4 worker × 100ms terbukti memicu badai 429 dari Olsera (~12-18 order gagal
+// per ~98 order). Diturunkan ke 2 worker × 200ms: ~100 order ≈ 25-35 detik,
+// tetap jauh di bawah maxDuration 300s.
+const DETAIL_DELAY_MS = 200;
 const LIST_DELAY_MS = 100;
-// Jumlah request detail order yang berjalan paralel. Rate limit Olsera
-// ditangani lewat retry-backoff pada getJson, bukan jeda panjang.
-const DETAIL_CONCURRENCY = 4;
+const DETAIL_CONCURRENCY = 2;
+// Jeda putaran retry akhir (sekuensial, percobaan terakhir yang hati-hati).
+const RETRY_PASS_DELAY_MS = 500;
 // Cache daftar produk dua lapis:
 // - In-memory (module-level, TTL pendek) — hanya membantu bila instance yang sama
 //   dipanggil berulang dalam waktu singkat.
@@ -41,6 +44,8 @@ export type OlseraSyncResult = {
   errorMessage: string | null;
   /** true = peta produk diambil dari cache (memory/MongoDB); false = fetch ulang Product List penuh. */
   productCacheHit: boolean;
+  /** Order yang tetap gagal setelah putaran retry akhir (ikut disimpan ke olsera_sync_log). */
+  failedOrders: { date: string; orderId: number; reason: string }[];
 };
 
 export type OlseraSyncOptions = {
@@ -95,8 +100,9 @@ async function getJson(
   const url = new URL(BASE_URL + pathName);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
-  // Jeda antar-request dipendekkan; kompensasinya: retry dengan backoff saat
-  // Olsera menjawab 429/5xx.
+  // Retry dengan backoff saat Olsera menjawab 429/5xx. 429 (rate limit) diberi
+  // budget retry lebih longgar (6 attempt) daripada 5xx (4 attempt) karena 429
+  // pasti pulih bila menunggu cukup lama; hormati header Retry-After bila ada.
   for (let attempt = 1; ; attempt++) {
     const response = await fetch(url.toString(), {
       headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
@@ -104,7 +110,9 @@ async function getJson(
     });
     // 404 pada endpoint order Olsera berarti "tidak ada data", bukan error.
     if (response.status === 404 && allow404) return null;
-    if ((response.status === 429 || response.status >= 500) && attempt < 4) {
+    const isRateLimited = response.status === 429;
+    const maxAttempts = isRateLimited ? 6 : 4;
+    if ((isRateLimited || response.status >= 500) && attempt < maxAttempts) {
       const retryAfter = Number(response.headers.get("retry-after"));
       const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** (attempt - 1);
       await sleep(Math.min(waitMs, 10_000));
@@ -112,7 +120,7 @@ async function getJson(
     }
     if (!response.ok) {
       const raw = await response.text();
-      throw new Error(`HTTP ${response.status} untuk ${pathName}: ${raw.slice(0, 200)}`);
+      throw new Error(`HTTP ${response.status} untuk ${pathName} setelah ${attempt} percobaan: ${raw.slice(0, 200)}`);
     }
     return (await response.json()) as Record<string, unknown>;
   }
@@ -345,6 +353,7 @@ export async function syncOlseraSalesByCategory(
     days: [],
     errorMessage: null,
     productCacheHit: false,
+    failedOrders: [],
   };
 
   try {
@@ -393,6 +402,27 @@ export async function syncOlseraSalesByCategory(
         // Detail ditarik paralel (pool DETAIL_CONCURRENCY worker) — agregasi
         // Map aman karena JS single-threaded.
         const byCategory = new Map<string, Aggregate>();
+
+        const processOrder = async (order: OrderRef) => {
+          const items = await fetchOrderDetail(token, order); // boleh throw — ditangani pemanggil
+          for (const item of items) {
+            const category = await resolveKlasifikasi(
+              token,
+              String(item.product_id),
+              String(item.product_name ?? ""),
+              productMap,
+            );
+            const entry = byCategory.get(category) ?? { qty: 0, amount: 0 };
+            entry.qty += toNumber(item.qty);
+            entry.amount += toNumber(item.amount);
+            byCategory.set(category, entry);
+          }
+          day.processed++;
+          result.processedOrderCount++;
+        };
+
+        // Order yang gagal TIDAK langsung divonis — dikumpulkan untuk putaran retry akhir.
+        const failedOrders: { order: OrderRef; reason: string }[] = [];
         let cursor = 0;
         const worker = async () => {
           for (;;) {
@@ -400,30 +430,32 @@ export async function syncOlseraSalesByCategory(
             if (index >= orders.length) return;
             const order = orders[index];
             await sleep(DETAIL_DELAY_MS);
-            let items: OrderItem[];
             try {
-              items = await fetchOrderDetail(token, order);
+              await processOrder(order);
             } catch (error) {
-              console.error(`Olsera sync: gagal detail order ${order.id} (${date})`, error);
-              continue;
+              const reason = error instanceof Error ? error.message : String(error);
+              console.error(`Olsera sync: gagal detail order ${order.id} (${date}): ${reason}`);
+              failedOrders.push({ order, reason });
             }
-            for (const item of items) {
-              const category = await resolveKlasifikasi(
-                token,
-                String(item.product_id),
-                String(item.product_name ?? ""),
-                productMap,
-              );
-              const entry = byCategory.get(category) ?? { qty: 0, amount: 0 };
-              entry.qty += toNumber(item.qty);
-              entry.amount += toNumber(item.amount);
-              byCategory.set(category, entry);
-            }
-            day.processed++;
-            result.processedOrderCount++;
           }
         };
         await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker));
+
+        // Putaran retry akhir: SEKUENSIAL (concurrency 1) dengan jeda lebih lega —
+        // percobaan terakhir yang hati-hati sebelum order benar-benar dianggap gagal.
+        if (failedOrders.length) {
+          console.log(`Olsera sync: retry akhir ${failedOrders.length} order gagal (${date}), sekuensial`);
+          for (const failed of failedOrders) {
+            await sleep(RETRY_PASS_DELAY_MS);
+            try {
+              await processOrder(failed.order);
+            } catch (error) {
+              const reason = error instanceof Error ? error.message : String(error);
+              console.error(`Olsera sync: order ${failed.order.id} (${date}) tetap gagal setelah retry akhir: ${reason}`);
+              result.failedOrders.push({ date, orderId: failed.order.id, reason });
+            }
+          }
+        }
 
         day.success = day.processed === day.expected;
 
@@ -485,6 +517,8 @@ export async function syncOlseraSalesByCategory(
         expectedOrderCount: result.expectedOrderCount,
         processedOrderCount: result.processedOrderCount,
         errorMessage: result.errorMessage,
+        // Ringkasan order gagal disimpan ke DB agar investigasi tidak bergantung Vercel logs.
+        ...(result.failedOrders.length ? { failedOrders: result.failedOrders } : {}),
         startedAt,
         finishedAt: new Date(),
       };
