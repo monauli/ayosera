@@ -121,6 +121,14 @@ export type OlseraSyncedDayDocument = {
   syncedAt: Date;
 };
 
+export type OlseraProductCacheDocument = {
+  /** ID produk Olsera (string, sesuai product_id di order items). */
+  productId: string;
+  /** Nama klasifikasi produk (sudah apa adanya dari API, dinormalisasi saat dipakai). */
+  klasifikasi: string;
+  cachedAt: Date;
+};
+
 export type OlseraSyncStateDocument = {
   _id: "olsera";
   /** Tanggal terakhir yang sync-nya tuntas penuh (expected = processed). */
@@ -194,6 +202,7 @@ export async function collections() {
     olseraSyncLog: db.collection<OlseraSyncLogDocument>("olsera_sync_log"),
     olseraSyncState: db.collection<OlseraSyncStateDocument>("olsera_sync_state"),
     olseraSyncedDays: db.collection<OlseraSyncedDayDocument>("olsera_synced_days"),
+    olseraProductCache: db.collection<OlseraProductCacheDocument>("olsera_product_cache"),
   };
 }
 
@@ -214,8 +223,17 @@ export async function ensureIndexes() {
 }
 
 async function createIndexes() {
-  const { users, bookings, syncLogs, fields, webhookLogs, olseraSalesByCategory, olseraSyncLog, olseraSyncedDays } =
-    await collections();
+  const {
+    users,
+    bookings,
+    syncLogs,
+    fields,
+    webhookLogs,
+    olseraSalesByCategory,
+    olseraSyncLog,
+    olseraSyncedDays,
+    olseraProductCache,
+  } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
     users.createIndex({ email: 1 }, { unique: true }),
@@ -233,6 +251,7 @@ async function createIndexes() {
     olseraSalesByCategory.createIndex({ date: 1, category: 1 }, { unique: true }),
     olseraSyncLog.createIndex({ startedAt: -1 }),
     olseraSyncedDays.createIndex({ syncedAt: -1 }),
+    olseraProductCache.createIndex({ productId: 1 }, { unique: true }),
   ]);
 }
 

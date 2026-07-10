@@ -15,8 +15,14 @@ const LIST_DELAY_MS = 100;
 // Jumlah request detail order yang berjalan paralel. Rate limit Olsera
 // ditangani lewat retry-backoff pada getJson, bukan jeda panjang.
 const DETAIL_CONCURRENCY = 4;
-// Cache daftar produk lintas pemanggilan (module-level, tahan selama proses hidup).
+// Cache daftar produk dua lapis:
+// - In-memory (module-level, TTL pendek) — hanya membantu bila instance yang sama
+//   dipanggil berulang dalam waktu singkat.
+// - MongoDB "olsera_product_cache" (persisten, TTL 24 jam) — sumber utama yang
+//   selamat dari cold start Vercel, supaya sync tidak menarik ulang seluruh
+//   Product List setiap invocation.
 const PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
+const PRODUCT_CACHE_MONGO_TTL_MS = 24 * 60 * 60 * 1000;
 
 const UNKNOWN_CATEGORY = "Tidak Diketahui";
 
@@ -33,6 +39,8 @@ export type OlseraSyncResult = {
   lastFullySyncedDate: string | null;
   days: { date: string; expected: number; processed: number; success: boolean; skipped?: boolean }[];
   errorMessage: string | null;
+  /** true = peta produk diambil dari cache (memory/MongoDB); false = fetch ulang Product List penuh. */
+  productCacheHit: boolean;
 };
 
 export type OlseraSyncOptions = {
@@ -112,16 +120,87 @@ async function getJson(
 
 let productCache: { map: Map<string, ProductInfo>; fetchedAt: number } | null = null;
 
-// Peta produk di-cache per proses: daftar produk jarang berubah dan penarikannya
-// (paging 100/halaman) adalah biaya tetap terbesar di awal setiap sync.
-// Map yang sama dipakai ulang sehingga hasil resolveKlasifikasi ikut terawetkan.
-async function getProductMap(token: string): Promise<Map<string, ProductInfo>> {
-  if (productCache && Date.now() - productCache.fetchedAt < PRODUCT_CACHE_TTL_MS) {
-    return productCache.map;
+/** Baca cache produk persisten dari MongoDB; null bila kosong atau melewati TTL 24 jam. */
+async function readProductCacheFromMongo(): Promise<Map<string, ProductInfo> | null> {
+  try {
+    return await withMongo(async () => {
+      const { olseraProductCache } = await collections();
+      const newest = await olseraProductCache.find().sort({ cachedAt: -1 }).limit(1).next();
+      if (!newest || Date.now() - newest.cachedAt.getTime() > PRODUCT_CACHE_MONGO_TTL_MS) return null;
+      const docs = await olseraProductCache.find().toArray();
+      if (!docs.length) return null;
+      const map = new Map<string, ProductInfo>();
+      // name tidak disimpan di cache — tidak dipakai untuk mapping klasifikasi.
+      for (const doc of docs) map.set(doc.productId, { klasifikasi: doc.klasifikasi, name: "" });
+      return map;
+    });
+  } catch (error) {
+    // Cache rusak/DB bermasalah bukan alasan menggagalkan sync — fallback ke fetch penuh.
+    console.error("Olsera sync: gagal membaca olsera_product_cache", error);
+    return null;
   }
+}
+
+/** Simpan hasil fetch katalog penuh ke MongoDB (upsert per productId). Best effort. */
+async function writeProductCacheToMongo(map: Map<string, ProductInfo>) {
+  if (!map.size) return;
+  try {
+    await withMongo(async () => {
+      const { olseraProductCache } = await collections();
+      const cachedAt = new Date();
+      await olseraProductCache.bulkWrite(
+        [...map.entries()].map(([productId, info]) => ({
+          updateOne: {
+            filter: { productId },
+            update: { $set: { klasifikasi: info.klasifikasi, cachedAt } },
+            upsert: true,
+          },
+        })),
+      );
+    });
+  } catch (error) {
+    console.error("Olsera sync: gagal menulis olsera_product_cache", error);
+  }
+}
+
+/** Upsert satu produk ke cache MongoDB (produk baru yang belum ada di katalog cache). */
+async function upsertProductCacheEntry(productId: string, info: ProductInfo) {
+  try {
+    await withMongo(async () => {
+      const { olseraProductCache } = await collections();
+      await olseraProductCache.updateOne(
+        { productId },
+        { $set: { klasifikasi: info.klasifikasi, cachedAt: new Date() } },
+        { upsert: true },
+      );
+    });
+  } catch (error) {
+    console.error(`Olsera sync: gagal upsert cache produk ${productId}`, error);
+  }
+}
+
+// Peta produk: cek in-memory dulu, lalu MongoDB (persisten, TTL 24 jam), baru
+// fetch ulang Product List penuh (paging 100/halaman — biaya tetap terbesar di
+// awal sync). Hasil fetch penuh disimpan kembali ke MongoDB agar invocation
+// berikutnya (proses/instance lain) tidak perlu menarik ulang.
+async function getProductMap(token: string): Promise<{ map: Map<string, ProductInfo>; cacheHit: boolean }> {
+  if (productCache && Date.now() - productCache.fetchedAt < PRODUCT_CACHE_TTL_MS) {
+    console.log(`Olsera sync: product cache HIT (in-memory, ${productCache.map.size} produk)`);
+    return { map: productCache.map, cacheHit: true };
+  }
+
+  const fromMongo = await readProductCacheFromMongo();
+  if (fromMongo) {
+    console.log(`Olsera sync: product cache HIT (MongoDB, ${fromMongo.size} produk)`);
+    productCache = { map: fromMongo, fetchedAt: Date.now() };
+    return { map: fromMongo, cacheHit: true };
+  }
+
+  console.log("Olsera sync: product cache MISS/expired — menarik ulang Product List penuh dari API Olsera");
   const map = await fetchAllProducts(token);
   productCache = { map, fetchedAt: Date.now() };
-  return map;
+  await writeProductCacheToMongo(map);
+  return { map, cacheHit: false };
 }
 
 async function fetchAllProducts(token: string): Promise<Map<string, ProductInfo>> {
@@ -232,8 +311,13 @@ async function resolveKlasifikasi(
 ): Promise<string> {
   let info = productMap.get(productId);
   if (!info) {
+    // Produk baru yang belum ada di cache katalog: tarik SATU produk dari
+    // Product Detail API dan tambahkan ke cache MongoDB — tanpa refresh katalog penuh.
     info = await fetchProductDetail(token, productId);
-    if (info) productMap.set(productId, info);
+    if (info) {
+      productMap.set(productId, info);
+      await upsertProductCacheEntry(productId, info);
+    }
   }
   if (!info) {
     const guessed = guessKlasifikasiFromName(productName, productMap);
@@ -260,6 +344,7 @@ export async function syncOlseraSalesByCategory(
     lastFullySyncedDate: null,
     days: [],
     errorMessage: null,
+    productCacheHit: false,
   };
 
   try {
@@ -267,7 +352,8 @@ export async function syncOlseraSalesByCategory(
     if ("error" in auth) throw new Error(auth.error);
     const token = auth.token;
 
-    const productMap = await getProductMap(token);
+    const { map: productMap, cacheHit } = await getProductMap(token);
+    result.productCacheHit = cacheHit;
 
     // Hari yang sudah pernah tuntas dilewati (kecuali force) — sync ulang
     // rentang lebar jadi hanya mengerjakan hari yang benar-benar kurang.
