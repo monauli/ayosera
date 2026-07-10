@@ -25,7 +25,6 @@ import {
   Store,
   Users,
   Webhook,
-  Copy,
   Clock,
 } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
@@ -169,8 +168,6 @@ type SessionUserInfo = {
   role: "supervisor" | "user";
   allowedModules: string[];
 };
-
-const WEBHOOK_URL = "https://ayosera.vercel.app/api/webhooks/ayo";
 
 const THEME_STORAGE_KEY = "ayo-theme";
 const themeOptions = [
@@ -374,7 +371,6 @@ export default function DashboardPage() {
   const [webhookData, setWebhookData] = useState<WebhookPayload | null>(null);
   const [webhookStatus, setWebhookStatus] = useState<"unknown" | "active" | "inactive">("unknown");
   const [webhookLoading, setWebhookLoading] = useState(false);
-  const [webhookCopied, setWebhookCopied] = useState(false);
   const [webhookRefresh, setWebhookRefresh] = useState(0);
   // Filter tampilan halaman Olsera: default "Kemarin" (data hari ini sering belum lengkap).
   const olseraYesterday = addDaysISO(today, -1);
@@ -943,17 +939,11 @@ export default function DashboardPage() {
     return `Filter ${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)}`;
   }
 
-  async function handleCopyWebhookUrl() {
-    try {
-      await navigator.clipboard.writeText(WEBHOOK_URL);
-      setWebhookCopied(true);
-      window.setTimeout(() => setWebhookCopied(false), 2000);
-    } catch {
-      // Abaikan jika clipboard tidak tersedia.
-    }
-  }
-
   const isSupervisor = sessionUser?.role === "supervisor";
+  // Aksi sync tidak lagi khusus supervisor — cukup punya modul terkait.
+  // (allowedModules dari /api/auth/me sudah dinormalisasi; supervisor otomatis punya semua modul.)
+  const canSyncAyo = ["dasbor", "transaksi"].some((module) => sessionUser?.allowedModules.includes(module));
+  const canSyncOlsera = Boolean(sessionUser?.allowedModules.includes("olsera"));
   const visibleNavItems = sessionUser
     ? isSupervisor
       ? navItems
@@ -1073,8 +1063,8 @@ export default function DashboardPage() {
             <DatabaseZap className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-sm font-semibold">Integrasi AYO</p>
-            <p className="text-xs text-slate-500">Platform Transaksi</p>
+            <p className="text-sm font-semibold">AYOSERA</p>
+            <p className="text-xs text-slate-500">Super App Transaksi</p>
           </div>
         </div>
         <nav className="space-y-1 px-3 py-4">
@@ -1194,8 +1184,8 @@ export default function DashboardPage() {
               <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">Logout</span>
             </Button>
-            {/* Tombol sync AYO hanya untuk supervisor; disembunyikan juga di halaman Olsera (punya tombol sync sendiri). */}
-            {isSupervisor && activeNav !== "Olsera" && activeNav !== "Pengguna" && (
+            {/* Tombol sync AYO untuk user bermodul dasbor/transaksi; disembunyikan juga di halaman Olsera (punya tombol sync sendiri). */}
+            {canSyncAyo && activeNav !== "Olsera" && activeNav !== "Pengguna" && (
             <div className="relative">
               <Button
                 onClick={() => {
@@ -1675,8 +1665,8 @@ export default function DashboardPage() {
 
           {activeNavAllowed && activeNav === "Olsera" && (
           <>
-          {/* Kartu sinkronisasi Olsera hanya untuk supervisor. */}
-          {isSupervisor && (
+          {/* Kartu sinkronisasi Olsera untuk semua user bermodul "olsera". */}
+          {canSyncOlsera && (
           <section className="mb-4">
             <Card>
               <CardHeader>
@@ -1934,26 +1924,6 @@ export default function DashboardPage() {
               icon={Clock}
               accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
             />
-          </section>
-
-          <section className="mt-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Webhook URL Produksi</CardTitle>
-                <CardDescription>Berikan URL ini ke pihak AYO</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <code className="flex-1 break-all rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                    {WEBHOOK_URL}
-                  </code>
-                  <Button variant="outline" onClick={handleCopyWebhookUrl}>
-                    <Copy className="h-4 w-4" />
-                    {webhookCopied ? "Tersalin" : "Salin URL"}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
           </section>
 
           <section className="mt-4">

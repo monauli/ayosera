@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSupervisor } from "@/lib/auth";
+import { requireAnyModule } from "@/lib/auth";
 import { logSyncFailure } from "@/lib/booking-sync";
 import { syncProductionListBookings } from "@/lib/production-sync";
 
@@ -36,7 +36,8 @@ function monthStartJakarta() {
 export async function POST(request: Request) {
   const startedAt = new Date();
   try {
-    await requireSupervisor();
+    // Sync AYO boleh dipakai semua user yang punya modul dasbor/transaksi (tidak lagi wajib supervisor).
+    await requireAnyModule("dasbor", "transaksi");
 
     const body = syncSchema.parse(await request.json().catch(() => ({})));
     const shouldUseDefaultRange = !body.date && !body.start_date && !body.end_date && !body.booking_id;

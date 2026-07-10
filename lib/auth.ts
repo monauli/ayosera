@@ -207,3 +207,12 @@ export async function requireModule(module: AppModule) {
   }
   return user;
 }
+
+/** Lolos bila user punya SALAH SATU modul (mis. aksi sync AYO: cukup "dasbor" atau "transaksi"). */
+export async function requireAnyModule(...modules: AppModule[]) {
+  const user = await requireUser();
+  if (user.role !== "supervisor" && !modules.some((module) => user.allowedModules.includes(module))) {
+    throw jsonError("Anda tidak memiliki izin untuk modul ini", 403);
+  }
+  return user;
+}

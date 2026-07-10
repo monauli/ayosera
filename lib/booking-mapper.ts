@@ -49,7 +49,7 @@ export function toTransactionRow(booking: BookingDocument) {
     customer: booking.booker_name || "-",
     phone: booking.booker_phone || "-",
     email: booking.booker_email || "-",
-    branch: getBookingBranchName(booking),
+    branch: resolveVenueName(),
     service: booking.field_name,
     fieldId: booking.field_id ? String(booking.field_id) : "-",
     amount: new Intl.NumberFormat("id-ID", {
@@ -83,6 +83,21 @@ export function mapStatus(status: string) {
 
 export function getBookingBranchName(booking: Pick<BookingDocument, "branch_name" | "raw">) {
   return booking.branch_name || getRawBranchName(booking.raw);
+}
+
+/**
+ * Nama venue human-readable untuk ditampilkan (kolom "Venue" pada export &
+ * field "branch" pada tabel Transaksi).
+ *
+ * PENTING: API AYO list-bookings TIDAK mengembalikan nama venue di payload —
+ * venue hanya diwakili kode di URL (AYO_VENUE_CODE, mis. "JBoHLrgHzK"), dan
+ * seluruh 7000+ booking di DB tidak punya field raw venue apa pun. Jadi satu-
+ * satunya sumber nama manusiawi adalah env AYO_BRANCH_NAME. Sengaja TIDAK jatuh
+ * ke AYO_VENUE_CODE supaya kode acak tidak pernah bocor ke laporan; bila env
+ * kosong kembalikan "—" sebagai fallback yang jelas.
+ */
+export function resolveVenueName() {
+  return process.env.AYO_BRANCH_NAME?.trim() || "—";
 }
 
 export function getRawBranchName(raw: Record<string, unknown>) {

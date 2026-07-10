@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
+import { resolveVenueName } from "@/lib/booking-mapper";
 import { buildOmzetHarianWorkbook } from "@/lib/omzet-export";
 
 export const runtime = "nodejs";
@@ -35,16 +36,11 @@ export async function GET(request: Request) {
       ]);
       const map = new Map<number, string>();
       for (const f of fieldRows) if (f.id && f.sport_name) map.set(f.id, f.sport_name);
-      const venue =
-        day[0]?.branch_name ||
-        month[0]?.branch_name ||
-        process.env.AYO_BRANCH_NAME ||
-        "AYO";
       return {
         dayBookings: day as BookingDocument[],
         monthBookings: month as BookingDocument[],
         sportByFieldId: map,
-        venueName: venue,
+        venueName: resolveVenueName(),
       };
     });
 

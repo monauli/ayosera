@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireModule, requireSupervisor } from "@/lib/auth";
+import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import {
   addDays,
@@ -34,7 +34,8 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    await requireSupervisor();
+    // Sync Olsera boleh dipakai semua user yang punya modul "olsera" (tidak lagi wajib supervisor).
+    await requireModule("olsera");
 
     const body = syncSchema.parse(await request.json().catch(() => ({})));
 

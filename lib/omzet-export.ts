@@ -118,6 +118,9 @@ function sportOf(b: BookingDocument, ctx: OmzetExportInput) {
 // Kolom dari "Booking ID" .. "Note" (dipakai Walk In; basis untuk AYO & ALL).
 const BASE_COLUMNS: ColumnDef[] = [
   { header: "Booking ID", get: (b) => b.booking_id || "-", width: 24 },
+  // Venue: nama venue human-readable dari config (input.venueName = AYO_BRANCH_NAME),
+  // BUKAN b.branch_name yang untuk data lama masih tersimpan sebagai kode AYO_VENUE_CODE.
+  { header: "Venue", get: (_b, c) => c.venueName || "—", width: 16 },
   { header: "Court", get: (b) => (b.field_name ? courtLabel(b.field_name) : "-"), width: 14 },
   { header: "Court ID", get: (b) => b.field_id || "-", width: 9 },
   { header: "Sports \nCategory", get: (b, c) => sportOf(b, c), width: 11 },
