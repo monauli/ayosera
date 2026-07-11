@@ -97,6 +97,8 @@ export type OlseraSalesByCategoryDocument = {
   category: string;
   qty: number;
   totalAmount: number;
+  /** Jumlah cost_amount (modal) seluruh item kategori ini pada tanggal ini. 0 untuk kategori jasa/sewa. */
+  costAmount: number;
   syncedAt: Date;
 };
 

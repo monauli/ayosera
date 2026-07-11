@@ -390,6 +390,8 @@ export default function DashboardPage() {
   const [olseraSyncEnd, setOlseraSyncEnd] = useState("");
   const [olseraSyncValidationError, setOlseraSyncValidationError] = useState("");
   const [olseraSyncRefresh, setOlseraSyncRefresh] = useState(0);
+  const [olseraExporting, setOlseraExporting] = useState(false);
+  const [olseraExportMessage, setOlseraExportMessage] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
   const [exportStart, setExportStart] = useState(today);
@@ -929,6 +931,42 @@ export default function DashboardPage() {
     setOlseraFilterMonth(currentMonth);
     setOlseraRangeStart(olseraYesterday);
     setOlseraRangeEnd(olseraYesterday);
+  }
+
+  async function handleOlseraExport() {
+    if (isInvalidDateRange(olseraStart, olseraEnd)) return;
+    setOlseraExporting(true);
+    setOlseraExportMessage("");
+    try {
+      const params = new URLSearchParams({ start_date: olseraStart, end_date: olseraEnd });
+      const response = await fetch(`/api/olsera/export?${params.toString()}`, { cache: "no-store" });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setOlseraExportMessage(payload?.error || "Ekspor Excel Olsera gagal.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
+      link.download =
+        match?.[1] ||
+        (olseraStart === olseraEnd ? `Omset Olsera ${olseraStart}.xlsx` : `Omset Olsera ${olseraStart} sd ${olseraEnd}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      setOlseraExportMessage("Ekspor Excel selesai.");
+    } catch {
+      setOlseraExportMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
+    } finally {
+      setOlseraExporting(false);
+    }
   }
 
   function getOlseraFilterDetail() {
@@ -1811,9 +1849,19 @@ export default function DashboardPage() {
               <RotateCcw className="h-4 w-4" />
               Reset
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleOlseraExport}
+              disabled={olseraExporting || isInvalidDateRange(olseraStart, olseraEnd)}
+            >
+              <ArrowDownToLine className="h-4 w-4" />
+              {olseraExporting ? "Mengekspor..." : "Export Excel"}
+            </Button>
             {olseraFilterMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
               <span className="text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
             )}
+            {olseraExportMessage && <span className="text-sm text-slate-600">{olseraExportMessage}</span>}
           </div>
 
           <section>

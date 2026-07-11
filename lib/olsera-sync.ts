@@ -2,7 +2,7 @@
 // Mengikuti pipeline TERVALIDASI 100% di scripts/validate-olsera-category.ts:
 //   Close Order List + Open Order List (is_paid=1, dedup) → detail per order →
 //   map product_id ke "klasifikasi" (Product List, fallback detail → nama → "Tidak Diketahui")
-//   → agregasi qty+amount per (tanggal, kategori).
+//   → agregasi qty+amount+costAmount per (tanggal, kategori).
 // Sepenuhnya terpisah dari sync AYO (lib/booking-sync.ts / lib/production-sync.ts).
 
 import { collections, withMongo, type OlseraSyncLogDocument } from "@/lib/mongodb";
@@ -30,7 +30,7 @@ const PRODUCT_CACHE_MONGO_TTL_MS = 24 * 60 * 60 * 1000;
 const UNKNOWN_CATEGORY = "Tidak Diketahui";
 
 type ProductInfo = { klasifikasi: string; name: string };
-type Aggregate = { qty: number; amount: number };
+type Aggregate = { qty: number; amount: number; costAmount: number };
 type OrderRef = { id: number; source: "close" | "open" };
 
 export type OlseraSyncResult = {
@@ -265,6 +265,7 @@ type OrderItem = {
   product_name?: string;
   qty: unknown;
   amount: unknown;
+  cost_amount?: unknown;
 };
 
 async function fetchOrderDetail(token: string, order: OrderRef): Promise<OrderItem[]> {
@@ -412,9 +413,10 @@ export async function syncOlseraSalesByCategory(
               String(item.product_name ?? ""),
               productMap,
             );
-            const entry = byCategory.get(category) ?? { qty: 0, amount: 0 };
+            const entry = byCategory.get(category) ?? { qty: 0, amount: 0, costAmount: 0 };
             entry.qty += toNumber(item.qty);
             entry.amount += toNumber(item.amount);
+            entry.costAmount += toNumber(item.cost_amount);
             byCategory.set(category, entry);
           }
           day.processed++;
@@ -470,7 +472,9 @@ export async function syncOlseraSalesByCategory(
                 [...byCategory.entries()].map(([category, agg]) => ({
                   updateOne: {
                     filter: { date, category },
-                    update: { $set: { qty: agg.qty, totalAmount: agg.amount, syncedAt } },
+                    update: {
+                      $set: { qty: agg.qty, totalAmount: agg.amount, costAmount: agg.costAmount, syncedAt },
+                    },
                     upsert: true,
                   },
                 })),
