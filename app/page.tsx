@@ -392,6 +392,8 @@ export default function DashboardPage() {
   const [olseraSyncRefresh, setOlseraSyncRefresh] = useState(0);
   const [olseraExporting, setOlseraExporting] = useState(false);
   const [olseraExportMessage, setOlseraExportMessage] = useState("");
+  const [olseraItemExporting, setOlseraItemExporting] = useState(false);
+  const [olseraItemExportMessage, setOlseraItemExportMessage] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
   const [exportStart, setExportStart] = useState(today);
@@ -966,6 +968,44 @@ export default function DashboardPage() {
       setOlseraExportMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
     } finally {
       setOlseraExporting(false);
+    }
+  }
+
+  async function handleOlseraItemExport() {
+    if (isInvalidDateRange(olseraStart, olseraEnd)) return;
+    setOlseraItemExporting(true);
+    setOlseraItemExportMessage("");
+    try {
+      const params = new URLSearchParams({ start_date: olseraStart, end_date: olseraEnd });
+      const response = await fetch(`/api/olsera/export-items?${params.toString()}`, { cache: "no-store" });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setOlseraItemExportMessage(payload?.error || "Ekspor Detail Transaksi Olsera gagal.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
+      link.download =
+        match?.[1] ||
+        (olseraStart === olseraEnd
+          ? `Detail Transaksi Olsera ${olseraStart}.xlsx`
+          : `Detail Transaksi Olsera ${olseraStart} sd ${olseraEnd}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      setOlseraItemExportMessage("Ekspor Detail Transaksi selesai.");
+    } catch {
+      setOlseraItemExportMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
+    } finally {
+      setOlseraItemExporting(false);
     }
   }
 
@@ -1858,10 +1898,20 @@ export default function DashboardPage() {
               <ArrowDownToLine className="h-4 w-4" />
               {olseraExporting ? "Mengekspor..." : "Export Excel"}
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleOlseraItemExport}
+              disabled={olseraItemExporting || isInvalidDateRange(olseraStart, olseraEnd)}
+            >
+              <ArrowDownToLine className="h-4 w-4" />
+              {olseraItemExporting ? "Mengekspor..." : "Export Detail Transaksi"}
+            </Button>
             {olseraFilterMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
               <span className="text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
             )}
             {olseraExportMessage && <span className="text-sm text-slate-600">{olseraExportMessage}</span>}
+            {olseraItemExportMessage && <span className="text-sm text-slate-600">{olseraItemExportMessage}</span>}
           </div>
 
           <section>
