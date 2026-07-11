@@ -140,6 +140,24 @@ export type OlseraSyncStateDocument = {
   updatedAt: Date;
 };
 
+export type OlseraOrderItemDocument = {
+  /** id baris item Olsera (data.orderitems[i].id) — unik per baris, dipakai sebagai _id agar upsert re-sync tidak duplikat. */
+  _id: number;
+  /** Tanggal order (YYYY-MM-DD, WIB). */
+  date: string;
+  orderNo: string;
+  orderDate: string;
+  customerName: string | null;
+  tableNo: string | null;
+  salesByName: string | null;
+  itemName: string;
+  qty: number;
+  amount: number;
+  costAmount: number;
+  discount: number;
+  syncedAt: Date;
+};
+
 function parseDirectHosts(value: string | undefined) {
   return (
     value
@@ -207,6 +225,7 @@ export async function collections() {
     olseraSyncState: db.collection<OlseraSyncStateDocument>("olsera_sync_state"),
     olseraSyncedDays: db.collection<OlseraSyncedDayDocument>("olsera_synced_days"),
     olseraProductCache: db.collection<OlseraProductCacheDocument>("olsera_product_cache"),
+    olseraOrderItems: db.collection<OlseraOrderItemDocument>("olsera_order_items"),
   };
 }
 
@@ -237,6 +256,7 @@ async function createIndexes() {
     olseraSyncLog,
     olseraSyncedDays,
     olseraProductCache,
+    olseraOrderItems,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -256,6 +276,8 @@ async function createIndexes() {
     olseraSyncLog.createIndex({ startedAt: -1 }),
     olseraSyncedDays.createIndex({ syncedAt: -1 }),
     olseraProductCache.createIndex({ productId: 1 }, { unique: true }),
+    olseraOrderItems.createIndex({ date: 1 }),
+    olseraOrderItems.createIndex({ orderNo: 1 }),
   ]);
 }
 

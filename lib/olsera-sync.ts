@@ -5,7 +5,7 @@
 //   → agregasi qty+amount+costAmount per (tanggal, kategori).
 // Sepenuhnya terpisah dari sync AYO (lib/booking-sync.ts / lib/production-sync.ts).
 
-import { collections, withMongo, type OlseraSyncLogDocument } from "@/lib/mongodb";
+import { collections, withMongo, type OlseraOrderItemDocument, type OlseraSyncLogDocument } from "@/lib/mongodb";
 import { getAccessToken } from "@/lib/olsera";
 
 const BASE_URL = "https://api-open.olsera.co.id";
@@ -261,18 +261,34 @@ async function fetchOrderIds(
 }
 
 type OrderItem = {
+  id: unknown;
   product_id: unknown;
   product_name?: string;
+  product_variant_name?: string;
   qty: unknown;
   amount: unknown;
   cost_amount?: unknown;
+  cost_price?: unknown;
+  discount?: unknown;
 };
 
-async function fetchOrderDetail(token: string, order: OrderRef): Promise<OrderItem[]> {
+// Field level-order dipakai untuk export detail transaksi (Feature: Export Detail Transaksi).
+type OrderMeta = {
+  order_no?: unknown;
+  order_date?: unknown;
+  customer_name?: unknown;
+  table_no?: unknown;
+  sales_by_name?: unknown;
+};
+
+async function fetchOrderDetail(
+  token: string,
+  order: OrderRef,
+): Promise<{ meta: OrderMeta; items: OrderItem[] }> {
   const kind = order.source === "close" ? "closeorder" : "openorder";
   const body = await getJson(token, `${API_PREFIX}/order/${kind}/detail`, { id: String(order.id) });
-  const data = (body?.data ?? {}) as { orderitems?: OrderItem[] };
-  return Array.isArray(data.orderitems) ? data.orderitems : [];
+  const data = (body?.data ?? {}) as OrderMeta & { orderitems?: OrderItem[] };
+  return { meta: data, items: Array.isArray(data.orderitems) ? data.orderitems : [] };
 }
 
 async function fetchProductDetail(token: string, productId: string): Promise<ProductInfo | undefined> {
@@ -403,9 +419,12 @@ export async function syncOlseraSalesByCategory(
         // Detail ditarik paralel (pool DETAIL_CONCURRENCY worker) — agregasi
         // Map aman karena JS single-threaded.
         const byCategory = new Map<string, Aggregate>();
+        // Detail per baris item (Export Detail Transaksi) — dikumpulkan bareng
+        // agregasi kategori supaya cukup satu kali tarik Close Order Detail.
+        const itemDocs: OlseraOrderItemDocument[] = [];
 
         const processOrder = async (order: OrderRef) => {
-          const items = await fetchOrderDetail(token, order); // boleh throw — ditangani pemanggil
+          const { meta, items } = await fetchOrderDetail(token, order); // boleh throw — ditangani pemanggil
           for (const item of items) {
             const category = await resolveKlasifikasi(
               token,
@@ -418,6 +437,28 @@ export async function syncOlseraSalesByCategory(
             entry.amount += toNumber(item.amount);
             entry.costAmount += toNumber(item.cost_amount);
             byCategory.set(category, entry);
+
+            const itemId = Number(item.id);
+            if (Number.isFinite(itemId)) {
+              const itemName = item.product_variant_name
+                ? `${item.product_name ?? ""} - ${item.product_variant_name}`
+                : String(item.product_name ?? "");
+              itemDocs.push({
+                _id: itemId,
+                date,
+                orderNo: String(meta.order_no ?? ""),
+                orderDate: String(meta.order_date ?? ""),
+                customerName: meta.customer_name != null ? String(meta.customer_name) : null,
+                tableNo: meta.table_no != null ? String(meta.table_no) : null,
+                salesByName: meta.sales_by_name != null ? String(meta.sales_by_name) : null,
+                itemName,
+                qty: toNumber(item.qty),
+                amount: toNumber(item.amount),
+                costAmount: toNumber(item.cost_amount),
+                discount: toNumber(item.discount),
+                syncedAt: new Date(),
+              });
+            }
           }
           day.processed++;
           result.processedOrderCount++;
@@ -465,7 +506,7 @@ export async function syncOlseraSalesByCategory(
         // data lama yang benar dengan angka yang kurang.
         if (day.success) {
           await withMongo(async () => {
-            const { olseraSalesByCategory, olseraSyncedDays } = await collections();
+            const { olseraSalesByCategory, olseraSyncedDays, olseraOrderItems } = await collections();
             const syncedAt = new Date();
             if (byCategory.size) {
               await olseraSalesByCategory.bulkWrite(
@@ -482,6 +523,18 @@ export async function syncOlseraSalesByCategory(
             }
             // Buang kategori lama yang tidak muncul lagi pada sync ulang hari ini.
             await olseraSalesByCategory.deleteMany({ date, syncedAt: { $lt: syncedAt } });
+            if (itemDocs.length) {
+              // Upsert per _id (id baris item Olsera) — sync ulang tidak menghasilkan duplikat.
+              await olseraOrderItems.bulkWrite(
+                itemDocs.map((doc) => ({
+                  updateOne: {
+                    filter: { _id: doc._id },
+                    update: { $set: doc },
+                    upsert: true,
+                  },
+                })),
+              );
+            }
             // Tandai hari ini tuntas agar sync berikutnya (rentang tumpang tindih)
             // bisa langsung dilewati tanpa menarik ulang order+detail.
             await olseraSyncedDays.updateOne(
