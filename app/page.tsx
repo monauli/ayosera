@@ -984,7 +984,7 @@ export default function DashboardPage() {
       }
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
-        setOlseraItemExportMessage(payload?.error || "Ekspor Detail Transaksi Olsera gagal.");
+        setOlseraItemExportMessage(payload?.error || "Ekspor Rincian Penjualan Olsera gagal.");
         return;
       }
       const blob = await response.blob();
@@ -995,13 +995,13 @@ export default function DashboardPage() {
       link.download =
         match?.[1] ||
         (olseraStart === olseraEnd
-          ? `Detail Transaksi Olsera ${olseraStart}.xlsx`
-          : `Detail Transaksi Olsera ${olseraStart} sd ${olseraEnd}.xlsx`);
+          ? `Rincian Penjualan-${olseraStart}__${olseraEnd}.xlsx`
+          : `Rincian Penjualan-${olseraStart}__${olseraEnd}.xlsx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(objectUrl);
-      setOlseraItemExportMessage("Ekspor Detail Transaksi selesai.");
+      setOlseraItemExportMessage("Ekspor Rincian Penjualan selesai.");
     } catch {
       setOlseraItemExportMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
     } finally {
@@ -1889,15 +1889,18 @@ export default function DashboardPage() {
               <RotateCcw className="h-4 w-4" />
               Reset
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleOlseraExport}
-              disabled={olseraExporting || isInvalidDateRange(olseraStart, olseraEnd)}
-            >
-              <ArrowDownToLine className="h-4 w-4" />
-              {olseraExporting ? "Mengekspor..." : "Export Excel"}
-            </Button>
+            {/* Export Excel (Omset+Laba) disembunyikan sementara — jangan hapus, tinggal ganti false -> true untuk memunculkan lagi. */}
+            {false && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleOlseraExport}
+                disabled={olseraExporting || isInvalidDateRange(olseraStart, olseraEnd)}
+              >
+                <ArrowDownToLine className="h-4 w-4" />
+                {olseraExporting ? "Mengekspor..." : "Export Excel"}
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -1905,12 +1908,12 @@ export default function DashboardPage() {
               disabled={olseraItemExporting || isInvalidDateRange(olseraStart, olseraEnd)}
             >
               <ArrowDownToLine className="h-4 w-4" />
-              {olseraItemExporting ? "Mengekspor..." : "Export Detail Transaksi"}
+              {olseraItemExporting ? "Mengekspor..." : "Export Rincian Penjualan"}
             </Button>
             {olseraFilterMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
               <span className="text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
             )}
-            {olseraExportMessage && <span className="text-sm text-slate-600">{olseraExportMessage}</span>}
+            {false && olseraExportMessage && <span className="text-sm text-slate-600">{olseraExportMessage}</span>}
             {olseraItemExportMessage && <span className="text-sm text-slate-600">{olseraItemExportMessage}</span>}
           </div>
 

@@ -147,6 +147,7 @@ export type OlseraOrderItemDocument = {
   date: string;
   orderNo: string;
   orderDate: string;
+  customerId: string | null;
   customerName: string | null;
   tableNo: string | null;
   salesByName: string | null;

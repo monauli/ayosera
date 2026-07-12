@@ -273,13 +273,118 @@ type OrderItem = {
 };
 
 // Field level-order dipakai untuk export detail transaksi (Feature: Export Detail Transaksi).
+// Diverifikasi terhadap payload nyata /order/closeorder/detail (lihat laporan resmi Olsera):
+//   order_time  = "2026-05-01 06:57:24"  → jam transaksi sebenarnya
+//   order_date  = "2026-05-01 00:00:00"  → selalu tengah malam (hanya tanggal)
+//   sales_by_name = "AMEL", order_source = "D" (kode: D = DINE IN)
+//   customer_id = 0 / customer_name = null / table_no = "" saat kosong
 type OrderMeta = {
   order_no?: unknown;
   order_date?: unknown;
+  transaction_date?: unknown;
+  transaction_time?: unknown;
+  order_time?: unknown;
+  paid_at?: unknown;
+  customer_id?: unknown;
   customer_name?: unknown;
   table_no?: unknown;
+  table_name?: unknown;
   sales_by_name?: unknown;
+  serve_by_name?: unknown;
+  cashier_name?: unknown;
+  created_by?: unknown;
+  customer?: unknown;
+  table?: unknown;
+  sales_by?: unknown;
+  cashier?: unknown;
+  order_source?: unknown;
+  order_source_name?: unknown;
+  order_type?: unknown;
+  order_type_name?: unknown;
+  service_type?: unknown;
+  service_type_name?: unknown;
 };
+
+function objectText(value: unknown, keys: string[]): string | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (candidate !== null && candidate !== undefined && String(candidate).trim() !== "") return String(candidate).trim();
+  }
+  return null;
+}
+
+function firstText(...values: unknown[]): string | null {
+  for (const candidate of values) {
+    if (candidate === null || candidate === undefined || typeof candidate === "object") continue;
+    const text = String(candidate).trim();
+    if (!text || text === "[object Object]") continue;
+    return text;
+  }
+  return null;
+}
+
+function personName(...values: unknown[]): string | null {
+  for (const candidate of values) {
+    const nested = objectText(candidate, ["name", "full_name", "display_name", "username"]);
+    const text = nested ?? firstText(candidate);
+    if (!text || /^\d+$/.test(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+function labelText(...values: unknown[]): string | null {
+  for (const candidate of values) {
+    const nested = objectText(candidate, ["name", "label", "title", "display_name", "code"]);
+    const text = nested ?? firstText(candidate);
+    if (!text || /^\d+$/.test(text)) continue;
+    return text.toUpperCase();
+  }
+  return null;
+}
+
+function orderDateTime(meta: OrderMeta, fallbackDate: string): string {
+  // order_time membawa jam transaksi sebenarnya; order_date dari Olsera selalu
+  // "YYYY-MM-DD 00:00:00". Jangan pernah pakai created_time/modified_time
+  // (jam server, beda timezone). Bila jam benar-benar tidak tersedia,
+  // kembalikan tanggal saja — bukan 00:00:00 palsu.
+  const withClock = firstText(meta.order_time, meta.transaction_time, meta.paid_at);
+  if (withClock && /[T ]\d{1,2}:\d{2}/.test(withClock) && !/[T ]00:00:00$/.test(withClock)) return withClock;
+  const dateSource = firstText(meta.order_date, meta.transaction_date, withClock) ?? fallbackDate;
+  return dateSource.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? fallbackDate;
+}
+
+// Kode order_source Olsera → label seperti pada export resmi Olsera.
+const ORDER_SOURCE_LABELS: Record<string, string> = {
+  D: "DINE IN",
+  T: "TAKE AWAY",
+  DV: "DELIVERY",
+  P: "PICK UP",
+};
+
+function orderTypeLabel(meta: OrderMeta): string | null {
+  const named = labelText(meta.order_source_name, meta.order_type_name, meta.service_type_name);
+  if (named) return named;
+  const code = firstText(meta.order_source, meta.order_type, meta.service_type);
+  if (!code) return null;
+  return ORDER_SOURCE_LABELS[code.toUpperCase()] ?? code.toUpperCase();
+}
+
+function salesBy(meta: OrderMeta): string | null {
+  // "-" adalah placeholder Olsera untuk serve_by_name kosong.
+  const cashier = personName(meta.sales_by_name, meta.cashier_name, meta.created_by, meta.cashier, meta.sales_by, meta.serve_by_name);
+  const name = cashier && cashier !== "-" ? cashier : null;
+  const orderType = orderTypeLabel(meta);
+  return name ? `${name}${orderType ? ` (${orderType})` : ""}` : null;
+}
+
+function customerIdText(meta: OrderMeta): string | null {
+  // customer_id = 0 berarti tanpa pelanggan — jangan tulis "0" ke kolom teks.
+  const id = firstText(meta.customer_id, objectText(meta.customer, ["id", "customer_id"]));
+  return id && id !== "0" ? id : null;
+}
 
 async function fetchOrderDetail(
   token: string,
@@ -446,11 +551,12 @@ export async function syncOlseraSalesByCategory(
               itemDocs.push({
                 _id: itemId,
                 date,
-                orderNo: String(meta.order_no ?? ""),
-                orderDate: String(meta.order_date ?? ""),
-                customerName: meta.customer_name != null ? String(meta.customer_name) : null,
-                tableNo: meta.table_no != null ? String(meta.table_no) : null,
-                salesByName: meta.sales_by_name != null ? String(meta.sales_by_name) : null,
+                orderNo: String(meta.order_no ?? order.id),
+                orderDate: orderDateTime(meta, date),
+                customerId: customerIdText(meta),
+                customerName: personName(meta.customer_name, meta.customer),
+                tableNo: firstText(meta.table_no, meta.table_name, objectText(meta.table, ["number", "no", "name", "table_no"])),
+                salesByName: salesBy(meta),
                 itemName,
                 qty: toNumber(item.qty),
                 amount: toNumber(item.amount),

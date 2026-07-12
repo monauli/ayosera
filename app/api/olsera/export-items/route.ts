@@ -33,6 +33,7 @@ export async function GET(request: Request) {
         .project<{
           orderNo: string;
           orderDate: string;
+          customerId: string | null;
           customerName: string | null;
           tableNo: string | null;
           salesByName: string | null;
@@ -45,6 +46,7 @@ export async function GET(request: Request) {
           _id: 0,
           orderNo: 1,
           orderDate: 1,
+          customerId: 1,
           customerName: 1,
           tableNo: 1,
           salesByName: 1,
@@ -59,7 +61,7 @@ export async function GET(request: Request) {
 
     const buffer = await buildOlseraItemWorkbook({ start, end, rows });
 
-    const filename = start === end ? `Detail Transaksi Olsera ${start}.xlsx` : `Detail Transaksi Olsera ${start} sd ${end}.xlsx`;
+    const filename = `Rincian Penjualan-${start}__${end}.xlsx`;
     // cast: TS 5.7 menganggap Uint8Array<ArrayBufferLike> tak cocok BodyInit (false positive)
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
