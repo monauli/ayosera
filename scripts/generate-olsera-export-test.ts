@@ -24,7 +24,7 @@ const rows = await client
   .collection("olsera_order_items")
   .find({ date: { $gte: START, $lte: END } })
   .sort({ orderDate: 1, orderNo: 1 })
-  .project({ _id: 0, orderNo: 1, orderDate: 1, customerId: 1, customerName: 1, tableNo: 1, salesByName: 1, itemName: 1, qty: 1, amount: 1, costAmount: 1, discount: 1 })
+  .project({ _id: 0, date: 1, orderNo: 1, orderDate: 1, customerId: 1, customerName: 1, tableNo: 1, salesByName: 1, itemName: 1, qty: 1, amount: 1, costAmount: 1, discount: 1 })
   .toArray();
 await client.close();
 

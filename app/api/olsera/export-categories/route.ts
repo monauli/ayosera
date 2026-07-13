@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo } from "@/lib/mongodb";
-import { buildOlseraItemWorkbook } from "@/lib/olsera-item-export";
+import {
+  buildOlseraCategoryWorkbook,
+  categoryForItem,
+  getCategoryByNameMap,
+} from "@/lib/olsera-category-export";
 
 export const runtime = "nodejs";
 
@@ -25,7 +29,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "start_date tidak boleh lebih besar dari end_date." }, { status: 400 });
     }
 
-    const rows = await withMongo(async () => {
+    const items = await withMongo(async () => {
       const { olseraOrderItems } = await collections();
       return olseraOrderItems
         .find({ date: { $gte: start, $lte: end } })
@@ -34,7 +38,6 @@ export async function GET(request: Request) {
           date: string;
           orderNo: string;
           orderDate: string;
-          customerId: string | null;
           customerName: string | null;
           tableNo: string | null;
           salesByName: string | null;
@@ -48,7 +51,6 @@ export async function GET(request: Request) {
           date: 1,
           orderNo: 1,
           orderDate: 1,
-          customerId: 1,
           customerName: 1,
           tableNo: 1,
           salesByName: 1,
@@ -61,9 +63,21 @@ export async function GET(request: Request) {
         .toArray();
     });
 
-    const buffer = await buildOlseraItemWorkbook({ start, end, rows });
+    if (!items.length) {
+      return NextResponse.json(
+        { error: "Tidak ada transaksi Olsera pada periode tersebut. Jalankan sync terlebih dahulu." },
+        { status: 404 },
+      );
+    }
 
-    const filename = `Rincian Penjualan-${start}__${end}.xlsx`;
+    // Kategori di-resolve dari katalog produk Olsera (nama → klasifikasi) —
+    // identik hasilnya dengan agregat olsera_sales_by_category di dashboard.
+    const nameMap = await getCategoryByNameMap();
+    const rows = items.map((item) => ({ ...item, category: categoryForItem(item.itemName, nameMap) }));
+
+    const buffer = await buildOlseraCategoryWorkbook({ start, end, rows });
+
+    const filename = `Kategori Penjualan-${start}__${end}.xlsx`;
     // cast: TS 5.7 menganggap Uint8Array<ArrayBufferLike> tak cocok BodyInit (false positive)
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
@@ -74,6 +88,6 @@ export async function GET(request: Request) {
   } catch (error) {
     if (error instanceof Response) return error;
     console.error(error);
-    return NextResponse.json({ error: "Gagal membuat export detail transaksi Olsera." }, { status: 500 });
+    return NextResponse.json({ error: "Gagal membuat export kategori penjualan Olsera." }, { status: 500 });
   }
 }

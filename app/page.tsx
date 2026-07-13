@@ -394,6 +394,8 @@ export default function DashboardPage() {
   const [olseraExportMessage, setOlseraExportMessage] = useState("");
   const [olseraItemExporting, setOlseraItemExporting] = useState(false);
   const [olseraItemExportMessage, setOlseraItemExportMessage] = useState("");
+  const [olseraCategoryExporting, setOlseraCategoryExporting] = useState(false);
+  const [olseraCategoryExportMessage, setOlseraCategoryExportMessage] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
   const [exportStart, setExportStart] = useState(today);
@@ -1006,6 +1008,40 @@ export default function DashboardPage() {
       setOlseraItemExportMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
     } finally {
       setOlseraItemExporting(false);
+    }
+  }
+
+  async function handleOlseraCategoryExport() {
+    if (isInvalidDateRange(olseraStart, olseraEnd)) return;
+    setOlseraCategoryExporting(true);
+    setOlseraCategoryExportMessage("");
+    try {
+      const params = new URLSearchParams({ start_date: olseraStart, end_date: olseraEnd });
+      const response = await fetch(`/api/olsera/export-categories?${params.toString()}`, { cache: "no-store" });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setOlseraCategoryExportMessage(payload?.error || "Ekspor Kategori Penjualan Olsera gagal.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
+      link.download = match?.[1] || `Kategori Penjualan-${olseraStart}__${olseraEnd}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      setOlseraCategoryExportMessage("Ekspor Kategori Penjualan selesai.");
+    } catch {
+      setOlseraCategoryExportMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
+    } finally {
+      setOlseraCategoryExporting(false);
     }
   }
 
@@ -1910,11 +1946,21 @@ export default function DashboardPage() {
               <ArrowDownToLine className="h-4 w-4" />
               {olseraItemExporting ? "Mengekspor..." : "Export Rincian Penjualan"}
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleOlseraCategoryExport}
+              disabled={olseraCategoryExporting || isInvalidDateRange(olseraStart, olseraEnd)}
+            >
+              <ArrowDownToLine className="h-4 w-4" />
+              {olseraCategoryExporting ? "Mengekspor..." : "Export Kategori Penjualan"}
+            </Button>
             {olseraFilterMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
               <span className="text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
             )}
             {false && olseraExportMessage && <span className="text-sm text-slate-600">{olseraExportMessage}</span>}
             {olseraItemExportMessage && <span className="text-sm text-slate-600">{olseraItemExportMessage}</span>}
+            {olseraCategoryExportMessage && <span className="text-sm text-slate-600">{olseraCategoryExportMessage}</span>}
           </div>
 
           <section>
