@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, type ElementType } from "react";
+import { useEffect, useRef, useState, type ElementType } from "react";
 import {
   Activity,
+  AlertTriangle,
   ArrowDown,
   ArrowDownToLine,
   ArrowUp,
@@ -12,11 +13,12 @@ import {
   CalendarClock,
   CalendarDays,
   CalendarRange,
-  Check,
   CheckCircle2,
   ChevronDown,
   DatabaseZap,
+  FileSpreadsheet,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Menu,
   RefreshCw,
@@ -154,11 +156,23 @@ function SortableHeader({
   );
 }
 
+// `label` adalah kunci internal navigasi (dipakai activeNav di banyak kondisi),
+// `display` adalah teks yang tampil di sidebar. `subItems` menjadikan menu
+// collapsible — submenu baru (mis. Inventori) cukup ditambahkan ke array ini.
 const navItems = [
-  { label: "Dasbor", icon: LayoutDashboard, module: "dasbor" },
-  { label: "Transaksi", icon: Activity, module: "transaksi" },
-  { label: "Olsera", icon: Store, module: "olsera" },
-  { label: "Webhook", icon: Webhook, module: "webhook" },
+  { label: "Dasbor", display: "Dashboard Ayosera", icon: LayoutDashboard, module: "dasbor" },
+  { label: "Transaksi", display: "Transaksi AYO", icon: Activity, module: "transaksi" },
+  {
+    label: "Olsera",
+    display: "Olsera",
+    icon: Store,
+    module: "olsera",
+    subItems: [
+      { label: "Kategori Penjualan", nav: "Olsera" },
+      // { label: "Inventori", nav: "OlseraInventori" }, // disiapkan untuk nanti
+    ],
+  },
+  { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
 ];
 
 type SessionUserInfo = {
@@ -178,6 +192,39 @@ const themeOptions = [
   { value: "ocean", label: "Ocean", swatch: "#A5E6F0", ring: "#67c8dc" },
   { value: "amber", label: "Amber", swatch: "#FDDDA8", ring: "#f5b45a" },
 ];
+
+/** "2026-07-13T11:11:39Z" → "13 Jul 2026 pukul 18:11:39" (Asia/Jakarta). */
+function formatSyncDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const parts = new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("day")} ${get("month")} ${get("year")} pukul ${get("hour")}:${get("minute")}:${get("second")}`;
+}
+
+/** Jam "18:11:39" (Asia/Jakarta) dari timestamp; "" bila tidak valid. */
+function formatJakartaTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("hour")}:${get("minute")}:${get("second")}`;
+}
 
 function statusVariant(status: string) {
   if (status === "Completed") return "success";
@@ -337,6 +384,24 @@ async function redirectToLogin() {
   window.location.href = "/login";
 }
 
+// ---- Gaya bersama halaman Penjualan Olsera (visual saja, tanpa logic) ----
+const OLSERA_CARD =
+  "rounded-2xl border-slate-200 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_14px_36px_-22px_rgba(15,23,42,0.3)]";
+const OLSERA_CARD_HEADER =
+  "rounded-t-2xl border-b border-slate-100 bg-gradient-to-r from-slate-50/90 via-white to-rose-50/50";
+const OLSERA_CARD_CONTENT = "pt-5";
+const OLSERA_TITLE = "text-[15px] font-semibold tracking-tight text-slate-900";
+const OLSERA_DESC = "mt-1 text-[13px] leading-relaxed text-slate-500";
+const OLSERA_ICON_CHIP = "rounded-xl p-2.5 ring-1 ring-inset";
+const OLSERA_FIELD =
+  "flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 shadow-sm transition-colors focus-within:border-rose-300 focus-within:ring-2 focus-within:ring-rose-200";
+const OLSERA_PRIMARY_BTN =
+  "rounded-lg bg-rose-600 font-medium text-white shadow-sm transition-colors hover:bg-rose-700 active:bg-rose-800";
+const OLSERA_SEGMENT_BTN =
+  "inline-flex h-8 items-center gap-1.5 rounded-lg px-3.5 text-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400";
+const OLSERA_MENU_ITEM =
+  "flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-slate-700 transition-colors hover:bg-rose-50 focus-visible:bg-rose-50 focus-visible:outline-none";
+
 export default function DashboardPage() {
   const today = formatJakartaDate(new Date());
   const currentMonth = today.slice(0, 7);
@@ -365,16 +430,18 @@ export default function DashboardPage() {
   const [syncMode, setSyncMode] = useState<"range" | "month" | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState("white");
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [olseraNavOpen, setOlseraNavOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Dasbor");
   const [sessionUser, setSessionUser] = useState<SessionUserInfo | null>(null);
   const [webhookData, setWebhookData] = useState<WebhookPayload | null>(null);
   const [webhookStatus, setWebhookStatus] = useState<"unknown" | "active" | "inactive">("unknown");
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookRefresh, setWebhookRefresh] = useState(0);
-  // Filter tampilan halaman Olsera: default "Kemarin" (data hari ini sering belum lengkap).
+  // Filter tampilan halaman Olsera. Dua mode laporan yang saling eksklusif:
+  // "range" (rentang tanggal, default Kemarin — data hari ini sering belum
+  // lengkap) dan "monthly" (satu bulan penuh, untuk laporan Omset Kategori).
   const olseraYesterday = addDaysISO(today, -1);
-  const [olseraFilterMode, setOlseraFilterMode] = useState<"yesterday" | "month" | "range">("yesterday");
+  const [olseraReportMode, setOlseraReportMode] = useState<"range" | "monthly">("range");
   const [olseraStart, setOlseraStart] = useState(olseraYesterday);
   const [olseraEnd, setOlseraEnd] = useState(olseraYesterday);
   const [olseraFilterMonth, setOlseraFilterMonth] = useState(currentMonth);
@@ -396,6 +463,29 @@ export default function DashboardPage() {
   const [olseraItemExportMessage, setOlseraItemExportMessage] = useState("");
   const [olseraCategoryExporting, setOlseraCategoryExporting] = useState(false);
   const [olseraCategoryExportMessage, setOlseraCategoryExportMessage] = useState("");
+  const [olseraOmsetKategoriExporting, setOlseraOmsetKategoriExporting] = useState(false);
+  const [olseraOmsetKategoriExportMessage, setOlseraOmsetKategoriExportMessage] = useState("");
+  const [olseraExportMenuOpen, setOlseraExportMenuOpen] = useState(false);
+  const olseraExportMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Dropdown Export: tutup saat klik di luar atau tekan Escape.
+  useEffect(() => {
+    if (!olseraExportMenuOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (olseraExportMenuRef.current && !olseraExportMenuRef.current.contains(event.target as Node)) {
+        setOlseraExportMenuOpen(false);
+      }
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOlseraExportMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [olseraExportMenuOpen]);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
   const [exportStart, setExportStart] = useState(today);
@@ -843,9 +933,12 @@ export default function DashboardPage() {
       .then((payload) => {
         if (cancelled || !payload || !("lastFullySyncedDate" in payload)) return;
         setOlseraSyncStatus(payload);
-        // Pre-fill: sync lanjutan mulai dari checkpoint+1 s/d hari ini (boleh diubah user).
+        // Pre-fill: sync lanjutan mulai dari checkpoint-1 hari (overlap satu hari
+        // agar tidak ada transaksi terlewat; penyimpanan upsert, aman dari duplikasi)
+        // s/d hari ini. startDate dijaga tidak melebihi endDate.
         if (payload.lastFullySyncedDate) {
-          setOlseraSyncStart(addDaysISO(payload.lastFullySyncedDate, 1));
+          const overlapStart = addDaysISO(payload.lastFullySyncedDate, -1);
+          setOlseraSyncStart(overlapStart > today ? today : overlapStart);
           setOlseraSyncEnd(today);
         }
       })
@@ -902,16 +995,38 @@ export default function DashboardPage() {
   }
 
   function handleOlseraYesterday() {
-    setOlseraFilterMode("yesterday");
+    setOlseraReportMode("range");
+    setOlseraRangeStart(olseraYesterday);
+    setOlseraRangeEnd(olseraYesterday);
     setOlseraStart(olseraYesterday);
     setOlseraEnd(olseraYesterday);
+  }
+
+  // Ganti mode laporan: tabel langsung mengikuti filter milik mode tersebut,
+  // sehingga filter bulan dan rentang tanggal tidak pernah aktif bersamaan.
+  function handleOlseraReportModeChange(mode: "range" | "monthly") {
+    if (mode === olseraReportMode) return;
+    setOlseraReportMode(mode);
+    if (mode === "monthly") {
+      const range = monthRangeFromValue(olseraFilterMonth || currentMonth);
+      setOlseraStart(range.startDate);
+      setOlseraEnd(range.endDate);
+    } else if (olseraRangeStart && olseraRangeEnd && olseraRangeStart <= olseraRangeEnd) {
+      setOlseraStart(olseraRangeStart);
+      setOlseraEnd(olseraRangeEnd);
+    } else {
+      setOlseraRangeStart(olseraYesterday);
+      setOlseraRangeEnd(olseraYesterday);
+      setOlseraStart(olseraYesterday);
+      setOlseraEnd(olseraYesterday);
+    }
   }
 
   function handleOlseraMonthFilter(value: string) {
     if (!value) return;
     const range = monthRangeFromValue(value);
     setOlseraFilterMonth(value);
-    setOlseraFilterMode("month");
+    setOlseraReportMode("monthly");
     setOlseraStart(range.startDate);
     setOlseraEnd(range.endDate);
   }
@@ -919,7 +1034,7 @@ export default function DashboardPage() {
   function handleOlseraRangeChange(startDate: string, endDate: string) {
     setOlseraRangeStart(startDate);
     setOlseraRangeEnd(endDate);
-    setOlseraFilterMode("range");
+    setOlseraReportMode("range");
     // Terapkan hanya kalau kedua tanggal terisi dan urutannya valid;
     // kalau belum, data terakhir tetap tampil sampai rentang valid.
     if (startDate && endDate && startDate <= endDate) {
@@ -929,12 +1044,17 @@ export default function DashboardPage() {
   }
 
   function handleOlseraResetFilters() {
-    setOlseraFilterMode("yesterday");
-    setOlseraStart(olseraYesterday);
-    setOlseraEnd(olseraYesterday);
-    setOlseraFilterMonth(currentMonth);
+    if (olseraReportMode === "monthly") {
+      const range = monthRangeFromValue(currentMonth);
+      setOlseraFilterMonth(currentMonth);
+      setOlseraStart(range.startDate);
+      setOlseraEnd(range.endDate);
+      return;
+    }
     setOlseraRangeStart(olseraYesterday);
     setOlseraRangeEnd(olseraYesterday);
+    setOlseraStart(olseraYesterday);
+    setOlseraEnd(olseraYesterday);
   }
 
   async function handleOlseraExport() {
@@ -1045,13 +1165,59 @@ export default function DashboardPage() {
     }
   }
 
-  function getOlseraFilterDetail() {
-    if (olseraFilterMode === "yesterday") return `Kemarin (${formatDisplayDate(olseraStart)})`;
-    if (olseraFilterMode === "month")
-      return `${formatMonthLabel(olseraFilterMonth)} (${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)})`;
-    if (olseraStart === olseraEnd) return `Filter tanggal ${formatDisplayDate(olseraStart)}`;
-    return `Filter ${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)}`;
+  // Laporan bulanan "Total Keseluruhan Omset". Mode bulanan memakai filter
+  // bulan; mode rentang tanggal memakai bulan dari tanggal awal (startDate) —
+  // filter bulan disinkronkan internal tanpa mengubah rentang yang aktif.
+  async function handleOlseraOmsetKategoriExport() {
+    const month = olseraReportMode === "monthly" ? olseraFilterMonth : olseraStart.slice(0, 7);
+    if (!month || olseraOmsetKategoriExporting) return;
+    if (month !== olseraFilterMonth) setOlseraFilterMonth(month);
+    setOlseraOmsetKategoriExporting(true);
+    setOlseraOmsetKategoriExportMessage("");
+    try {
+      const params = new URLSearchParams({ month });
+      const response = await fetch(`/api/olsera/export-category-revenue?${params.toString()}`, { cache: "no-store" });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setOlseraOmsetKategoriExportMessage(payload?.error || "Ekspor Omset Kategori gagal.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
+      link.download = match?.[1] || `Omset Kategori-${month}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      setOlseraOmsetKategoriExportMessage(`Ekspor Omset Kategori ${formatMonthLabel(month)} selesai.`);
+    } catch {
+      setOlseraOmsetKategoriExportMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
+    } finally {
+      setOlseraOmsetKategoriExporting(false);
+    }
   }
+
+  function getOlseraFilterDetail() {
+    if (olseraReportMode === "monthly")
+      return `${formatMonthLabel(olseraFilterMonth)} (${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)})`;
+    if (olseraStart === olseraEnd && olseraStart === olseraYesterday) return `Kemarin (${formatDisplayDate(olseraStart)})`;
+    if (olseraStart === olseraEnd) return `Tanggal ${formatDisplayDate(olseraStart)}`;
+    return `${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)}`;
+  }
+
+  const olseraAnyExporting = olseraItemExporting || olseraCategoryExporting || olseraOmsetKategoriExporting;
+  const olseraExportMessages = [
+    olseraItemExportMessage,
+    olseraCategoryExportMessage,
+    olseraOmsetKategoriExportMessage,
+  ].filter(Boolean);
 
   const isSupervisor = sessionUser?.role === "supervisor";
   // Aksi sync tidak lagi khusus supervisor — cukup punya modul terkait.
@@ -1087,7 +1253,6 @@ export default function DashboardPage() {
   const paymentRows = dashboard?.paymentBreakdown ?? [];
   const eventRows = dashboard?.syncEvents ?? [];
   const courtOptions = dashboard?.branchOptions ?? [];
-  const currentTheme = themeOptions.find((option) => option.value === theme) ?? themeOptions[0];
   const latestEvent = eventRows[0];
   const syncStatusLabel = latestEvent ? (latestEvent.tone.includes("teal") ? "OK" : "Gagal") : "-";
   const lastCheckpoint = latestEvent ? formatEventTime(latestEvent.time) : "-";
@@ -1182,70 +1347,73 @@ export default function DashboardPage() {
           </div>
         </div>
         <nav className="space-y-1 px-3 py-4">
-          {[...visibleNavItems, ...(isSupervisor ? [{ label: "Pengguna", icon: Users, module: "" }] : [])].map((item) => (
-            <button
-              key={item.label}
-              onClick={() => {
-                setActiveNav(item.label);
-                if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
-              }}
-              className={`flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors ${
-                activeNav === item.label
-                  ? "bg-[rgb(var(--accent))] font-medium text-[rgb(var(--accent-foreground))]"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-              }`}
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </button>
-          ))}
+          {[
+            ...visibleNavItems,
+            ...(isSupervisor ? [{ label: "Pengguna", display: "Pengguna", icon: Users, module: "" }] : []),
+          ].map((item) => {
+            const subItems = "subItems" in item ? item.subItems : undefined;
+            if (subItems?.length) {
+              // Menu collapsible (Olsera): terbuka otomatis saat salah satu submenunya aktif.
+              const groupActive = subItems.some((sub) => sub.nav === activeNav);
+              const open = olseraNavOpen || groupActive;
+              return (
+                <div key={item.label}>
+                  <button
+                    onClick={() => setOlseraNavOpen((value) => !value)}
+                    aria-expanded={open}
+                    className={`flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors ${
+                      groupActive
+                        ? "font-semibold text-slate-900"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                    }`}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    <span className="flex-1 text-left">{item.display}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+                  </button>
+                  {open && (
+                    <div className="mt-1 space-y-1 pl-7">
+                      {subItems.map((sub) => (
+                        <button
+                          key={sub.label}
+                          onClick={() => {
+                            setActiveNav(sub.nav);
+                            if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
+                          }}
+                          className={`flex h-9 w-full items-center gap-2 rounded-md px-3 text-sm transition-colors ${
+                            activeNav === sub.nav
+                              ? "bg-[rgb(var(--primary))] font-semibold text-[rgb(var(--primary-foreground))] shadow-sm ring-1 ring-inset ring-black/5"
+                              : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                          }`}
+                        >
+                          {sub.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            return (
+              <button
+                key={item.label}
+                onClick={() => {
+                  setActiveNav(item.label);
+                  if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
+                }}
+                className={`flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors ${
+                  activeNav === item.label
+                    ? "bg-[rgb(var(--primary))] font-semibold text-[rgb(var(--primary-foreground))] shadow-sm ring-1 ring-inset ring-black/5"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                }`}
+              >
+                <item.icon className="h-4 w-4" />
+                {item.display}
+              </button>
+            );
+          })}
         </nav>
         <div className="absolute inset-x-0 bottom-0 space-y-3 border-t p-4">
-          <div className="relative">
-            <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400">Theme</p>
-            <button
-              type="button"
-              onClick={() => setThemeMenuOpen((open) => !open)}
-              aria-expanded={themeMenuOpen}
-              className="flex h-9 w-full items-center justify-between rounded-md border bg-white px-3 text-sm hover:bg-slate-50"
-            >
-              <span className="flex items-center gap-2">
-                <span
-                  className="h-4 w-4 rounded-full border border-black/10"
-                  style={{ backgroundColor: currentTheme.swatch }}
-                />
-                {currentTheme.label}
-              </span>
-              <ChevronDown className={`h-4 w-4 transition-transform ${themeMenuOpen ? "rotate-180" : ""}`} />
-            </button>
-            {themeMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setThemeMenuOpen(false)} />
-                <div className="absolute bottom-full left-0 z-50 mb-2 w-full overflow-hidden rounded-md border bg-white p-1 shadow-lg">
-                  {themeOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => {
-                        setTheme(option.value);
-                        setThemeMenuOpen(false);
-                      }}
-                      className="flex w-full items-center justify-between gap-2 rounded px-2 py-2 text-sm hover:bg-slate-100"
-                    >
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="h-4 w-4 rounded-full border border-black/10"
-                          style={{ backgroundColor: option.swatch }}
-                        />
-                        {option.label}
-                      </span>
-                      {theme === option.value && <Check className="h-4 w-4 text-slate-600" />}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
           <div className="rounded-md bg-[rgb(var(--accent))] p-3">
             <div className="flex items-center gap-2 text-sm font-medium">
               <CheckCircle2 className="h-4 w-4 text-[rgb(var(--accent-foreground))]" />
@@ -1257,7 +1425,7 @@ export default function DashboardPage() {
       </aside>
 
       <section className={`transition-[padding] duration-300 ease-in-out ${drawerOpen ? "lg:pl-64" : "pl-0"}`}>
-        <header className="sticky top-0 z-30 border-b bg-white/95 backdrop-blur">
+        <header className="sticky top-0 z-30 border-b bg-white/95 shadow-[0_1px_3px_rgba(15,23,42,0.05)] backdrop-blur">
           <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
             <Button
               variant="ghost"
@@ -1273,7 +1441,7 @@ export default function DashboardPage() {
                 {activeNav === "Transaksi"
                   ? "Transaksi AYO"
                   : activeNav === "Olsera"
-                    ? "Penjualan Olsera"
+                    ? "Kategori Penjualan Olsera"
                     : activeNav === "Webhook"
                       ? "Monitoring Webhook AYO"
                       : activeNav === "Pengguna"
@@ -1302,6 +1470,7 @@ export default function DashboardPage() {
             {canSyncAyo && activeNav !== "Olsera" && activeNav !== "Pengguna" && (
             <div className="relative">
               <Button
+                className={OLSERA_PRIMARY_BTN}
                 onClick={() => {
                   setSyncMode(null);
                   setSyncMenuOpen((open) => !open);
@@ -1309,8 +1478,8 @@ export default function DashboardPage() {
                 disabled={syncing}
                 aria-expanded={syncMenuOpen}
               >
-                <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-                {syncing ? "Menyinkronkan" : "Sinkronkan Sekarang"}
+                {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {syncing ? "Menyinkronkan AYO..." : "Sync AYO"}
                 <ChevronDown className={`h-4 w-4 transition-transform ${syncMenuOpen ? "rotate-180" : ""}`} />
               </Button>
               {syncMenuOpen && (
@@ -1409,7 +1578,13 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        <div className="px-4 py-5 sm:px-6">
+        <div
+          className={`px-4 py-5 sm:px-6 ${
+            activeNav === "Olsera"
+              ? "min-h-[calc(100vh-4rem)] bg-gradient-to-b from-slate-50 via-slate-50 to-rose-50/40"
+              : ""
+          }`}
+        >
           {syncMessage && <p className="mb-4 text-sm text-slate-600">{syncMessage}</p>}
 
           {!sessionUser && (
@@ -1781,81 +1956,100 @@ export default function DashboardPage() {
           <>
           {/* Kartu sinkronisasi Olsera untuk semua user bermodul "olsera". */}
           {canSyncOlsera && (
-          <section className="mb-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Sinkronisasi Olsera</CardTitle>
-                <CardDescription>
-                  {olseraSyncStatus?.lastFullySyncedDate ? (
-                    <>
-                      Data tersinkron:{" "}
-                      <span className="font-medium">
-                        {formatDisplayDate(olseraSyncStatus.firstSyncedDate ?? olseraSyncStatus.lastFullySyncedDate)}
-                        {" - "}
-                        {formatDisplayDate(olseraSyncStatus.lastFullySyncedDate)}
-                      </span>
-                      {olseraSyncStatus.lastSync && (
+          <section className="mb-6">
+            <Card className={OLSERA_CARD}>
+              <CardHeader className={`${OLSERA_CARD_HEADER} flex flex-row items-start justify-between gap-3 space-y-0`}>
+                <div className="flex items-start gap-3.5">
+                  <div className={`${OLSERA_ICON_CHIP} bg-rose-50 text-rose-600 ring-rose-100`}>
+                    <RefreshCw className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <CardTitle className={OLSERA_TITLE}>Sync Olsera</CardTitle>
+                    <CardDescription className={OLSERA_DESC}>
+                      {olseraSyncStatus?.lastFullySyncedDate ? (
                         <>
-                          {" "}— terakhir sync{" "}
-                          {olseraSyncStatus.lastSync.finishedAt
-                            ? new Date(olseraSyncStatus.lastSync.finishedAt).toLocaleString("id-ID", {
-                                timeZone: "Asia/Jakarta",
-                              })
-                            : "-"}
-                          , status{" "}
-                          <span
-                            className={
-                              olseraSyncStatus.lastSync.status === "success"
-                                ? "font-medium text-emerald-600"
-                                : olseraSyncStatus.lastSync.status === "partial"
-                                  ? "font-medium text-amber-600"
-                                  : "font-medium text-red-600"
-                            }
-                          >
-                            {olseraSyncStatus.lastSync.status}
+                          Data tersinkron{" "}
+                          <span className="font-medium text-slate-700">
+                            {formatDisplayDate(olseraSyncStatus.firstSyncedDate ?? olseraSyncStatus.lastFullySyncedDate)}
+                            {" - "}
+                            {formatDisplayDate(olseraSyncStatus.lastFullySyncedDate)}
                           </span>
+                          {olseraSyncStatus.lastSync?.finishedAt && (
+                            <> · terakhir sync {formatSyncDateTime(olseraSyncStatus.lastSync.finishedAt)}</>
+                          )}
                         </>
+                      ) : (
+                        "Belum pernah sync — isi tanggal mulai dan selesai untuk sync pertama kali."
                       )}
-                    </>
+                    </CardDescription>
+                  </div>
+                </div>
+                {olseraSyncing ? (
+                  <Badge variant="info" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-sky-200/70">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Running
+                  </Badge>
+                ) : olseraSyncStatus?.lastSync ? (
+                  olseraSyncStatus.lastSync.status === "success" ? (
+                    <Badge variant="success" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-emerald-200/70">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Success
+                    </Badge>
+                  ) : olseraSyncStatus.lastSync.status === "partial" ? (
+                    <Badge variant="warning" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-amber-200/70">
+                      <AlertTriangle className="h-3 w-3" />
+                      Partial
+                    </Badge>
                   ) : (
-                    "Belum pernah sync — isi tanggal mulai dan selesai untuk sync pertama kali."
-                  )}
-                </CardDescription>
+                    <Badge variant="danger" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-red-200/70">
+                      <AlertTriangle className="h-3 w-3" />
+                      Failed
+                    </Badge>
+                  )
+                ) : (
+                  <Badge variant="secondary" className="rounded-full px-2.5 ring-1 ring-inset ring-slate-200/70">
+                    Belum sync
+                  </Badge>
+                )}
               </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    type="date"
-                    aria-label="Tanggal mulai sync Olsera"
-                    value={olseraSyncStart}
-                    max={today}
-                    className="h-10 w-[170px] cursor-pointer"
-                    onClick={(event) => event.currentTarget.showPicker?.()}
-                    onChange={(event) => {
-                      setOlseraSyncStart(event.target.value);
-                      setOlseraSyncValidationError("");
-                    }}
-                  />
-                  <span className="text-sm text-slate-500">s/d</span>
-                  <Input
-                    type="date"
-                    aria-label="Tanggal selesai sync Olsera"
-                    value={olseraSyncEnd}
-                    max={today}
-                    className="h-10 w-[170px] cursor-pointer"
-                    onClick={(event) => event.currentTarget.showPicker?.()}
-                    onChange={(event) => {
-                      setOlseraSyncEnd(event.target.value);
-                      setOlseraSyncValidationError("");
-                    }}
-                  />
+              <CardContent className={OLSERA_CARD_CONTENT}>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className={OLSERA_FIELD}>
+                    <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
+                    <Input
+                      type="date"
+                      aria-label="Tanggal mulai sync Olsera"
+                      value={olseraSyncStart}
+                      max={today}
+                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                      onClick={(event) => event.currentTarget.showPicker?.()}
+                      onChange={(event) => {
+                        setOlseraSyncStart(event.target.value);
+                        setOlseraSyncValidationError("");
+                      }}
+                    />
+                    <span className="text-xs text-slate-400">s/d</span>
+                    <Input
+                      type="date"
+                      aria-label="Tanggal selesai sync Olsera"
+                      value={olseraSyncEnd}
+                      max={today}
+                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                      onClick={(event) => event.currentTarget.showPicker?.()}
+                      onChange={(event) => {
+                        setOlseraSyncEnd(event.target.value);
+                        setOlseraSyncValidationError("");
+                      }}
+                    />
+                  </div>
                   <Button
                     type="button"
+                    className={OLSERA_PRIMARY_BTN}
                     onClick={handleOlseraSync}
                     disabled={olseraSyncing || !olseraSyncStart || !olseraSyncEnd}
                   >
-                    <RefreshCw className={`h-4 w-4 ${olseraSyncing ? "animate-spin" : ""}`} />
-                    Sinkronkan Olsera
+                    {olseraSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    {olseraSyncing ? "Menyinkronkan Olsera..." : "Sync Olsera"}
                   </Button>
                   {olseraSyncMessage && <span className="text-sm text-slate-600">{olseraSyncMessage}</span>}
                 </div>
@@ -1869,126 +2063,282 @@ export default function DashboardPage() {
           </section>
           )}
 
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant={olseraFilterMode === "yesterday" ? "default" : "outline"}
-              onClick={handleOlseraYesterday}
-            >
-              <CalendarRange className="h-4 w-4" />
-              Kemarin
-            </Button>
-            <div
-              className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
-                olseraFilterMode === "month"
-                  ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
-                  : "bg-white"
-              }`}
-            >
-              <CalendarDays className="h-4 w-4 text-slate-500" />
-              <Input
-                type="month"
-                aria-label="Filter bulan tertentu (Olsera)"
-                value={olseraFilterMonth}
-                className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-                onClick={(event) => event.currentTarget.showPicker?.()}
-                onChange={(event) => handleOlseraMonthFilter(event.target.value)}
-              />
-            </div>
-            <div
-              className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
-                olseraFilterMode === "range"
-                  ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
-                  : "bg-white"
-              }`}
-            >
-              <CalendarRange className="h-4 w-4 text-slate-500" />
-              <Input
-                type="date"
-                aria-label="Tanggal mulai filter Olsera"
-                value={olseraRangeStart}
-                className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-                onClick={(event) => event.currentTarget.showPicker?.()}
-                onChange={(event) => handleOlseraRangeChange(event.target.value, olseraRangeEnd)}
-              />
-              <span className="text-xs text-slate-500">s/d</span>
-              <Input
-                type="date"
-                aria-label="Tanggal selesai filter Olsera"
-                value={olseraRangeEnd}
-                className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-                onClick={(event) => event.currentTarget.showPicker?.()}
-                onChange={(event) => handleOlseraRangeChange(olseraRangeStart, event.target.value)}
-              />
-            </div>
-            <Button type="button" variant="ghost" onClick={handleOlseraResetFilters}>
-              <RotateCcw className="h-4 w-4" />
-              Reset
-            </Button>
-            {/* Export Excel (Omset+Laba) disembunyikan sementara — jangan hapus, tinggal ganti false -> true untuk memunculkan lagi. */}
-            {false && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleOlseraExport}
-                disabled={olseraExporting || isInvalidDateRange(olseraStart, olseraEnd)}
-              >
-                <ArrowDownToLine className="h-4 w-4" />
-                {olseraExporting ? "Mengekspor..." : "Export Excel"}
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleOlseraItemExport}
-              disabled={olseraItemExporting || isInvalidDateRange(olseraStart, olseraEnd)}
-            >
-              <ArrowDownToLine className="h-4 w-4" />
-              {olseraItemExporting ? "Mengekspor..." : "Export Rincian Penjualan"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleOlseraCategoryExport}
-              disabled={olseraCategoryExporting || isInvalidDateRange(olseraStart, olseraEnd)}
-            >
-              <ArrowDownToLine className="h-4 w-4" />
-              {olseraCategoryExporting ? "Mengekspor..." : "Export Kategori Penjualan"}
-            </Button>
-            {olseraFilterMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
-              <span className="text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
-            )}
-            {false && olseraExportMessage && <span className="text-sm text-slate-600">{olseraExportMessage}</span>}
-            {olseraItemExportMessage && <span className="text-sm text-slate-600">{olseraItemExportMessage}</span>}
-            {olseraCategoryExportMessage && <span className="text-sm text-slate-600">{olseraCategoryExportMessage}</span>}
-          </div>
+          <section className="mb-6">
+            <Card className={OLSERA_CARD}>
+              <CardHeader className={`${OLSERA_CARD_HEADER} flex flex-row items-start gap-3.5 space-y-0`}>
+                <div className={`${OLSERA_ICON_CHIP} bg-slate-100 text-slate-600 ring-slate-200/80`}>
+                  <FileSpreadsheet className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle className={OLSERA_TITLE}>Laporan Penjualan</CardTitle>
+                  <CardDescription className={OLSERA_DESC}>
+                    Pilih mode laporan, atur periodenya, lalu unduh export yang tersedia untuk mode tersebut.
+                  </CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent className={OLSERA_CARD_CONTENT}>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {/* Segmented control mode laporan — bulan & rentang tidak pernah aktif bersamaan. */}
+                  <div
+                    role="tablist"
+                    aria-label="Mode laporan Olsera"
+                    className="inline-flex h-10 items-center rounded-xl bg-slate-100/90 p-1 ring-1 ring-inset ring-slate-200/70"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={olseraReportMode === "range"}
+                      onClick={() => handleOlseraReportModeChange("range")}
+                      className={`${OLSERA_SEGMENT_BTN} ${
+                        olseraReportMode === "range"
+                          ? "bg-rose-600 font-semibold text-white shadow-sm"
+                          : "font-medium text-slate-500 hover:bg-white/70 hover:text-slate-700"
+                      }`}
+                    >
+                      <CalendarRange className="h-4 w-4" />
+                      Rentang Tanggal
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={olseraReportMode === "monthly"}
+                      onClick={() => handleOlseraReportModeChange("monthly")}
+                      className={`${OLSERA_SEGMENT_BTN} ${
+                        olseraReportMode === "monthly"
+                          ? "bg-rose-600 font-semibold text-white shadow-sm"
+                          : "font-medium text-slate-500 hover:bg-white/70 hover:text-slate-700"
+                      }`}
+                    >
+                      <CalendarDays className="h-4 w-4" />
+                      Bulanan
+                    </button>
+                  </div>
+
+                  {olseraReportMode === "range" ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={`rounded-lg shadow-sm transition-colors ${
+                          olseraStart === olseraYesterday && olseraEnd === olseraYesterday
+                            ? "border-rose-200 bg-rose-50 font-medium text-rose-700 hover:bg-rose-100"
+                            : "border-slate-200 bg-white text-slate-600 hover:bg-rose-50 hover:text-rose-700"
+                        }`}
+                        onClick={handleOlseraYesterday}
+                      >
+                        Kemarin
+                      </Button>
+                      <div className={OLSERA_FIELD}>
+                        <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
+                        <Input
+                          type="date"
+                          aria-label="Tanggal mulai filter Olsera"
+                          value={olseraRangeStart}
+                          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                          onClick={(event) => event.currentTarget.showPicker?.()}
+                          onChange={(event) => handleOlseraRangeChange(event.target.value, olseraRangeEnd)}
+                        />
+                        <span className="text-xs text-slate-400">s/d</span>
+                        <Input
+                          type="date"
+                          aria-label="Tanggal selesai filter Olsera"
+                          value={olseraRangeEnd}
+                          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                          onClick={(event) => event.currentTarget.showPicker?.()}
+                          onChange={(event) => handleOlseraRangeChange(olseraRangeStart, event.target.value)}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className={OLSERA_FIELD}>
+                      <CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />
+                      <Input
+                        type="month"
+                        aria-label="Filter bulan tertentu (Olsera)"
+                        value={olseraFilterMonth}
+                        className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                        onClick={(event) => event.currentTarget.showPicker?.()}
+                        onChange={(event) => handleOlseraMonthFilter(event.target.value)}
+                      />
+                    </div>
+                  )}
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                    onClick={handleOlseraResetFilters}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Reset
+                  </Button>
+
+                  {/* Tombol Export tunggal + dropdown yang mengikuti mode aktif. */}
+                  <div ref={olseraExportMenuRef} className="relative ml-auto w-full sm:w-auto">
+                    <Button
+                      type="button"
+                      className={`${OLSERA_PRIMARY_BTN} w-full sm:w-auto`}
+                      aria-haspopup="menu"
+                      aria-expanded={olseraExportMenuOpen}
+                      disabled={olseraAnyExporting || isInvalidDateRange(olseraStart, olseraEnd)}
+                      onClick={() => setOlseraExportMenuOpen((value) => !value)}
+                    >
+                      {olseraAnyExporting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ArrowDownToLine className="h-4 w-4" />
+                      )}
+                      {olseraAnyExporting ? "Mengekspor..." : "Export"}
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform ${olseraExportMenuOpen ? "rotate-180" : ""}`}
+                      />
+                    </Button>
+                    {olseraExportMenuOpen && (
+                      <div
+                        role="menu"
+                        aria-label="Pilihan export Olsera"
+                        className="absolute right-0 z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl shadow-slate-900/10"
+                      >
+                        {/* Ketiga export selalu tersedia; Omset Kategori memakai
+                            bulan filter (mode bulanan) atau bulan startDate (mode rentang). */}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={OLSERA_MENU_ITEM}
+                          onClick={() => {
+                            setOlseraExportMenuOpen(false);
+                            handleOlseraItemExport();
+                          }}
+                        >
+                          <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
+                            <FileSpreadsheet className="h-4 w-4" />
+                          </span>
+                          <span>
+                            <span className="block font-medium">Export Rincian Penjualan</span>
+                            <span className="block text-xs text-slate-500">
+                              Detail transaksi pada rentang tanggal aktif
+                            </span>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={OLSERA_MENU_ITEM}
+                          onClick={() => {
+                            setOlseraExportMenuOpen(false);
+                            handleOlseraCategoryExport();
+                          }}
+                        >
+                          <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
+                            <FileSpreadsheet className="h-4 w-4" />
+                          </span>
+                          <span>
+                            <span className="block font-medium">Export Kategori Penjualan</span>
+                            <span className="block text-xs text-slate-500">
+                              Rincian item per kategori pada rentang tanggal aktif
+                            </span>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={OLSERA_MENU_ITEM}
+                          onClick={() => {
+                            setOlseraExportMenuOpen(false);
+                            handleOlseraOmsetKategoriExport();
+                          }}
+                        >
+                          <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
+                            <FileSpreadsheet className="h-4 w-4" />
+                          </span>
+                          <span>
+                            <span className="block font-medium">Export Omset Kategori</span>
+                            <span className="block text-xs text-slate-500">
+                              Rekap omset kategori untuk bulan yang dipilih
+                            </span>
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {olseraReportMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
+                  <p className="mt-3 text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</p>
+                )}
+                {olseraExportMessages.length > 0 && (
+                  <p className="mt-3 text-sm text-slate-600">{olseraExportMessages.join(" · ")}</p>
+                )}
+                {/* Export Excel (Omset+Laba) disembunyikan sementara — jangan hapus, tinggal ganti false -> true untuk memunculkan lagi. */}
+                {false && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleOlseraExport}
+                    disabled={olseraExporting || isInvalidDateRange(olseraStart, olseraEnd)}
+                  >
+                    <ArrowDownToLine className="h-4 w-4" />
+                    {olseraExporting ? "Mengekspor..." : "Export Excel"}
+                  </Button>
+                )}
+                {false && olseraExportMessage && <span className="text-sm text-slate-600">{olseraExportMessage}</span>}
+              </CardContent>
+            </Card>
+          </section>
 
           <section>
-            <Card>
-              <CardHeader>
-                <CardTitle>Penjualan per Kategori</CardTitle>
-                <CardDescription>
-                  Data hasil sync dari MongoDB — {getOlseraFilterDetail()}
-                </CardDescription>
+            <Card className={OLSERA_CARD}>
+              <CardHeader
+                className={`${OLSERA_CARD_HEADER} flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between`}
+              >
+                <div className="flex items-start gap-3.5">
+                  <div className={`${OLSERA_ICON_CHIP} bg-rose-50 text-rose-600 ring-rose-100`}>
+                    <Store className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <CardTitle className={OLSERA_TITLE}>Penjualan per Kategori</CardTitle>
+                    <CardDescription className={OLSERA_DESC}>
+                      Data hasil sync dari MongoDB — {getOlseraFilterDetail()}
+                    </CardDescription>
+                  </div>
+                </div>
+                {olseraRows.length > 0 && !olseraLoading && !olseraError && (
+                  <div className="flex shrink-0 items-center gap-5 rounded-xl border border-slate-200/70 bg-slate-50/80 px-4 py-2.5">
+                    <div>
+                      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Kategori</p>
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums tracking-tight text-slate-900">
+                        {olseraRows.length}
+                      </p>
+                    </div>
+                    <div className="h-8 w-px bg-slate-200" />
+                    <div>
+                      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Total Penjualan</p>
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums tracking-tight text-rose-700">
+                        {formatRupiah(olseraRows.reduce((sum, row) => sum + row.totalPenjualan, 0))}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </CardHeader>
-              <CardContent>
+              <CardContent className={OLSERA_CARD_CONTENT}>
                 {olseraSyncStatus?.lastFullySyncedDate && olseraEnd > olseraSyncStatus.lastFullySyncedDate && (
-                  <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                    ⚠️ Data hanya lengkap sampai{" "}
-                    <span className="font-medium">{formatDisplayDate(olseraSyncStatus.lastFullySyncedDate)}</span> —{" "}
-                    {daysBetweenISO(
-                      olseraStart > olseraSyncStatus.lastFullySyncedDate
-                        ? olseraStart
-                        : addDaysISO(olseraSyncStatus.lastFullySyncedDate, 1),
-                      olseraEnd,
-                    ) + 1}{" "}
-                    hari tersisa dalam rentang ini belum disinkron. Total di bawah HANYA mencerminkan hari yang sudah
-                    disync.
+                  <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-200/80 border-l-4 border-l-amber-400 bg-amber-50/80 px-3.5 py-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <div>
+                      <p className="text-sm font-semibold text-amber-900">Data belum lengkap</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
+                        Data baru tersinkron sampai {formatDisplayDate(olseraSyncStatus.lastFullySyncedDate)}
+                        {olseraSyncStatus.lastSync?.finishedAt &&
+                          formatJakartaTime(olseraSyncStatus.lastSync.finishedAt) &&
+                          ` pukul ${formatJakartaTime(olseraSyncStatus.lastSync.finishedAt)}`}
+                        . Total hanya mencerminkan data yang sudah tersedia.
+                      </p>
+                    </div>
                   </div>
                 )}
                 {olseraLoading ? (
                   <div className="flex items-center gap-2 py-10 text-sm text-slate-500">
-                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                     Memuat data penjualan Olsera...
                   </div>
                 ) : olseraError ? (
@@ -1996,42 +2346,47 @@ export default function DashboardPage() {
                     {olseraError}
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto rounded-xl border border-slate-200/80">
                     <table className="w-full min-w-[400px] text-sm">
-                      <thead className="bg-white">
-                        <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
-                          <th className="h-10 px-2 font-medium">Kategori</th>
-                          <th className="h-10 px-2 text-right font-medium">Qty</th>
-                          <th className="h-10 px-2 text-right font-medium">Total Penjualan</th>
+                      <thead className="bg-slate-50/90">
+                        <tr className="border-b border-slate-200/80 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                          <th className="h-11 px-4">Kategori</th>
+                          <th className="h-11 px-4 text-right">Qty</th>
+                          <th className="h-11 px-4 text-right">Total Penjualan</th>
                         </tr>
                       </thead>
                       <tbody>
                         {olseraRows.length ? (
                           olseraRows.map((row) => (
-                            <tr key={row.kategori} className="border-b last:border-0">
-                              <td className="px-2 py-3">{row.kategori}</td>
-                              <td className="whitespace-nowrap px-2 py-3 text-right">{row.qty ?? "-"}</td>
-                              <td className="whitespace-nowrap px-2 py-3 text-right">
+                            <tr
+                              key={row.kategori}
+                              className="border-b border-slate-100 transition-colors last:border-0 odd:bg-slate-50/50 hover:bg-rose-50/60"
+                            >
+                              <td className="px-4 py-3 font-medium text-slate-700">{row.kategori}</td>
+                              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-slate-500">
+                                {row.qty ?? "-"}
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums tracking-tight text-slate-800">
                                 {formatRupiah(row.totalPenjualan)}
                               </td>
                             </tr>
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={3} className="px-2 py-10 text-center text-slate-500">
-                              Tidak ada data penjualan pada rentang tanggal ini. Jalankan sinkronisasi terlebih dahulu.
+                            <td colSpan={3} className="px-4 py-12 text-center text-slate-500">
+                              Tidak ada data penjualan pada periode ini. Jalankan sinkronisasi terlebih dahulu.
                             </td>
                           </tr>
                         )}
                       </tbody>
                       {olseraRows.length > 0 && (
                         <tfoot>
-                          <tr className="border-t bg-[rgb(var(--accent))]">
-                            <td className="px-2 py-3 font-semibold">Total</td>
-                            <td className="whitespace-nowrap px-2 py-3 text-right font-semibold">
+                          <tr className="border-t-2 border-rose-200/80 bg-rose-50/80">
+                            <td className="px-4 py-3.5 font-bold tracking-tight text-slate-900">Total</td>
+                            <td className="whitespace-nowrap px-4 py-3.5 text-right font-bold tabular-nums text-slate-900">
                               {olseraRows.reduce((sum, row) => sum + (row.qty ?? 0), 0)}
                             </td>
-                            <td className="whitespace-nowrap px-2 py-3 text-right font-semibold">
+                            <td className="whitespace-nowrap px-4 py-3.5 text-right font-bold tabular-nums tracking-tight text-rose-700">
                               {formatRupiah(olseraRows.reduce((sum, row) => sum + row.totalPenjualan, 0))}
                             </td>
                           </tr>
