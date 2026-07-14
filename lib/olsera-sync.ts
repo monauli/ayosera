@@ -7,6 +7,12 @@
 
 import { collections, withMongo, type OlseraOrderItemDocument, type OlseraSyncLogDocument } from "@/lib/mongodb";
 import { getAccessToken } from "@/lib/olsera";
+import {
+  evaluateDayCompleteness,
+  fetchDayOrderRows,
+  sumOrderTotals,
+  type OlseraOrderKind,
+} from "@/lib/olsera-audit";
 
 const BASE_URL = "https://api-open.olsera.co.id";
 const API_PREFIX = "/api/open-api/v1/id";
@@ -635,12 +641,17 @@ export async function syncOlseraSalesByCategory(
                 itemDocs.map((doc) => ({
                   updateOne: {
                     filter: { _id: doc._id },
-                    update: { $set: doc },
+                    // syncedAt disamakan dengan timestamp tulis agar tidak ikut
+                    // terhapus oleh pembersihan item basi di bawah.
+                    update: { $set: { ...doc, syncedAt } },
                     upsert: true,
                   },
                 })),
               );
             }
+            // Buang item lama yang tidak muncul lagi pada sync ulang hari ini
+            // (order dibatalkan/di-void di Olsera) — mencegah data basi tersisa.
+            await olseraOrderItems.deleteMany({ date, syncedAt: { $lt: syncedAt } });
             // Tandai hari ini tuntas agar sync berikutnya (rentang tumpang tindih)
             // bisa langsung dilewati tanpa menarik ulang order+detail.
             await olseraSyncedDays.updateOne(
@@ -715,6 +726,175 @@ export async function syncOlseraSalesByCategory(
   }
 
   return result;
+}
+
+export type OlseraDayAuditResult = {
+  date: string;
+  /** match = data sudah cocok; resynced = ditarik ulang dan tersimpan; failed = gagal. */
+  action: "match" | "resynced" | "failed";
+  expectedOrderCount: number;
+  processedOrderCount: number;
+  /** Alasan keputusan audit (untuk log/progres UI). */
+  reason: string | null;
+  errorMessage: string | null;
+};
+
+/** Majukan checkpoint bila `date` menyambung (tidak melompati tanggal yang belum tuntas). */
+async function advanceCheckpointTo(date: string) {
+  await withMongo(async () => {
+    const { olseraSyncState } = await collections();
+    const state = await olseraSyncState.findOne({ _id: "olsera" });
+    const checkpoint = state?.lastFullySyncedDate ?? null;
+    if (checkpoint !== null && date > addDays(checkpoint, 1)) return;
+    if (checkpoint === null || date > checkpoint) {
+      await olseraSyncState.updateOne(
+        { _id: "olsera" },
+        { $set: { lastFullySyncedDate: date, updatedAt: new Date() } },
+        { upsert: true },
+      );
+    }
+  });
+}
+
+/**
+ * Audit satu tanggal terhadap API Olsera (sumber kebenaran):
+ * bandingkan jumlah order + total penjualan Order List dengan catatan MongoDB.
+ * Bila belum lengkap → tarik ulang penuh (upsert, aman duplikat).
+ * Dipanggil frontend satu tanggal per request agar aman di Vercel.
+ */
+export async function auditAndSyncOlseraDay(date: string): Promise<OlseraDayAuditResult> {
+  const result: OlseraDayAuditResult = {
+    date,
+    action: "failed",
+    expectedOrderCount: 0,
+    processedOrderCount: 0,
+    reason: null,
+    errorMessage: null,
+  };
+
+  try {
+    const auth = await getAccessToken();
+    if ("error" in auth) throw new Error(auth.error);
+    const token = auth.token;
+
+    // Order List (Close + Open paid, dedup) — error/pagination gagal dilempar,
+    // sehingga "0 order" hanya sah bila API benar-benar menjawab kosong.
+    const rows = await fetchDayOrderRows(async (kind: OlseraOrderKind, page: number) => {
+      if (page > 1) await sleep(LIST_DELAY_MS);
+      const params: Record<string, string> = {
+        per_page: "100",
+        page: String(page),
+        start_date: date,
+        end_date: date,
+      };
+      if (kind === "openorder") params.is_paid = "1";
+      return (await getJson(token, `${API_PREFIX}/order/${kind}`, params, true)) as {
+        data?: unknown;
+        meta?: { last_page?: number };
+      } | null;
+    });
+    const expectedCount = rows.length;
+    const expectedTotal = sumOrderTotals(rows);
+    result.expectedOrderCount = expectedCount;
+
+    const { marked, storedOrderCount } = await withMongo(async () => {
+      const { olseraSyncedDays, olseraOrderItems } = await collections();
+      const [markedDoc, orderNos] = await Promise.all([
+        olseraSyncedDays.findOne({ _id: date }),
+        olseraOrderItems.distinct("orderNo", { date }),
+      ]);
+      return { marked: markedDoc, storedOrderCount: orderNos.length };
+    });
+
+    const verdict = evaluateDayCompleteness({
+      expectedCount,
+      expectedTotal,
+      marked: marked ? { expectedOrderCount: marked.expectedOrderCount, expectedTotal: marked.expectedTotal } : null,
+      storedOrderCount,
+    });
+    result.reason = verdict.reason;
+
+    if (verdict.complete) {
+      // Catat hasil audit (termasuk total sebagai baseline pembanding berikutnya)
+      // dan majukan checkpoint bila menyambung.
+      await withMongo(async () => {
+        const { olseraSyncedDays } = await collections();
+        await olseraSyncedDays.updateOne(
+          { _id: date },
+          {
+            $set: { expectedOrderCount: expectedCount, expectedTotal, verifiedAt: new Date() },
+            $setOnInsert: { syncedAt: new Date() },
+          },
+          { upsert: true },
+        );
+      });
+      await advanceCheckpointTo(date);
+      result.action = "match";
+      return result;
+    }
+
+    // Belum lengkap → tarik ulang penuh tanggal ini (force, upsert aman duplikat).
+    const sync = await syncOlseraSalesByCategory(date, date, { force: true });
+    result.expectedOrderCount = sync.expectedOrderCount;
+    result.processedOrderCount = sync.processedOrderCount;
+    if (sync.status === "success") {
+      await withMongo(async () => {
+        const { olseraSyncedDays } = await collections();
+        await olseraSyncedDays.updateOne(
+          { _id: date },
+          { $set: { expectedTotal, verifiedAt: new Date() } },
+        );
+      });
+      result.action = "resynced";
+    } else {
+      result.action = "failed";
+      result.errorMessage = sync.errorMessage ?? `Sync ulang tanggal ${date} gagal.`;
+    }
+  } catch (error) {
+    result.action = "failed";
+    result.errorMessage = error instanceof Error ? error.message : `Audit tanggal ${date} gagal.`;
+  }
+  return result;
+}
+
+export type OlseraMonthSyncSummary = {
+  startDate: string;
+  endDate: string;
+  checkedDates: number;
+  matchedDates: number;
+  updatedDates: number;
+  expectedOrderCount: number;
+  processedOrderCount: number;
+  failedDates: string[];
+  startedAt: string;
+};
+
+/**
+ * Tulis satu log ringkasan untuk seluruh run bulan berjalan — dipanggil frontend
+ * setelah semua tanggal selesai. Log ini yang tampil sebagai status terakhir,
+ * sehingga badge tidak pernah "Success" bila masih ada tanggal gagal.
+ */
+export async function logOlseraMonthSync(summary: OlseraMonthSyncSummary) {
+  const status: OlseraSyncLogDocument["status"] = summary.failedDates.length
+    ? summary.matchedDates + summary.updatedDates > 0
+      ? "partial"
+      : "failed"
+    : "success";
+  const startedAt = new Date(summary.startedAt);
+  await withMongo(async () => {
+    const { olseraSyncLog } = await collections();
+    await olseraSyncLog.insertOne({
+      startDate: summary.startDate,
+      endDate: summary.endDate,
+      status,
+      expectedOrderCount: summary.expectedOrderCount,
+      processedOrderCount: summary.processedOrderCount,
+      errorMessage: summary.failedDates.length ? `Tanggal gagal: ${summary.failedDates.join(", ")}` : null,
+      startedAt: Number.isNaN(startedAt.getTime()) ? new Date() : startedAt,
+      finishedAt: new Date(),
+    });
+  });
+  return { status };
 }
 
 export async function getOlseraSyncStatus() {

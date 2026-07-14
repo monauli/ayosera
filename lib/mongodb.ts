@@ -123,6 +123,10 @@ export type OlseraSyncedDayDocument = {
   /** Jumlah order (Close+Open dedup) saat hari ini dituntaskan. */
   expectedOrderCount: number;
   syncedAt: Date;
+  /** Total penjualan dari Order List Olsera saat audit terakhir (null bila list tidak memuat nominal). */
+  expectedTotal?: number | null;
+  /** Waktu audit terakhir yang memastikan tanggal ini masih cocok dengan API Olsera. */
+  verifiedAt?: Date;
 };
 
 export type OlseraProductCacheDocument = {

@@ -453,10 +453,9 @@ export default function DashboardPage() {
   const [olseraSyncStatus, setOlseraSyncStatus] = useState<OlseraSyncStatus | null>(null);
   const [olseraSyncing, setOlseraSyncing] = useState(false);
   const [olseraSyncMessage, setOlseraSyncMessage] = useState("");
-  const [olseraSyncStart, setOlseraSyncStart] = useState("");
-  const [olseraSyncEnd, setOlseraSyncEnd] = useState("");
-  const [olseraSyncValidationError, setOlseraSyncValidationError] = useState("");
   const [olseraSyncRefresh, setOlseraSyncRefresh] = useState(0);
+  // Guard klik ganda tombol Sync Olsera — state React async, ref langsung akurat.
+  const olseraSyncRunRef = useRef(false);
   const [olseraExporting, setOlseraExporting] = useState(false);
   const [olseraExportMessage, setOlseraExportMessage] = useState("");
   const [olseraItemExporting, setOlseraItemExporting] = useState(false);
@@ -933,14 +932,6 @@ export default function DashboardPage() {
       .then((payload) => {
         if (cancelled || !payload || !("lastFullySyncedDate" in payload)) return;
         setOlseraSyncStatus(payload);
-        // Pre-fill: sync lanjutan mulai dari checkpoint-1 hari (overlap satu hari
-        // agar tidak ada transaksi terlewat; penyimpanan upsert, aman dari duplikasi)
-        // s/d hari ini. startDate dijaga tidak melebihi endDate.
-        if (payload.lastFullySyncedDate) {
-          const overlapStart = addDaysISO(payload.lastFullySyncedDate, -1);
-          setOlseraSyncStart(overlapStart > today ? today : overlapStart);
-          setOlseraSyncEnd(today);
-        }
       })
       .catch(() => undefined);
 
@@ -949,47 +940,102 @@ export default function DashboardPage() {
     };
   }, [activeNav, olseraSyncRefresh]);
 
+  // Sync Olsera bulan berjalan: audit tanggal 1 s/d hari ini SATU TANGGAL PER
+  // REQUEST (aman di Vercel — tidak ada satu proses server panjang). Backend
+  // membandingkan API Olsera vs MongoDB dan hanya menarik ulang tanggal yang
+  // belum lengkap; upsert menjamin tidak ada duplikat walau di-klik berulang.
   async function handleOlseraSync() {
-    if (!olseraSyncStart || !olseraSyncEnd) return;
-
-    setOlseraSyncValidationError("");
-    if (olseraSyncEnd < olseraSyncStart) {
-      setOlseraSyncValidationError("Tanggal selesai tidak boleh sebelum tanggal mulai.");
-      return;
-    }
-    if (olseraSyncEnd > today) {
-      setOlseraSyncValidationError("Tanggal selesai tidak boleh melewati hari ini.");
-      return;
-    }
-
+    if (olseraSyncRunRef.current) return;
+    olseraSyncRunRef.current = true;
     setOlseraSyncing(true);
     setOlseraSyncMessage("");
+
+    const runStartedAt = new Date().toISOString();
+    const startedMs = Date.now();
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const dates: string[] = [];
+    for (let date = monthStart; date <= today; date = addDaysISO(date, 1)) dates.push(date);
+
+    let matched = 0;
+    let updated = 0;
+    let expectedOrders = 0;
+    let processedOrders = 0;
+    const failedDates: string[] = [];
+
     try {
-      // Kirim rentang persis yang dipilih user — jangan diam-diam meluas sampai hari ini.
-      const response = await fetch("/api/olsera/sync", {
+      for (let index = 0; index < dates.length; index++) {
+        const date = dates[index];
+        setOlseraSyncMessage(
+          `Memeriksa ${formatDisplayDate(date)}... (${index} dari ${dates.length} tanggal selesai diperiksa)`,
+        );
+        try {
+          const response = await fetch("/api/olsera/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ date }),
+          });
+          if (response.status === 401) {
+            await redirectToLogin();
+            return;
+          }
+          const payload = (await response.json().catch(() => null)) as
+            | {
+                action?: "match" | "resynced" | "failed";
+                expectedOrderCount?: number;
+                processedOrderCount?: number;
+                errorMessage?: string | null;
+                error?: string;
+              }
+            | null;
+          if (!response.ok || !payload || payload.error || payload.action === "failed" || !payload.action) {
+            failedDates.push(date);
+          } else {
+            expectedOrders += payload.expectedOrderCount ?? 0;
+            if (payload.action === "resynced") {
+              updated++;
+              processedOrders += payload.processedOrderCount ?? 0;
+            } else {
+              matched++;
+            }
+          }
+        } catch {
+          // Request putus — tanggal ini dianggap gagal; klik Sync berikutnya
+          // akan memeriksanya lagi (tanggal yang sudah cocok hanya diaudit ringan).
+          failedDates.push(date);
+        }
+      }
+
+      // Tulis log ringkasan run (status terakhir + badge mengikuti log ini).
+      await fetch("/api/olsera/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start_date: olseraSyncStart, end_date: olseraSyncEnd }),
-      });
-      if (response.status === 401) {
-        await redirectToLogin();
-        return;
-      }
-      const payload = (await response.json().catch(() => null)) as
-        | { status?: string; expectedOrderCount?: number; processedOrderCount?: number; error?: string }
-        | null;
-      if (!response.ok || !payload || payload.error) {
-        setOlseraSyncMessage(payload?.error || "Sync Olsera gagal.");
-        return;
-      }
+        body: JSON.stringify({
+          finalize: {
+            start_date: monthStart,
+            end_date: today,
+            checked: dates.length,
+            matched,
+            updated,
+            expected_orders: expectedOrders,
+            processed_orders: processedOrders,
+            failed_dates: failedDates,
+            started_at: runStartedAt,
+          },
+        }),
+      }).catch(() => undefined);
+
+      const durationSec = Math.max(1, Math.round((Date.now() - startedMs) / 1000));
       setOlseraSyncMessage(
-        `Sync ${payload.status === "success" ? "berhasil" : payload.status === "partial" ? "sebagian" : "gagal"}: ` +
-          `${payload.processedOrderCount ?? 0}/${payload.expectedOrderCount ?? 0} order diproses.`,
+        failedDates.length
+          ? `Sync sebagian selesai: ${matched + updated} tanggal cocok, ${failedDates.length} tanggal gagal (${failedDates
+              .map(formatDisplayDate)
+              .join(", ")}). Durasi ${durationSec} detik.`
+          : `Sync selesai: ${dates.length} tanggal diperiksa, ${updated} tanggal diperbarui, ${processedOrders} transaksi diproses. Durasi ${durationSec} detik.`,
       );
-    } catch {
-      setOlseraSyncMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
     } finally {
+      olseraSyncRunRef.current = false;
       setOlseraSyncing(false);
+      // Refresh tabel kategori, status sync, dan warning tanpa reload browser.
       setOlseraSyncRefresh((value) => value + 1);
     }
   }
@@ -1333,8 +1379,8 @@ export default function DashboardPage() {
         />
       )}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r bg-white transition-transform duration-300 ease-in-out ${
-          drawerOpen ? "translate-x-0 shadow-xl" : "-translate-x-full"
+        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-200 bg-white transition-transform duration-300 ease-in-out ${
+          drawerOpen ? "translate-x-0 shadow-[1px_0_3px_rgba(15,23,42,0.04)] max-lg:shadow-xl" : "-translate-x-full"
         }`}
       >
         <div className="flex h-16 items-center gap-3 px-5">
@@ -1361,13 +1407,13 @@ export default function DashboardPage() {
                   <button
                     onClick={() => setOlseraNavOpen((value) => !value)}
                     aria-expanded={open}
-                    className={`flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors ${
+                    className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm transition-colors ${
                       groupActive
-                        ? "font-semibold text-slate-900"
-                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                        ? "font-semibold text-rose-700"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
-                    <item.icon className="h-4 w-4" />
+                    <item.icon className={`h-4 w-4 ${groupActive ? "text-rose-600" : ""}`} />
                     <span className="flex-1 text-left">{item.display}</span>
                     <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
                   </button>
@@ -1380,10 +1426,10 @@ export default function DashboardPage() {
                             setActiveNav(sub.nav);
                             if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
                           }}
-                          className={`flex h-9 w-full items-center gap-2 rounded-md px-3 text-sm transition-colors ${
+                          className={`flex h-9 w-full items-center gap-2 rounded-lg border-l-2 px-3 text-sm transition-colors ${
                             activeNav === sub.nav
-                              ? "bg-[rgb(var(--primary))] font-semibold text-[rgb(var(--primary-foreground))] shadow-sm ring-1 ring-inset ring-black/5"
-                              : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                              ? "border-rose-500 bg-rose-50 font-medium text-rose-700"
+                              : "border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                           }`}
                         >
                           {sub.label}
@@ -1401,31 +1447,31 @@ export default function DashboardPage() {
                   setActiveNav(item.label);
                   if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
                 }}
-                className={`flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors ${
+                className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm transition-colors ${
                   activeNav === item.label
-                    ? "bg-[rgb(var(--primary))] font-semibold text-[rgb(var(--primary-foreground))] shadow-sm ring-1 ring-inset ring-black/5"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                    ? "bg-rose-50 font-semibold text-rose-700 ring-1 ring-inset ring-rose-100"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
               >
-                <item.icon className="h-4 w-4" />
+                <item.icon className={`h-4 w-4 ${activeNav === item.label ? "text-rose-600" : ""}`} />
                 {item.display}
               </button>
             );
           })}
         </nav>
-        <div className="absolute inset-x-0 bottom-0 space-y-3 border-t p-4">
-          <div className="rounded-md bg-[rgb(var(--accent))] p-3">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <CheckCircle2 className="h-4 w-4 text-[rgb(var(--accent-foreground))]" />
+        <div className="absolute inset-x-0 bottom-0 border-t border-slate-200 p-3">
+          <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-700">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
               API Sehat
             </div>
-            <p className="mt-1 text-xs text-slate-500">Checkpoint terakhir: {lastCheckpoint}</p>
+            <p className="mt-0.5 text-[11px] text-slate-500">Checkpoint terakhir: {lastCheckpoint}</p>
           </div>
         </div>
       </aside>
 
       <section className={`transition-[padding] duration-300 ease-in-out ${drawerOpen ? "lg:pl-64" : "pl-0"}`}>
-        <header className="sticky top-0 z-30 border-b bg-white/95 shadow-[0_1px_3px_rgba(15,23,42,0.05)] backdrop-blur">
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 shadow-[0_1px_3px_rgba(15,23,42,0.05)] backdrop-blur">
           <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
             <Button
               variant="ghost"
@@ -1437,7 +1483,7 @@ export default function DashboardPage() {
               <Menu className="h-5 w-5" />
             </Button>
             <div className="min-w-0 flex-1">
-              <h1 className="truncate text-lg font-semibold">
+              <h1 className="truncate text-lg font-semibold tracking-tight text-slate-900">
                 {activeNav === "Transaksi"
                   ? "Transaksi AYO"
                   : activeNav === "Olsera"
@@ -1454,7 +1500,12 @@ export default function DashboardPage() {
                 </p>
               )}
             </div>
-            <Button variant="outline" size="icon" aria-label="Notifikasi">
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Notifikasi"
+              className="rounded-lg border-slate-200 text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+            >
               <Bell className="h-4 w-4" />
             </Button>
             <Button
@@ -1462,6 +1513,7 @@ export default function DashboardPage() {
               onClick={() => void redirectToLogin()}
               aria-label="Logout"
               title="Logout"
+              className="rounded-lg border-slate-200 text-slate-600 shadow-sm transition-colors hover:bg-rose-50 hover:text-rose-700"
             >
               <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">Logout</span>
@@ -2013,50 +2065,24 @@ export default function DashboardPage() {
                 )}
               </CardHeader>
               <CardContent className={OLSERA_CARD_CONTENT}>
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <div className={OLSERA_FIELD}>
-                    <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
-                    <Input
-                      type="date"
-                      aria-label="Tanggal mulai sync Olsera"
-                      value={olseraSyncStart}
-                      max={today}
-                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-                      onClick={(event) => event.currentTarget.showPicker?.()}
-                      onChange={(event) => {
-                        setOlseraSyncStart(event.target.value);
-                        setOlseraSyncValidationError("");
-                      }}
-                    />
-                    <span className="text-xs text-slate-400">s/d</span>
-                    <Input
-                      type="date"
-                      aria-label="Tanggal selesai sync Olsera"
-                      value={olseraSyncEnd}
-                      max={today}
-                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-                      onClick={(event) => event.currentTarget.showPicker?.()}
-                      onChange={(event) => {
-                        setOlseraSyncEnd(event.target.value);
-                        setOlseraSyncValidationError("");
-                      }}
-                    />
-                  </div>
+                <div className="flex flex-wrap items-center gap-3">
                   <Button
                     type="button"
                     className={OLSERA_PRIMARY_BTN}
                     onClick={handleOlseraSync}
-                    disabled={olseraSyncing || !olseraSyncStart || !olseraSyncEnd}
+                    disabled={olseraSyncing}
                   >
                     {olseraSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     {olseraSyncing ? "Menyinkronkan Olsera..." : "Sync Olsera"}
                   </Button>
-                  {olseraSyncMessage && <span className="text-sm text-slate-600">{olseraSyncMessage}</span>}
+                  <span className="text-xs text-slate-500">
+                    Memeriksa dan memperbarui data bulan berjalan secara otomatis.
+                  </span>
                 </div>
-                {olseraSyncValidationError && (
-                  <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                    {olseraSyncValidationError}
-                  </div>
+                {olseraSyncMessage && (
+                  <p className="mt-3 text-sm text-slate-600" aria-live="polite">
+                    {olseraSyncMessage}
+                  </p>
                 )}
               </CardContent>
             </Card>
@@ -2333,6 +2359,13 @@ export default function DashboardPage() {
                           ` pukul ${formatJakartaTime(olseraSyncStatus.lastSync.finishedAt)}`}
                         . Total hanya mencerminkan data yang sudah tersedia.
                       </p>
+                      {olseraSyncStatus.lastSync &&
+                        olseraSyncStatus.lastSync.status !== "success" &&
+                        olseraSyncStatus.lastSync.errorMessage && (
+                          <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
+                            {olseraSyncStatus.lastSync.errorMessage}
+                          </p>
+                        )}
                     </div>
                   </div>
                 )}
@@ -2373,8 +2406,15 @@ export default function DashboardPage() {
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={3} className="px-4 py-12 text-center text-slate-500">
-                              Tidak ada data penjualan pada periode ini. Jalankan sinkronisasi terlebih dahulu.
+                            <td colSpan={3} className="px-4 py-12 text-center">
+                              <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
+                                <span className="rounded-xl bg-slate-100 p-2.5 text-slate-400">
+                                  <Search className="h-5 w-5" />
+                                </span>
+                                <p className="text-sm text-slate-500">
+                                  Tidak ada data penjualan pada periode ini. Jalankan sinkronisasi terlebih dahulu.
+                                </p>
+                              </div>
                             </td>
                           </tr>
                         )}

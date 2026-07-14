@@ -4,7 +4,9 @@ import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import {
   addDays,
+  auditAndSyncOlseraDay,
   getOlseraSyncStatus,
+  logOlseraMonthSync,
   syncOlseraSalesByCategory,
   todayJakarta,
 } from "@/lib/olsera-sync";
@@ -14,9 +16,28 @@ export const dynamic = "force-dynamic";
 // Sync per hari memanggil detail tiap order (2 worker × jeda 200ms + retry 429) — beri waktu lega.
 export const maxDuration = 300;
 
+const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
 const syncSchema = z.object({
-  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // Mode audit bertahap (dipakai tombol Sync Olsera): satu tanggal per request.
+  date: dateString.optional(),
+  // Mode finalize: tulis satu log ringkasan setelah seluruh tanggal diperiksa.
+  finalize: z
+    .object({
+      start_date: dateString,
+      end_date: dateString,
+      checked: z.number().int().min(0),
+      matched: z.number().int().min(0),
+      updated: z.number().int().min(0),
+      expected_orders: z.number().int().min(0),
+      processed_orders: z.number().int().min(0),
+      failed_dates: z.array(dateString),
+      started_at: z.string(),
+    })
+    .optional(),
+  // Mode lama (rentang tanggal) dipertahankan untuk skrip/pemakaian manual.
+  start_date: dateString.optional(),
+  end_date: dateString.optional(),
   force: z.boolean().optional(),
 });
 
@@ -38,6 +59,37 @@ export async function POST(request: Request) {
     await requireModule("olsera");
 
     const body = syncSchema.parse(await request.json().catch(() => ({})));
+    const today = todayJakarta();
+
+    // Mode audit bertahap: periksa satu tanggal terhadap API Olsera, tarik ulang
+    // bila belum lengkap. Frontend memanggil tanggal demi tanggal (aman di Vercel).
+    if (body.date) {
+      if (body.date > today) {
+        return NextResponse.json(
+          { error: `Tanggal (${body.date}) tidak boleh melewati hari ini (${today}).` },
+          { status: 400 },
+        );
+      }
+      const audit = await auditAndSyncOlseraDay(body.date);
+      return NextResponse.json(audit, { headers: NO_CACHE_HEADERS });
+    }
+
+    // Mode finalize: catat ringkasan run bulan berjalan sebagai log status terakhir.
+    if (body.finalize) {
+      const summary = body.finalize;
+      const { status } = await logOlseraMonthSync({
+        startDate: summary.start_date,
+        endDate: summary.end_date,
+        checkedDates: summary.checked,
+        matchedDates: summary.matched,
+        updatedDates: summary.updated,
+        expectedOrderCount: summary.expected_orders,
+        processedOrderCount: summary.processed_orders,
+        failedDates: summary.failed_dates,
+        startedAt: summary.started_at,
+      });
+      return NextResponse.json({ status }, { headers: NO_CACHE_HEADERS });
+    }
 
     let startDate = body.start_date;
     if (!startDate) {
@@ -50,7 +102,6 @@ export async function POST(request: Request) {
       }
       startDate = addDays(status.lastFullySyncedDate, 1);
     }
-    const today = todayJakarta();
     const endDate = body.end_date ?? today;
 
     if (endDate > today) {
