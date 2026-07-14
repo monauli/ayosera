@@ -104,6 +104,7 @@ type InputRow = Pick<
   | "amount"
   | "costAmount"
   | "discount"
+  | "addonPrice"
 > & { category: string };
 
 export type OlseraCategoryExportInput = { start: string; end: string; rows: InputRow[] };
@@ -172,7 +173,9 @@ export function safeSheetName(raw: string, used: Set<string>): string {
 
 // Lebar minimum tiap kolom (A–P). Kolom uang bisa melebar lagi mengikuti
 // nilai terpanjang (lihat applyColumnWidths) agar tidak muncul "#######".
-const MIN_COLUMN_WIDTHS = [23, 20, 16, 12, 20, 14, 28, 8, 16, 17, 14, 17, 17, 16, 14, 17];
+// A..Q (17 kolom) — "Add-on Price" disisipkan setelah J Total Pesanan,
+// sebelum K Komisi (dulu); semua kolom setelahnya bergeser +1.
+const MIN_COLUMN_WIDTHS = [23, 20, 16, 12, 20, 14, 28, 8, 16, 17, 14, 14, 17, 17, 16, 14, 17];
 const HEADERS = [
   "No. Pesanan",
   "Tanggal Jual",
@@ -184,6 +187,7 @@ const HEADERS = [
   "Qty",
   "Unit Pengukuran",
   "Total Pesanan",
+  "Add-on Price",
   "Komisi",
   "Modal Produk",
   "Sudah termasuk\nPajak",
@@ -191,8 +195,9 @@ const HEADERS = [
   "Diskon",
   "Laba",
 ];
-// Kolom uang (1-based): J,K,L,M,O,P
-const MONEY_COLUMNS = [10, 11, 12, 13, 15, 16];
+// Kolom uang (1-based): J Total Pesanan, K Add-on Price, L Komisi, M Modal
+// Produk, N Sudah termasuk Pajak, P Diskon, Q Laba (O "Nama Diskon" teks).
+const MONEY_COLUMNS = [10, 11, 12, 13, 14, 16, 17];
 
 // Panjang tampilan format '"IDR" #,##0' untuk sebuah angka, mis. 3150000 →
 // "IDR 3.150.000" = 13 karakter.
@@ -235,7 +240,7 @@ function writeDateBlock(
 ): number {
   // Judul blok — merge penuh, polos (tanpa fill), seperti referensi.
   const titleRowNumber = startRowNumber;
-  ws.mergeCells(`A${titleRowNumber}:P${titleRowNumber}`);
+  ws.mergeCells(`A${titleRowNumber}:Q${titleRowNumber}`);
   const title = ws.getCell(`A${titleRowNumber}`);
   title.value = `Item Penjualan : ${prettyDate(blockDate)} - ${prettyDate(blockDate)}`;
   title.font = { name: FONT, size: 10, color: { argb: BLACK } };
@@ -272,12 +277,15 @@ function writeDateBlock(
       row.qty,
       "", // Unit Pengukuran — tidak tersedia
       row.amount,
+      // Add-on: informasi saja — row.amount SUDAH menyertakannya, jangan
+      // dijumlahkan lagi (lihat komentar rumus di lib/olsera-sync.ts).
+      row.addonPrice ?? 0,
       0, // Komisi
       row.costAmount,
       0, // Sudah termasuk Pajak
       "", // Nama Diskon — tidak tersedia
       row.discount,
-      { formula: `J${rowNumber}-L${rowNumber}`, result: profit },
+      { formula: `J${rowNumber}-M${rowNumber}`, result: profit },
     ];
     values.forEach((value, columnIndex) => {
       const column = columnIndex + 1;
@@ -305,12 +313,14 @@ function writeDateBlock(
   const sum = (col: string) => ({ formula: `SUM(${col}${firstDataRow}:${col}${lastDataRow})` });
   ws.getCell(`H${totalRow}`).value = { ...sum("H"), result: rows.reduce((x, r) => x + r.qty, 0) };
   ws.getCell(`J${totalRow}`).value = { ...sum("J"), result: rows.reduce((x, r) => x + r.amount, 0) };
-  ws.getCell(`K${totalRow}`).value = { ...sum("K"), result: 0 };
-  ws.getCell(`L${totalRow}`).value = { ...sum("L"), result: rows.reduce((x, r) => x + r.costAmount, 0) };
-  ws.getCell(`M${totalRow}`).value = { ...sum("M"), result: 0 };
-  ws.getCell(`O${totalRow}`).value = { ...sum("O"), result: rows.reduce((x, r) => x + r.discount, 0) };
-  ws.getCell(`P${totalRow}`).value = { ...sum("P"), result: rows.reduce((x, r) => x + (r.amount - r.costAmount), 0) };
-  for (let column = 1; column <= 16; column++) {
+  // Add-on: total sesungguhnya (informasi saja) — tidak ikut dijumlahkan ke J.
+  ws.getCell(`K${totalRow}`).value = { ...sum("K"), result: rows.reduce((x, r) => x + (r.addonPrice ?? 0), 0) };
+  ws.getCell(`L${totalRow}`).value = { ...sum("L"), result: 0 };
+  ws.getCell(`M${totalRow}`).value = { ...sum("M"), result: rows.reduce((x, r) => x + r.costAmount, 0) };
+  ws.getCell(`N${totalRow}`).value = { ...sum("N"), result: 0 };
+  ws.getCell(`P${totalRow}`).value = { ...sum("P"), result: rows.reduce((x, r) => x + r.discount, 0) };
+  ws.getCell(`Q${totalRow}`).value = { ...sum("Q"), result: rows.reduce((x, r) => x + (r.amount - r.costAmount), 0) };
+  for (let column = 1; column <= 17; column++) {
     const cell = ws.getCell(totalRow, column);
     cell.fill = fill(TOTAL_BLUE);
     cell.border = thinBorder();
@@ -361,7 +371,7 @@ function addCategorySheet(
   applyColumnWidths(ws);
 
   ws.views = [{ showGridLines: true, zoomScale: 90 }];
-  ws.pageSetup.printArea = `A1:P${cursor - 1}`;
+  ws.pageSetup.printArea = `A1:Q${cursor - 1}`;
 }
 
 export async function buildOlseraCategoryWorkbook(input: OlseraCategoryExportInput): Promise<Uint8Array> {

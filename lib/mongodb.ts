@@ -160,6 +160,13 @@ export type OlseraOrderItemDocument = {
   amount: number;
   costAmount: number;
   discount: number;
+  /**
+   * Add-on price (per unit) dari payload Olsera — INFORMASI SAJA. `amount`
+   * SUDAH termasuk add-on ((basic price + addon) × qty − discount, terbukti
+   * dari data nyata) — jangan pernah dijumlahkan lagi ke amount/total manapun.
+   * Optional: dokumen yang disync sebelum fitur ini menunggu backfill.
+   */
+  addonPrice?: number;
   syncedAt: Date;
 
   // --- Identitas produk historis (Feature: canonical category mapping) ---

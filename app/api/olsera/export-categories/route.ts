@@ -43,6 +43,7 @@ export async function GET(request: Request) {
           amount: number;
           costAmount: number;
           discount: number;
+          addonPrice?: number;
           productId?: number | null;
           variantId?: number | null;
           sku?: string | null;
@@ -64,6 +65,7 @@ export async function GET(request: Request) {
           amount: 1,
           costAmount: 1,
           discount: 1,
+          addonPrice: 1,
           productId: 1,
           variantId: 1,
           sku: 1,

@@ -25,6 +25,7 @@ import {
   type ResolverContext,
 } from "@/lib/olsera-category-resolver";
 import { loadResolverContext } from "@/lib/olsera-resolver-context";
+import { parseAddonPrice } from "@/lib/olsera-addon";
 
 const BASE_URL = "https://api-open.olsera.co.id";
 const API_PREFIX = "/api/open-api/v1/id";
@@ -196,6 +197,8 @@ type OrderItem = {
   cost_amount?: unknown;
   cost_price?: unknown;
   discount?: unknown;
+  /** Nilai add-on per unit — SUDAH termasuk di `amount` (dibuktikan dari data nyata). */
+  addon_price?: unknown;
 };
 
 function toIdOrNull(value: unknown): number | null {
@@ -510,6 +513,13 @@ export async function syncOlseraSalesByCategory(
 
             const itemId = Number(item.id);
             if (Number.isFinite(itemId)) {
+              // Add-on: informasi saja — `amount` SUDAH mengandung add-on
+              // ((basic price + addon) × qty − discount). Jangan pernah
+              // menjumlahkan addonPrice ke amount/total manapun.
+              const addonResult = parseAddonPrice(item.addon_price);
+              if (addonResult.warning) {
+                console.warn(`Olsera sync: item ${itemId} (order ${orderNo}, ${date}): ${addonResult.warning}`);
+              }
               itemDocs.push({
                 _id: itemId,
                 date,
@@ -524,6 +534,7 @@ export async function syncOlseraSalesByCategory(
                 amount: toNumber(item.amount),
                 costAmount: toNumber(item.cost_amount),
                 discount: toNumber(item.discount),
+                addonPrice: addonResult.value,
                 syncedAt: new Date(),
                 // Identitas + hasil resolusi canonical (Feature: category mapping).
                 productId: identity.productId ?? null,

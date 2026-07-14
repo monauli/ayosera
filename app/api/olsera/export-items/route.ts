@@ -43,6 +43,7 @@ export async function GET(request: Request) {
           amount: number;
           costAmount: number;
           discount: number;
+          addonPrice?: number;
         }>({
           _id: 0,
           date: 1,
@@ -57,6 +58,7 @@ export async function GET(request: Request) {
           amount: 1,
           costAmount: 1,
           discount: 1,
+          addonPrice: 1,
         })
         .toArray();
     });
