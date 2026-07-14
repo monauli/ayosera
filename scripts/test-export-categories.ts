@@ -27,9 +27,8 @@ for (const fileName of [".env.local", ".env"]) {
 }
 
 const { collections, withMongo } = await import("../lib/mongodb.ts");
-const { buildOlseraCategoryWorkbook, categoryForItem, getCategoryByNameMap } = await import(
-  "../lib/olsera-category-export.ts"
-);
+const { buildOlseraCategoryWorkbook } = await import("../lib/olsera-category-export.ts");
+const { loadResolverContext, resolveStoredItemCategory } = await import("../lib/olsera-resolver-context.ts");
 
 const START = process.argv[2] ?? "2026-05-01";
 const END = process.argv[3] ?? "2026-05-02";
@@ -86,8 +85,10 @@ async function main() {
   });
   if (!items.length) throw new Error(`Tidak ada item pada ${START}..${END} — jalankan sync dulu.`);
 
-  const nameMap = await getCategoryByNameMap();
-  const rows = items.map((item) => ({ ...item, category: categoryForItem(item.itemName, nameMap) }));
+  // Mapping identik dengan route export: canonical resolver (identitas
+  // tersimpan → katalog → alias → SKU/nama exact) — bukan name-map lama.
+  const { ctx } = await loadResolverContext();
+  const rows = items.map((item) => ({ ...item, category: resolveStoredItemCategory(item, ctx) }));
 
   const buffer = await buildOlseraCategoryWorkbook({ start: START, end: END, rows });
   writeFileSync(OUT_FILE, buffer);

@@ -161,6 +161,162 @@ export type OlseraOrderItemDocument = {
   costAmount: number;
   discount: number;
   syncedAt: Date;
+
+  // --- Identitas produk historis (Feature: canonical category mapping) ---
+  // Disimpan saat sync agar perubahan product_id di katalog Olsera tidak
+  // menghilangkan jejak identitas transaksi lama. Optional: dokumen lama
+  // (sebelum fitur ini) belum memilikinya sampai dibackfill.
+  /** product_id asli dari payload transaksi. */
+  productId?: number | null;
+  /** product_variant_id asli dari payload transaksi. */
+  variantId?: number | null;
+  /** product_variant_sku ?? product_sku dari payload transaksi. */
+  sku?: string | null;
+  barcode?: string | null;
+  /** itemName ternormalisasi (uppercase, spasi rapi) untuk lookup exact. */
+  normalizedItemName?: string;
+  /** Kategori asli dari payload transaksi bila Olsera menyediakannya (saat ini tidak). */
+  originalCategoryId?: string | null;
+  originalCategoryName?: string | null;
+  /** Hasil resolusi canonical resolver. */
+  resolvedProductId?: number | null;
+  resolvedCategoryId?: string | null;
+  resolvedCategoryName?: string | null;
+  categoryResolutionMethod?: string;
+  categoryResolutionStatus?: "resolved" | "unresolved";
+  categoryResolutionReason?: string | null;
+  /** Payload item mentah dari API (tanpa field photo) — pola sama dengan bookings.raw. */
+  raw?: Record<string, unknown>;
+};
+
+export type OlseraProductAliasDocument = {
+  /** `${oldProductId}:${oldVariantId ?? 0}` — unique key stabil per identitas lama. */
+  _id: string;
+  oldProductId: number;
+  /** product_id pengganti di katalog aktif; null bila hanya alias kategori historis. */
+  newProductId: number | null;
+  oldVariantId: number | null;
+  newVariantId: number | null;
+  sku: string | null;
+  /** Nama produk lama ternormalisasi (uppercase) — dipakai lookup by-name. */
+  normalizedName: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  /** Asal alias, mis. "manual-verified", "catalog-match". */
+  source: string;
+  confidence: "verified" | "high" | "low";
+  verifiedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+// ---- Inventori Olsera (modul terpisah dari penjualan; read-only terhadap API) ----
+
+export type OlseraInventoryProductDocument = {
+  /** `${storeId}:${productId}:${variantId ?? 0}` — unik & stabil per outlet+produk+variant. */
+  _id: string;
+  productId: number;
+  variantId: number | null;
+  sku: string | null;
+  barcode: string | null;
+  name: string;
+  variantName: string | null;
+  /** Klasifikasi Olsera (dipakai sebagai kategori utama, konsisten dengan modul penjualan). */
+  category: string;
+  /** category_name Olsera (subkategori). */
+  subCategory: string | null;
+  uom: string | null;
+  storeId: number | null;
+  storeName: string | null;
+  active: boolean;
+  trackInventory: boolean;
+  sellPrice: number;
+  buyPrice: number;
+  lastBuyPrice: number;
+  stockQty: number;
+  holdQty: number;
+  /** low_stock_alert Olsera; null bila 0/tidak diset (threshold default dipakai). */
+  lowStockAlert: number | null;
+  isOutStock: boolean;
+  modifiedTime: string | null;
+  stockSyncTime: string | null;
+  syncedAt: Date;
+};
+
+export type OlseraInventorySnapshotDocument = {
+  /** `${storeId}:${productId}:${variantId ?? 0}:${date}` */
+  _id: string;
+  date: string;
+  productId: number;
+  variantId: number | null;
+  sku: string | null;
+  name: string;
+  storeId: number | null;
+  stockQty: number;
+  holdQty: number;
+  buyPrice: number;
+  syncedAt: Date;
+};
+
+export type OlseraInventoryMovementDocument = {
+  /** Deterministic source key, mis. `sale:${orderItemId}` — upsert aman diulang. */
+  _id: string;
+  source: "sale";
+  /** Jenis mutasi (saat ini "penjualan" — satu-satunya histori yang tersedia dari data Olsera). */
+  type: string;
+  date: string;
+  movementAt: string;
+  productId: number | null;
+  variantId: number | null;
+  sku: string | null;
+  productName: string;
+  qtyBefore: number | null;
+  qtyChange: number;
+  qtyAfter: number | null;
+  costPrice: number | null;
+  value: number | null;
+  storeId: number | null;
+  reference: string | null;
+  note: string | null;
+  syncedAt: Date;
+};
+
+export type OlseraInventorySyncRunDocument = {
+  /** `run-${startedAt ISO}` */
+  _id: string;
+  status: "running" | "success" | "partial" | "failed";
+  phase: "products" | "movements" | "done";
+  baselineDate: string;
+  startDate: string;
+  endDate: string;
+  /** Tanggal yang belum diproses (antrian; tanggal gagal run sebelumnya di depan). */
+  pendingDates: string[];
+  currentDate: string | null;
+  processedDays: number;
+  totalDays: number;
+  totalProducts: number;
+  totalMovements: number;
+  createdRecords: number;
+  updatedRecords: number;
+  failedDates: string[];
+  errorMessage: string | null;
+  startedAt: Date;
+  completedAt: Date | null;
+  updatedAt: Date;
+};
+
+export type OlseraInventoryStateDocument = {
+  _id: "olsera-inventory";
+  /** Diperbarui hanya saat run selesai sukses penuh. */
+  lastSuccessfulSyncAt: Date | null;
+  /** Tanggal terakhir yang mutasinya tuntas — start incremental berikutnya = tanggal ini - 1 hari. */
+  lastSyncedDate: string | null;
+  firstSyncAt: Date | null;
+  /** Tanggal data paling awal yang benar-benar tersedia (min tanggal mutasi/snapshot). */
+  earliestAvailableDate: string | null;
+  /** API Olsera tidak menyediakan histori mutasi/adjustment — hanya stok saat ini + penjualan. */
+  historyCoverage: "snapshot-only";
+  updatedAt: Date;
 };
 
 function parseDirectHosts(value: string | undefined) {
@@ -231,6 +387,12 @@ export async function collections() {
     olseraSyncedDays: db.collection<OlseraSyncedDayDocument>("olsera_synced_days"),
     olseraProductCache: db.collection<OlseraProductCacheDocument>("olsera_product_cache"),
     olseraOrderItems: db.collection<OlseraOrderItemDocument>("olsera_order_items"),
+    olseraProductAliases: db.collection<OlseraProductAliasDocument>("olsera_product_aliases"),
+    olseraInventoryProducts: db.collection<OlseraInventoryProductDocument>("olsera_inventory_products"),
+    olseraInventorySnapshots: db.collection<OlseraInventorySnapshotDocument>("olsera_inventory_snapshots"),
+    olseraInventoryMovements: db.collection<OlseraInventoryMovementDocument>("olsera_inventory_movements"),
+    olseraInventorySyncRuns: db.collection<OlseraInventorySyncRunDocument>("olsera_inventory_sync_runs"),
+    olseraInventoryState: db.collection<OlseraInventoryStateDocument>("olsera_inventory_state"),
   };
 }
 
@@ -262,6 +424,11 @@ async function createIndexes() {
     olseraSyncedDays,
     olseraProductCache,
     olseraOrderItems,
+    olseraProductAliases,
+    olseraInventoryProducts,
+    olseraInventorySnapshots,
+    olseraInventoryMovements,
+    olseraInventorySyncRuns,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -283,6 +450,20 @@ async function createIndexes() {
     olseraProductCache.createIndex({ productId: 1 }, { unique: true }),
     olseraOrderItems.createIndex({ date: 1 }),
     olseraOrderItems.createIndex({ orderNo: 1 }),
+    olseraOrderItems.createIndex({ categoryResolutionStatus: 1 }),
+    olseraProductAliases.createIndex({ normalizedName: 1 }),
+    olseraProductAliases.createIndex({ sku: 1 }),
+    olseraInventoryProducts.createIndex({ productId: 1, variantId: 1 }),
+    olseraInventoryProducts.createIndex({ sku: 1 }),
+    olseraInventoryProducts.createIndex({ category: 1 }),
+    olseraInventoryProducts.createIndex({ storeId: 1 }),
+    olseraInventorySnapshots.createIndex({ date: 1 }),
+    olseraInventorySnapshots.createIndex({ productId: 1, variantId: 1, date: 1 }),
+    olseraInventoryMovements.createIndex({ date: 1 }),
+    olseraInventoryMovements.createIndex({ productId: 1, variantId: 1, date: 1 }),
+    olseraInventoryMovements.createIndex({ sku: 1 }),
+    olseraInventoryMovements.createIndex({ type: 1 }),
+    olseraInventorySyncRuns.createIndex({ startedAt: -1 }),
   ]);
 }
 

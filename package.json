@@ -8,6 +8,8 @@
     "build": "next build",
     "test:revenue": "node --no-warnings --experimental-strip-types --test lib/revenue.test.ts",
     "test:olsera-audit": "node --no-warnings --experimental-strip-types --test lib/olsera-audit.test.ts",
+    "test:olsera-inventory": "node --no-warnings --experimental-strip-types --test lib/olsera-inventory-core.test.ts",
+    "test:olsera-resolver": "node --no-warnings --experimental-strip-types --test lib/olsera-category-resolver.test.ts",
     "sync:prod": "node --no-warnings --experimental-strip-types scripts/sync-prod.ts",
     "sync:auto": "node --no-warnings --experimental-strip-types scripts/auto-sync.ts",
     "explore:olsera": "node --no-warnings --experimental-strip-types scripts/explore-olsera.ts",

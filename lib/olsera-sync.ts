@@ -13,6 +13,18 @@ import {
   sumOrderTotals,
   type OlseraOrderKind,
 } from "@/lib/olsera-audit";
+import {
+  emptyResolutionStats,
+  normalizeKlasifikasi as normalizeResolverKlasifikasi,
+  normalizeName,
+  resolveItemCategory,
+  tallyResolution,
+  type CategoryResolution,
+  type ItemIdentity,
+  type ResolutionStats,
+  type ResolverContext,
+} from "@/lib/olsera-category-resolver";
+import { loadResolverContext } from "@/lib/olsera-resolver-context";
 
 const BASE_URL = "https://api-open.olsera.co.id";
 const API_PREFIX = "/api/open-api/v1/id";
@@ -24,15 +36,6 @@ const LIST_DELAY_MS = 100;
 const DETAIL_CONCURRENCY = 2;
 // Jeda putaran retry akhir (sekuensial, percobaan terakhir yang hati-hati).
 const RETRY_PASS_DELAY_MS = 500;
-// Cache daftar produk dua lapis:
-// - In-memory (module-level, TTL pendek) — hanya membantu bila instance yang sama
-//   dipanggil berulang dalam waktu singkat.
-// - MongoDB "olsera_product_cache" (persisten, TTL 24 jam) — sumber utama yang
-//   selamat dari cold start Vercel, supaya sync tidak menarik ulang seluruh
-//   Product List setiap invocation.
-const PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
-const PRODUCT_CACHE_MONGO_TTL_MS = 24 * 60 * 60 * 1000;
-
 const UNKNOWN_CATEGORY = "Tidak Diketahui";
 
 type ProductInfo = { klasifikasi: string; name: string };
@@ -48,10 +51,14 @@ export type OlseraSyncResult = {
   lastFullySyncedDate: string | null;
   days: { date: string; expected: number; processed: number; success: boolean; skipped?: boolean }[];
   errorMessage: string | null;
-  /** true = peta produk diambil dari cache (memory/MongoDB); false = fetch ulang Product List penuh. */
+  /** true = resolver context diambil dari cache in-memory; false = fetch ulang katalog penuh. */
   productCacheHit: boolean;
   /** Order yang tetap gagal setelah putaran retry akhir (ikut disimpan ke olsera_sync_log). */
   failedOrders: { date: string; orderId: number; reason: string }[];
+  /** Ringkasan mapping kategori item (canonical resolver). */
+  resolutionStats: ResolutionStats;
+  /** Contoh item unresolved (maks 50) untuk audit cepat tanpa membongkar DB. */
+  unresolvedItems: { date: string; orderNo: string; itemName: string; productId: number | null }[];
 };
 
 export type OlseraSyncOptions = {
@@ -132,51 +139,6 @@ async function getJson(
   }
 }
 
-let productCache: { map: Map<string, ProductInfo>; fetchedAt: number } | null = null;
-
-/** Baca cache produk persisten dari MongoDB; null bila kosong atau melewati TTL 24 jam. */
-async function readProductCacheFromMongo(): Promise<Map<string, ProductInfo> | null> {
-  try {
-    return await withMongo(async () => {
-      const { olseraProductCache } = await collections();
-      const newest = await olseraProductCache.find().sort({ cachedAt: -1 }).limit(1).next();
-      if (!newest || Date.now() - newest.cachedAt.getTime() > PRODUCT_CACHE_MONGO_TTL_MS) return null;
-      const docs = await olseraProductCache.find().toArray();
-      if (!docs.length) return null;
-      const map = new Map<string, ProductInfo>();
-      // name tidak disimpan di cache — tidak dipakai untuk mapping klasifikasi.
-      for (const doc of docs) map.set(doc.productId, { klasifikasi: doc.klasifikasi, name: "" });
-      return map;
-    });
-  } catch (error) {
-    // Cache rusak/DB bermasalah bukan alasan menggagalkan sync — fallback ke fetch penuh.
-    console.error("Olsera sync: gagal membaca olsera_product_cache", error);
-    return null;
-  }
-}
-
-/** Simpan hasil fetch katalog penuh ke MongoDB (upsert per productId). Best effort. */
-async function writeProductCacheToMongo(map: Map<string, ProductInfo>) {
-  if (!map.size) return;
-  try {
-    await withMongo(async () => {
-      const { olseraProductCache } = await collections();
-      const cachedAt = new Date();
-      await olseraProductCache.bulkWrite(
-        [...map.entries()].map(([productId, info]) => ({
-          updateOne: {
-            filter: { productId },
-            update: { $set: { klasifikasi: info.klasifikasi, cachedAt } },
-            upsert: true,
-          },
-        })),
-      );
-    });
-  } catch (error) {
-    console.error("Olsera sync: gagal menulis olsera_product_cache", error);
-  }
-}
-
 /** Upsert satu produk ke cache MongoDB (produk baru yang belum ada di katalog cache). */
 async function upsertProductCacheEntry(productId: string, info: ProductInfo) {
   try {
@@ -191,51 +153,6 @@ async function upsertProductCacheEntry(productId: string, info: ProductInfo) {
   } catch (error) {
     console.error(`Olsera sync: gagal upsert cache produk ${productId}`, error);
   }
-}
-
-// Peta produk: cek in-memory dulu, lalu MongoDB (persisten, TTL 24 jam), baru
-// fetch ulang Product List penuh (paging 100/halaman — biaya tetap terbesar di
-// awal sync). Hasil fetch penuh disimpan kembali ke MongoDB agar invocation
-// berikutnya (proses/instance lain) tidak perlu menarik ulang.
-async function getProductMap(token: string): Promise<{ map: Map<string, ProductInfo>; cacheHit: boolean }> {
-  if (productCache && Date.now() - productCache.fetchedAt < PRODUCT_CACHE_TTL_MS) {
-    console.log(`Olsera sync: product cache HIT (in-memory, ${productCache.map.size} produk)`);
-    return { map: productCache.map, cacheHit: true };
-  }
-
-  const fromMongo = await readProductCacheFromMongo();
-  if (fromMongo) {
-    console.log(`Olsera sync: product cache HIT (MongoDB, ${fromMongo.size} produk)`);
-    productCache = { map: fromMongo, fetchedAt: Date.now() };
-    return { map: fromMongo, cacheHit: true };
-  }
-
-  console.log("Olsera sync: product cache MISS/expired — menarik ulang Product List penuh dari API Olsera");
-  const map = await fetchAllProducts(token);
-  productCache = { map, fetchedAt: Date.now() };
-  await writeProductCacheToMongo(map);
-  return { map, cacheHit: false };
-}
-
-async function fetchAllProducts(token: string): Promise<Map<string, ProductInfo>> {
-  const map = new Map<string, ProductInfo>();
-  let page = 1;
-  for (;;) {
-    const body = await getJson(token, `${API_PREFIX}/product`, { per_page: "100", page: String(page) });
-    const list: Record<string, unknown>[] = Array.isArray(body?.data) ? (body.data as Record<string, unknown>[]) : [];
-    for (const product of list) {
-      map.set(String(product.id), {
-        klasifikasi:
-          typeof product.klasifikasi === "string" && product.klasifikasi ? product.klasifikasi : "(tanpa klasifikasi)",
-        name: String(product.name ?? ""),
-      });
-    }
-    const meta = body?.meta as { last_page?: number } | undefined;
-    if (!meta?.last_page || page >= meta.last_page) break;
-    page++;
-    await sleep(LIST_DELAY_MS);
-  }
-  return map;
 }
 
 // Ambil id order dari list (close atau open) untuk satu tanggal, semua halaman.
@@ -270,13 +187,38 @@ type OrderItem = {
   id: unknown;
   product_id: unknown;
   product_name?: string;
+  product_variant_id?: unknown;
   product_variant_name?: string;
+  product_sku?: unknown;
+  product_variant_sku?: unknown;
   qty: unknown;
   amount: unknown;
   cost_amount?: unknown;
   cost_price?: unknown;
   discount?: unknown;
 };
+
+function toIdOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed !== 0 ? parsed : null;
+}
+
+function toTextOrNull(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
+/** Payload item mentah untuk disimpan — buang field photo/gambar agar dokumen ramping. */
+function rawItemPayload(item: OrderItem): Record<string, unknown> {
+  const raw: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(item as Record<string, unknown>)) {
+    if (/photo/i.test(key)) continue;
+    raw[key] = value;
+  }
+  return raw;
+}
 
 // Field level-order dipakai untuk export detail transaksi (Feature: Export Detail Transaksi).
 // Diverifikasi terhadap payload nyata /order/closeorder/detail (lihat laporan resmi Olsera):
@@ -423,46 +365,44 @@ async function fetchProductDetail(token: string, productId: string): Promise<Pro
   return undefined;
 }
 
-// Produk terhapus permanen: cocokkan nama produk ke nama klasifikasi terpanjang yang dikenal.
-function guessKlasifikasiFromName(productName: string, productMap: Map<string, ProductInfo>): string | undefined {
-  const name = normalizeKlasifikasi(productName).toUpperCase();
-  if (!name) return undefined;
-  const known = [...new Set([...productMap.values()].map((p) => normalizeKlasifikasi(p.klasifikasi)))].filter(
-    (k) => k && !k.startsWith("("),
-  );
-  let best: string | undefined;
-  for (const klasifikasi of known) {
-    if (name.includes(klasifikasi.toUpperCase()) && (!best || klasifikasi.length > best.length)) {
-      best = klasifikasi;
-    }
-  }
-  return best;
-}
+// Cache resolusi via Product Detail dalam satu run (produk unpublish yang
+// tidak muncul di Product List tetapi detail-nya masih bisa ditarik).
+type DetailResolution = CategoryResolution | null;
 
-async function resolveKlasifikasi(
+/**
+ * Resolusi kategori satu item: canonical resolver (product_id → variant_id →
+ * alias → SKU → barcode → nama exact → historis), lalu fallback terakhir
+ * Product Detail API untuk product_id yang tidak ada di Product List.
+ * Tidak ada pencocokan substring — unresolved dikembalikan apa adanya untuk audit.
+ */
+async function resolveItemWithFallback(
   token: string,
-  productId: string,
-  productName: string,
-  productMap: Map<string, ProductInfo>,
-): Promise<string> {
-  let info = productMap.get(productId);
-  if (!info) {
-    // Produk baru yang belum ada di cache katalog: tarik SATU produk dari
-    // Product Detail API dan tambahkan ke cache MongoDB — tanpa refresh katalog penuh.
-    info = await fetchProductDetail(token, productId);
-    if (info) {
-      productMap.set(productId, info);
-      await upsertProductCacheEntry(productId, info);
-    }
+  identity: ItemIdentity,
+  ctx: ResolverContext,
+  detailCache: Map<number, DetailResolution>,
+): Promise<CategoryResolution> {
+  const resolution = resolveItemCategory(identity, ctx);
+  if (resolution.status === "resolved" || identity.productId == null) return resolution;
+
+  if (detailCache.has(identity.productId)) {
+    return detailCache.get(identity.productId) ?? resolution;
   }
-  if (!info) {
-    const guessed = guessKlasifikasiFromName(productName, productMap);
-    if (guessed) {
-      info = { klasifikasi: guessed, name: productName };
-      productMap.set(productId, info);
-    }
+  const info = await fetchProductDetail(token, String(identity.productId));
+  let detailResolution: DetailResolution = null;
+  if (info) {
+    detailResolution = {
+      status: "resolved",
+      method: "product-id",
+      category: normalizeResolverKlasifikasi(info.klasifikasi),
+      categoryId: null,
+      resolvedProductId: identity.productId,
+      resolvedVariantId: identity.variantId ?? null,
+      reason: null,
+    };
+    await upsertProductCacheEntry(String(identity.productId), info);
   }
-  return normalizeKlasifikasi(info?.klasifikasi ?? UNKNOWN_CATEGORY);
+  detailCache.set(identity.productId, detailResolution);
+  return detailResolution ?? resolution;
 }
 
 export async function syncOlseraSalesByCategory(
@@ -482,6 +422,8 @@ export async function syncOlseraSalesByCategory(
     errorMessage: null,
     productCacheHit: false,
     failedOrders: [],
+    resolutionStats: emptyResolutionStats(),
+    unresolvedItems: [],
   };
 
   try {
@@ -489,8 +431,11 @@ export async function syncOlseraSalesByCategory(
     if ("error" in auth) throw new Error(auth.error);
     const token = auth.token;
 
-    const { map: productMap, cacheHit } = await getProductMap(token);
+    // Canonical resolver context: katalog aktif + alias produk historis +
+    // identitas historis. Menggantikan peta product_id→klasifikasi lama.
+    const { ctx: resolverCtx, cacheHit } = await loadResolverContext();
     result.productCacheHit = cacheHit;
+    const detailCache = new Map<number, DetailResolution>();
 
     // Hari yang sudah pernah tuntas dilewati (kecuali force) — sync ulang
     // rentang lebar jadi hanya mengerjakan hari yang benar-benar kurang.
@@ -537,12 +482,26 @@ export async function syncOlseraSalesByCategory(
         const processOrder = async (order: OrderRef) => {
           const { meta, items } = await fetchOrderDetail(token, order); // boleh throw — ditangani pemanggil
           for (const item of items) {
-            const category = await resolveKlasifikasi(
-              token,
-              String(item.product_id),
-              String(item.product_name ?? ""),
-              productMap,
-            );
+            const itemName = item.product_variant_name
+              ? `${item.product_name ?? ""} - ${item.product_variant_name}`
+              : String(item.product_name ?? "");
+            // Identitas produk dari payload transaksi — disimpan agar perubahan
+            // product_id di katalog tidak menghilangkan jejak transaksi lama.
+            const identity: ItemIdentity = {
+              itemName,
+              productId: toIdOrNull(item.product_id),
+              variantId: toIdOrNull(item.product_variant_id),
+              sku: toTextOrNull(item.product_variant_sku) ?? toTextOrNull(item.product_sku),
+              barcode: null,
+            };
+            const resolution = await resolveItemWithFallback(token, identity, resolverCtx, detailCache);
+            tallyResolution(result.resolutionStats, resolution);
+            const orderNo = String(meta.order_no ?? order.id);
+            if (resolution.status === "unresolved" && result.unresolvedItems.length < 50) {
+              result.unresolvedItems.push({ date, orderNo, itemName, productId: identity.productId ?? null });
+            }
+
+            const category = resolution.category;
             const entry = byCategory.get(category) ?? { qty: 0, amount: 0, costAmount: 0 };
             entry.qty += toNumber(item.qty);
             entry.amount += toNumber(item.amount);
@@ -551,13 +510,10 @@ export async function syncOlseraSalesByCategory(
 
             const itemId = Number(item.id);
             if (Number.isFinite(itemId)) {
-              const itemName = item.product_variant_name
-                ? `${item.product_name ?? ""} - ${item.product_variant_name}`
-                : String(item.product_name ?? "");
               itemDocs.push({
                 _id: itemId,
                 date,
-                orderNo: String(meta.order_no ?? order.id),
+                orderNo,
                 orderDate: orderDateTime(meta, date),
                 customerId: customerIdText(meta),
                 customerName: personName(meta.customer_name, meta.customer),
@@ -569,6 +525,21 @@ export async function syncOlseraSalesByCategory(
                 costAmount: toNumber(item.cost_amount),
                 discount: toNumber(item.discount),
                 syncedAt: new Date(),
+                // Identitas + hasil resolusi canonical (Feature: category mapping).
+                productId: identity.productId ?? null,
+                variantId: identity.variantId ?? null,
+                sku: identity.sku ?? null,
+                barcode: null,
+                normalizedItemName: normalizeName(itemName),
+                originalCategoryId: null,
+                originalCategoryName: null,
+                resolvedProductId: resolution.resolvedProductId,
+                resolvedCategoryId: resolution.categoryId,
+                resolvedCategoryName: resolution.status === "resolved" ? resolution.category : null,
+                categoryResolutionMethod: resolution.method,
+                categoryResolutionStatus: resolution.status,
+                categoryResolutionReason: resolution.reason,
+                raw: rawItemPayload(item),
               });
             }
           }
@@ -737,6 +708,8 @@ export type OlseraDayAuditResult = {
   /** Alasan keputusan audit (untuk log/progres UI). */
   reason: string | null;
   errorMessage: string | null;
+  /** Ringkasan mapping kategori saat resync (0 semua bila action=match). */
+  resolutionStats?: ResolutionStats;
 };
 
 /** Majukan checkpoint bila `date` menyambung (tidak melompati tanggal yang belum tuntas). */
@@ -837,6 +810,7 @@ export async function auditAndSyncOlseraDay(date: string): Promise<OlseraDayAudi
     const sync = await syncOlseraSalesByCategory(date, date, { force: true });
     result.expectedOrderCount = sync.expectedOrderCount;
     result.processedOrderCount = sync.processedOrderCount;
+    result.resolutionStats = sync.resolutionStats;
     if (sync.status === "success") {
       await withMongo(async () => {
         const { olseraSyncedDays } = await collections();
@@ -899,13 +873,15 @@ export async function logOlseraMonthSync(summary: OlseraMonthSyncSummary) {
 
 export async function getOlseraSyncStatus() {
   return withMongo(async () => {
-    const { olseraSalesByCategory, olseraSyncLog, olseraSyncState } = await collections();
-    const [state, lastLog, earliestDoc] = await Promise.all([
+    const { olseraSalesByCategory, olseraSyncLog, olseraSyncState, olseraOrderItems } = await collections();
+    const [state, lastLog, earliestDoc, unresolvedItemCount] = await Promise.all([
       olseraSyncState.findOne({ _id: "olsera" }),
       olseraSyncLog.find().sort({ startedAt: -1 }).limit(1).next(),
       olseraSalesByCategory.find().sort({ date: 1 }).limit(1).next(),
+      olseraOrderItems.countDocuments({ categoryResolutionStatus: "unresolved" }),
     ]);
     return {
+      unresolvedItemCount,
       lastFullySyncedDate: state?.lastFullySyncedDate ?? null,
       firstSyncedDate: earliestDoc?.date ?? null,
       lastSync: lastLog

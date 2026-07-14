@@ -17,7 +17,7 @@
 import ExcelJS from "exceljs";
 import { collections, withMongo } from "./mongodb.ts";
 import { getRevenueAmount, isDisplayEligibleTransaction } from "./revenue.ts";
-import { categoryForItem, getCategoryByNameMap } from "./olsera-category-export.ts";
+import { loadResolverContext, resolveStoredItemCategory } from "./olsera-resolver-context.ts";
 
 const FONT = "Calibri";
 const BLACK = "FF000000";
@@ -136,7 +136,32 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
     const [itemRows, bookingRows] = await Promise.all([
       olseraOrderItems
         .find({ date: { $gte: start, $lte: end } })
-        .project<{ date: string; itemName: string; amount: number }>({ _id: 0, date: 1, itemName: 1, amount: 1 })
+        .project<{
+          date: string;
+          itemName: string;
+          amount: number;
+          productId?: number | null;
+          variantId?: number | null;
+          sku?: string | null;
+          barcode?: string | null;
+          originalCategoryId?: string | null;
+          originalCategoryName?: string | null;
+          resolvedCategoryName?: string | null;
+          categoryResolutionStatus?: "resolved" | "unresolved";
+        }>({
+          _id: 0,
+          date: 1,
+          itemName: 1,
+          amount: 1,
+          productId: 1,
+          variantId: 1,
+          sku: 1,
+          barcode: 1,
+          originalCategoryId: 1,
+          originalCategoryName: 1,
+          resolvedCategoryName: 1,
+          categoryResolutionStatus: 1,
+        })
         .toArray(),
       bookings.find({ date: { $gte: start, $lte: end } }).toArray(),
     ]);
@@ -161,9 +186,9 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
     else padel[idx] += amount;
   }
 
-  // Item Olsera → per (kategori, tanggal); mapping katalog sama dengan
-  // Export Kategori Penjualan.
-  const nameMap = items.length ? await getCategoryByNameMap() : new Map<string, string>();
+  // Item Olsera → per (kategori, tanggal); canonical resolver yang sama dengan
+  // dashboard & Export Kategori Penjualan.
+  const resolverCtx = items.length ? (await loadResolverContext()).ctx : null;
   const byCategory = new Map<string, number[]>();
   const add = (category: string, idx: number, amount: number) => {
     let arr = byCategory.get(category);
@@ -173,8 +198,10 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
   for (const item of items) {
     const idx = dayIndex(item.date);
     if (idx < 0 || idx >= dayCount) continue;
-    let category = categoryForItem(item.itemName, nameMap);
+    let category = resolverCtx ? resolveStoredItemCategory(item, resolverCtx) : UNKNOWN_CATEGORY;
     if (category === UNKNOWN_CATEGORY) {
+      // Last-resort tampilan laporan (bukan metode mapping utama) — item
+      // unresolved tetap tercatat di audit lewat categoryResolutionStatus.
       category = FALLBACK_KEYWORDS.find(([re]) => re.test(item.itemName))?.[1] ?? UNKNOWN_CATEGORY;
     }
     if (EXCLUDED_OLSERA_CATEGORIES.has(category)) continue;

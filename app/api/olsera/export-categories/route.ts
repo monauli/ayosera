@@ -1,11 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo } from "@/lib/mongodb";
-import {
-  buildOlseraCategoryWorkbook,
-  categoryForItem,
-  getCategoryByNameMap,
-} from "@/lib/olsera-category-export";
+import { buildOlseraCategoryWorkbook } from "@/lib/olsera-category-export";
+import { loadResolverContext, resolveStoredItemCategory } from "@/lib/olsera-resolver-context";
 
 export const runtime = "nodejs";
 
@@ -46,6 +43,14 @@ export async function GET(request: Request) {
           amount: number;
           costAmount: number;
           discount: number;
+          productId?: number | null;
+          variantId?: number | null;
+          sku?: string | null;
+          barcode?: string | null;
+          originalCategoryId?: string | null;
+          originalCategoryName?: string | null;
+          resolvedCategoryName?: string | null;
+          categoryResolutionStatus?: "resolved" | "unresolved";
         }>({
           _id: 0,
           date: 1,
@@ -59,6 +64,14 @@ export async function GET(request: Request) {
           amount: 1,
           costAmount: 1,
           discount: 1,
+          productId: 1,
+          variantId: 1,
+          sku: 1,
+          barcode: 1,
+          originalCategoryId: 1,
+          originalCategoryName: 1,
+          resolvedCategoryName: 1,
+          categoryResolutionStatus: 1,
         })
         .toArray();
     });
@@ -70,10 +83,10 @@ export async function GET(request: Request) {
       );
     }
 
-    // Kategori di-resolve dari katalog produk Olsera (nama → klasifikasi) —
-    // identik hasilnya dengan agregat olsera_sales_by_category di dashboard.
-    const nameMap = await getCategoryByNameMap();
-    const rows = items.map((item) => ({ ...item, category: categoryForItem(item.itemName, nameMap) }));
+    // Kategori via canonical resolver (identitas tersimpan → katalog → alias →
+    // SKU/nama exact) — identik dengan agregat olsera_sales_by_category di dashboard.
+    const { ctx } = await loadResolverContext();
+    const rows = items.map((item) => ({ ...item, category: resolveStoredItemCategory(item, ctx) }));
 
     const buffer = await buildOlseraCategoryWorkbook({ start, end, rows });
 

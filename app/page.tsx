@@ -36,6 +36,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
 import { UsersPanel } from "@/components/users-panel";
 
 type HourlyPoint = { time: string; transactions: number; revenue: number };
@@ -101,6 +102,8 @@ type WebhookLogRow = {
 };
 
 type OlseraSyncStatus = {
+  /** Jumlah item yang belum punya mapping kategori (audit canonical resolver). */
+  unresolvedItemCount?: number;
   lastFullySyncedDate: string | null;
   firstSyncedDate: string | null;
   lastSync: {
@@ -169,7 +172,7 @@ const navItems = [
     module: "olsera",
     subItems: [
       { label: "Kategori Penjualan", nav: "Olsera" },
-      // { label: "Inventori", nav: "OlseraInventori" }, // disiapkan untuk nanti
+      { label: "Inventori", nav: "OlseraInventori" },
     ],
   },
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
@@ -960,6 +963,7 @@ export default function DashboardPage() {
     let updated = 0;
     let expectedOrders = 0;
     let processedOrders = 0;
+    let unresolvedNew = 0;
     const failedDates: string[] = [];
 
     try {
@@ -985,12 +989,14 @@ export default function DashboardPage() {
                 processedOrderCount?: number;
                 errorMessage?: string | null;
                 error?: string;
+                resolutionStats?: { unresolved?: number };
               }
             | null;
           if (!response.ok || !payload || payload.error || payload.action === "failed" || !payload.action) {
             failedDates.push(date);
           } else {
             expectedOrders += payload.expectedOrderCount ?? 0;
+            unresolvedNew += payload.resolutionStats?.unresolved ?? 0;
             if (payload.action === "resynced") {
               updated++;
               processedOrders += payload.processedOrderCount ?? 0;
@@ -1025,12 +1031,14 @@ export default function DashboardPage() {
       }).catch(() => undefined);
 
       const durationSec = Math.max(1, Math.round((Date.now() - startedMs) / 1000));
+      // Sync tidak dilaporkan mulus bila ada item baru tanpa mapping kategori.
+      const unresolvedNote = unresolvedNew > 0 ? ` Peringatan: ${unresolvedNew} item belum memiliki mapping kategori.` : "";
       setOlseraSyncMessage(
         failedDates.length
           ? `Sync sebagian selesai: ${matched + updated} tanggal cocok, ${failedDates.length} tanggal gagal (${failedDates
               .map(formatDisplayDate)
-              .join(", ")}). Durasi ${durationSec} detik.`
-          : `Sync selesai: ${dates.length} tanggal diperiksa, ${updated} tanggal diperbarui, ${processedOrders} transaksi diproses. Durasi ${durationSec} detik.`,
+              .join(", ")}). Durasi ${durationSec} detik.${unresolvedNote}`
+          : `Sync selesai: ${dates.length} tanggal diperiksa, ${updated} tanggal diperbarui, ${processedOrders} transaksi diproses. Durasi ${durationSec} detik.${unresolvedNote}`,
       );
     } finally {
       olseraSyncRunRef.current = false;
@@ -1278,7 +1286,12 @@ export default function DashboardPage() {
   const activeNavAllowed =
     activeNav === "Pengguna"
       ? isSupervisor
-      : Boolean(sessionUser) && visibleNavItems.some((item) => item.label === activeNav);
+      : Boolean(sessionUser) &&
+        visibleNavItems.some(
+          (item) =>
+            item.label === activeNav ||
+            ("subItems" in item && item.subItems?.some((sub) => sub.nav === activeNav)),
+        );
 
   const metrics = dashboard?.metrics;
   const dateRangeInvalid = isInvalidDateRange(startDate, endDate);
@@ -1488,12 +1501,19 @@ export default function DashboardPage() {
                   ? "Transaksi AYO"
                   : activeNav === "Olsera"
                     ? "Kategori Penjualan Olsera"
-                    : activeNav === "Webhook"
-                      ? "Monitoring Webhook AYO"
-                      : activeNav === "Pengguna"
-                        ? "Manajemen Pengguna"
-                        : "Dasbor Transaksi Real-Time"}
+                    : activeNav === "OlseraInventori"
+                      ? "Inventori Olsera"
+                      : activeNav === "Webhook"
+                        ? "Monitoring Webhook AYO"
+                        : activeNav === "Pengguna"
+                          ? "Manajemen Pengguna"
+                          : "Dasbor Transaksi Real-Time"}
               </h1>
+              {activeNav === "OlseraInventori" && (
+                <p className="hidden text-sm text-slate-500 sm:block">
+                  Monitoring stok, mutasi, harga modal, dan nilai persediaan Olsera.
+                </p>
+              )}
               {activeNav === "Dasbor" && (
                 <p className="hidden text-sm text-slate-500 sm:block">
                   Monitoring transaksi, pendapatan, sinkronisasi, dan integrasi AYO.
@@ -1519,7 +1539,7 @@ export default function DashboardPage() {
               <span className="hidden sm:inline">Logout</span>
             </Button>
             {/* Tombol sync AYO untuk user bermodul dasbor/transaksi; disembunyikan juga di halaman Olsera (punya tombol sync sendiri). */}
-            {canSyncAyo && activeNav !== "Olsera" && activeNav !== "Pengguna" && (
+            {canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "Pengguna" && (
             <div className="relative">
               <Button
                 className={OLSERA_PRIMARY_BTN}
@@ -1632,7 +1652,7 @@ export default function DashboardPage() {
 
         <div
           className={`px-4 py-5 sm:px-6 ${
-            activeNav === "Olsera"
+            activeNav === "Olsera" || activeNav === "OlseraInventori"
               ? "min-h-[calc(100vh-4rem)] bg-gradient-to-b from-slate-50 via-slate-50 to-rose-50/40"
               : ""
           }`}
@@ -2347,6 +2367,14 @@ export default function DashboardPage() {
                 )}
               </CardHeader>
               <CardContent className={OLSERA_CARD_CONTENT}>
+                {(olseraSyncStatus?.unresolvedItemCount ?? 0) > 0 && (
+                  <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-200/80 border-l-4 border-l-amber-400 bg-amber-50/80 px-3.5 py-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <p className="text-sm text-amber-900">
+                      Ada {olseraSyncStatus!.unresolvedItemCount} item yang belum memiliki mapping kategori.
+                    </p>
+                  </div>
+                )}
                 {olseraSyncStatus?.lastFullySyncedDate && olseraEnd > olseraSyncStatus.lastFullySyncedDate && (
                   <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-200/80 border-l-4 border-l-amber-400 bg-amber-50/80 px-3.5 py-3">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
@@ -2441,6 +2469,8 @@ export default function DashboardPage() {
 
           </>
           )}
+
+          {activeNavAllowed && activeNav === "OlseraInventori" && <OlseraInventoryPanel />}
 
           {activeNavAllowed && activeNav === "Webhook" && (
           <>
