@@ -34,6 +34,7 @@ import {
   INVENTORY_BASELINE_DATE,
   DEFAULT_LOW_STOCK_THRESHOLD,
   type ConsistencyRow,
+  type ConsistencyStatus,
   type InventoryProductInput,
 } from "@/lib/olsera-inventory-core";
 
@@ -93,7 +94,12 @@ export type InventorySyncStatus = {
     lastSuccessfulSyncAt: string | null;
     lastSyncedDate: string | null;
     firstSyncAt: string | null;
+    /** min(earliestSalesDate, earliestSnapshotDate) — dipertahankan untuk kompatibilitas (skrip backfill gap). */
     earliestAvailableDate: string | null;
+    /** Tanggal transaksi penjualan paling awal yang tersimpan (olsera_inventory_movements). */
+    earliestSalesDate: string | null;
+    /** Tanggal snapshot stok paling awal yang tersimpan (olsera_inventory_snapshots). */
+    earliestSnapshotDate: string | null;
     historyCoverage: "snapshot-only";
   };
   run: {
@@ -141,13 +147,22 @@ function serializeRun(run: OlseraInventorySyncRunDocument): NonNullable<Inventor
 
 export async function getInventorySyncStatus(): Promise<InventorySyncStatus> {
   return withMongo(async () => {
-    const { olseraInventoryState, olseraInventorySyncRuns, olseraInventoryProducts, olseraInventoryMovements } =
-      await collections();
-    const [state, run, productCount, movementCount] = await Promise.all([
+    const {
+      olseraInventoryState,
+      olseraInventorySyncRuns,
+      olseraInventoryProducts,
+      olseraInventoryMovements,
+      olseraInventorySnapshots,
+    } = await collections();
+    const [state, run, productCount, movementCount, earliestMovement, earliestSnapshot] = await Promise.all([
       olseraInventoryState.findOne({ _id: "olsera-inventory" }),
       olseraInventorySyncRuns.find().sort({ startedAt: -1 }).limit(1).next(),
       olseraInventoryProducts.countDocuments(),
       olseraInventoryMovements.countDocuments(),
+      // Baca langsung dari koleksi (bukan hanya field tersimpan) — status yang
+      // ditampilkan selalu mencerminkan data aktual, tidak pernah hardcode.
+      olseraInventoryMovements.find().sort({ date: 1 }).limit(1).next(),
+      olseraInventorySnapshots.find().sort({ date: 1 }).limit(1).next(),
     ]);
     return {
       state: {
@@ -155,6 +170,8 @@ export async function getInventorySyncStatus(): Promise<InventorySyncStatus> {
         lastSyncedDate: state?.lastSyncedDate ?? null,
         firstSyncAt: state?.firstSyncAt?.toISOString() ?? null,
         earliestAvailableDate: state?.earliestAvailableDate ?? null,
+        earliestSalesDate: earliestMovement?.date ?? null,
+        earliestSnapshotDate: earliestSnapshot?.date ?? null,
         historyCoverage: "snapshot-only",
       },
       run: run ? serializeRun(run) : null,
@@ -468,13 +485,24 @@ export async function getInventoryConsistency(): Promise<{
         movements: movementsByKey.get(product._id) ?? [],
       }),
     );
-    rows.sort((a, b) => Math.abs(b.difference ?? 0) - Math.abs(a.difference ?? 0));
+    // "Perlu Stock Opname" (butuh perhatian) ditampilkan lebih dulu, lalu
+    // diurutkan berdasarkan besar perubahan snapshot — bukan klaim kebenaran.
+    const statusPriority: Record<ConsistencyStatus, number> = {
+      "Perlu Stock Opname": 0,
+      "Snapshot Tersedia": 1,
+      "Histori Tidak Lengkap": 2,
+      "Belum Ada Snapshot": 3,
+    };
+    rows.sort((a, b) => {
+      const byStatus = statusPriority[a.status] - statusPriority[b.status];
+      if (byStatus !== 0) return byStatus;
+      return Math.abs(b.snapshotChange ?? 0) - Math.abs(a.snapshotChange ?? 0);
+    });
     return {
       rows,
       note:
-        "Konsistensi sistem: selisih = perubahan stok yang tidak terekam sebagai penjualan " +
-        "(API Olsera tidak menyediakan mutasi pembelian/adjustment). " +
-        "Kecocokan stok fisik memerlukan data stock opname.",
+        "Konsistensi hanya menggunakan snapshot stok aplikasi dan transaksi penjualan yang tersedia. " +
+        "Kecocokan stok fisik memerlukan stock opname.",
     };
   });
 }

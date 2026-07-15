@@ -467,6 +467,8 @@ export default function DashboardPage() {
   const [olseraCategoryExportMessage, setOlseraCategoryExportMessage] = useState("");
   const [olseraOmsetKategoriExporting, setOlseraOmsetKategoriExporting] = useState(false);
   const [olseraOmsetKategoriExportMessage, setOlseraOmsetKategoriExportMessage] = useState("");
+  const [olseraLabersExporting, setOlseraLabersExporting] = useState(false);
+  const [olseraLabersExportMessage, setOlseraLabersExportMessage] = useState("");
   const [olseraExportMenuOpen, setOlseraExportMenuOpen] = useState(false);
   const olseraExportMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -1258,6 +1260,42 @@ export default function DashboardPage() {
     }
   }
 
+  // Export "Pembagian Hasil LABERS" — hanya untuk mode Bulanan, memakai bulan
+  // filter yang sedang aktif (tidak menambah input tanggal/bulan baru).
+  async function handleOlseraLabersExport() {
+    if (olseraReportMode !== "monthly" || !olseraFilterMonth || olseraLabersExporting) return;
+    setOlseraLabersExporting(true);
+    setOlseraLabersExportMessage("");
+    try {
+      const params = new URLSearchParams({ month: olseraFilterMonth });
+      const response = await fetch(`/api/olsera/export-labers-sharing?${params.toString()}`, { cache: "no-store" });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setOlseraLabersExportMessage(payload?.error || "Ekspor Pembagian Hasil LABERS gagal.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
+      link.download = match?.[1] || `Pembagian Hasil LABERS-${olseraFilterMonth}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      setOlseraLabersExportMessage(`Ekspor Pembagian Hasil LABERS ${formatMonthLabel(olseraFilterMonth)} selesai.`);
+    } catch {
+      setOlseraLabersExportMessage("Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.");
+    } finally {
+      setOlseraLabersExporting(false);
+    }
+  }
+
   function getOlseraFilterDetail() {
     if (olseraReportMode === "monthly")
       return `${formatMonthLabel(olseraFilterMonth)} (${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)})`;
@@ -1266,11 +1304,13 @@ export default function DashboardPage() {
     return `${formatDisplayDate(olseraStart)} - ${formatDisplayDate(olseraEnd)}`;
   }
 
-  const olseraAnyExporting = olseraItemExporting || olseraCategoryExporting || olseraOmsetKategoriExporting;
+  const olseraAnyExporting =
+    olseraItemExporting || olseraCategoryExporting || olseraOmsetKategoriExporting || olseraLabersExporting;
   const olseraExportMessages = [
     olseraItemExportMessage,
     olseraCategoryExportMessage,
     olseraOmsetKategoriExportMessage,
+    olseraLabersExportMessage,
   ].filter(Boolean);
 
   const isSupervisor = sessionUser?.role === "supervisor";
@@ -2301,6 +2341,30 @@ export default function DashboardPage() {
                             <span className="block font-medium">Export Omset Kategori</span>
                             <span className="block text-xs text-slate-500">
                               Rekap omset kategori untuk bulan yang dipilih
+                            </span>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          disabled={olseraReportMode !== "monthly"}
+                          className={`${OLSERA_MENU_ITEM} ${
+                            olseraReportMode !== "monthly" ? "cursor-not-allowed opacity-50 hover:bg-transparent" : ""
+                          }`}
+                          onClick={() => {
+                            setOlseraExportMenuOpen(false);
+                            handleOlseraLabersExport();
+                          }}
+                        >
+                          <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
+                            <FileSpreadsheet className="h-4 w-4" />
+                          </span>
+                          <span>
+                            <span className="block font-medium">Export Pembagian Hasil LABERS</span>
+                            <span className="block text-xs text-slate-500">
+                              {olseraReportMode === "monthly"
+                                ? `Rekap penjualan LABERS & pembagian Padel/Labers bulan ${formatMonthLabel(olseraFilterMonth)}`
+                                : "Pilih mode Bulanan"}
                             </span>
                           </span>
                         </button>

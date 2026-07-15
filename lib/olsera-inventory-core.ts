@@ -160,9 +160,14 @@ export type StockStatus = "Aman" | "Hampir Habis" | "Habis" | "Data Tidak Lengka
 export function stockStatusFor(product: {
   trackInventory: boolean;
   stockQty: number;
+  buyPrice: number;
   lowStockAlert: number | null;
 }): StockStatus {
   if (!product.trackInventory) return "Data Tidak Lengkap";
+  // Produk tanpa harga modal dari Olsera (buy_price 0/tidak diisi) — status stok
+  // tidak bisa dinyatakan tanpa data harga; tampilkan sebagai tidak lengkap
+  // daripada memberi label Aman/Habis yang menyesatkan.
+  if (!product.buyPrice) return "Data Tidak Lengkap";
   const threshold = product.lowStockAlert ?? DEFAULT_LOW_STOCK_THRESHOLD;
   if (product.stockQty <= 0) return "Habis";
   if (product.stockQty <= threshold) return "Hampir Habis";
@@ -210,31 +215,38 @@ export function summarizeInventory(products: InventoryProductInput[]): Inventory
   return summary;
 }
 
-export type ConsistencyStatus = "Cocok" | "Selisih" | "Histori Tidak Lengkap" | "Belum Ada Snapshot";
+/**
+ * Status cakupan data konsistensi — TIDAK PERNAH menyatakan stok fisik "Cocok"/benar
+ * (itu memerlukan stock opname). Hanya menyatakan seberapa lengkap data snapshot
+ * & penjualan yang tersedia untuk produk ini.
+ */
+export type ConsistencyStatus = "Snapshot Tersedia" | "Histori Tidak Lengkap" | "Belum Ada Snapshot" | "Perlu Stock Opname";
 
 export type ConsistencyRow = {
   key: string;
   sku: string | null;
   name: string;
   category: string;
-  startDate: string | null;
-  endDate: string | null;
-  startQty: number | null;
-  stockIn: number;
-  stockOut: number;
-  adjustment: number;
-  computedEndQty: number | null;
-  snapshotEndQty: number | null;
-  difference: number | null;
+  /** Snapshot stok paling awal yang benar-benar tersedia — null bila belum ada snapshot sama sekali. */
+  startSnapshotQty: number | null;
+  /** Total qty terjual tercatat (dari olsera_order_items via mutasi "penjualan") antara snapshot awal & akhir — null bila kurang dari 2 snapshot (periode tidak bisa ditentukan). */
+  recordedSales: number | null;
+  /** Snapshot stok paling akhir yang tersedia. */
+  endSnapshotQty: number | null;
+  /** endSnapshotQty - startSnapshotQty — null bila kurang dari 2 snapshot (tidak ada perubahan yang bisa dihitung). */
+  snapshotChange: number | null;
   status: ConsistencyStatus;
 };
 
 /**
- * Konsistensi SISTEM per produk: Stok Akhir = Stok Awal + Masuk - Keluar ± Penyesuaian.
- * Periode = snapshot paling awal s/d snapshot terakhir yang tersedia. Mutasi yang
- * diketahui hanya penjualan (API tidak memberi mutasi lain), jadi selisih yang
- * tampil = perubahan yang tidak terekam (pembelian/adjustment manual di Olsera).
- * Kecocokan stok FISIK memerlukan stock opname — tidak dinyatakan di sini.
+ * Cakupan data konsistensi per produk — BUKAN rekonsiliasi stok fisik.
+ * API Olsera hanya menyediakan snapshot stok saat ini + transaksi penjualan;
+ * pembelian/adjustment/transfer/retur tidak tersedia. Karena itu fungsi ini
+ * TIDAK PERNAH merekonstruksi "stok akhir hasil hitung" sebagai angka final —
+ * ia hanya melaporkan snapshot yang benar-benar ada, penjualan yang benar-benar
+ * tercatat, dan menandai `Perlu Stock Opname` bila perubahan snapshot tidak
+ * habis dijelaskan oleh penjualan tercatat saja (indikasi ada mutasi lain yang
+ * tidak terlihat dari API — pembelian/adjustment manual di Olsera).
  */
 export function computeConsistency(input: {
   key: string;
@@ -245,59 +257,46 @@ export function computeConsistency(input: {
   snapshots: { date: string; stockQty: number }[];
   movements: { date: string; qtyChange: number }[];
 }): ConsistencyRow {
-  const base = {
-    key: input.key,
-    sku: input.sku,
-    name: input.name,
-    category: input.category,
-    stockIn: 0,
-    stockOut: 0,
-    adjustment: 0,
-  };
+  const base = { key: input.key, sku: input.sku, name: input.name, category: input.category };
   if (!input.snapshots.length) {
-    return {
-      ...base,
-      startDate: null,
-      endDate: null,
-      startQty: null,
-      computedEndQty: null,
-      snapshotEndQty: null,
-      difference: null,
-      status: "Belum Ada Snapshot",
-    };
+    return { ...base, startSnapshotQty: null, recordedSales: null, endSnapshotQty: null, snapshotChange: null, status: "Belum Ada Snapshot" };
   }
   const sorted = [...input.snapshots].sort((a, b) => (a.date < b.date ? -1 : 1));
   const first = sorted[0];
   const last = sorted[sorted.length - 1];
 
-  let stockIn = 0;
-  let stockOut = 0;
-  for (const movement of input.movements) {
-    // Mutasi dihitung SETELAH snapshot awal sampai dengan snapshot akhir.
-    if (movement.date <= first.date || movement.date > last.date) continue;
-    if (movement.qtyChange >= 0) stockIn += movement.qtyChange;
-    else stockOut += -movement.qtyChange;
+  // Kurang dari 2 titik snapshot (atau produk tidak dilacak Olsera) — snapshot
+  // yang ada tetap ditampilkan apa adanya, tetapi perubahan/penjualan TIDAK
+  // dihitung (periode tidak bisa ditentukan dari satu titik data).
+  if (!input.trackInventory || first.date === last.date) {
+    return {
+      ...base,
+      startSnapshotQty: first.stockQty,
+      recordedSales: null,
+      endSnapshotQty: last.stockQty,
+      snapshotChange: null,
+      status: "Histori Tidak Lengkap",
+    };
   }
-  const computedEndQty = first.stockQty + stockIn - stockOut;
-  const difference = last.stockQty - computedEndQty;
 
-  let status: ConsistencyStatus;
-  if (!input.trackInventory) status = "Histori Tidak Lengkap";
-  else if (first.date === last.date) status = "Histori Tidak Lengkap";
-  else if (Math.abs(difference) < 0.001) status = "Cocok";
-  else status = "Selisih";
+  // Penjualan tercatat = total qty terjual (satu-satunya jenis mutasi yang
+  // tersedia dari API) antara snapshot awal (eksklusif) dan snapshot akhir (inklusif).
+  let recordedSales = 0;
+  for (const movement of input.movements) {
+    if (movement.date <= first.date || movement.date > last.date) continue;
+    recordedSales += -movement.qtyChange;
+  }
+  const snapshotChange = last.stockQty - first.stockQty;
+  const explainedBySalesOnly = -recordedSales;
+  const unexplained = snapshotChange - explainedBySalesOnly;
+  const status: ConsistencyStatus = Math.abs(unexplained) < 0.001 ? "Snapshot Tersedia" : "Perlu Stock Opname";
 
   return {
     ...base,
-    startDate: first.date,
-    endDate: last.date,
-    startQty: first.stockQty,
-    stockIn,
-    stockOut,
-    adjustment: 0,
-    computedEndQty,
-    snapshotEndQty: last.stockQty,
-    difference,
+    startSnapshotQty: first.stockQty,
+    recordedSales,
+    endSnapshotQty: last.stockQty,
+    snapshotChange,
     status,
   };
 }

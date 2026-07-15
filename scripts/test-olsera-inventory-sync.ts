@@ -112,7 +112,8 @@ check("historyCoverage = snapshot-only", statusAfter.state.historyCoverage === "
 const stockWb = await buildInventoryStockWorkbook({});
 const stockSheet = stockWb.worksheets[0];
 check("export stok: baris data ada", stockSheet.rowCount > 5, `rows=${stockSheet.rowCount}`);
-const sampleCell = stockSheet.getRow(5).getCell(7).value;
+// Kolom 8 = "Stok Saat Ini" (SKU, Produk, Varian, Kategori, Satuan, Outlet, Gudang, Stok Saat Ini, ...).
+const sampleCell = stockSheet.getRow(5).getCell(8).value;
 check("export stok: kolom stok berupa number", typeof sampleCell === "number", `typeof=${typeof sampleCell}`);
 
 const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);

@@ -70,12 +70,12 @@ export async function buildInventoryStockWorkbook(filter: {
   );
 
   const header = sheet.addRow([
-    "SKU", "Produk", "Variant", "Kategori", "Satuan", "Outlet",
+    "SKU", "Produk", "Varian", "Kategori", "Satuan", "Outlet", "Gudang",
     "Stok Saat Ini", "Stok Minimum", "Status Stok", "Harga Modal", "Nilai Persediaan", "Terakhir Diperbarui",
   ]);
   styleHeaderRow(header);
   sheet.views = [{ state: "frozen", ySplit: header.number }];
-  sheet.autoFilter = { from: { row: header.number, column: 1 }, to: { row: header.number, column: 12 } };
+  sheet.autoFilter = { from: { row: header.number, column: 1 }, to: { row: header.number, column: 13 } };
 
   let totalStock = 0;
   let totalValue = 0;
@@ -92,6 +92,10 @@ export async function buildInventoryStockWorkbook(filter: {
       product.category,
       product.uom ?? "-",
       product.storeName ?? "-",
+      // API Olsera tidak menyediakan data gudang terpisah dari outlet (endpoint
+      // warehouse 404 — lihat scripts/inspect-olsera-inventory.ts): tampilkan
+      // apa adanya, jangan diisi nilai reka-reka.
+      "-",
       product.stockQty,
       product.lowStockAlert ?? (product.trackInventory ? DEFAULT_LOW_STOCK_THRESHOLD : 0),
       stockStatusFor(product),
@@ -103,19 +107,21 @@ export async function buildInventoryStockWorkbook(filter: {
       cell.font = { name: FONT, size: 10 };
       cell.border = thinBorder();
     });
-    row.getCell(10).numFmt = MONEY_FMT;
     row.getCell(11).numFmt = MONEY_FMT;
+    row.getCell(12).numFmt = MONEY_FMT;
   }
 
-  const totalRow = sheet.addRow(["TOTAL", "", "", "", "", "", totalStock, "", "", "", totalValue, ""]);
+  const totalRow = sheet.addRow([
+    "TOTAL", `${products.length} produk`, "", "", "", "", "", totalStock, "", "", "", totalValue, "",
+  ]);
   totalRow.eachCell((cell) => {
     cell.font = { name: FONT, bold: true, size: 10 };
     cell.fill = fill(TOTAL_BLUE);
     cell.border = thinBorder();
   });
-  totalRow.getCell(11).numFmt = MONEY_FMT;
+  totalRow.getCell(12).numFmt = MONEY_FMT;
 
-  const widths = [14, 34, 16, 18, 10, 18, 12, 12, 14, 14, 16, 20];
+  const widths = [14, 34, 16, 18, 10, 18, 12, 12, 12, 14, 14, 16, 20];
   widths.forEach((width, index) => (sheet.getColumn(index + 1).width = width));
   return workbook;
 }
@@ -145,10 +151,14 @@ export async function buildInventoryMovementWorkbook(filter: {
     "RIWAYAT MUTASI INVENTORI OLSERA",
     `Periode: ${filter.startDate} s/d ${filter.endDate}${filter.type ? ` · Jenis: ${filter.type}` : ""}`,
   );
-
-  const header = sheet.addRow([
-    "Tanggal", "SKU", "Produk", "Jenis Mutasi", "Perubahan Qty", "Harga Modal", "Nilai Mutasi", "Referensi", "Catatan",
+  const noteRow = sheet.addRow([
+    "Data mutasi berasal dari transaksi penjualan Olsera. Histori stok masuk, adjustment, transfer, retur, " +
+      "serta saldo sebelum dan sesudah tidak tersedia dari API.",
   ]);
+  noteRow.font = { name: FONT, size: 9, italic: true, color: { argb: "FF595959" } };
+  sheet.addRow([]);
+
+  const header = sheet.addRow(["Tanggal", "SKU", "Produk", "Jenis Mutasi", "Perubahan", "Harga Modal", "Nilai", "Referensi", "Catatan"]);
   styleHeaderRow(header);
   sheet.views = [{ state: "frozen", ySplit: header.number }];
   sheet.autoFilter = { from: { row: header.number, column: 1 }, to: { row: header.number, column: 9 } };
@@ -190,34 +200,35 @@ export async function buildInventoryMovementWorkbook(filter: {
   return workbook;
 }
 
-/** Export Konsistensi Inventori (perhitungan sistem, bukan stock opname). */
+/**
+ * Export Konsistensi Inventori — cakupan data snapshot & penjualan tercatat.
+ * BUKAN rekonsiliasi stok fisik: tidak ada kolom stok masuk/adjustment/transfer
+ * palsu, dan status tidak pernah menyatakan stok fisik "Cocok"/benar.
+ */
 export async function buildInventoryConsistencyWorkbook(): Promise<ExcelJS.Workbook> {
   const { rows, note } = await getInventoryConsistency();
 
   const workbook = new ExcelJS.Workbook();
-  const sheet = newSheet(workbook, "Konsistensi", "KONSISTENSI INVENTORI OLSERA (SISTEM)", note);
+  const sheet = newSheet(workbook, "Konsistensi", "KONSISTENSI INVENTORI OLSERA (CAKUPAN DATA)", note);
 
   const header = sheet.addRow([
-    "SKU", "Produk", "Kategori", "Periode Awal", "Periode Akhir", "Stok Awal",
-    "Stok Masuk", "Stok Keluar", "Stok Akhir (Hitung)", "Stok Akhir (Snapshot)", "Selisih", "Status",
+    "SKU", "Produk", "Kategori", "Snapshot Stok Awal", "Penjualan Tercatat", "Snapshot Stok Terakhir",
+    "Perubahan Snapshot", "Status Cakupan Data",
   ]);
   styleHeaderRow(header);
   sheet.views = [{ state: "frozen", ySplit: header.number }];
-  sheet.autoFilter = { from: { row: header.number, column: 1 }, to: { row: header.number, column: 12 } };
+  sheet.autoFilter = { from: { row: header.number, column: 1 }, to: { row: header.number, column: 8 } };
 
+  const NA = "Tidak tersedia";
   for (const item of rows) {
     const row = sheet.addRow([
       item.sku ?? "-",
       item.name,
       item.category,
-      item.startDate ?? "-",
-      item.endDate ?? "-",
-      item.startQty ?? 0,
-      item.stockIn,
-      item.stockOut,
-      item.computedEndQty ?? 0,
-      item.snapshotEndQty ?? 0,
-      item.difference ?? 0,
+      item.startSnapshotQty ?? NA,
+      item.recordedSales ?? NA,
+      item.endSnapshotQty ?? NA,
+      item.snapshotChange ?? NA,
       item.status,
     ]);
     row.eachCell((cell) => {
@@ -226,7 +237,7 @@ export async function buildInventoryConsistencyWorkbook(): Promise<ExcelJS.Workb
     });
   }
 
-  const widths = [14, 36, 18, 13, 13, 11, 11, 11, 16, 17, 10, 20];
+  const widths = [14, 36, 18, 18, 18, 20, 18, 20];
   widths.forEach((width, index) => (sheet.getColumn(index + 1).width = width));
   return workbook;
 }

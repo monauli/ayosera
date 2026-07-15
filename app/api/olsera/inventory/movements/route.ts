@@ -59,9 +59,9 @@ export async function GET(request: Request) {
           sku: doc.sku,
           productName: doc.productName,
           type: doc.type,
-          qtyBefore: doc.qtyBefore,
+          // Qty sebelum/sesudah TIDAK ditampilkan — API Olsera tidak menyediakan
+          // saldo sebelum/sesudah (lihat lib/mongodb.ts: field selalu null).
           qtyChange: doc.qtyChange,
-          qtyAfter: doc.qtyAfter,
           costPrice: doc.costPrice,
           value: doc.value,
           reference: doc.reference,

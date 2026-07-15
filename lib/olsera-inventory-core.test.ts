@@ -141,6 +141,9 @@ test("status stok: aman / hampir habis / habis / data tidak lengkap", () => {
   // minimum stock Olsera dipakai bila tersedia
   assert.equal(stockStatusFor(makeProduct({ stockQty: 8, lowStockAlert: 10 })), "Hampir Habis");
   assert.equal(stockStatusFor(makeProduct({ stockQty: 8, lowStockAlert: 3 })), "Aman");
+  // tanpa harga modal (buy_price 0/tidak diisi Olsera) → data tidak lengkap, bukan Aman/Habis
+  assert.equal(stockStatusFor(makeProduct({ stockQty: 8, buyPrice: 0 })), "Data Tidak Lengkap");
+  assert.equal(stockStatusFor(makeProduct({ stockQty: 0, buyPrice: 0 })), "Data Tidak Lengkap");
 });
 
 test("nilai persediaan = stok × harga modal", () => {
@@ -174,7 +177,7 @@ test("name index: produk polos dan ber-variant cocok dengan itemName order", () 
   assert.equal(index.get(normalizeItemName("TIDAK ADA")), undefined);
 });
 
-test("konsistensi: cocok saat mutasi menjelaskan perubahan snapshot", () => {
+test("konsistensi: Snapshot Tersedia saat penjualan tercatat menjelaskan perubahan snapshot", () => {
   const row = computeConsistency({
     key: "a",
     sku: null,
@@ -190,14 +193,14 @@ test("konsistensi: cocok saat mutasi menjelaskan perubahan snapshot", () => {
       { date: "2026-07-13", qtyChange: -2 },
     ],
   });
-  assert.equal(row.startQty, 20);
-  assert.equal(row.stockOut, 5);
-  assert.equal(row.computedEndQty, 15);
-  assert.equal(row.difference, 0);
-  assert.equal(row.status, "Cocok");
+  assert.equal(row.startSnapshotQty, 20);
+  assert.equal(row.recordedSales, 5);
+  assert.equal(row.endSnapshotQty, 15);
+  assert.equal(row.snapshotChange, -5);
+  assert.equal(row.status, "Snapshot Tersedia");
 });
 
-test("konsistensi: selisih saat ada perubahan tak terekam", () => {
+test("konsistensi: Perlu Stock Opname saat perubahan snapshot tidak habis dijelaskan penjualan tercatat", () => {
   const row = computeConsistency({
     key: "a",
     sku: null,
@@ -210,18 +213,23 @@ test("konsistensi: selisih saat ada perubahan tak terekam", () => {
     ],
     movements: [{ date: "2026-07-12", qtyChange: -3 }],
   });
-  assert.equal(row.computedEndQty, 17);
-  assert.equal(row.difference, 13); // pembelian/adjustment tak terekam API
-  assert.equal(row.status, "Selisih");
+  assert.equal(row.recordedSales, 3);
+  assert.equal(row.snapshotChange, 10); // naik 10, padahal penjualan tercatat hanya -3 (bukan angka stok masuk palsu)
+  assert.equal(row.status, "Perlu Stock Opname");
 });
 
-test("konsistensi: satu snapshot = histori tidak lengkap; tanpa snapshot = belum ada snapshot", () => {
+test("konsistensi: satu snapshot = histori tidak lengkap (snapshot tetap ditampilkan, perubahan/penjualan tidak dihitung)", () => {
   const single = computeConsistency({
     key: "a", sku: null, name: "X", category: "Y", trackInventory: true,
     snapshots: [{ date: "2026-07-14", stockQty: 5 }],
     movements: [],
   });
   assert.equal(single.status, "Histori Tidak Lengkap");
+  assert.equal(single.startSnapshotQty, 5);
+  assert.equal(single.endSnapshotQty, 5);
+  assert.equal(single.recordedSales, null);
+  assert.equal(single.snapshotChange, null);
+
   const none = computeConsistency({
     key: "a", sku: null, name: "X", category: "Y", trackInventory: true,
     snapshots: [],

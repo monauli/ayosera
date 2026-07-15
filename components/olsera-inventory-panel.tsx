@@ -124,6 +124,8 @@ type SyncStatus = {
     lastSyncedDate: string | null;
     firstSyncAt: string | null;
     earliestAvailableDate: string | null;
+    earliestSalesDate: string | null;
+    earliestSnapshotDate: string | null;
     historyCoverage: string;
   };
   run: SyncRun | null;
@@ -157,9 +159,7 @@ type MovementRow = {
   sku: string | null;
   productName: string;
   type: string;
-  qtyBefore: number | null;
   qtyChange: number;
-  qtyAfter: number | null;
   costPrice: number | null;
   value: number | null;
   reference: string | null;
@@ -171,14 +171,10 @@ type ConsistencyRow = {
   sku: string | null;
   name: string;
   category: string;
-  startDate: string | null;
-  endDate: string | null;
-  startQty: number | null;
-  stockIn: number;
-  stockOut: number;
-  computedEndQty: number | null;
-  snapshotEndQty: number | null;
-  difference: number | null;
+  startSnapshotQty: number | null;
+  recordedSales: number | null;
+  endSnapshotQty: number | null;
+  snapshotChange: number | null;
   status: string;
 };
 
@@ -190,8 +186,9 @@ function stockStatusBadge(status: string) {
 }
 
 function consistencyBadge(status: string) {
-  if (status === "Cocok") return <Badge variant="success" className="rounded-full px-2.5">Cocok</Badge>;
-  if (status === "Selisih") return <Badge variant="warning" className="rounded-full px-2.5">Selisih</Badge>;
+  // Tidak pernah "Cocok" — status hanya menyatakan cakupan data, bukan kebenaran stok fisik.
+  if (status === "Perlu Stock Opname") return <Badge variant="warning" className="rounded-full px-2.5">Perlu Stock Opname</Badge>;
+  if (status === "Snapshot Tersedia") return <Badge variant="info" className="rounded-full px-2.5">Snapshot Tersedia</Badge>;
   return <Badge variant="secondary" className="rounded-full px-2.5">{status}</Badge>;
 }
 
@@ -511,13 +508,13 @@ export function OlseraInventoryPanel() {
   }
 
   function handleExportConsistency() {
-    const params = new URLSearchParams({ type: "consistency", start_date: syncStatus?.state.earliestAvailableDate ?? today });
-    void downloadExport(params.toString(), `Konsistensi Inventori-${today}.xlsx`);
+    const start = syncStatus?.state.earliestSnapshotDate ?? today;
+    const params = new URLSearchParams({ type: "consistency", start_date: start });
+    void downloadExport(params.toString(), `Konsistensi Inventori-${start}__${today}.xlsx`);
   }
 
   const state = syncStatus?.state;
   const run = syncStatus?.run;
-  const historyIncomplete = !state?.earliestAvailableDate || state.earliestAvailableDate > BASELINE_DATE;
 
   const summaryCards: { label: string; value: string; accent?: string }[] = summary
     ? [
@@ -528,9 +525,18 @@ export function OlseraInventoryPanel() {
         { label: "Total Stok", value: String(summary.totalStock) },
         { label: "Total Nilai Persediaan", value: formatRupiah(summary.totalValue), accent: "text-rose-700" },
         { label: "Terakhir Sync", value: state?.lastSuccessfulSyncAt ? formatDateTime(state.lastSuccessfulSyncAt) : "-" },
-        { label: "Data Tersedia Sejak", value: formatDate(state?.earliestAvailableDate) },
       ]
     : [];
+
+  // Cakupan data — baseline, riwayat penjualan, dan snapshot stok TIDAK sama;
+  // ditampilkan terpisah supaya tidak membingungkan (lihat CLAUDE.md finalisasi Inventori).
+  const coverageRows: { label: string; value: string }[] = [
+    { label: "Baseline yang diminta", value: formatDate(BASELINE_DATE) },
+    { label: "Riwayat penjualan tersedia sejak", value: formatDate(state?.earliestSalesDate) },
+    { label: "Snapshot stok tersedia sejak", value: formatDate(state?.earliestSnapshotDate) },
+    { label: "Terakhir sync", value: state?.lastSuccessfulSyncAt ? formatDateTime(state.lastSuccessfulSyncAt) : "-" },
+    { label: "Histori mutasi stok lengkap", value: "Tidak tersedia dari API Olsera" },
+  ];
 
   return (
     <>
@@ -588,19 +594,24 @@ export function OlseraInventoryPanel() {
                 {syncMessage}
               </p>
             )}
-            {historyIncomplete && (
-              <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-200/80 border-l-4 border-l-amber-400 bg-amber-50/80 px-3.5 py-3">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                <div>
-                  <p className="text-sm font-semibold text-amber-900">Histori tidak lengkap</p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
-                    Histori inventori dari {formatDate(BASELINE_DATE)} tidak tersedia penuh dari API Olsera (hanya stok
-                    saat ini + transaksi penjualan). Perhitungan dimulai dari data paling awal yang tersedia
-                    {state?.earliestAvailableDate ? ` (${formatDate(state.earliestAvailableDate)})` : ""}.
-                  </p>
-                </div>
-              </div>
-            )}
+            <div className="mt-4 rounded-lg border border-slate-200/80 bg-slate-50/70 px-3.5 py-3">
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                {coverageRows.map((row) => (
+                  <div key={row.label} className="flex items-baseline justify-between gap-3 text-xs sm:justify-start">
+                    <dt className="text-slate-500">{row.label}</dt>
+                    <dd className="font-medium text-slate-700">{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+            <div className="mt-3 flex items-start gap-3 rounded-lg border border-amber-200/80 border-l-4 border-l-amber-400 bg-amber-50/80 px-3.5 py-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <p className="text-xs leading-relaxed text-amber-700">
+                API Olsera tidak menyediakan histori lengkap untuk stok masuk, adjustment, transfer, retur, serta
+                saldo sebelum dan sesudah. Riwayat yang tersedia terutama berasal dari transaksi penjualan dan
+                snapshot stok aplikasi.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </section>
@@ -774,15 +785,16 @@ export function OlseraInventoryPanel() {
                   </select>
                 </div>
                 <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-                  <table className="w-full min-w-[1100px] text-sm">
+                  <table className="w-full min-w-[1180px] text-sm">
                     <thead className="bg-slate-50/90">
                       <tr className="border-b border-slate-200/80">
                         <th className={TH}>SKU</th>
                         <th className={TH}>Produk</th>
-                        <th className={TH}>Variant</th>
+                        <th className={TH}>Varian</th>
                         <th className={TH}>Kategori</th>
                         <th className={TH}>Satuan</th>
                         <th className={TH}>Outlet</th>
+                        <th className={TH}>Gudang</th>
                         <th className={`${TH} text-right`}>
                           <button
                             type="button"
@@ -794,11 +806,11 @@ export function OlseraInventoryPanel() {
                             }
                             title="Urutkan stok"
                           >
-                            Stok {stockSort.key === "stock" ? (stockSort.dir === "asc" ? "↑" : "↓") : ""}
+                            Stok Saat Ini {stockSort.key === "stock" ? (stockSort.dir === "asc" ? "↑" : "↓") : ""}
                           </button>
                         </th>
-                        <th className={`${TH} text-right`}>Min</th>
-                        <th className={TH}>Status</th>
+                        <th className={`${TH} text-right`}>Stok Minimum</th>
+                        <th className={TH}>Status Stok</th>
                         <th className={`${TH} text-right`}>Harga Modal</th>
                         <th className={`${TH} text-right`}>
                           <button
@@ -811,16 +823,16 @@ export function OlseraInventoryPanel() {
                             }
                             title="Urutkan nilai persediaan"
                           >
-                            Nilai {stockSort.key === "value" ? (stockSort.dir === "asc" ? "↑" : "↓") : ""}
+                            Nilai Persediaan {stockSort.key === "value" ? (stockSort.dir === "asc" ? "↑" : "↓") : ""}
                           </button>
                         </th>
-                        <th className={TH}>Diperbarui</th>
+                        <th className={TH}>Terakhir Diperbarui</th>
                       </tr>
                     </thead>
                     <tbody>
                       {stockLoading ? (
                         <tr>
-                          <td colSpan={12} className="px-4 py-10 text-center text-slate-500">
+                          <td colSpan={13} className="px-4 py-10 text-center text-slate-500">
                             <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
                             Memuat stok...
                           </td>
@@ -839,6 +851,9 @@ export function OlseraInventoryPanel() {
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.category}</td>
                             <td className="px-3 py-2.5 text-slate-500">{row.uom ?? "-"}</td>
                             <td className="max-w-[130px] truncate px-3 py-2.5 text-slate-500">{row.storeName ?? "-"}</td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-slate-400" title="Tidak tersedia dari API Olsera">
+                              -
+                            </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-800">
                               {row.trackInventory ? row.stockQty : "-"}
                             </td>
@@ -863,7 +878,7 @@ export function OlseraInventoryPanel() {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={12} className="px-4 py-12 text-center">
+                          <td colSpan={13} className="px-4 py-12 text-center">
                             <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
                               <span className="rounded-xl bg-slate-100 p-2.5 text-slate-400">
                                 <PackageSearch className="h-5 w-5" />
@@ -884,6 +899,13 @@ export function OlseraInventoryPanel() {
 
             {tab === "movements" && (
               <>
+                <div className="mb-4 flex items-start gap-3 rounded-lg border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                  <p className="text-xs leading-relaxed text-slate-600">
+                    Riwayat yang tersedia berasal dari transaksi penjualan Olsera. Histori stok masuk, adjustment,
+                    transfer, retur, dan saldo sebelum/sesudah tidak tersedia dari API.
+                  </p>
+                </div>
                 <div className="mb-4 flex flex-wrap items-center gap-2.5">
                   <div className={FIELD}>
                     <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
@@ -923,7 +945,7 @@ export function OlseraInventoryPanel() {
                     <option value="">Semua Jenis</option>
                     {movementTypes.map((type) => (
                       <option key={type} value={type}>
-                        {type}
+                        {type === "penjualan" ? "Penjualan" : type}
                       </option>
                     ))}
                   </select>
@@ -951,10 +973,8 @@ export function OlseraInventoryPanel() {
                         <th className={TH}>Tanggal</th>
                         <th className={TH}>SKU</th>
                         <th className={TH}>Produk</th>
-                        <th className={TH}>Jenis</th>
-                        <th className={`${TH} text-right`}>Qty Sebelum</th>
+                        <th className={TH}>Jenis Mutasi</th>
                         <th className={`${TH} text-right`}>Perubahan</th>
-                        <th className={`${TH} text-right`}>Qty Sesudah</th>
                         <th className={`${TH} text-right`}>Harga Modal</th>
                         <th className={`${TH} text-right`}>Nilai</th>
                         <th className={TH}>Referensi</th>
@@ -964,7 +984,7 @@ export function OlseraInventoryPanel() {
                     <tbody>
                       {movementLoading ? (
                         <tr>
-                          <td colSpan={11} className="px-4 py-10 text-center text-slate-500">
+                          <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
                             <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
                             Memuat mutasi...
                           </td>
@@ -981,18 +1001,12 @@ export function OlseraInventoryPanel() {
                               {row.productName}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 capitalize text-slate-600">{row.type}</td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
-                              {row.qtyBefore ?? "-"}
-                            </td>
                             <td
                               className={`whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums ${
                                 row.qtyChange < 0 ? "text-red-600" : "text-emerald-600"
                               }`}
                             >
                               {row.qtyChange > 0 ? `+${row.qtyChange}` : row.qtyChange}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
-                              {row.qtyAfter ?? "-"}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
                               {row.costPrice === null ? "-" : formatRupiah(row.costPrice)}
@@ -1008,7 +1022,7 @@ export function OlseraInventoryPanel() {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={11} className="px-4 py-12 text-center">
+                          <td colSpan={9} className="px-4 py-12 text-center">
                             <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
                               <span className="rounded-xl bg-slate-100 p-2.5 text-slate-400">
                                 <PackageSearch className="h-5 w-5" />
@@ -1022,10 +1036,6 @@ export function OlseraInventoryPanel() {
                   </table>
                 </div>
                 <PaginationRow page={movementPage} meta={movementMeta} onPage={setMovementPage} unit="mutasi" />
-                <p className="mt-3 text-xs text-slate-500">
-                  Qty sebelum/sesudah tidak tersedia dari API Olsera — mutasi penjualan diturunkan dari transaksi Olsera
-                  yang sudah tersinkron.
-                </p>
               </>
             )}
 
@@ -1038,26 +1048,23 @@ export function OlseraInventoryPanel() {
                   </div>
                 )}
                 <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-                  <table className="w-full min-w-[1000px] text-sm">
+                  <table className="w-full min-w-[900px] text-sm">
                     <thead className="bg-slate-50/90">
                       <tr className="border-b border-slate-200/80">
                         <th className={TH}>SKU</th>
                         <th className={TH}>Produk</th>
                         <th className={TH}>Kategori</th>
-                        <th className={TH}>Periode</th>
-                        <th className={`${TH} text-right`}>Stok Awal</th>
-                        <th className={`${TH} text-right`}>Masuk</th>
-                        <th className={`${TH} text-right`}>Keluar</th>
-                        <th className={`${TH} text-right`}>Akhir (Hitung)</th>
-                        <th className={`${TH} text-right`}>Akhir (Snapshot)</th>
-                        <th className={`${TH} text-right`}>Selisih</th>
-                        <th className={TH}>Status</th>
+                        <th className={`${TH} text-right`}>Snapshot Stok Awal</th>
+                        <th className={`${TH} text-right`}>Penjualan Tercatat</th>
+                        <th className={`${TH} text-right`}>Snapshot Stok Terakhir</th>
+                        <th className={`${TH} text-right`}>Perubahan Snapshot</th>
+                        <th className={TH}>Status Cakupan Data</th>
                       </tr>
                     </thead>
                     <tbody>
                       {consistencyLoading ? (
                         <tr>
-                          <td colSpan={11} className="px-4 py-10 text-center text-slate-500">
+                          <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
                             <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
                             Menghitung konsistensi...
                           </td>
@@ -1073,33 +1080,24 @@ export function OlseraInventoryPanel() {
                               {row.name}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.category}</td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-500">
-                              {row.startDate ? `${formatDate(row.startDate)} - ${formatDate(row.endDate)}` : "-"}
-                            </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
-                              {row.startQty ?? "-"}
+                              {row.startSnapshotQty ?? "Tidak tersedia"}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-emerald-600">{row.stockIn}</td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-red-600">{row.stockOut}</td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-700">
-                              {row.computedEndQty ?? "-"}
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-red-600">
+                              {row.recordedSales ?? "Tidak tersedia"}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-700">
-                              {row.snapshotEndQty ?? "-"}
+                              {row.endSnapshotQty ?? "Tidak tersedia"}
                             </td>
-                            <td
-                              className={`whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums ${
-                                row.difference ? "text-amber-600" : "text-slate-500"
-                              }`}
-                            >
-                              {row.difference ?? "-"}
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-700">
+                              {row.snapshotChange ?? "Tidak tersedia"}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5">{consistencyBadge(row.status)}</td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={11} className="px-4 py-12 text-center">
+                          <td colSpan={8} className="px-4 py-12 text-center">
                             <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
                               <span className="rounded-xl bg-slate-100 p-2.5 text-slate-400">
                                 <PackageSearch className="h-5 w-5" />
@@ -1114,7 +1112,6 @@ export function OlseraInventoryPanel() {
                     </tbody>
                   </table>
                 </div>
-                <p className="mt-3 text-xs text-slate-500">Kecocokan stok fisik memerlukan data stock opname.</p>
               </>
             )}
           </CardContent>
