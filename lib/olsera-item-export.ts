@@ -135,7 +135,9 @@ function buildDailySalesSheet(
   const totalProfit = totalAmount - totalCost;
   // Add-on: informasi saja, TIDAK ikut dijumlahkan ke totalAmount/totalProfit
   // di atas — amount sudah menyertakannya. Total add-on dihitung terpisah.
-  const totalAddon = orders.reduce((sum, rows) => sum + rows.reduce((x, row) => x + (row.addonPrice ?? 0), 0), 0);
+  // addonPrice tersimpan per unit (lihat lib/mongodb.ts) — kontribusi add-on
+  // satu baris = addonPrice × qty.
+  const totalAddon = orders.reduce((sum, rows) => sum + rows.reduce((x, row) => x + (row.addonPrice ?? 0) * row.qty, 0), 0);
 
   const ws = wb.addWorksheet(sheetName, {
     pageSetup: {
@@ -237,9 +239,10 @@ function buildDailySalesSheet(
     const cost = rows.reduce((sum, item) => sum + item.costAmount, 0);
     const discount = rows.reduce((sum, item) => sum + item.discount, 0);
     const qty = rows.reduce((sum, item) => sum + item.qty, 0);
-    // Add-on satu order = jumlah addonPrice seluruh item order itu (informasi
-    // saja — TIDAK dijumlahkan ke `amount`, karena amount sudah menyertakannya).
-    const addon = rows.reduce((sum, item) => sum + (item.addonPrice ?? 0), 0);
+    // Add-on satu order = jumlah addonPrice × qty seluruh item order itu
+    // (addonPrice per unit, lib/mongodb.ts). Informasi saja — TIDAK dijumlahkan
+    // ke `amount`, karena amount sudah menyertakannya.
+    const addon = rows.reduce((sum, item) => sum + (item.addonPrice ?? 0) * item.qty, 0);
     const date = dateValue(first.orderDate, input.start);
 
     ws.mergeCells(`B${rowNumber}:C${rowNumber}`);

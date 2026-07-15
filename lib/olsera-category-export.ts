@@ -279,7 +279,8 @@ function writeDateBlock(
       row.amount,
       // Add-on: informasi saja — row.amount SUDAH menyertakannya, jangan
       // dijumlahkan lagi (lihat komentar rumus di lib/olsera-sync.ts).
-      row.addonPrice ?? 0,
+      // addonPrice per unit (lib/mongodb.ts) — total add-on baris = × qty.
+      (row.addonPrice ?? 0) * row.qty,
       0, // Komisi
       row.costAmount,
       0, // Sudah termasuk Pajak
@@ -314,7 +315,8 @@ function writeDateBlock(
   ws.getCell(`H${totalRow}`).value = { ...sum("H"), result: rows.reduce((x, r) => x + r.qty, 0) };
   ws.getCell(`J${totalRow}`).value = { ...sum("J"), result: rows.reduce((x, r) => x + r.amount, 0) };
   // Add-on: total sesungguhnya (informasi saja) — tidak ikut dijumlahkan ke J.
-  ws.getCell(`K${totalRow}`).value = { ...sum("K"), result: rows.reduce((x, r) => x + (r.addonPrice ?? 0), 0) };
+  // addonPrice per unit (lib/mongodb.ts) — kontribusi tiap baris = × qty.
+  ws.getCell(`K${totalRow}`).value = { ...sum("K"), result: rows.reduce((x, r) => x + (r.addonPrice ?? 0) * r.qty, 0) };
   ws.getCell(`L${totalRow}`).value = { ...sum("L"), result: 0 };
   ws.getCell(`M${totalRow}`).value = { ...sum("M"), result: rows.reduce((x, r) => x + r.costAmount, 0) };
   ws.getCell(`N${totalRow}`).value = { ...sum("N"), result: 0 };
