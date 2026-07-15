@@ -8,8 +8,10 @@
 //   stok saat ini disimpan sebagai snapshot, dan mutasi "penjualan" diturunkan dari
 //   olsera_order_items (order Olsera nyata hasil sync modul penjualan sejak baseline).
 
-/** Baseline tetap sync inventori (spesifikasi bisnis). */
-export const INVENTORY_BASELINE_DATE = "2026-05-01";
+import { OLSERA_INVENTORY_BASELINE_DATE } from "./olsera-baseline.ts";
+
+/** Baseline tetap sync inventori (spesifikasi bisnis) — sumber: lib/olsera-baseline.ts. */
+export const INVENTORY_BASELINE_DATE = OLSERA_INVENTORY_BASELINE_DATE;
 /** Threshold "hampir habis" bila produk tidak punya low_stock_alert dari Olsera. */
 export const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 

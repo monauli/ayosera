@@ -16,3 +16,8 @@ yarn-error.log*
 pnpm-debug.log*
 
 .DS_Store
+
+# Export/test artifacts generated at repo root by scripts/*.ts (never commit these)
+/*.xlsx
+/*.pdf
+/backfill-logs/

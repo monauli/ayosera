@@ -1,5 +1,5 @@
-// Backfill field `addonPrice` untuk item Olsera lama sejak 1 Mei 2026
-// (rerunnable, idempoten). Hanya melengkapi addonPrice — TIDAK mengubah
+// Backfill field `addonPrice` untuk item Olsera lama sejak baseline
+// (lib/olsera-baseline.ts, rerunnable, idempoten). Hanya melengkapi addonPrice — TIDAK mengubah
 // amount, qty, costAmount, discount, orderNo, tanggal, kategori, atau field
 // lain, dan TIDAK membuat order/item baru (hanya update dokumen yang sudah
 // ada, dicocokkan lewat _id = item id Olsera, unique key yang sudah dipakai
@@ -39,6 +39,7 @@ for (const fileName of [".env.local", ".env"]) {
 const { collections, withMongo, mongoClient } = await import("../lib/mongodb.ts");
 const { getAccessToken } = await import("../lib/olsera.ts");
 const { parseAddonPrice } = await import("../lib/olsera-addon.ts");
+const { OLSERA_SALES_BASELINE_DATE } = await import("../lib/olsera-baseline.ts");
 
 const BASE_URL = "https://api-open.olsera.co.id";
 const API_PREFIX = "/api/open-api/v1/id";
@@ -55,8 +56,7 @@ function todayJakarta(): string {
   );
 }
 
-const BASELINE = "2026-05-01";
-const START = process.argv[2] ?? BASELINE;
+const START = process.argv[2] ?? OLSERA_SALES_BASELINE_DATE;
 const END = process.argv[3] ?? todayJakarta();
 
 async function getJson(token: string, pathName: string, params: Record<string, string>, allow404 = false) {

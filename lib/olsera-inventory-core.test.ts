@@ -46,8 +46,8 @@ function makeProduct(overrides: Partial<InventoryProductInput>): InventoryProduc
   };
 }
 
-test("baseline tetap 1 Mei 2026", () => {
-  assert.equal(INVENTORY_BASELINE_DATE, "2026-05-01");
+test("baseline tetap 1 Februari 2026", () => {
+  assert.equal(INVENTORY_BASELINE_DATE, "2026-02-01");
 });
 
 test("toInventoryNumber: string desimal titik & string kosong", () => {

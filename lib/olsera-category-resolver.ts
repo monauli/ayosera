@@ -4,6 +4,9 @@
 // Kategori, dan backfill historis.
 //
 // Urutan lookup (wajib, dari paling kuat):
+//   0. manual override PER ITEM TRANSAKSI (olsera_category_overrides, kunci =
+//      orderItemId — unique key item, BUKAN nama/product_id — sehingga tidak
+//      pernah menjadi aturan global untuk item lain yang kebetulan senama);
 //   1. kategori asli dari item transaksi (bila payload menyimpannya);
 //   2. product_id langsung di katalog aktif;
 //   3. product_variant_id di katalog aktif;
@@ -11,7 +14,9 @@
 //   5. SKU exact (unik);
 //   6. barcode exact (unik);
 //   7. normalized product name exact (unik);
-//   8. historical identity (nama yang pernah ter-resolve konsisten sebelumnya);
+//   8. historical identity (nama yang pernah ter-resolve konsisten sebelumnya;
+//      item hasil manual_override TIDAK ikut membentuk identitas historis ini
+//      — lihat loadHistoricalIdentities di lib/olsera-resolver-context.ts);
 //   9. fallback audit: status "unresolved" + alasan (BUKAN langsung kategori final).
 //
 // Tidak ada pencocokan substring longgar: nama hanya cocok bila exact setelah
@@ -65,9 +70,12 @@ export type ItemIdentity = {
   barcode?: string | null;
   originalCategoryId?: string | null;
   originalCategoryName?: string | null;
+  /** Unique key baris item (olsera_order_items._id) — dipakai HANYA untuk lookup manual override per item. */
+  orderItemId?: number | null;
 };
 
 export type ResolutionMethod =
+  | "manual_override"
   | "original-category"
   | "product-id"
   | "variant-id"
@@ -92,6 +100,9 @@ export type CategoryResolution = {
 // "ambiguous" = kunci muncul lebih dari sekali di sumbernya → dilarang dipakai otomatis.
 type UniqueMap<T> = Map<string, T | "ambiguous">;
 
+/** Override manual per item transaksi, kunci = orderItemId (bukan nama/product_id). */
+export type CategoryOverrideEntry = { orderItemId: number; category: string; reason: string };
+
 export type ResolverContext = {
   byProductId: Map<number, CatalogEntry>;
   byVariantId: Map<number, CatalogEntry>;
@@ -102,6 +113,7 @@ export type ResolverContext = {
   aliasByName: UniqueMap<AliasEntry>;
   aliasBySku: UniqueMap<AliasEntry>;
   historicalByName: UniqueMap<HistoricalEntry>;
+  overridesByOrderItemId: Map<number, CategoryOverrideEntry>;
 };
 
 function setUnique<T>(map: UniqueMap<T>, key: string | null | undefined, value: T) {
@@ -123,6 +135,7 @@ export function buildResolverContext(input: {
   catalog: CatalogEntry[];
   aliases?: AliasEntry[];
   historical?: HistoricalEntry[];
+  overrides?: CategoryOverrideEntry[];
 }): ResolverContext {
   const ctx: ResolverContext = {
     byProductId: new Map(),
@@ -134,7 +147,11 @@ export function buildResolverContext(input: {
     aliasByName: new Map(),
     aliasBySku: new Map(),
     historicalByName: new Map(),
+    overridesByOrderItemId: new Map(),
   };
+  for (const override of input.overrides ?? []) {
+    ctx.overridesByOrderItemId.set(override.orderItemId, override);
+  }
   for (const entry of input.catalog) {
     // byProductId: level produk — baris tanpa variant menang; kalau hanya ada
     // baris variant, baris pertama mewakili (kategori sama untuk semua variant produk).
@@ -197,6 +214,25 @@ function fromAlias(alias: AliasEntry, ctx: ResolverContext): CategoryResolution 
 }
 
 export function resolveItemCategory(item: ItemIdentity, ctx: ResolverContext): CategoryResolution {
+  // 0. Manual override PER ITEM (kunci = orderItemId, bukan nama/product_id) —
+  //    prioritas tertinggi karena hasil konfirmasi langsung/manusia, dan HANYA
+  //    berlaku untuk baris item ini (item lain dengan nama/product_id sama
+  //    TIDAK ikut berubah).
+  if (item.orderItemId != null) {
+    const override = ctx.overridesByOrderItemId.get(item.orderItemId);
+    if (override) {
+      return {
+        status: "resolved",
+        method: "manual_override",
+        category: override.category,
+        categoryId: null,
+        resolvedProductId: item.productId ?? null,
+        resolvedVariantId: item.variantId ?? null,
+        reason: override.reason,
+      };
+    }
+  }
+
   // 1. Kategori asli dari transaksi (bila payload menyediakannya dan valid).
   const original = item.originalCategoryName?.trim();
   if (original && normalizeKlasifikasi(original) !== UNKNOWN_CATEGORY) {

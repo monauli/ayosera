@@ -11,6 +11,7 @@ import {
   UNKNOWN_CATEGORY,
   type AliasEntry,
   type CatalogEntry,
+  type CategoryOverrideEntry,
 } from "./olsera-category-resolver.ts";
 
 const CATALOG: CatalogEntry[] = [
@@ -56,6 +57,35 @@ const ctx = buildResolverContext({
   catalog: CATALOG,
   aliases: ALIASES,
   historical: [{ normalizedName: normalizeName("ITEM HISTORIS LAMA"), category: "SALON", categoryId: "888" }],
+});
+
+const OVERRIDES: CategoryOverrideEntry[] = [
+  { orderItemId: 3110441219, category: "MINUMAN", reason: "Confirmed directly with cashier" },
+];
+const ctxWithOverride = buildResolverContext({ catalog: CATALOG, aliases: ALIASES, overrides: OVERRIDES });
+
+test("0. manual override per orderItemId menang atas resolusi lain (prioritas tertinggi)", () => {
+  const r = resolveItemCategory({ itemName: "Custom", productId: 1, orderItemId: 3110441219 }, ctxWithOverride);
+  assert.equal(r.status, "resolved");
+  assert.equal(r.method, "manual_override");
+  assert.equal(r.category, "MINUMAN");
+  assert.equal(r.reason, "Confirmed directly with cashier");
+});
+
+test("0b. override TIDAK menjadi aturan global — item lain dengan nama/product_id sama tetap unresolved", () => {
+  // Item lain, orderItemId BEDA, tapi nama & product_id identik dengan item yang di-override.
+  const other = resolveItemCategory({ itemName: "Custom", productId: 1, orderItemId: 999999999 }, ctxWithOverride);
+  assert.equal(other.status, "unresolved");
+  assert.notEqual(other.method, "manual_override");
+
+  // Item tanpa orderItemId sama sekali (mis. kode lama) juga tidak ikut ter-override.
+  const noKey = resolveItemCategory({ itemName: "Custom", productId: 1 }, ctxWithOverride);
+  assert.equal(noKey.status, "unresolved");
+});
+
+test("0c. override tidak berlaku bila ResolverContext tidak memuatnya (ctx biasa)", () => {
+  const r = resolveItemCategory({ itemName: "Custom", productId: 1, orderItemId: 3110441219 }, ctx);
+  assert.equal(r.status, "unresolved");
 });
 
 test("1. product_id aktif ditemukan langsung", () => {

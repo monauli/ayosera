@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { OLSERA_INVENTORY_BASELINE_DATE } from "@/lib/olsera-baseline";
 
 const CARD =
   "rounded-2xl border-slate-200 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_14px_36px_-22px_rgba(15,23,42,0.3)]";
@@ -39,7 +40,7 @@ const SELECT_CLASS =
   "h-10 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-200";
 const TH = "h-11 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500";
 
-const BASELINE_DATE = "2026-05-01";
+const BASELINE_DATE = OLSERA_INVENTORY_BASELINE_DATE;
 
 function formatRupiah(value: number) {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 })

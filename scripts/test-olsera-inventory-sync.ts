@@ -1,5 +1,5 @@
 // Test end-to-end sync Inventori Olsera terhadap API + MongoDB nyata.
-// - Sync pertama: baseline 2026-05-01 s/d hari ini (start + step berulang).
+// - Sync pertama: baseline (lib/olsera-baseline.ts) s/d hari ini (start + step berulang).
 // - Idempotensi: run kedua (incremental) tidak menggandakan data.
 // - Export: ketiga workbook terbentuk dengan angka Excel (number, bukan string).
 //
@@ -75,7 +75,7 @@ console.log(
 const first = await runFullSync("Run 1");
 check("run 1 selesai tanpa failed", first.run.status === "success" || first.run.status === "partial");
 check(
-  "sync pertama mulai dari baseline 1 Mei 2026",
+  "sync pertama mulai dari baseline",
   statusBefore.state.lastSyncedDate !== null || first.run.startDate === INVENTORY_BASELINE_DATE,
   `startDate=${first.run.startDate}`,
 );

@@ -60,7 +60,7 @@ function wibDate(offsetDays: number): string {
 }
 const TODAY = wibDate(0);
 const WEEK_AGO = wibDate(-7);
-const BASELINE = "2026-05-01";
+const { OLSERA_INVENTORY_BASELINE_DATE: BASELINE } = await import("../lib/olsera-baseline.ts");
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));

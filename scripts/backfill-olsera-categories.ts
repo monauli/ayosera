@@ -1,4 +1,4 @@
-// Backfill kategori item Olsera sejak 1 Mei 2026 (rerunnable, idempoten).
+// Backfill kategori item Olsera sejak baseline (lib/olsera-baseline.ts, rerunnable, idempoten).
 //
 // Yang dilakukan:
 // 1. Setiap dokumen olsera_order_items pada rentang di-resolve ulang dengan
@@ -32,8 +32,9 @@ for (const fileName of [".env.local", ".env"]) {
 const { collections, withMongo, mongoClient } = await import("../lib/mongodb.ts");
 const { loadResolverContext, identityFromStoredItem } = await import("../lib/olsera-resolver-context.ts");
 const { resolveItemCategory, normalizeName, UNKNOWN_CATEGORY } = await import("../lib/olsera-category-resolver.ts");
+const { OLSERA_SALES_BASELINE_DATE } = await import("../lib/olsera-baseline.ts");
 
-const START = process.argv[2] ?? "2026-05-01";
+const START = process.argv[2] ?? OLSERA_SALES_BASELINE_DATE;
 const END =
   process.argv[3] ??
   new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -78,6 +79,9 @@ for (const item of items) {
     categoryResolutionMethod: resolution.method,
     categoryResolutionStatus: resolution.status,
     categoryResolutionReason: resolution.reason,
+    // resolvedAt hanya relevan untuk manual_override; pertahankan nilai lama
+    // bila sudah ada agar rerun tidak terus menggeser waktunya (idempoten).
+    ...(resolution.method === "manual_override" ? { resolvedAt: item.resolvedAt ?? new Date() } : {}),
   };
   const changed =
     item.normalizedItemName !== next.normalizedItemName ||

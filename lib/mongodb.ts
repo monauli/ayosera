@@ -194,6 +194,27 @@ export type OlseraOrderItemDocument = {
   categoryResolutionReason?: string | null;
   /** Payload item mentah dari API (tanpa field photo) — pola sama dengan bookings.raw. */
   raw?: Record<string, unknown>;
+  /** Waktu resolusi kategori terakhir diterapkan (diisi terutama untuk manual_override). */
+  resolvedAt?: Date | null;
+};
+
+/**
+ * Override kategori manual untuk SATU item transaksi spesifik (bukan aturan
+ * global per nama/product_id) — mis. konfirmasi langsung dari kasir untuk
+ * item yang tidak bisa dipetakan otomatis. `_id` = orderItemId (unique key
+ * olsera_order_items) — identitas paling spesifik yang tersedia, sehingga
+ * override TIDAK PERNAH memengaruhi item lain meski nama/product_id sama.
+ */
+export type OlseraCategoryOverrideDocument = {
+  /** orderItemId — sama dengan olsera_order_items._id (unique key item, bukan nama/product_id). */
+  _id: number;
+  orderNo: string;
+  date: string;
+  itemName: string;
+  productId: number | null;
+  category: string;
+  reason: string;
+  createdAt: Date;
 };
 
 export type OlseraProductAliasDocument = {
@@ -395,6 +416,7 @@ export async function collections() {
     olseraProductCache: db.collection<OlseraProductCacheDocument>("olsera_product_cache"),
     olseraOrderItems: db.collection<OlseraOrderItemDocument>("olsera_order_items"),
     olseraProductAliases: db.collection<OlseraProductAliasDocument>("olsera_product_aliases"),
+    olseraCategoryOverrides: db.collection<OlseraCategoryOverrideDocument>("olsera_category_overrides"),
     olseraInventoryProducts: db.collection<OlseraInventoryProductDocument>("olsera_inventory_products"),
     olseraInventorySnapshots: db.collection<OlseraInventorySnapshotDocument>("olsera_inventory_snapshots"),
     olseraInventoryMovements: db.collection<OlseraInventoryMovementDocument>("olsera_inventory_movements"),

@@ -488,14 +488,18 @@ export async function syncOlseraSalesByCategory(
             const itemName = item.product_variant_name
               ? `${item.product_name ?? ""} - ${item.product_variant_name}`
               : String(item.product_name ?? "");
+            const itemId = Number(item.id);
             // Identitas produk dari payload transaksi — disimpan agar perubahan
             // product_id di katalog tidak menghilangkan jejak transaksi lama.
+            // orderItemId dipakai HANYA untuk lookup manual override per item
+            // (lihat olsera_category_overrides) — tidak pernah aturan global.
             const identity: ItemIdentity = {
               itemName,
               productId: toIdOrNull(item.product_id),
               variantId: toIdOrNull(item.product_variant_id),
               sku: toTextOrNull(item.product_variant_sku) ?? toTextOrNull(item.product_sku),
               barcode: null,
+              orderItemId: Number.isFinite(itemId) ? itemId : null,
             };
             const resolution = await resolveItemWithFallback(token, identity, resolverCtx, detailCache);
             tallyResolution(result.resolutionStats, resolution);
@@ -511,7 +515,6 @@ export async function syncOlseraSalesByCategory(
             entry.costAmount += toNumber(item.cost_amount);
             byCategory.set(category, entry);
 
-            const itemId = Number(item.id);
             if (Number.isFinite(itemId)) {
               // Add-on: informasi saja — `amount` SUDAH mengandung add-on
               // ((basic price + addon) × qty − discount). Jangan pernah
@@ -550,6 +553,7 @@ export async function syncOlseraSalesByCategory(
                 categoryResolutionMethod: resolution.method,
                 categoryResolutionStatus: resolution.status,
                 categoryResolutionReason: resolution.reason,
+                ...(resolution.method === "manual_override" ? { resolvedAt: new Date() } : {}),
                 raw: rawItemPayload(item),
               });
             }

@@ -12,7 +12,8 @@
 //
 // API Olsera TIDAK menyediakan endpoint histori mutasi/adjustment/purchase/transfer
 // (semua 404 — lihat scripts/inspect-olsera-inventory.ts). Karena itu stok awal
-// 1 Mei 2026 tidak dapat direkonstruksi; snapshot pertama = data paling awal.
+// pada baseline (lib/olsera-baseline.ts) tidak dapat direkonstruksi; snapshot
+// pertama = data paling awal yang benar-benar tersedia dari API.
 
 import {
   collections,
@@ -166,7 +167,8 @@ export async function getInventorySyncStatus(): Promise<InventorySyncStatus> {
 /**
  * Mulai run sync baru (atau kembalikan run running yang belum selesai supaya
  * klik berikutnya melanjutkan, bukan menduplikasi). Sync pertama: baseline
- * 1 Mei 2026 s/d hari ini; incremental: lastSyncedDate - 1 hari (overlap) s/d hari ini.
+ * (lib/olsera-baseline.ts) s/d hari ini; incremental: lastSyncedDate - 1 hari
+ * (overlap) s/d hari ini.
  */
 export async function startInventorySync(): Promise<NonNullable<InventorySyncStatus["run"]>> {
   return withMongo(async () => {
@@ -264,8 +266,13 @@ async function runProductsPhase(run: OlseraInventorySyncRunDocument) {
   return { totalProducts: products.length, created, updated };
 }
 
-/** Fase movements: satu tanggal — mutasi "penjualan" dari olsera_order_items. */
-async function runMovementDate(date: string) {
+/**
+ * Fase movements: satu tanggal — mutasi "penjualan" dari olsera_order_items.
+ * Diekspor agar skrip backfill lokal (mis. mengisi mutasi tanggal sebelum
+ * checkpoint lama saat baseline dimundurkan) bisa memakai fungsi yang SAMA
+ * tanpa duplikasi logika.
+ */
+export async function runMovementDate(date: string) {
   return withMongo(async () => {
     const { olseraOrderItems, olseraInventoryProducts, olseraInventoryMovements } = await collections();
     const [items, productDocs] = await Promise.all([
@@ -366,39 +373,53 @@ export async function stepInventorySync(): Promise<InventoryStepResult | { error
 
   const merged = { ...run, ...updates } as OlseraInventorySyncRunDocument;
   await withMongo(async () => {
-    const { olseraInventorySyncRuns, olseraInventoryState, olseraInventoryMovements, olseraInventorySnapshots } =
-      await collections();
+    const { olseraInventorySyncRuns } = await collections();
     await olseraInventorySyncRuns.updateOne({ _id: run._id }, { $set: updates });
 
     if (merged.status === "success" || merged.status === "partial") {
-      const now = new Date();
-      const [earliestMovement, earliestSnapshot, state] = await Promise.all([
-        olseraInventoryMovements.find().sort({ date: 1 }).limit(1).next(),
-        olseraInventorySnapshots.find().sort({ date: 1 }).limit(1).next(),
-        olseraInventoryState.findOne({ _id: "olsera-inventory" }),
-      ]);
-      const earliestAvailableDate =
-        [earliestMovement?.date, earliestSnapshot?.date].filter((d): d is string => Boolean(d)).sort()[0] ?? null;
-      await olseraInventoryState.updateOne(
-        { _id: "olsera-inventory" },
-        {
-          $set: {
-            earliestAvailableDate,
-            historyCoverage: "snapshot-only" as const,
-            updatedAt: now,
-            ...(state?.firstSyncAt ? {} : { firstSyncAt: now }),
-            // last_successful_sync_at & checkpoint tanggal HANYA maju saat sukses penuh —
-            // run partial membiarkan checkpoint lama agar tanggal gagal ditarik ulang.
-            // last_successful_sync_at & checkpoint tanggal hanya maju saat sukses penuh;
-            // field yang belum pernah ditulis dibaca sebagai null oleh pemakai state.
-            ...(merged.status === "success" ? { lastSuccessfulSyncAt: now, lastSyncedDate: merged.endDate } : {}),
-          },
-        },
-        { upsert: true },
-      );
+      await refreshInventoryEarliestAvailableDate({
+        // last_successful_sync_at & checkpoint tanggal HANYA maju saat sukses penuh —
+        // run partial membiarkan checkpoint lama agar tanggal gagal ditarik ulang.
+        advanceCheckpointTo: merged.status === "success" ? merged.endDate : null,
+      });
     }
   });
   return { done: merged.phase === "done", run: serializeRun(merged) };
+}
+
+/**
+ * Hitung ulang & simpan `earliestAvailableDate` (tanggal mutasi/snapshot paling
+ * awal yang benar-benar tersimpan) — dipanggil setelah step sync normal maupun
+ * setelah backfill mutasi historis (mis. skrip lokal yang mengisi tanggal
+ * sebelum checkpoint lama saat baseline dimundurkan). TIDAK pernah menyentuh
+ * stockQty/buyPrice/nilai persediaan — hanya field metadata cakupan histori.
+ */
+export async function refreshInventoryEarliestAvailableDate(options: { advanceCheckpointTo: string | null }) {
+  await withMongo(async () => {
+    const { olseraInventoryState, olseraInventoryMovements, olseraInventorySnapshots } = await collections();
+    const now = new Date();
+    const [earliestMovement, earliestSnapshot, state] = await Promise.all([
+      olseraInventoryMovements.find().sort({ date: 1 }).limit(1).next(),
+      olseraInventorySnapshots.find().sort({ date: 1 }).limit(1).next(),
+      olseraInventoryState.findOne({ _id: "olsera-inventory" }),
+    ]);
+    const earliestAvailableDate =
+      [earliestMovement?.date, earliestSnapshot?.date].filter((d): d is string => Boolean(d)).sort()[0] ?? null;
+    await olseraInventoryState.updateOne(
+      { _id: "olsera-inventory" },
+      {
+        $set: {
+          earliestAvailableDate,
+          historyCoverage: "snapshot-only" as const,
+          updatedAt: now,
+          ...(state?.firstSyncAt ? {} : { firstSyncAt: now }),
+          // field yang belum pernah ditulis dibaca sebagai null oleh pemakai state.
+          ...(options.advanceCheckpointTo ? { lastSuccessfulSyncAt: now, lastSyncedDate: options.advanceCheckpointTo } : {}),
+        },
+      },
+      { upsert: true },
+    );
+  });
 }
 
 // ---- Query untuk halaman ----

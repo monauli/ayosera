@@ -12,6 +12,7 @@ import {
   resolveItemCategory,
   type AliasEntry,
   type CatalogEntry,
+  type CategoryOverrideEntry,
   type CategoryResolution,
   type HistoricalEntry,
   type ItemIdentity,
@@ -63,6 +64,15 @@ async function loadAliases(): Promise<AliasEntry[]> {
   });
 }
 
+/** Override manual per item (olsera_category_overrides) — kunci orderItemId, tidak pernah global. */
+async function loadCategoryOverrides(): Promise<CategoryOverrideEntry[]> {
+  return withMongo(async () => {
+    const { olseraCategoryOverrides } = await collections();
+    const docs = await olseraCategoryOverrides.find().toArray();
+    return docs.map((doc) => ({ orderItemId: doc._id, category: doc.category, reason: doc.reason }));
+  });
+}
+
 /** Nama → kategori yang pernah ter-resolve KONSISTEN (satu kategori saja) di histori item. */
 async function loadHistoricalIdentities(): Promise<HistoricalEntry[]> {
   return withMongo(async () => {
@@ -74,6 +84,10 @@ async function loadHistoricalIdentities(): Promise<HistoricalEntry[]> {
             categoryResolutionStatus: "resolved",
             normalizedItemName: { $type: "string" },
             resolvedCategoryName: { $type: "string" },
+            // manual_override adalah koreksi PER ITEM (konfirmasi kasus spesifik) —
+            // tidak boleh ikut membentuk identitas historis global, karena itu akan
+            // membuat item LAIN dengan nama sama otomatis ikut ter-resolve juga.
+            categoryResolutionMethod: { $ne: "manual_override" },
           },
         },
         {
@@ -103,22 +117,29 @@ export async function loadResolverContext(options: { forceRefresh?: boolean } = 
   }
   const auth = await getAccessToken();
   if ("error" in auth) throw new Error(auth.error);
-  const [catalog, aliases, historical] = await Promise.all([
+  const [catalog, aliases, historical, overrides] = await Promise.all([
     fetchCatalogEntries(auth.token),
     loadAliases(),
     loadHistoricalIdentities(),
+    loadCategoryOverrides(),
   ]);
-  const ctx = buildResolverContext({ catalog, aliases, historical });
+  const ctx = buildResolverContext({ catalog, aliases, historical, overrides });
   contextCache = { ctx, fetchedAt: Date.now() };
   return { ctx, cacheHit: false };
 }
 
-/** Identitas resolver dari dokumen olsera_order_items (lama maupun baru). */
+/**
+ * Identitas resolver dari dokumen olsera_order_items (lama maupun baru).
+ * `_id` opsional: sebagian query proyeksi (export) sengaja tidak menariknya
+ * (`_id: 0`) — tanpanya, lookup manual override (per orderItemId) dilewati,
+ * tetapi item yang SUDAH resolved tetap terbaca via resolveStoredItemCategory
+ * (mempercayai resolvedCategoryName tersimpan lebih dulu).
+ */
 export function identityFromStoredItem(
   item: Pick<
     OlseraOrderItemDocument,
     "itemName" | "productId" | "variantId" | "sku" | "barcode" | "originalCategoryId" | "originalCategoryName"
-  >,
+  > & { _id?: number },
 ): ItemIdentity {
   return {
     itemName: item.itemName,
@@ -128,6 +149,7 @@ export function identityFromStoredItem(
     barcode: item.barcode ?? null,
     originalCategoryId: item.originalCategoryId ?? null,
     originalCategoryName: item.originalCategoryName ?? null,
+    orderItemId: item._id ?? null,
   };
 }
 
@@ -147,7 +169,7 @@ export function resolveStoredItemCategory(
     | "originalCategoryName"
     | "resolvedCategoryName"
     | "categoryResolutionStatus"
-  >,
+  > & { _id?: number },
   ctx: ResolverContext,
 ): string {
   if (item.categoryResolutionStatus === "resolved" && item.resolvedCategoryName) return item.resolvedCategoryName;
