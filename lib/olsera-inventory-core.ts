@@ -226,6 +226,170 @@ export function buildNameIndex(products: InventoryProductInput[]): Map<string, I
   return index;
 }
 
+// ---------------------------------------------------------------------------
+// Product mapping movement — prioritas identitas (resolvedProductId/productId
+// +variantId) di atas pencocokan nama. buildNameIndex di atas TETAP DIPAKAI
+// oleh kode lama (tidak dihapus, backward-compatible); pemetaan movement baru
+// pakai index terpisah di bawah yang menyimpan SEMUA kandidat per kunci (bukan
+// pemenang pertama) supaya ambiguitas bisa dideteksi, bukan ditebak diam-diam.
+// ---------------------------------------------------------------------------
+
+/** Kelompokkan katalog per productId — dasar pencocokan berbasis ID (langkah 1-4). */
+export function buildMovementIdentityIndex(products: InventoryProductInput[]): Map<number, InventoryProductInput[]> {
+  const index = new Map<number, InventoryProductInput[]>();
+  for (const product of products) {
+    const list = index.get(product.productId) ?? [];
+    list.push(product);
+    index.set(product.productId, list);
+  }
+  return index;
+}
+
+/**
+ * Kelompokkan katalog per nama ternormalisasi — SEMUA kandidat disimpan (bukan
+ * pemenang pertama) supaya nama yang dipakai >1 produk/variant terdeteksi
+ * ambigu, bukan diam-diam memilih salah satu (lihat selectMovementProduct).
+ */
+export function buildMovementNameIndex(products: InventoryProductInput[]): Map<string, InventoryProductInput[]> {
+  const index = new Map<string, InventoryProductInput[]>();
+  const add = (key: string, product: InventoryProductInput) => {
+    const list = index.get(key) ?? [];
+    list.push(product);
+    index.set(key, list);
+  };
+  for (const product of products) {
+    const fullKey = product.variantName
+      ? normalizeItemName(`${product.name} - ${product.variantName}`)
+      : normalizeItemName(product.name);
+    add(fullKey, product);
+    // Produk ber-variant juga didaftarkan di bawah nama polos (item order lama
+    // bisa tersimpan tanpa suffix varian) — kalau produk itu ber-variant lebih
+    // dari satu, nama polos otomatis jadi ambigu (benar, bukan bug).
+    if (product.variantName) add(normalizeItemName(product.name), product);
+  }
+  return index;
+}
+
+export type MovementItemIdentity = {
+  itemName: string;
+  productId: number | null;
+  variantId: number | null;
+  resolvedProductId: number | null;
+};
+
+export type MovementProductMethod =
+  | "resolvedProductId"
+  | "productId+variantId"
+  | "productId"
+  | "name"
+  | "ambiguous-name"
+  | "unmatched";
+
+export type MovementProductSelection = {
+  product: InventoryProductInput | null;
+  method: MovementProductMethod;
+  note: string;
+};
+
+const MOVEMENT_MAPPING_NOTE: Record<MovementProductMethod, string> = {
+  "resolvedProductId": "Dipetakan dari resolvedProductId",
+  "productId+variantId": "Dipetakan dari productId + variantId",
+  "productId": "Dipetakan dari productId (kandidat tunggal)",
+  "name": "Dipetakan dari nama unik (fallback)",
+  "ambiguous-name": "Nama produk ambigu — tidak dipetakan otomatis",
+  "unmatched": "Produk tidak ditemukan di katalog (nama tidak cocok)",
+};
+
+/**
+ * Pilih produk katalog untuk satu item transaksi — urutan wajib:
+ * 1. resolvedProductId (bila ada) sebagai id efektif, else productId asli.
+ * 2. Bila variantId tersedia, prioritaskan kecocokan id efektif + variantId.
+ * 3. Bila id efektif cocok dan kandidatnya cuma satu (produk tanpa variant
+ *    atau variantId tidak diberikan), pakai kandidat itu.
+ * 4. Selain itu (id efektif tidak ketemu, atau ambigu — banyak variant tanpa
+ *    variantId yang cocok): fallback ke exact normalized name, HANYA bila
+ *    hasilnya unik satu kandidat.
+ * 5. Tidak ada yang cocok / ambigu di kedua jalur → product null + note jelas.
+ * TIDAK PERNAH memilih kandidat pertama secara sembarang saat ambigu (baik by
+ * ID maupun by nama) — SKU tidak dipakai sebagai kriteria pencocokan sama sekali.
+ */
+export function selectMovementProduct(
+  item: MovementItemIdentity,
+  idIndex: Map<number, InventoryProductInput[]>,
+  nameIndex: Map<string, InventoryProductInput[]>,
+): MovementProductSelection {
+  const effectiveId = item.resolvedProductId ?? item.productId;
+  const usedResolvedId = item.resolvedProductId !== null;
+
+  if (effectiveId !== null) {
+    const candidates = idIndex.get(effectiveId) ?? [];
+    if (candidates.length) {
+      if (item.variantId !== null) {
+        const exact = candidates.find((candidate) => candidate.variantId === item.variantId);
+        if (exact) {
+          const method: MovementProductMethod = usedResolvedId ? "resolvedProductId" : "productId+variantId";
+          return { product: exact, method, note: MOVEMENT_MAPPING_NOTE[method] };
+        }
+        // variantId diberikan tapi tidak cocok kandidat manapun untuk id ini —
+        // jangan menebak variant; tetap boleh lanjut ke fallback baris di bawah
+        // HANYA bila kandidatnya memang cuma satu (produk tanpa variant nyata).
+      }
+      if (candidates.length === 1) {
+        const method: MovementProductMethod = usedResolvedId ? "resolvedProductId" : "productId";
+        return { product: candidates[0], method, note: MOVEMENT_MAPPING_NOTE[method] };
+      }
+      // Ambigu by ID (banyak variant, variantId item tidak menunjuk salah
+      // satunya) — jangan pilih sembarang, lanjut ke fallback nama.
+    }
+  }
+
+  const key = normalizeItemName(item.itemName);
+  const nameCandidates = nameIndex.get(key) ?? [];
+  if (nameCandidates.length === 1) {
+    return { product: nameCandidates[0], method: "name", note: MOVEMENT_MAPPING_NOTE.name };
+  }
+  if (nameCandidates.length > 1) {
+    return { product: null, method: "ambiguous-name", note: MOVEMENT_MAPPING_NOTE["ambiguous-name"] };
+  }
+  return { product: null, method: "unmatched", note: MOVEMENT_MAPPING_NOTE.unmatched };
+}
+
+// ---------------------------------------------------------------------------
+// Rekonsiliasi movement per tanggal — hapus movement "yatim" (order item
+// sumbernya sudah dibatalkan/dihapus dari olsera_order_items) HANYA bila
+// tanggal penjualan sudah terkonfirmasi tuntas disync (lihat
+// lib/olsera-inventory.ts runMovementDate: dicek lewat olsera_synced_days).
+// ---------------------------------------------------------------------------
+
+export type MovementReconciliationInput = {
+  /** `sale:{orderItemId}` dari olsera_order_items yang ADA saat ini untuk tanggal ini. */
+  expectedIds: string[];
+  /** _id movement source="sale" yang SAAT INI tersimpan di DB untuk tanggal ini. */
+  existingSaleMovementIds: string[];
+  /** true bila tanggal penjualan ini sudah terkonfirmasi tuntas disync (olsera_synced_days). */
+  dateFullySynced: boolean;
+};
+
+export type MovementReconciliationPlan = {
+  /** _id movement yang aman dihapus (source="sale", tanggal ini, tidak ada order item sumbernya lagi). */
+  idsToDelete: string[];
+  cleanupSkipped: boolean;
+  cleanupSkippedReason: string | null;
+};
+
+export function planMovementReconciliation(input: MovementReconciliationInput): MovementReconciliationPlan {
+  if (!input.dateFullySynced) {
+    return {
+      idsToDelete: [],
+      cleanupSkipped: true,
+      cleanupSkippedReason: "Tanggal belum terkonfirmasi tuntas disync (olsera_synced_days) — cleanup movement yatim dilewati.",
+    };
+  }
+  const expected = new Set(input.expectedIds);
+  const idsToDelete = input.existingSaleMovementIds.filter((id) => !expected.has(id));
+  return { idsToDelete, cleanupSkipped: false, cleanupSkippedReason: null };
+}
+
 export type StockStatus = "Aman" | "Hampir Habis" | "Habis" | "Data Tidak Lengkap";
 
 export function stockStatusFor(product: {

@@ -19,19 +19,20 @@ import {
   collections,
   withMongo,
   type OlseraInventoryMovementDocument,
-  type OlseraInventoryProductDocument,
   type OlseraInventorySyncRunDocument,
 } from "@/lib/mongodb";
 import { getAccessToken } from "@/lib/olsera";
 import { todayJakarta, addDays } from "@/lib/olsera-sync";
 import {
-  buildNameIndex,
+  buildMovementIdentityIndex,
+  buildMovementNameIndex,
   buildPendingDates,
   computeConsistency,
   flattenOlseraProduct,
   isInventorySyncStale,
-  normalizeItemName,
+  planMovementReconciliation,
   planStaleClosure,
+  selectMovementProduct,
   summarizeInventory,
   INVENTORY_BASELINE_DATE,
   DEFAULT_LOW_STOCK_THRESHOLD,
@@ -352,44 +353,106 @@ async function runProductsPhase(run: OlseraInventorySyncRunDocument) {
  */
 export async function runMovementDate(date: string) {
   return withMongo(async () => {
-    const { olseraOrderItems, olseraInventoryProducts, olseraInventoryMovements } = await collections();
-    const [items, productDocs] = await Promise.all([
+    const { olseraOrderItems, olseraInventoryProducts, olseraInventoryMovements, olseraSyncedDays } = await collections();
+    // olsera_synced_days: keberadaan dokumen untuk tanggal ini = tanggal
+    // penjualan sudah tuntas disync (lihat lib/olsera-sync.ts) — dipakai
+    // sebagai pengaman sebelum menghapus movement yatim (lihat di bawah),
+    // BUKAN untuk menentukan apakah movement perlu dibuat sama sekali.
+    const [items, productDocs, syncedDay] = await Promise.all([
       olseraOrderItems.find({ date }).toArray(),
       olseraInventoryProducts.find().toArray(),
+      olseraSyncedDays.findOne({ _id: date }),
     ]);
-    if (!items.length) return { movements: 0, created: 0, updated: 0 };
+    const dateFullySynced = Boolean(syncedDay);
 
-    const nameIndex = buildNameIndex(productDocs as InventoryProductInput[]);
+    const catalog = productDocs as InventoryProductInput[];
+    const idIndex = buildMovementIdentityIndex(catalog);
+    const nameIndex = buildMovementNameIndex(catalog);
+
     const syncedAt = new Date();
+    let unresolved = 0;
     const docs: OlseraInventoryMovementDocument[] = items.map((item) => {
-      const match = nameIndex.get(normalizeItemName(item.itemName)) as OlseraInventoryProductDocument | undefined;
+      const selection = selectMovementProduct(
+        {
+          itemName: item.itemName,
+          productId: item.productId ?? null,
+          variantId: item.variantId ?? null,
+          resolvedProductId: item.resolvedProductId ?? null,
+        },
+        idIndex,
+        nameIndex,
+      );
+      if (!selection.product) unresolved++;
       return {
         _id: `sale:${item._id}`,
         source: "sale",
         type: "penjualan",
         date,
         movementAt: item.orderDate,
-        productId: match?.productId ?? null,
-        variantId: match?.variantId ?? null,
-        sku: match?.sku ?? null,
+        productId: selection.product?.productId ?? null,
+        variantId: selection.product?.variantId ?? null,
+        sku: selection.product?.sku ?? null,
         productName: item.itemName,
         qtyBefore: null,
         qtyChange: -item.qty,
         qtyAfter: null,
         costPrice: item.qty > 0 ? item.costAmount / item.qty : null,
         value: item.amount,
-        storeId: match?.storeId ?? null,
+        storeId: selection.product?.storeId ?? null,
         reference: item.orderNo,
-        note: match ? null : "Produk tidak ditemukan di katalog (nama tidak cocok)",
+        note: selection.note,
         syncedAt,
       };
     });
-    const result = await olseraInventoryMovements.bulkWrite(
-      docs.map((doc) => ({
-        updateOne: { filter: { _id: doc._id }, update: { $set: doc }, upsert: true },
-      })),
-    );
-    return { movements: docs.length, created: result.upsertedCount, updated: result.modifiedCount };
+
+    let created = 0;
+    let updated = 0;
+    if (docs.length) {
+      const result = await olseraInventoryMovements.bulkWrite(
+        docs.map((doc) => ({
+          updateOne: { filter: { _id: doc._id }, update: { $set: doc }, upsert: true },
+        })),
+      );
+      created = result.upsertedCount;
+      updated = result.modifiedCount;
+    }
+
+    // Rekonsiliasi movement yatim: item yang sudah dibatalkan/dihapus dari
+    // olsera_order_items (lib/olsera-sync.ts:640 membuang item basi saat
+    // sync ulang) tidak pernah menghapus movement lamanya sendiri — dibersihkan
+    // di sini, HANYA bila tanggal ini sudah dikonfirmasi tuntas disync (supaya
+    // sync penjualan yang belum selesai tidak membuat movement valid terhapus).
+    const expectedIds = items.map((item) => `sale:${item._id}`);
+    const existingSaleMovements = await olseraInventoryMovements
+      .find({ source: "sale", date }, { projection: { _id: 1 } })
+      .toArray();
+    const plan = planMovementReconciliation({
+      expectedIds,
+      existingSaleMovementIds: existingSaleMovements.map((doc) => doc._id),
+      dateFullySynced,
+    });
+
+    let deleted = 0;
+    if (plan.idsToDelete.length) {
+      // Filter sangat spesifik — source+date+_id in idsToDelete — tidak pernah
+      // menyentuh movement source lain atau tanggal lain.
+      const result = await olseraInventoryMovements.deleteMany({
+        source: "sale",
+        date,
+        _id: { $in: plan.idsToDelete },
+      });
+      deleted = result.deletedCount ?? 0;
+    }
+
+    return {
+      movements: docs.length,
+      created,
+      updated,
+      deleted,
+      unresolved,
+      cleanupSkipped: plan.cleanupSkipped,
+      cleanupSkippedReason: plan.cleanupSkippedReason,
+    };
   });
 }
 

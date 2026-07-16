@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  buildMovementIdentityIndex,
+  buildMovementNameIndex,
   buildNameIndex,
   buildPendingDates,
   computeConsistency,
@@ -10,7 +12,9 @@ import {
   inventoryValueFor,
   isInventorySyncStale,
   normalizeItemName,
+  planMovementReconciliation,
   planStaleClosure,
+  selectMovementProduct,
   stockStatusFor,
   summarizeInventory,
   toInventoryNumber,
@@ -355,4 +359,192 @@ test("planStaleClosure: fase products tapi sudah ada createdRecords -> tetap dia
     updatedRecords: 0,
   });
   assert.equal(plan.status, "partial");
+});
+
+// --- Movement product mapping: selectMovementProduct & index builders ---
+function movementIdentity(
+  overrides: Partial<{ itemName: string; productId: number | null; variantId: number | null; resolvedProductId: number | null }> = {},
+) {
+  return { itemName: "PRODUK", productId: null, variantId: null, resolvedProductId: null, ...overrides };
+}
+
+test("buildMovementIdentityIndex: kelompokkan seluruh kandidat per productId", () => {
+  const catalog = [
+    makeProduct({ _id: "a", productId: 1, variantId: null }),
+    makeProduct({ _id: "b", productId: 2, variantId: 10 }),
+    makeProduct({ _id: "c", productId: 2, variantId: 20 }),
+  ];
+  const index = buildMovementIdentityIndex(catalog);
+  assert.equal(index.get(1)?.length, 1);
+  assert.equal(index.get(2)?.length, 2);
+  assert.equal(index.get(999), undefined);
+});
+
+test("buildMovementNameIndex: nama polos produk ber-variant >1 terdaftar ambigu; produk tunggal tidak", () => {
+  const catalog = [
+    makeProduct({ _id: "a", productId: 1, name: "TUNGGAL" }),
+    makeProduct({ _id: "b", productId: 2, variantId: 1, variantName: "X", name: "GANDA" }),
+    makeProduct({ _id: "c", productId: 2, variantId: 2, variantName: "Y", name: "GANDA" }),
+  ];
+  const index = buildMovementNameIndex(catalog);
+  assert.equal(index.get("TUNGGAL")?.length, 1);
+  assert.equal(index.get("GANDA")?.length, 2); // nama polos ambigu — 2 variant terdaftar
+  assert.equal(index.get("GANDA - X")?.length, 1);
+  assert.equal(index.get("GANDA - Y")?.length, 1);
+});
+
+test("selectMovementProduct: 1. resolvedProductId dipakai meski nama produk berganti/berbeda saat transaksi", () => {
+  const catalog = [makeProduct({ _id: "324175:200:0", productId: 200, name: "NAMA BARU DI KATALOG" })];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "NAMA LAMA SAAT TRANSAKSI", productId: 999, resolvedProductId: 200 });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product?._id, "324175:200:0");
+  assert.equal(result.method, "resolvedProductId");
+  assert.match(result.note, /resolvedProductId/);
+});
+
+test("selectMovementProduct: 2. productId + variantId cocok -> variant yang benar dipilih", () => {
+  const catalog = [
+    makeProduct({ _id: "324175:300:10", productId: 300, variantId: 10, variantName: "STANDAR" }),
+    makeProduct({ _id: "324175:300:20", productId: 300, variantId: 20, variantName: "PREMIUM" }),
+  ];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "PRODUK - PREMIUM", productId: 300, variantId: 20 });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product?._id, "324175:300:20");
+  assert.equal(result.method, "productId+variantId");
+});
+
+test("selectMovementProduct: 3. productId cocok dengan satu produk (tanpa variant) -> dipakai", () => {
+  const catalog = [makeProduct({ _id: "324175:400:0", productId: 400 })];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "APAPUN NAMANYA DI TRANSAKSI", productId: 400 });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product?._id, "324175:400:0");
+  assert.equal(result.method, "productId");
+});
+
+test("selectMovementProduct: 4. exact normalized name unik berhasil sebagai fallback terakhir", () => {
+  const catalog = [makeProduct({ _id: "324175:500:0", productId: 500, name: "ES KOPI SUSU" })];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "es kopi susu" }); // tanpa identitas ID sama sekali
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product?._id, "324175:500:0");
+  assert.equal(result.method, "name");
+});
+
+test("selectMovementProduct: 5. nama sama untuk beberapa produk -> tidak memilih sembarang (ambiguous)", () => {
+  const catalog = [
+    makeProduct({ _id: "324175:600:0", productId: 600, name: "COURT FEES" }),
+    makeProduct({ _id: "324175:601:0", productId: 601, name: "COURT FEES" }),
+  ];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "COURT FEES" });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product, null);
+  assert.equal(result.method, "ambiguous-name");
+});
+
+test("selectMovementProduct: 6. seluruh identitas kosong & nama tidak cocok -> productId null + note", () => {
+  const catalog = [makeProduct({ _id: "324175:700:0", productId: 700, name: "PRODUK LAIN" })];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "TIDAK DIKENAL SAMA SEKALI" });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product, null);
+  assert.equal(result.method, "unmatched");
+  assert.match(result.note, /tidak ditemukan/i);
+});
+
+test("selectMovementProduct: 7. SKU kosong tidak memengaruhi mapping (bukan kriteria pencocokan)", () => {
+  const catalog = [makeProduct({ _id: "324175:800:0", productId: 800, sku: null, name: "PRODUK SKU KOSONG" })];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "produk sku kosong" });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product?._id, "324175:800:0");
+  assert.equal(result.method, "name");
+});
+
+test("selectMovementProduct: variantId item tidak cocok kandidat manapun -> tidak menebak variant, fallback nama bila unik", () => {
+  const catalog = [
+    makeProduct({ _id: "324175:900:11", productId: 900, variantId: 11, variantName: "A", name: "MULTI VARIANT ITEM" }),
+    makeProduct({ _id: "324175:900:12", productId: 900, variantId: 12, variantName: "B", name: "MULTI VARIANT ITEM" }),
+  ];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  // variantId 99 tidak ada di katalog untuk productId 900 — tidak boleh menebak salah satu dari A/B.
+  const item = movementIdentity({ itemName: "MULTI VARIANT ITEM - A", productId: 900, variantId: 99 });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  // Nama "MULTI VARIANT ITEM - A" unik di katalog -> fallback nama berhasil (bukan tebakan by ID).
+  assert.equal(result.product?._id, "324175:900:11");
+  assert.equal(result.method, "name");
+});
+
+test("selectMovementProduct: 8. productId ambigu (banyak variant) tanpa variantId item -> fallback nama, bukan variant pertama", () => {
+  const catalog = [
+    makeProduct({ _id: "324175:1000:21", productId: 1000, variantId: 21, variantName: "STANDAR", name: "SEWA RAKET" }),
+    makeProduct({ _id: "324175:1000:22", productId: 1000, variantId: 22, variantName: "PREMIUM", name: "SEWA RAKET" }),
+  ];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "SEWA RAKET", productId: 1000, variantId: null });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  // Nama polos "SEWA RAKET" juga ambigu (2 variant terdaftar di baseKey) -> tidak boleh menebak.
+  assert.equal(result.product, null);
+  assert.equal(result.method, "ambiguous-name");
+});
+
+// --- Orphan cleanup: planMovementReconciliation ---
+
+test("planMovementReconciliation: 13. tanggal belum fully synced -> cleanup dilewati, alasan tercatat", () => {
+  const plan = planMovementReconciliation({
+    expectedIds: ["sale:1"],
+    existingSaleMovementIds: ["sale:1", "sale:2"],
+    dateFullySynced: false,
+  });
+  assert.deepEqual(plan.idsToDelete, []);
+  assert.equal(plan.cleanupSkipped, true);
+  assert.match(plan.cleanupSkippedReason ?? "", /belum terkonfirmasi/i);
+});
+
+test("planMovementReconciliation: 11. tanggal fully synced -> movement yatim (tidak ada di expected) dihapus", () => {
+  const plan = planMovementReconciliation({
+    expectedIds: ["sale:1"],
+    existingSaleMovementIds: ["sale:1", "sale:2", "sale:3"],
+    dateFullySynced: true,
+  });
+  assert.deepEqual(plan.idsToDelete.sort(), ["sale:2", "sale:3"]);
+  assert.equal(plan.cleanupSkipped, false);
+  assert.equal(plan.cleanupSkippedReason, null);
+});
+
+test("planMovementReconciliation: 12. semua item dibatalkan (expected kosong) & fully synced -> semua movement sale tanggal itu dihapus", () => {
+  const plan = planMovementReconciliation({
+    expectedIds: [],
+    existingSaleMovementIds: ["sale:1", "sale:2"],
+    dateFullySynced: true,
+  });
+  assert.deepEqual(plan.idsToDelete.sort(), ["sale:1", "sale:2"]);
+});
+
+test("planMovementReconciliation: tidak ada movement yatim -> idsToDelete kosong (re-run aman)", () => {
+  const plan = planMovementReconciliation({
+    expectedIds: ["sale:1", "sale:2"],
+    existingSaleMovementIds: ["sale:1", "sale:2"],
+    dateFullySynced: true,
+  });
+  assert.deepEqual(plan.idsToDelete, []);
+});
+
+test("planMovementReconciliation: idempotent — input sama menghasilkan output sama", () => {
+  const input = { expectedIds: ["sale:1"], existingSaleMovementIds: ["sale:1", "sale:2"], dateFullySynced: true };
+  const first = planMovementReconciliation(input);
+  const second = planMovementReconciliation(input);
+  assert.deepEqual(first, second);
 });
