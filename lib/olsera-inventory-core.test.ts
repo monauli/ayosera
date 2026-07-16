@@ -8,12 +8,16 @@ import {
   dateRangeList,
   flattenOlseraProduct,
   inventoryValueFor,
+  isInventorySyncStale,
   normalizeItemName,
+  planStaleClosure,
   stockStatusFor,
   summarizeInventory,
   toInventoryNumber,
   DEFAULT_LOW_STOCK_THRESHOLD,
   INVENTORY_BASELINE_DATE,
+  INVENTORY_SYNC_STALE_MS,
+  INVENTORY_SYNC_STALE_MINUTES,
   type InventoryProductInput,
 } from "./olsera-inventory-core.ts";
 
@@ -244,4 +248,111 @@ test("dateRangeList & buildPendingDates: incremental + prioritas tanggal gagal, 
   assert.deepEqual(queue, ["2026-06-20", "2026-07-13", "2026-07-12", "2026-07-14"]);
   // klik dua kali: antrian deterministik yang sama — upsert menjamin tanpa duplikat data.
   assert.deepEqual(queue, buildPendingDates(["2026-07-13", "2026-06-20"], "2026-07-12", "2026-07-14"));
+});
+
+// --- Stale-lock: isInventorySyncStale & planStaleClosure ---
+// Fixture waktu tetap (bukan Date.now() nyata) supaya test tidak bergantung jam sistem.
+const NOW = new Date("2026-07-16T10:00:00.000Z");
+const RECENT_HEARTBEAT = new Date(NOW.getTime() - 5 * 60 * 1000); // 5 menit lalu
+const OLD_HEARTBEAT = new Date(NOW.getTime() - (INVENTORY_SYNC_STALE_MS + 60_000)); // basi + 1 menit
+
+test("isInventorySyncStale: run running dengan heartbeat baru -> tidak stale", () => {
+  const run = { status: "running" as const, startedAt: OLD_HEARTBEAT, updatedAt: RECENT_HEARTBEAT };
+  assert.equal(isInventorySyncStale(run, NOW), false);
+});
+
+test("isInventorySyncStale: run running melewati batas waktu -> stale", () => {
+  const run = { status: "running" as const, startedAt: OLD_HEARTBEAT, updatedAt: OLD_HEARTBEAT };
+  assert.equal(isInventorySyncStale(run, NOW), true);
+});
+
+test("isInventorySyncStale: persis di batas waktu (belum lewat) -> tidak stale", () => {
+  const boundary = new Date(NOW.getTime() - INVENTORY_SYNC_STALE_MS);
+  const run = { status: "running" as const, startedAt: boundary, updatedAt: boundary };
+  assert.equal(isInventorySyncStale(run, NOW), false);
+});
+
+test("isInventorySyncStale: status success/failed/partial tidak pernah dianggap stale meski heartbeat sangat lama", () => {
+  for (const status of ["success", "failed", "partial"] as const) {
+    const run = { status, startedAt: OLD_HEARTBEAT, updatedAt: OLD_HEARTBEAT };
+    assert.equal(isInventorySyncStale(run, NOW), false, `status ${status} seharusnya tidak stale`);
+  }
+});
+
+test("isInventorySyncStale: dokumen lama tanpa updatedAt -> fallback ke startedAt", () => {
+  const staleByStartedAt = { status: "running" as const, startedAt: OLD_HEARTBEAT };
+  assert.equal(isInventorySyncStale(staleByStartedAt, NOW), true);
+
+  const freshByStartedAt = { status: "running" as const, startedAt: RECENT_HEARTBEAT };
+  assert.equal(isInventorySyncStale(freshByStartedAt, NOW), false);
+
+  // updatedAt null (bukan hanya undefined) juga harus fallback, bukan dianggap "0"/Invalid Date.
+  const nullUpdatedAt = { status: "running" as const, startedAt: RECENT_HEARTBEAT, updatedAt: null };
+  assert.equal(isInventorySyncStale(nullUpdatedAt, NOW), false);
+});
+
+test("planStaleClosure: fase movements dengan progres -> partial, currentDate masuk failedDates, pendingDates/processedDays tidak disentuh", () => {
+  const plan = planStaleClosure({
+    phase: "movements",
+    currentDate: "2026-07-10",
+    failedDates: ["2026-07-05"],
+    processedDays: 3,
+    createdRecords: 12,
+    updatedRecords: 4,
+  });
+  assert.equal(plan.status, "partial");
+  assert.equal(plan.phase, "done");
+  assert.deepEqual(plan.failedDates, ["2026-07-05", "2026-07-10"]);
+  assert.match(plan.errorMessage, /heartbeat/i);
+  assert.match(plan.errorMessage, new RegExp(String(INVENTORY_SYNC_STALE_MINUTES)));
+});
+
+test("planStaleClosure: currentDate sudah ada di failedDates -> tidak dobel", () => {
+  const plan = planStaleClosure({
+    phase: "movements",
+    currentDate: "2026-07-05",
+    failedDates: ["2026-07-05"],
+    processedDays: 1,
+    createdRecords: 0,
+    updatedRecords: 0,
+  });
+  assert.deepEqual(plan.failedDates, ["2026-07-05"]);
+});
+
+test("planStaleClosure: currentDate null (mis. macet pas transisi fase) -> failedDates tidak berubah", () => {
+  const plan = planStaleClosure({
+    phase: "movements",
+    currentDate: null,
+    failedDates: ["2026-07-05"],
+    processedDays: 2,
+    createdRecords: 0,
+    updatedRecords: 0,
+  });
+  assert.deepEqual(plan.failedDates, ["2026-07-05"]);
+});
+
+test("planStaleClosure: macet di fase products tanpa progres apa pun -> failed", () => {
+  const plan = planStaleClosure({
+    phase: "products",
+    currentDate: null,
+    failedDates: [],
+    processedDays: 0,
+    createdRecords: 0,
+    updatedRecords: 0,
+  });
+  assert.equal(plan.status, "failed");
+  assert.equal(plan.phase, "done");
+  assert.deepEqual(plan.failedDates, []);
+});
+
+test("planStaleClosure: fase products tapi sudah ada createdRecords -> tetap dianggap ada progres (partial)", () => {
+  const plan = planStaleClosure({
+    phase: "products",
+    currentDate: null,
+    failedDates: [],
+    processedDays: 0,
+    createdRecords: 5,
+    updatedRecords: 0,
+  });
+  assert.equal(plan.status, "partial");
 });

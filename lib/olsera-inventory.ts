@@ -29,10 +29,13 @@ import {
   buildPendingDates,
   computeConsistency,
   flattenOlseraProduct,
+  isInventorySyncStale,
   normalizeItemName,
+  planStaleClosure,
   summarizeInventory,
   INVENTORY_BASELINE_DATE,
   DEFAULT_LOW_STOCK_THRESHOLD,
+  INVENTORY_SYNC_STALE_MINUTES,
   type ConsistencyRow,
   type ConsistencyStatus,
   type InventoryProductInput,
@@ -42,7 +45,11 @@ const BASE_URL = "https://api-open.olsera.co.id";
 const API_PREFIX = "/api/open-api/v1/id";
 const LIST_DELAY_MS = 150;
 
-export { INVENTORY_BASELINE_DATE, DEFAULT_LOW_STOCK_THRESHOLD };
+export { INVENTORY_BASELINE_DATE, DEFAULT_LOW_STOCK_THRESHOLD, INVENTORY_SYNC_STALE_MINUTES };
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: number }).code === 11000);
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -119,12 +126,20 @@ export type InventorySyncStatus = {
     errorMessage: string | null;
     startedAt: string;
     completedAt: string | null;
+    /** true bila status "running" tapi heartbeat sudah melewati INVENTORY_SYNC_STALE_MINUTES. */
+    isStale: boolean;
+    /** updatedAt (fallback startedAt untuk dokumen lama) — heartbeat terakhir run ini. */
+    lastHeartbeatAt: string;
   } | null;
   productCount: number;
   movementCount: number;
+  /** Batas basi run "running" dalam menit — lihat lib/olsera-inventory-core.ts. */
+  staleAfterMinutes: number;
 };
 
-function serializeRun(run: OlseraInventorySyncRunDocument): NonNullable<InventorySyncStatus["run"]> {
+function serializeRun(run: OlseraInventorySyncRunDocument, now: Date = new Date()): NonNullable<InventorySyncStatus["run"]> {
+  const heartbeatRaw = run.updatedAt ?? run.startedAt;
+  const heartbeat = heartbeatRaw instanceof Date ? heartbeatRaw : new Date(heartbeatRaw);
   return {
     id: run._id,
     status: run.status,
@@ -142,6 +157,8 @@ function serializeRun(run: OlseraInventorySyncRunDocument): NonNullable<Inventor
     errorMessage: run.errorMessage,
     startedAt: run.startedAt.toISOString(),
     completedAt: run.completedAt ? run.completedAt.toISOString() : null,
+    isStale: isInventorySyncStale(run, now),
+    lastHeartbeatAt: heartbeat.toISOString(),
   };
 }
 
@@ -177,7 +194,34 @@ export async function getInventorySyncStatus(): Promise<InventorySyncStatus> {
       run: run ? serializeRun(run) : null,
       productCount,
       movementCount,
+      staleAfterMinutes: INVENTORY_SYNC_STALE_MINUTES,
     };
+  });
+}
+
+/**
+ * Tutup run "running" yang basi secara atomik — filter menyertakan
+ * status:"running" (conditional update) supaya dua request paralel tidak
+ * sama-sama berhasil menutup run yang sama; hanya satu yang mendapat dokumen
+ * hasil (returnDocument:"after"), yang lain menerima null. Tidak menghapus
+ * histori: pendingDates, processedDays, totalProducts/Movements, dan
+ * createdRecords/updatedRecords dipertahankan apa adanya. currentDate yang
+ * sedang diproses saat macet ditambahkan ke failedDates (bila belum ada) agar
+ * otomatis diulang run berikutnya lewat buildPendingDates — currentDate
+ * sendiri tidak diubah/dikosongkan.
+ */
+async function closeStaleInventorySyncRun(
+  run: OlseraInventorySyncRunDocument,
+): Promise<OlseraInventorySyncRunDocument | null> {
+  return withMongo(async () => {
+    const { olseraInventorySyncRuns } = await collections();
+    const plan = planStaleClosure(run);
+    const completedAt = new Date();
+    return olseraInventorySyncRuns.findOneAndUpdate(
+      { _id: run._id, status: "running" },
+      { $set: { ...plan, completedAt, updatedAt: completedAt } },
+      { returnDocument: "after" },
+    );
   });
 }
 
@@ -191,7 +235,13 @@ export async function startInventorySync(): Promise<NonNullable<InventorySyncSta
   return withMongo(async () => {
     const { olseraInventoryState, olseraInventorySyncRuns } = await collections();
 
-    const existing = await olseraInventorySyncRuns.find({ status: "running" }).sort({ startedAt: -1 }).limit(1).next();
+    let existing = await olseraInventorySyncRuns.find({ status: "running" }).sort({ startedAt: -1 }).limit(1).next();
+    if (existing && isInventorySyncStale(existing)) {
+      const closed = await closeStaleInventorySyncRun(existing);
+      // closed === null → request lain sudah menutup (atau mengambil alih)
+      // run ini duluan; baca ulang supaya tidak dobel-tutup / dobel-buat run.
+      existing = closed ? null : await olseraInventorySyncRuns.find({ status: "running" }).sort({ startedAt: -1 }).limit(1).next();
+    }
     if (existing) return serializeRun(existing);
 
     const today = todayJakarta();
@@ -229,7 +279,18 @@ export async function startInventorySync(): Promise<NonNullable<InventorySyncSta
       completedAt: null,
       updatedAt: startedAt,
     };
-    await olseraInventorySyncRuns.insertOne(run);
+    try {
+      await olseraInventorySyncRuns.insertOne(run);
+    } catch (error) {
+      // Index unik partial {status:"running"} (lib/mongodb.ts) menolak insert
+      // kedua — request paralel lain sudah lebih dulu membuat run baru.
+      // Kembalikan run itu, jangan membuat run kedua.
+      if (isDuplicateKeyError(error)) {
+        const concurrent = await olseraInventorySyncRuns.find({ status: "running" }).sort({ startedAt: -1 }).limit(1).next();
+        if (concurrent) return serializeRun(concurrent);
+      }
+      throw error;
+    }
     return serializeRun(run);
   });
 }
@@ -346,6 +407,15 @@ export async function stepInventorySync(): Promise<InventoryStepResult | { error
   if (!run) return { error: "Tidak ada sync inventori yang sedang berjalan. Panggil start terlebih dahulu." };
 
   const updates: Partial<OlseraInventorySyncRunDocument> = { updatedAt: new Date() };
+
+  // Heartbeat awal — ditulis SEBELUM memanggil API/DB yang bisa berjalan lama,
+  // supaya kalau proses mati di tengah step ini, updatedAt tetap mencerminkan
+  // "baru mulai", bukan diam sejak step sebelumnya. Satu tulis per step (per
+  // fase produk ATAU per tanggal mutasi) — bukan per item/API request.
+  await withMongo(async () => {
+    const { olseraInventorySyncRuns } = await collections();
+    await olseraInventorySyncRuns.updateOne({ _id: run._id, status: "running" }, { $set: { updatedAt: new Date() } });
+  });
 
   if (run.phase === "products") {
     try {

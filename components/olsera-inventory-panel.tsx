@@ -116,6 +116,8 @@ type SyncRun = {
   errorMessage: string | null;
   startedAt: string;
   completedAt: string | null;
+  isStale?: boolean;
+  lastHeartbeatAt?: string;
 };
 
 type SyncStatus = {
@@ -131,6 +133,7 @@ type SyncStatus = {
   run: SyncRun | null;
   productCount: number;
   movementCount: number;
+  staleAfterMinutes?: number;
 };
 
 type ProductRow = {
@@ -589,10 +592,20 @@ export function OlseraInventoryPanel() {
                 Baseline {formatDate(BASELINE_DATE)} — sync berikutnya melanjutkan otomatis dari checkpoint.
               </span>
             </div>
-            {syncMessage && (
+            {syncMessage ? (
               <p className="mt-3 text-sm text-slate-600" aria-live="polite">
                 {syncMessage}
               </p>
+            ) : (
+              !syncing &&
+              run &&
+              run.status !== "running" &&
+              run.status !== "success" &&
+              run.errorMessage && (
+                <p className="mt-3 text-sm text-slate-600" aria-live="polite">
+                  {run.errorMessage}
+                </p>
+              )
             )}
             <div className="mt-4 rounded-lg border border-slate-200/80 bg-slate-50/70 px-3.5 py-3">
               <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">

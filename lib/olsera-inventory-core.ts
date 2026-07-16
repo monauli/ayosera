@@ -15,6 +15,77 @@ export const INVENTORY_BASELINE_DATE = OLSERA_INVENTORY_BASELINE_DATE;
 /** Threshold "hampir habis" bila produk tidak punya low_stock_alert dari Olsera. */
 export const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
+/**
+ * Batas basi (stale) untuk run sync yang macet di status "running" — mis. proses
+ * Vercel/terminal/koneksi terputus sebelum status sempat diperbarui. Satu step
+ * (fase produk ATAU satu tanggal mutasi) dibatasi maxDuration 300 detik per
+ * request (app/api/olsera/inventory/sync/route.ts), dan retry/backoff internal
+ * (lib/olsera-inventory.ts getJson: maks 6x percobaan, backoff sampai 10 detik)
+ * jauh di bawah itu. 30 menit memberi jarak aman berkali-lipat dari durasi step
+ * terpanjang yang wajar, sehingga sync yang masih benar-benar berjalan (retry
+ * beruntun, katalog besar) tidak pernah salah dianggap basi.
+ */
+export const INVENTORY_SYNC_STALE_MS = 30 * 60 * 1000;
+export const INVENTORY_SYNC_STALE_MINUTES = INVENTORY_SYNC_STALE_MS / 60_000;
+
+export type StaleCheckableRun = {
+  status: "running" | "success" | "partial" | "failed";
+  startedAt: Date | string;
+  updatedAt?: Date | string | null;
+};
+
+/**
+ * true bila run berstatus "running" tapi heartbeat-nya (updatedAt, fallback ke
+ * startedAt untuk dokumen lama yang belum punya updatedAt valid) sudah
+ * melewati INVENTORY_SYNC_STALE_MS. Run yang bukan "running" tidak pernah basi.
+ */
+export function isInventorySyncStale(run: StaleCheckableRun, now: Date = new Date()): boolean {
+  if (run.status !== "running") return false;
+  const heartbeatRaw = run.updatedAt ?? run.startedAt;
+  const heartbeat = heartbeatRaw instanceof Date ? heartbeatRaw : new Date(heartbeatRaw);
+  if (Number.isNaN(heartbeat.getTime())) return false;
+  return now.getTime() - heartbeat.getTime() > INVENTORY_SYNC_STALE_MS;
+}
+
+/** Pesan errorMessage baku saat run "running" ditutup otomatis karena basi. */
+export const INVENTORY_SYNC_STALE_MESSAGE =
+  `Sync dianggap terputus karena tidak ada heartbeat selama ${INVENTORY_SYNC_STALE_MINUTES} menit.`;
+
+export type StaleClosureRun = {
+  phase: "products" | "movements" | "done";
+  currentDate: string | null;
+  failedDates: string[];
+  processedDays: number;
+  createdRecords: number;
+  updatedRecords: number;
+};
+
+export type StaleClosurePlan = {
+  status: "partial" | "failed";
+  phase: "done";
+  failedDates: string[];
+  errorMessage: string;
+};
+
+/**
+ * Hitung field yang perlu di-set untuk menutup run "running" yang basi — murni
+ * logika, tidak menyentuh DB (caller yang menulisnya, atomik, lihat
+ * lib/olsera-inventory.ts closeStaleInventorySyncRun). "partial" dipilih bila
+ * ada progres nyata yang bisa dilanjutkan (fase mutasi sudah dimulai, atau
+ * sudah ada tanggal/record yang berhasil); selain itu "failed". currentDate
+ * yang sedang diproses saat macet ditambahkan ke failedDates (bila belum ada)
+ * supaya otomatis diulang run berikutnya lewat buildPendingDates — currentDate
+ * sendiri, pendingDates, processedDays, totalProducts/Movements, dan
+ * createdRecords/updatedRecords TIDAK disentuh (dipertahankan caller apa adanya).
+ */
+export function planStaleClosure(run: StaleClosureRun): StaleClosurePlan {
+  const failedDates =
+    run.currentDate && !run.failedDates.includes(run.currentDate) ? [...run.failedDates, run.currentDate] : run.failedDates;
+  const hasProgress = run.phase !== "products" || run.processedDays > 0 || run.createdRecords > 0 || run.updatedRecords > 0;
+  const status: "partial" | "failed" = hasProgress ? "partial" : "failed";
+  return { status, phase: "done", failedDates, errorMessage: INVENTORY_SYNC_STALE_MESSAGE };
+}
+
 export type InventoryProductInput = {
   _id: string;
   productId: number;

@@ -493,6 +493,13 @@ async function createIndexes() {
     olseraInventoryMovements.createIndex({ sku: 1 }),
     olseraInventoryMovements.createIndex({ type: 1 }),
     olseraInventorySyncRuns.createIndex({ startedAt: -1 }),
+    // Paling banyak satu dokumen "running" pada satu waktu — mencegah dua
+    // request start() paralel sama-sama membuat run baru (lihat
+    // lib/olsera-inventory.ts startInventorySync, stale-lock protection).
+    olseraInventorySyncRuns.createIndex(
+      { status: 1 },
+      { unique: true, partialFilterExpression: { status: "running" } },
+    ),
   ]);
 }
 
