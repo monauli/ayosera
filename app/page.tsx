@@ -9,7 +9,6 @@ import {
   ArrowUp,
   ArrowUpDown,
   BadgeCheck,
-  Bell,
   CalendarClock,
   CalendarDays,
   CalendarRange,
@@ -19,8 +18,6 @@ import {
   FileSpreadsheet,
   LayoutDashboard,
   Loader2,
-  LogOut,
-  Menu,
   RefreshCw,
   Search,
   RotateCcw,
@@ -29,15 +26,19 @@ import {
   Webhook,
   Clock,
 } from "lucide-react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
 import { UsersPanel } from "@/components/users-panel";
+import { AyoseraHeader } from "@/components/redesign/ayosera-header";
+import { AyoseraShell } from "@/components/redesign/ayosera-shell";
+import { AyoseraSidebar } from "@/components/redesign/ayosera-sidebar";
+import { DashboardOverview } from "@/components/redesign/dashboard-overview";
+import { DashboardStatCard } from "@/components/redesign/dashboard-stat-card";
+import { TransactionExportMenu } from "@/components/redesign/transaction-export-menu";
 
 type HourlyPoint = { time: string; transactions: number; revenue: number };
 type ServicePoint = { name: string; branch: string; revenue: string; count: number; progress: number };
@@ -147,9 +148,9 @@ function SortableHeader({
       <button
         type="button"
         onClick={() => onSort(sortKey)}
-        className={`inline-flex items-center gap-1 uppercase tracking-wide hover:text-slate-900 ${
+        className={`inline-flex items-center gap-1 uppercase tracking-wide transition-colors hover:text-slate-100 ${
           align === "right" ? "flex-row-reverse" : ""
-        } ${active ? "text-slate-900" : ""}`}
+        } ${active ? "text-slate-100" : ""}`}
         title="Klik untuk mengurutkan"
       >
         {label}
@@ -1356,49 +1357,51 @@ export default function DashboardPage() {
   const syncStatusLabel = latestEvent ? (latestEvent.tone.includes("teal") ? "OK" : "Gagal") : "-";
   const lastCheckpoint = latestEvent ? formatEventTime(latestEvent.time) : "-";
 
+  // Panel filter tanggal dark (halaman Transaksi) — handler & preset sama
+  // persis dengan versi lama, hanya gaya visual yang berubah.
   const presetFilterRow = (
     <div className="flex flex-wrap items-center gap-2">
-      {datePresetButtons.map((preset) => (
-        <Button
-          key={preset.value}
-          type="button"
-          variant={datePreset === preset.value ? "default" : "outline"}
-          onClick={() => handleRangePreset(preset.value)}
-        >
-          <CalendarRange className="h-4 w-4" />
-          {preset.label}
-        </Button>
-      ))}
+      <div className="rd-capsule-group inline-flex flex-wrap items-center gap-1 rounded-full p-1">
+        {datePresetButtons.map((preset) => (
+          <button
+            key={preset.value}
+            type="button"
+            onClick={() => handleRangePreset(preset.value)}
+            className={`rd-capsule inline-flex items-center gap-1.5 ${
+              datePreset === preset.value ? "rd-capsule-active" : ""
+            }`}
+          >
+            <CalendarRange className="h-4 w-4" />
+            {preset.label}
+          </button>
+        ))}
+      </div>
       <div
-        className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
-          datePreset === "manualMonth"
-            ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
-            : "bg-white"
+        className={`rd-field flex h-10 items-center gap-2 rounded-full px-3 ${
+          datePreset === "manualMonth" ? "rd-field-active" : ""
         }`}
       >
-        <CalendarDays className="h-4 w-4 text-slate-500" />
+        <CalendarDays className="h-4 w-4 text-slate-400" />
         <Input
           type="month"
           aria-label="Filter bulan tertentu"
           value={filterMonth}
-          className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+          className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
           onClick={(event) => event.currentTarget.showPicker?.()}
           onChange={(event) => handleMonthFilter(event.target.value)}
         />
       </div>
       <div
-        className={`flex h-10 items-center gap-2 rounded-md border px-2 ${
-          datePreset === "custom"
-            ? "border-[rgb(var(--primary))] bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
-            : "bg-white"
+        className={`rd-field flex h-10 items-center gap-2 rounded-full px-3 ${
+          datePreset === "custom" ? "rd-field-active" : ""
         }`}
       >
-        <CalendarRange className="h-4 w-4 text-slate-500" />
+        <CalendarRange className="h-4 w-4 text-slate-400" />
         <Input
           type="date"
           aria-label="Tanggal mulai filter custom"
           value={customRangeStart}
-          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
           onClick={(event) => event.currentTarget.showPicker?.()}
           onChange={(event) => handleCustomRangeChange(event.target.value, customRangeEnd)}
         />
@@ -1407,179 +1410,50 @@ export default function DashboardPage() {
           type="date"
           aria-label="Tanggal selesai filter custom"
           value={customRangeEnd}
-          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
           onClick={(event) => event.currentTarget.showPicker?.()}
           onChange={(event) => handleCustomRangeChange(customRangeStart, event.target.value)}
         />
       </div>
-      <Button type="button" variant="ghost" onClick={handleResetFilters}>
+      <button type="button" onClick={handleResetFilters} className="rd-capsule inline-flex items-center gap-1.5">
         <RotateCcw className="h-4 w-4" />
         Reset
-      </Button>
+      </button>
       {datePreset === "custom" && isInvalidDateRange(customRangeStart, customRangeEnd) && (
-        <span className="text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
+        <span className="text-sm text-rose-400">Tanggal selesai tidak boleh sebelum tanggal mulai.</span>
       )}
     </div>
   );
 
-  return (
-    <main className="min-h-screen bg-[rgb(var(--background))] text-[rgb(var(--foreground))]">
-      {drawerOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
-          onClick={() => setDrawerOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-200 bg-white transition-transform duration-300 ease-in-out ${
-          drawerOpen ? "translate-x-0 shadow-[1px_0_3px_rgba(15,23,42,0.04)] max-lg:shadow-xl" : "-translate-x-full"
-        }`}
-      >
-        <div className="flex h-16 items-center gap-3 px-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))]">
-            <DatabaseZap className="h-5 w-5" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold">AYOSERA</p>
-            <p className="text-xs text-slate-500">Super App Transaksi</p>
-          </div>
-        </div>
-        <nav className="space-y-1 px-3 py-4">
-          {[
-            ...visibleNavItems,
-            ...(isSupervisor ? [{ label: "Pengguna", display: "Pengguna", icon: Users, module: "" }] : []),
-          ].map((item) => {
-            const subItems = "subItems" in item ? item.subItems : undefined;
-            if (subItems?.length) {
-              // Menu collapsible (Olsera): terbuka otomatis saat salah satu submenunya aktif.
-              const groupActive = subItems.some((sub) => sub.nav === activeNav);
-              const open = olseraNavOpen || groupActive;
-              return (
-                <div key={item.label}>
-                  <button
-                    onClick={() => setOlseraNavOpen((value) => !value)}
-                    aria-expanded={open}
-                    className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm transition-colors ${
-                      groupActive
-                        ? "font-semibold text-rose-700"
-                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                    }`}
-                  >
-                    <item.icon className={`h-4 w-4 ${groupActive ? "text-rose-600" : ""}`} />
-                    <span className="flex-1 text-left">{item.display}</span>
-                    <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
-                  </button>
-                  {open && (
-                    <div className="mt-1 space-y-1 pl-7">
-                      {subItems.map((sub) => (
-                        <button
-                          key={sub.label}
-                          onClick={() => {
-                            setActiveNav(sub.nav);
-                            if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
-                          }}
-                          className={`flex h-9 w-full items-center gap-2 rounded-lg border-l-2 px-3 text-sm transition-colors ${
-                            activeNav === sub.nav
-                              ? "border-rose-500 bg-rose-50 font-medium text-rose-700"
-                              : "border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                          }`}
-                        >
-                          {sub.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            }
-            return (
-              <button
-                key={item.label}
-                onClick={() => {
-                  setActiveNav(item.label);
-                  if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
-                }}
-                className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm transition-colors ${
-                  activeNav === item.label
-                    ? "bg-rose-50 font-semibold text-rose-700 ring-1 ring-inset ring-rose-100"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                }`}
-              >
-                <item.icon className={`h-4 w-4 ${activeNav === item.label ? "text-rose-600" : ""}`} />
-                {item.display}
-              </button>
-            );
-          })}
-        </nav>
-        <div className="absolute inset-x-0 bottom-0 border-t border-slate-200 p-3">
-          <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2">
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-700">
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-              API Sehat
-            </div>
-            <p className="mt-0.5 text-[11px] text-slate-500">Checkpoint terakhir: {lastCheckpoint}</p>
-          </div>
-        </div>
-      </aside>
+  // Judul & deskripsi header — mapping sama persis dengan versi lama.
+  const headerTitle =
+    activeNav === "Transaksi"
+      ? "Transaksi AYO"
+      : activeNav === "Olsera"
+        ? "Kategori Penjualan Olsera"
+        : activeNav === "OlseraInventori"
+          ? "Inventori Olsera"
+          : activeNav === "Webhook"
+            ? "Monitoring Webhook AYO"
+            : activeNav === "Pengguna"
+              ? "Manajemen Pengguna"
+              : "Dasbor Transaksi Real-Time";
+  const headerDescription =
+    activeNav === "OlseraInventori"
+      ? "Monitoring stok, mutasi, harga modal, dan nilai persediaan Olsera."
+      : activeNav === "Dasbor"
+        ? "Monitoring transaksi, pendapatan, sinkronisasi, dan integrasi AYO."
+        : undefined;
 
-      <section className={`transition-[padding] duration-300 ease-in-out ${drawerOpen ? "lg:pl-64" : "pl-0"}`}>
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 shadow-[0_1px_3px_rgba(15,23,42,0.05)] backdrop-blur">
-          <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setDrawerOpen((open) => !open)}
-              aria-label="Buka/tutup navigasi"
-              aria-expanded={drawerOpen}
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-lg font-semibold tracking-tight text-slate-900">
-                {activeNav === "Transaksi"
-                  ? "Transaksi AYO"
-                  : activeNav === "Olsera"
-                    ? "Kategori Penjualan Olsera"
-                    : activeNav === "OlseraInventori"
-                      ? "Inventori Olsera"
-                      : activeNav === "Webhook"
-                        ? "Monitoring Webhook AYO"
-                        : activeNav === "Pengguna"
-                          ? "Manajemen Pengguna"
-                          : "Dasbor Transaksi Real-Time"}
-              </h1>
-              {activeNav === "OlseraInventori" && (
-                <p className="hidden text-sm text-slate-500 sm:block">
-                  Monitoring stok, mutasi, harga modal, dan nilai persediaan Olsera.
-                </p>
-              )}
-              {activeNav === "Dasbor" && (
-                <p className="hidden text-sm text-slate-500 sm:block">
-                  Monitoring transaksi, pendapatan, sinkronisasi, dan integrasi AYO.
-                </p>
-              )}
-            </div>
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label="Notifikasi"
-              className="rounded-lg border-slate-200 text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
-            >
-              <Bell className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => void redirectToLogin()}
-              aria-label="Logout"
-              title="Logout"
-              className="rounded-lg border-slate-200 text-slate-600 shadow-sm transition-colors hover:bg-rose-50 hover:text-rose-700"
-            >
-              <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Logout</span>
-            </Button>
-            {/* Tombol sync AYO untuk user bermodul dasbor/transaksi; disembunyikan juga di halaman Olsera (punya tombol sync sendiri). */}
-            {canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "Pengguna" && (
+  const sidebarItems = [
+    ...visibleNavItems,
+    ...(isSupervisor ? [{ label: "Pengguna", display: "Pengguna", icon: Users, module: "" }] : []),
+  ];
+
+  // Dropdown Sync AYO lama — handler & endpoint tidak berubah, hanya dipindah
+  // ke variabel agar bisa disuntikkan sebagai slot `actions` di header baru.
+  const ayoSyncControl =
+    canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "Pengguna" ? (
             <div className="relative">
               <Button
                 className={OLSERA_PRIMARY_BTN}
@@ -1686,21 +1560,46 @@ export default function DashboardPage() {
                 </>
               )}
             </div>
-            )}
-          </div>
-        </header>
+    ) : null;
 
-        <div
-          className={`px-4 py-5 sm:px-6 ${
-            activeNav === "Olsera" || activeNav === "OlseraInventori"
-              ? "min-h-[calc(100vh-4rem)] bg-gradient-to-b from-slate-50 via-slate-50 to-rose-50/40"
-              : ""
-          }`}
-        >
-          {syncMessage && <p className="mb-4 text-sm text-slate-600">{syncMessage}</p>}
+  return (
+    <AyoseraShell
+      sidebarOpen={drawerOpen}
+      onOverlayClick={() => setDrawerOpen(false)}
+      sidebar={
+        <AyoseraSidebar
+          open={drawerOpen}
+          items={sidebarItems}
+          activeNav={activeNav}
+          onSelect={(nav) => {
+            setActiveNav(nav);
+            if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
+          }}
+          groupOpen={olseraNavOpen}
+          onToggleGroup={() => setOlseraNavOpen((value) => !value)}
+          statusLabel={syncStatusLabel}
+          lastCheckpoint={lastCheckpoint}
+        />
+      }
+      header={
+        <AyoseraHeader
+          title={headerTitle}
+          description={headerDescription}
+          onToggleSidebar={() => setDrawerOpen((open) => !open)}
+          sidebarOpen={drawerOpen}
+          ayoStatus={syncStatusLabel}
+          olseraStatus={olseraSyncStatus?.lastSync?.status ?? null}
+          lastCheckpoint={lastCheckpoint}
+          actions={ayoSyncControl}
+          onLogout={() => void redirectToLogin()}
+        />
+      }
+    >
+        <div className="px-4 py-5 sm:px-6">
+          {syncMessage && <p className="mb-4 text-sm text-slate-300">{syncMessage}</p>}
 
           {!sessionUser && (
-            <p className="py-10 text-center text-sm text-slate-500">Memuat sesi…</p>
+            <p className="py-10 text-center text-sm text-slate-400">Memuat sesi…</p>
           )}
 
           {sessionUser && !activeNavAllowed && (
@@ -1715,185 +1614,122 @@ export default function DashboardPage() {
           )}
 
           {activeNavAllowed && activeNav === "Pengguna" && isSupervisor && (
-            <UsersPanel currentUserId={sessionUser!.id} />
+            <div className="rd-legacy p-4 sm:p-5">
+              <UsersPanel currentUserId={sessionUser!.id} />
+            </div>
           )}
 
           {activeNavAllowed && activeNav === "Dasbor" && (
-          <>
-          <div className="mb-4">{presetFilterRow}</div>
-
-          <section className="grid gap-4 md:grid-cols-3">
-            <MetricCard
-              title="Total Transaksi"
-              value={String(metrics?.totalTransactions ?? 0)}
-              detail={getRevenueFilterDetail(datePreset, startDate, endDate)}
-              icon={Activity}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+            <DashboardOverview
+              presets={datePresetButtons}
+              activePreset={datePreset}
+              onPreset={(value) => handleRangePreset(value as DatePreset)}
+              filterMonth={filterMonth}
+              onMonthFilter={handleMonthFilter}
+              customRangeStart={customRangeStart}
+              customRangeEnd={customRangeEnd}
+              onCustomRangeChange={handleCustomRangeChange}
+              onResetFilters={handleResetFilters}
+              customRangeInvalid={isInvalidDateRange(customRangeStart, customRangeEnd)}
+              stats={[
+                {
+                  title: "Total Transaksi",
+                  value: String(metrics?.totalTransactions ?? 0),
+                  detail: getRevenueFilterDetail(datePreset, startDate, endDate),
+                  icon: Activity,
+                },
+                {
+                  title: "Pendapatan Hari Ini",
+                  value: metrics?.revenueToday ?? "Rp 0",
+                  detail: `Hari ini (${formatDisplayDate(today)})`,
+                  icon: BadgeCheck,
+                },
+                {
+                  title: "Pendapatan (Filter)",
+                  value: metrics?.revenueMonth ?? "Rp 0",
+                  detail: getRevenueFilterDetail(datePreset, startDate, endDate),
+                  icon: CalendarDays,
+                },
+              ]}
+              paymentRows={paymentRows}
+              serviceRows={serviceRows}
+              syncStatusLabel={syncStatusLabel}
+              latestEventText={
+                latestEvent ? `${latestEvent.label} · ${formatEventTime(latestEvent.time)}` : "Belum ada sinkronisasi"
+              }
+              events={eventRows.map((event) => ({
+                label: event.label,
+                detail: event.detail,
+                timeText: formatEventTime(event.time),
+                ok: event.tone.includes("teal"),
+              }))}
             />
-            <MetricCard
-              title="Pendapatan Hari Ini"
-              value={metrics?.revenueToday ?? "Rp 0"}
-              detail={`Hari ini (${formatDisplayDate(today)})`}
-              icon={BadgeCheck}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
-            />
-            <MetricCard
-              title="Pendapatan (Filter)"
-              value={metrics?.revenueMonth ?? "Rp 0"}
-              detail={getRevenueFilterDetail(datePreset, startDate, endDate)}
-              icon={CalendarDays}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
-            />
-          </section>
-          </>
           )}
 
           {activeNavAllowed && activeNav === "Transaksi" && (
-          <>
-          <div className="mb-4">{presetFilterRow}</div>
+          <div>
+          <div className="rd-enter mb-4">{presetFilterRow}</div>
 
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard
+            <DashboardStatCard
               title="Total Transaksi"
               value={String(metrics?.totalTransactions ?? 0)}
               detail={getRevenueFilterDetail(datePreset, startDate, endDate)}
               icon={Activity}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+              beam
             />
-            <MetricCard
+            <DashboardStatCard
               title="Pendapatan Hari Ini"
               value={metrics?.revenueToday ?? "Rp 0"}
               detail={`Hari ini (${formatDisplayDate(today)})`}
               icon={BadgeCheck}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+              delay={90}
             />
-            <MetricCard
+            <DashboardStatCard
               title="Pendapatan (Filter)"
               value={metrics?.revenueMonth ?? "Rp 0"}
               detail={getRevenueFilterDetail(datePreset, startDate, endDate)}
               icon={CalendarDays}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+              delay={180}
             />
-            <Card>
-              <CardContent className="relative flex h-full items-center justify-between gap-4 p-5">
+            <div className="rd-card rd-enter relative rounded-2xl" style={{ animationDelay: "270ms" }}>
+              <div className="relative flex h-full items-center justify-between gap-4 p-5">
                 <div className="min-w-0">
-                  <p className="text-sm text-slate-500">Ekspor</p>
-                  <p className="mt-2 text-2xl font-semibold tracking-normal">Excel</p>
+                  <p className="text-sm text-slate-400">Ekspor</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-50">Excel</p>
                   <p className="mt-1 text-xs text-slate-500">Ikut filter aktif</p>
                 </div>
-                <div className="relative shrink-0">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => setExportMenuOpen((open) => !open)}
-                    disabled={exporting}
-                    aria-expanded={exportMenuOpen}
-                    className="h-11 w-11"
-                  >
-                    <ArrowDownToLine className="h-5 w-5" />
-                  </Button>
-                      {exportMenuOpen && (
-                        <>
-                          <div className="fixed inset-0 z-40" onClick={() => setExportMenuOpen(false)} />
-                          <div className="absolute right-0 z-50 mt-2 w-72 rounded-md border bg-white p-4 text-left shadow-lg">
-                            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-                              Ekspor Sesuai Filter (.xlsx)
-                            </p>
-                            <p className="mb-2 text-xs text-slate-500">
-                              {getRevenueFilterDetail(datePreset, startDate, endDate)}
-                            </p>
-                            <Button
-                              className="w-full"
-                              onClick={handleExportFilter}
-                              disabled={exporting || dateRangeInvalid}
-                            >
-                              <ArrowDownToLine className="h-4 w-4" />
-                              {exporting ? "Mengekspor" : "Unduh Sesuai Filter"}
-                            </Button>
-                            <p className="mb-2 mt-3 border-t pt-3 text-xs font-medium uppercase tracking-wide text-slate-500">
-                              Ekspor Harian (.xlsx)
-                            </p>
-                            <Input
-                              type="date"
-                              aria-label="Tanggal ekspor harian"
-                              value={exportDate}
-                              className="mb-2 cursor-pointer"
-                              onClick={(event) => event.currentTarget.showPicker?.()}
-                              onChange={(event) => setExportDate(event.target.value)}
-                            />
-                            <Button className="w-full" onClick={handleExportHarian} disabled={exporting || !exportDate}>
-                              <ArrowDownToLine className="h-4 w-4" />
-                              {exporting ? "Mengekspor" : "Unduh Harian"}
-                            </Button>
-                            <div className="mt-3 space-y-2 border-t pt-3">
-                              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                                Ekspor Range Tanggal (.xlsx)
-                              </p>
-                              <div className="flex gap-2">
-                                <Input
-                                  type="date"
-                                  aria-label="Tanggal awal ekspor range"
-                                  value={exportStart}
-                                  className="cursor-pointer"
-                                  onClick={(event) => event.currentTarget.showPicker?.()}
-                                  onChange={(event) => setExportStart(event.target.value)}
-                                />
-                                <Input
-                                  type="date"
-                                  aria-label="Tanggal akhir ekspor range"
-                                  value={exportEnd}
-                                  className="cursor-pointer"
-                                  onClick={(event) => event.currentTarget.showPicker?.()}
-                                  onChange={(event) => setExportEnd(event.target.value)}
-                                />
-                              </div>
-                              <Button
-                                variant="outline"
-                                className="w-full justify-start"
-                                onClick={handleExportRange}
-                                disabled={exporting || !exportStart || !exportEnd}
-                              >
-                                <CalendarRange className="h-4 w-4" />
-                                {exporting ? "Mengekspor" : "Unduh Range"}
-                              </Button>
-                            </div>
-                            <div className="mt-3 space-y-2 border-t pt-3">
-                              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                                Ekspor Bulanan (.xlsx)
-                              </p>
-                              <Input
-                                type="month"
-                                aria-label="Bulan ekspor"
-                                value={exportMonth}
-                                className="cursor-pointer"
-                                onClick={(event) => event.currentTarget.showPicker?.()}
-                                onChange={(event) => setExportMonth(event.target.value)}
-                              />
-                              <Button
-                                variant="outline"
-                                className="w-full justify-start"
-                                onClick={handleExportBulanan}
-                                disabled={exporting || !exportMonth}
-                              >
-                                <CalendarDays className="h-4 w-4" />
-                                {exporting ? "Mengekspor" : "Unduh Bulanan"}
-                              </Button>
-                            </div>
-                          </div>
-                        </>
-                      )}
+                <div className="shrink-0">
+                  <TransactionExportMenu
+                    open={exportMenuOpen}
+                    onOpenChange={setExportMenuOpen}
+                    exporting={exporting}
+                    dateRangeInvalid={dateRangeInvalid}
+                    filterDetail={getRevenueFilterDetail(datePreset, startDate, endDate)}
+                    exportDate={exportDate}
+                    onExportDateChange={setExportDate}
+                    exportStart={exportStart}
+                    onExportStartChange={setExportStart}
+                    exportEnd={exportEnd}
+                    onExportEndChange={setExportEnd}
+                    exportMonth={exportMonth}
+                    onExportMonthChange={setExportMonth}
+                    onExportFilter={handleExportFilter}
+                    onExportHarian={handleExportHarian}
+                    onExportRange={handleExportRange}
+                    onExportBulanan={handleExportBulanan}
+                  />
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </section>
 
-          <section className="mt-4">
-            <Card>
-              <CardContent>
+          <section className="mt-8">
+            <div className="rd-card rd-enter relative rounded-2xl p-5" style={{ animationDelay: "340ms" }}>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1000px] text-sm">
-                    <thead className="bg-white">
-                      <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
+                  <table className="rd-table w-full min-w-[1000px] text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
                         <SortableHeader label="Tanggal" sortKey="date" sort={sort} onSort={handleSort} />
                         <th className="h-10 px-2 font-medium">Jam</th>
                         <SortableHeader label="ID Booking" sortKey="id" sort={sort} onSort={handleSort} />
@@ -1904,7 +1740,7 @@ export default function DashboardPage() {
                         <SortableHeader label="Status" sortKey="status" sort={sort} onSort={handleSort} />
                         <th className="h-10 px-2 font-medium">Perubahan</th>
                       </tr>
-                      <tr className="border-b">
+                      <tr className="border-b border-white/10">
                         <th className="px-2 pb-2" />
                         <th className="px-2 pb-2" />
                         <th className="px-2 pb-2">
@@ -1912,7 +1748,7 @@ export default function DashboardPage() {
                             value={columnFilters.id}
                             onChange={(event) => setColumnFilter("id", event.target.value)}
                             placeholder="Cari ID Booking"
-                            className="h-7 w-full rounded border bg-white px-2 text-xs font-normal normal-case text-slate-700"
+                            className="rd-input h-7 w-full px-2 text-xs font-normal normal-case"
                           />
                         </th>
                         <th className="px-2 pb-2">
@@ -1920,7 +1756,7 @@ export default function DashboardPage() {
                             value={columnFilters.customer}
                             onChange={(event) => setColumnFilter("customer", event.target.value)}
                             placeholder="Nama, telepon, atau ID"
-                            className="h-7 w-full rounded border px-2 text-xs font-normal normal-case text-slate-700"
+                            className="rd-input h-7 w-full px-2 text-xs font-normal normal-case"
                           />
                         </th>
                         <th className="px-2 pb-2" />
@@ -1928,7 +1764,7 @@ export default function DashboardPage() {
                           <select
                             value={columnFilters.service}
                             onChange={(event) => setColumnFilter("service", event.target.value)}
-                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
+                            className="rd-input h-7 w-full px-1 text-xs font-normal normal-case"
                           >
                             <option value="">Semua</option>
                             {serviceOptions.map((service) => (
@@ -1943,7 +1779,7 @@ export default function DashboardPage() {
                           <select
                             value={columnFilters.status}
                             onChange={(event) => setColumnFilter("status", event.target.value)}
-                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
+                            className="rd-input h-7 w-full px-1 text-xs font-normal normal-case"
                           >
                             <option value="">Semua</option>
                             <option value="Completed">Selesai</option>
@@ -1955,7 +1791,7 @@ export default function DashboardPage() {
                           <select
                             value={columnFilters.change}
                             onChange={(event) => setColumnFilter("change", event.target.value)}
-                            className="h-7 w-full rounded border bg-white px-1 text-xs font-normal normal-case text-slate-700"
+                            className="rd-input h-7 w-full px-1 text-xs font-normal normal-case"
                           >
                             <option value="">Semua</option>
                             <option value="rescheduled">Reschedule</option>
@@ -1966,7 +1802,7 @@ export default function DashboardPage() {
                     <tbody>
                       {pagedRows.length ? (
                         pagedRows.map((transaction) => (
-                          <tr key={transaction.id} className="h-[58px] border-b last:border-0">
+                          <tr key={transaction.id} className="h-[58px]">
                             <td className="whitespace-nowrap px-2 py-2">{transaction.date}</td>
                             <td className="whitespace-nowrap px-2 py-2">
                               {transaction.time} - {transaction.endTime || "-"}
@@ -1987,7 +1823,7 @@ export default function DashboardPage() {
                             <td className="px-2 py-2">
                               {(() => {
                                 const indicator = changeIndicator(transaction);
-                                if (!indicator) return <span className="text-slate-300">—</span>;
+                                if (!indicator) return <span className="text-slate-600">—</span>;
                                 const Icon = indicator.icon;
                                 return (
                                   <span
@@ -2004,7 +1840,7 @@ export default function DashboardPage() {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={9} className="h-[360px] text-center text-sm text-slate-500">
+                          <td colSpan={9} className="h-[360px] text-center text-sm text-slate-400">
                             Tidak ada transaksi ditemukan
                           </td>
                         </tr>
@@ -2012,9 +1848,9 @@ export default function DashboardPage() {
                     </tbody>
                   </table>
                 </div>
-                <div className="mt-4 flex flex-col items-center justify-between gap-3 border-t pt-4 text-sm sm:flex-row">
+                <div className="mt-4 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-4 text-sm sm:flex-row">
                   <div className="flex items-center gap-3">
-                    <span className="text-slate-500">
+                    <span className="text-slate-400">
                       {txnMeta.total
                         ? `Menampilkan ${(currentPage - 1) * limit + 1}–${Math.min(
                             currentPage * limit,
@@ -2029,7 +1865,7 @@ export default function DashboardPage() {
                         setPage(1);
                       }}
                       aria-label="Jumlah baris per halaman"
-                      className="h-8 rounded border bg-white px-2 text-xs text-slate-700"
+                      className="rd-input h-8 px-2 text-xs"
                     >
                       <option value={50}>50 / halaman</option>
                       <option value={100}>100 / halaman</option>
@@ -2040,17 +1876,19 @@ export default function DashboardPage() {
                     <Button
                       type="button"
                       variant="outline"
+                      className="border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white"
                       onClick={() => setPage((value) => Math.max(1, value - 1))}
                       disabled={currentPage <= 1}
                     >
                       Sebelumnya
                     </Button>
-                    <span className="text-slate-500">
+                    <span className="text-slate-400">
                       Halaman {currentPage} / {pageCount}
                     </span>
                     <Button
                       type="button"
                       variant="outline"
+                      className="border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white"
                       onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
                       disabled={currentPage >= pageCount}
                     >
@@ -2058,14 +1896,13 @@ export default function DashboardPage() {
                     </Button>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+            </div>
           </section>
-          </>
+          </div>
           )}
 
           {activeNavAllowed && activeNav === "Olsera" && (
-          <>
+          <div className="rd-legacy min-h-[calc(100vh-8rem)] bg-gradient-to-b from-slate-50 via-slate-50 to-rose-50/40 p-4 sm:p-5">
           {/* Kartu sinkronisasi Olsera untuk semua user bermodul "olsera". */}
           {canSyncOlsera && (
           <section className="mb-6">
@@ -2531,13 +2368,17 @@ export default function DashboardPage() {
             </Card>
           </section>
 
-          </>
+          </div>
           )}
 
-          {activeNavAllowed && activeNav === "OlseraInventori" && <OlseraInventoryPanel />}
+          {activeNavAllowed && activeNav === "OlseraInventori" && (
+            <div className="rd-legacy min-h-[calc(100vh-8rem)] bg-gradient-to-b from-slate-50 via-slate-50 to-rose-50/40 p-4 sm:p-5">
+              <OlseraInventoryPanel />
+            </div>
+          )}
 
           {activeNavAllowed && activeNav === "Webhook" && (
-          <>
+          <div className="rd-legacy p-4 sm:p-5">
           <section className="grid gap-4 md:grid-cols-3">
             <MetricCard
               title="Status Route"
@@ -2633,87 +2474,10 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </section>
-          </>
-          )}
-
-          {activeNavAllowed && activeNav === "Dasbor" && (
-          <>
-          <section className="mt-4 grid gap-4 xl:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Rincian Pembayaran</CardTitle>
-                <CardDescription>Pembagian pendapatan per metode pembayaran</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[236px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={paymentRows} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88} paddingAngle={4}>
-                        {paymentRows.map((entry) => (
-                          <Cell key={entry.name} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip contentStyle={{ borderRadius: 8, borderColor: "#e2e8f0" }} formatter={(value) => [`${value}%`, "Porsi"]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {paymentRows.map((item) => (
-                    <div key={item.name} className="flex items-center gap-2 text-sm">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                      <span className="text-slate-600">{item.name}</span>
-                      <span className="ml-auto font-medium">{item.value}%</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Layanan Terlaris</CardTitle>
-                <CardDescription>Diurutkan berdasarkan pendapatan pada filter</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {serviceRows.map((service) => (
-                  <div key={service.name} className="space-y-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium">{service.name}</p>
-                        <p className="text-xs text-slate-500">{service.branch} · {service.count} pesanan</p>
-                      </div>
-                      <span className="text-sm font-semibold">{service.revenue}</span>
-                    </div>
-                    <Progress value={service.progress} />
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </section>
-
-          <section className="mt-4">
-            <Card>
-              <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`h-2.5 w-2.5 rounded-full ${
-                      latestEvent ? latestEvent.tone.replace("text", "bg") : "bg-slate-300"
-                    }`}
-                  />
-                  <span className="text-sm font-medium">Kesehatan Sinkronisasi</span>
-                  <Badge variant={syncStatusLabel === "Gagal" ? "danger" : "default"}>{syncStatusLabel}</Badge>
-                </div>
-                <span className="text-xs text-slate-500">
-                  {latestEvent ? `${latestEvent.label} · ${formatEventTime(latestEvent.time)}` : "Belum ada sinkronisasi"}
-                </span>
-              </CardContent>
-            </Card>
-          </section>
-          </>
+          </div>
           )}
         </div>
-      </section>
-    </main>
+    </AyoseraShell>
   );
 }
 
