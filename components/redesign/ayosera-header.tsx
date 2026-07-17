@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import { Bell, LogOut, Menu } from "lucide-react";
+import { Bell, LogOut, Menu, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-// Header gelap Ayosera. Semua aksi (sync, logout) tetap memakai handler lama
-// yang dikirim dari app/page.tsx — komponen ini tidak punya logic sendiri.
+// Header Ayosera. Semua aksi (sync, logout) tetap memakai handler lama yang
+// dikirim dari app/page.tsx — komponen ini tidak punya logic sendiri.
 export function AyoseraHeader({
   title,
   description,
@@ -14,6 +14,8 @@ export function AyoseraHeader({
   lastCheckpoint,
   actions,
   onLogout,
+  mode,
+  onToggleMode,
 }: {
   title: string;
   description?: string;
@@ -26,6 +28,8 @@ export function AyoseraHeader({
   /** Slot tombol aksi lama (mis. dropdown Sync AYO) — dirender apa adanya. */
   actions?: ReactNode;
   onLogout: () => void;
+  mode: "dark" | "light";
+  onToggleMode: () => void;
 }) {
   return (
     <header className="rd-header sticky top-0 z-30">
@@ -55,6 +59,17 @@ export function AyoseraHeader({
           )}
           <span className="rd-chip">Sinkron terakhir: {lastCheckpoint}</span>
         </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onToggleMode}
+          aria-label={mode === "dark" ? "Ganti ke Light Mode" : "Ganti ke Dark Mode"}
+          title={mode === "dark" ? "Light Mode" : "Dark Mode"}
+          className="text-slate-300 hover:bg-white/10 hover:text-white"
+        >
+          {mode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
         <Button
           variant="ghost"
           size="icon"

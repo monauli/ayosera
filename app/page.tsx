@@ -5,6 +5,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowDown,
+  ArrowLeft,
   ArrowDownToLine,
   ArrowUp,
   ArrowUpDown,
@@ -28,7 +29,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
@@ -39,9 +40,15 @@ import { AyoseraSidebar } from "@/components/redesign/ayosera-sidebar";
 import { DashboardOverview } from "@/components/redesign/dashboard-overview";
 import { DashboardStatCard } from "@/components/redesign/dashboard-stat-card";
 import { TransactionExportMenu } from "@/components/redesign/transaction-export-menu";
+import { OlseraExportMenu } from "@/components/redesign/olsera-export-menu";
+import type { BookingStatusItem } from "@/components/redesign/booking-status-donut";
+import type { MonthlyRevenuePoint, MonthlyRevenueStatus } from "@/components/redesign/annual-revenue-chart";
 
 type HourlyPoint = { time: string; transactions: number; revenue: number };
-type ServicePoint = { name: string; branch: string; revenue: string; count: number; progress: number };
+// `revenueValue` sudah dikembalikan API (server men-spread objek asli sebelum
+// memformat `revenue`) — deklarasi ini hanya melengkapi tipe klien, bukan
+// mengubah response.
+type ServicePoint = { name: string; branch: string; revenue: string; revenueValue: number; count: number; progress: number };
 type PaymentPoint = { name: string; value: number; color: string };
 type RevenuePoint = { day: string; amount: number };
 type OccupancyPoint = { branch: string; rate: number };
@@ -89,7 +96,7 @@ type TransactionRow = {
   previousSchedule?: { date: string; start_time: string; end_time: string };
   fieldChanges?: { field: string; from: string; to: string }[];
 };
-type DatePreset = "today" | "yesterday" | "month" | "lastMonth" | "custom" | "manualMonth";
+type DatePreset = "today" | "yesterday" | "week" | "month" | "lastMonth" | "custom" | "manualMonth";
 
 type WebhookLogRow = {
   receivedAt: string;
@@ -164,7 +171,7 @@ function SortableHeader({
 // `display` adalah teks yang tampil di sidebar. `subItems` menjadikan menu
 // collapsible — submenu baru (mis. Inventori) cukup ditambahkan ke array ini.
 const navItems = [
-  { label: "Dasbor", display: "Dashboard Ayosera", icon: LayoutDashboard, module: "dasbor" },
+  { label: "Dasbor", display: "Dashboard AYO", icon: LayoutDashboard, module: "dasbor" },
   { label: "Transaksi", display: "Transaksi AYO", icon: Activity, module: "transaksi" },
   {
     label: "Olsera",
@@ -188,6 +195,7 @@ type SessionUserInfo = {
 };
 
 const THEME_STORAGE_KEY = "ayo-theme";
+const MODE_STORAGE_KEY = "ayo-mode";
 const themeOptions = [
   { value: "white", label: "Putih + Rosé", swatch: "#ffffff", ring: "#FFD8DF" },
   { value: "rose", label: "Rosé", swatch: "#FFD8DF", ring: "#f472b6" },
@@ -230,7 +238,7 @@ function formatJakartaTime(value: string) {
   return `${get("hour")}:${get("minute")}:${get("second")}`;
 }
 
-function statusVariant(status: string) {
+function statusVariant(status: string): "success" | "warning" | "danger" {
   if (status === "Completed") return "success";
   if (status === "Pending") return "warning";
   return "danger";
@@ -292,6 +300,7 @@ function previousMonthValue() {
   return new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 7);
 }
 
+
 function getDatePresetRange(value: DatePreset) {
   const now = new Date();
   const currentDate = formatJakartaDate(now);
@@ -303,6 +312,13 @@ function getDatePresetRange(value: DatePreset) {
   if (value === "yesterday") {
     const yesterday = addDaysISO(currentDate, -1);
     return { startDate: yesterday, endDate: yesterday };
+  }
+
+  if (value === "week") {
+    // Minggu berjalan (Asia/Jakarta): Senin s/d hari ini.
+    const dayOfWeek = new Date(`${currentDate}T00:00:00Z`).getUTCDay();
+    const offsetFromMonday = (dayOfWeek + 6) % 7;
+    return { startDate: addDaysISO(currentDate, -offsetFromMonday), endDate: currentDate };
   }
 
   if (value === "lastMonth") {
@@ -352,6 +368,7 @@ function formatMonthLabel(value: string) {
 function getRevenueFilterDetail(preset: DatePreset, startDate: string, endDate: string) {
   if (preset === "today") return `Hari ini (${formatDisplayDate(startDate)})`;
   if (preset === "yesterday") return `Kemarin (${formatDisplayDate(startDate)})`;
+  if (preset === "week") return `Minggu ini (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
   if (preset === "month") return `Bulan ini (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
   if (preset === "lastMonth") return `Bulan lalu (${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)})`;
   if (preset === "manualMonth")
@@ -370,6 +387,73 @@ function formatRupiah(value: number) {
     .replace(/\s/g, "");
 }
 
+/** "Rp277.457.500" → 277457500. /api/dashboard mengembalikan revenueMonth
+ *  sudah diformat (toIdrFull, sama seperti formatRupiah di atas — tanpa
+ *  desimal), jadi strip-non-digit selalu lossless untuk membalikkannya. */
+function parseRupiahToNumber(formatted: string | undefined | null) {
+  if (!formatted) return 0;
+  const digits = formatted.replace(/[^0-9]/g, "");
+  return digits ? Number(digits) : 0;
+}
+
+const MONTH_SHORT_LABELS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+const MONTH_FULL_LABELS = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
+
+/**
+ * Largest-remainder rounding: distribusikan `total` (integer eksak, mis.
+ * metrics.totalTransactions) ke proporsi `shares` (persentase yang sudah
+ * dihitung server) sehingga hasilnya menjumlah persis `total` — dipakai untuk
+ * menurunkan jumlah booking per kategori pada donut Status Booking dari
+ * persentase paymentBreakdown yang sudah ada (tanpa fetch atau endpoint baru).
+ */
+function allocateIntegerCounts(shares: number[], total: number): number[] {
+  const shareSum = shares.reduce((sum, value) => sum + value, 0);
+  if (shareSum <= 0 || total <= 0) return shares.map(() => 0);
+  const raw = shares.map((value) => (value / shareSum) * total);
+  const floors = raw.map((value) => Math.floor(value));
+  let remainder = total - floors.reduce((sum, value) => sum + value, 0);
+  const order = raw
+    .map((value, index) => ({ index, frac: value - Math.floor(value) }))
+    .sort((a, b) => b.frac - a.frac);
+  const result = [...floors];
+  for (let i = 0; i < order.length && remainder > 0; i++, remainder--) {
+    result[order[i].index] += 1;
+  }
+  return result;
+}
+
+// Enam lapangan Ayosera untuk kartu Performa Lapangan — presentasi saja,
+// TIDAK mengubah nama field_name di database/API. Deteksi Pickleball & nomor
+// lapangan mengikuti pola canonical yang sama dengan lib/omzet-export.ts
+// (PICKLE_CANONICAL_1/2, pickleCourtNumber) supaya konsisten dengan export.
+const COURT_DISPLAY_ORDER = ["Court No 1", "Court No 2", "Court No 3", "Court No 4", "Pickleball 1", "Pickleball 2"];
+
+function normalizeCourtName(rawName: string): string | null {
+  if (/pickle/i.test(rawName)) {
+    const isTwo = /(?:no\.?|court|pickleball)\s*2\b/i.test(rawName);
+    return isTwo ? "Pickleball 2" : "Pickleball 1";
+  }
+  const match = rawName.match(/(\d+)/);
+  if (match) {
+    const num = Number(match[1]);
+    if (num >= 1 && num <= 4) return `Court No ${num}`;
+  }
+  return null;
+}
+
 const datePresetButtons: { label: string; value: DatePreset }[] = [
   { label: "Hari ini", value: "today" },
   { label: "Kemarin", value: "yesterday" },
@@ -377,34 +461,51 @@ const datePresetButtons: { label: string; value: DatePreset }[] = [
   { label: "Bulan lalu", value: "lastMonth" },
 ];
 
-// Sesi tidak valid (401): bersihkan cookie sesi yang basi lalu arahkan ke /login.
-// Tanpa sign-out, cookie kedaluwarsa tetap tersisa dan bikin pengalaman membingungkan.
-async function redirectToLogin() {
-  try {
-    await fetch("/api/auth/sign-out", { method: "POST" });
-  } catch {
-    // abaikan — tetap arahkan ke login apa pun hasilnya
-  }
-  window.location.href = "/login";
+// Filter ringkas khusus modul Transaksi Real-Time (Dashboard AYO):
+// Hari & Minggu sebagai kapsul; Bulan & Rentang khusus ditangani DashboardOverview.
+const dashboardPresetButtons: { label: string; value: DatePreset }[] = [
+  { label: "Hari", value: "today" },
+  { label: "Minggu", value: "week" },
+];
+
+/** Judul dinamis kartu Pendapatan sesuai filter aktif — nilainya tetap dari
+ *  metrics.revenueMonth (total pendapatan filter existing). */
+function getRevenueCardTitle(preset: DatePreset, startDate: string, endDate: string, filterMonth: string) {
+  if (preset === "today") return "Pendapatan Hari Ini";
+  if (preset === "yesterday") return "Pendapatan Kemarin";
+  if (preset === "week") return "Pendapatan Minggu Ini";
+  if (preset === "month") return "Pendapatan Bulan Ini";
+  if (preset === "lastMonth") return "Pendapatan Bulan Lalu";
+  if (preset === "manualMonth") return `Pendapatan ${formatMonthLabel(filterMonth)}`;
+  if (startDate === endDate) return `Pendapatan ${formatDisplayDate(startDate)}`;
+  return `Pendapatan ${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`;
 }
 
-// ---- Gaya bersama halaman Penjualan Olsera (visual saja, tanpa logic) ----
-const OLSERA_CARD =
-  "rounded-2xl border-slate-200 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_14px_36px_-22px_rgba(15,23,42,0.3)]";
-const OLSERA_CARD_HEADER =
-  "rounded-t-2xl border-b border-slate-100 bg-gradient-to-r from-slate-50/90 via-white to-rose-50/50";
-const OLSERA_CARD_CONTENT = "pt-5";
-const OLSERA_TITLE = "text-[15px] font-semibold tracking-tight text-slate-900";
-const OLSERA_DESC = "mt-1 text-[13px] leading-relaxed text-slate-500";
-const OLSERA_ICON_CHIP = "rounded-xl p-2.5 ring-1 ring-inset";
-const OLSERA_FIELD =
-  "flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 shadow-sm transition-colors focus-within:border-rose-300 focus-within:ring-2 focus-within:ring-rose-200";
+// Sesi tidak valid (401): bersihkan cookie sesi yang basi lalu arahkan ke /login.
+// Tanpa sign-out, cookie kedaluwarsa tetap tersisa dan bikin pengalaman membingungkan.
+let redirectToLoginPromise: Promise<void> | null = null;
+
+function redirectToLogin() {
+  if (redirectToLoginPromise) return redirectToLoginPromise;
+  redirectToLoginPromise = (async () => {
+    try {
+      await fetch("/api/auth/sign-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+    } catch {
+      // abaikan — tetap arahkan ke login apa pun hasilnya
+    } finally {
+      window.location.href = "/login";
+    }
+  })();
+  return redirectToLoginPromise;
+}
+
+// Tombol aksi utama (pink/merah) — dipakai Sync AYO dan tombol aksi Olsera.
 const OLSERA_PRIMARY_BTN =
   "rounded-lg bg-rose-600 font-medium text-white shadow-sm transition-colors hover:bg-rose-700 active:bg-rose-800";
-const OLSERA_SEGMENT_BTN =
-  "inline-flex h-8 items-center gap-1.5 rounded-lg px-3.5 text-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400";
-const OLSERA_MENU_ITEM =
-  "flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-slate-700 transition-colors hover:bg-rose-50 focus-visible:bg-rose-50 focus-visible:outline-none";
 
 export default function DashboardPage() {
   const today = formatJakartaDate(new Date());
@@ -434,8 +535,24 @@ export default function DashboardPage() {
   const [syncMode, setSyncMode] = useState<"range" | "month" | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState("white");
+  // Light/Dark Mode — default "light" (sesuai atribut yang sudah di-set skrip
+  // bootstrap blocking di app/layout.tsx sebelum hydration, jadi nilai awal
+  // di sini tidak pernah menyebabkan mismatch: dibaca ulang di useEffect
+  // setelah mount, sama seperti pola `theme` di atas).
+  const [mode, setMode] = useState<"dark" | "light">("light");
   const [olseraNavOpen, setOlseraNavOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Dasbor");
+  // Kartu "Pendapatan Bulanan" (Jan–Des) — tahun independen dari filter
+  // Dashboard utama. Data & cache per tahun dikelola effect terkait di bawah;
+  // earliestTransactionDate dipakai untuk membedakan bulan "Belum tersedia"
+  // (sebelum cakupan data AYO) dari Rp0 sungguhan — diambil sekali saja
+  // (undefined = belum pernah dicoba, null = gagal/kosong).
+  const currentYear = currentMonth.slice(0, 4);
+  const [annualRevenueYear, setAnnualRevenueYear] = useState(currentYear);
+  const [annualRevenueData, setAnnualRevenueData] = useState<MonthlyRevenuePoint[]>([]);
+  const [annualRevenueLoading, setAnnualRevenueLoading] = useState(false);
+  const [earliestTransactionDate, setEarliestTransactionDate] = useState<string | null | undefined>(undefined);
+  const annualRevenueCacheRef = useRef<Map<string, MonthlyRevenuePoint[]>>(new Map());
   const [sessionUser, setSessionUser] = useState<SessionUserInfo | null>(null);
   const [webhookData, setWebhookData] = useState<WebhookPayload | null>(null);
   const [webhookStatus, setWebhookStatus] = useState<"unknown" | "active" | "inactive">("unknown");
@@ -470,27 +587,9 @@ export default function DashboardPage() {
   const [olseraOmsetKategoriExportMessage, setOlseraOmsetKategoriExportMessage] = useState("");
   const [olseraLabersExporting, setOlseraLabersExporting] = useState(false);
   const [olseraLabersExportMessage, setOlseraLabersExportMessage] = useState("");
+  // Dropdown Export Olsera kini dirender lewat portal (OlseraExportMenu) —
+  // penutupan klik-luar/Escape ditangani komponen tersebut.
   const [olseraExportMenuOpen, setOlseraExportMenuOpen] = useState(false);
-  const olseraExportMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // Dropdown Export: tutup saat klik di luar atau tekan Escape.
-  useEffect(() => {
-    if (!olseraExportMenuOpen) return;
-    function onPointerDown(event: MouseEvent) {
-      if (olseraExportMenuRef.current && !olseraExportMenuRef.current.contains(event.target as Node)) {
-        setOlseraExportMenuOpen(false);
-      }
-    }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOlseraExportMenuOpen(false);
-    }
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [olseraExportMenuOpen]);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportDate, setExportDate] = useState(today);
   const [exportStart, setExportStart] = useState(today);
@@ -543,6 +642,11 @@ export default function DashboardPage() {
   useEffect(() => {
     const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (saved) setTheme(saved);
+    // Sinkronkan state React dengan atribut yang sudah di-set skrip bootstrap
+    // (localStorage → default terang) tanpa menulis
+    // ulang localStorage di sini — mencegah flash & hydration warning.
+    const bootstrapped = document.documentElement.getAttribute("data-mode");
+    if (bootstrapped === "light" || bootstrapped === "dark") setMode(bootstrapped);
     // Sidebar terbuka secara default di desktop, tertutup di mobile.
     setDrawerOpen(window.matchMedia("(min-width: 1024px)").matches);
   }, []);
@@ -551,6 +655,11 @@ export default function DashboardPage() {
     document.documentElement.setAttribute("data-theme", theme);
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-mode", mode);
+    window.localStorage.setItem(MODE_STORAGE_KEY, mode);
+  }, [mode]);
 
   function buildFilterParams(range = { startDate, endDate }) {
     const params = new URLSearchParams();
@@ -843,6 +952,139 @@ export default function DashboardPage() {
     return () => window.clearTimeout(timeout);
     // columnFilters & sort adalah objek — perubahannya (referensi baru) memicu fetch ulang.
   }, [searchTerm, statusFilter, courtFilter, startDate, endDate, page, limit, sort, columnFilters]);
+
+  // Tanggal booking AYO paling awal yang benar-benar tersedia — dipakai
+  // kartu "Pendapatan Bulanan" untuk membedakan bulan "Belum tersedia"
+  // (sebelum cakupan data) dari Rp0 sungguhan. Endpoint transaksi existing,
+  // limit=1 (bukan untuk menghitung total, hanya baris paling awal) —
+  // diambil SEKALI per sesi (guard `earliestTransactionDate !== undefined`),
+  // dicache di state sehingga pindah tahun tidak mengulang request ini.
+  useEffect(() => {
+    if (activeNav !== "Dasbor") return;
+    if (earliestTransactionDate !== undefined) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    const params = new URLSearchParams({ page: "1", limit: "1", sort: "date", dir: "asc", _t: String(Date.now()) });
+    fetch(`/api/transactions?${params.toString()}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (response.status === 401) {
+          await redirectToLogin();
+          return;
+        }
+        const payload = response.ok
+          ? ((await response.json().catch(() => null)) as { data?: TransactionRow[] } | null)
+          : null;
+        if (cancelled) return;
+        setEarliestTransactionDate(payload?.data?.[0]?.date ?? null);
+      })
+      .catch((error) => {
+        if (!cancelled && (error as Error)?.name !== "AbortError") setEarliestTransactionDate(null);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [activeNav, earliestTransactionDate]);
+
+  // Kartu "Pendapatan Bulanan": SATU request /api/dashboard per bulan yang
+  // relevan (bukan per tanggal, bukan /api/transactions yang kena limit
+  // pagination — /api/dashboard menghitung total dari query Mongo TANPA
+  // limit, sama persis dengan formula KPI, sehingga nilainya PASTI cocok
+  // dengan KPI saat Dashboard difilter ke bulan yang sama). Bulan sebelum
+  // earliestTransactionDate & sesudah bulan berjalan dilewati (tanpa fetch)
+  // dan langsung ditandai "unavailable"/"future". Hasil 12 bulan di-cache
+  // per tahun (annualRevenueCacheRef) — pindah ke tahun yang sudah pernah
+  // dimuat tidak melakukan fetch ulang. Tidak ada polling/interval.
+  useEffect(() => {
+    if (activeNav !== "Dasbor") return;
+    if (earliestTransactionDate === undefined) return;
+
+    const cached = annualRevenueCacheRef.current.get(annualRevenueYear);
+    if (cached) {
+      setAnnualRevenueData(cached);
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setAnnualRevenueLoading(true);
+
+    const earliestMonth = earliestTransactionDate ? earliestTransactionDate.slice(0, 7) : null;
+    const earliestDay = earliestTransactionDate ? earliestTransactionDate.slice(8, 10) : null;
+
+    async function run() {
+      const points: MonthlyRevenuePoint[] = [];
+      for (let index = 0; index < 12; index++) {
+        const monthValue = `${annualRevenueYear}-${String(index + 1).padStart(2, "0")}`;
+        const label = MONTH_SHORT_LABELS[index];
+        const fullLabel = `${MONTH_FULL_LABELS[index]} ${annualRevenueYear}`;
+
+        if (monthValue > currentMonth) {
+          points.push({ monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "future" });
+          continue;
+        }
+        if (earliestMonth && monthValue < earliestMonth) {
+          points.push({ monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "unavailable" });
+          continue;
+        }
+
+        const range = monthRangeFromValue(monthValue);
+        const fetchRange = monthValue === currentMonth ? { startDate: range.startDate, endDate: today } : range;
+        const params = new URLSearchParams({
+          start_date: fetchRange.startDate,
+          end_date: fetchRange.endDate,
+          _t: String(Date.now()),
+        });
+
+        try {
+          const response = await fetch(`/api/dashboard?${params.toString()}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (response.status === 401) {
+            await redirectToLogin();
+            return;
+          }
+          const payload = response.ok
+            ? ((await response.json().catch(() => null)) as {
+                metrics?: { revenueMonth?: string; totalTransactions?: number };
+              } | null)
+            : null;
+          if (cancelled) return;
+
+          let status: MonthlyRevenueStatus = "complete";
+          if (monthValue === currentMonth) status = "running";
+          else if (earliestMonth === monthValue && earliestDay && earliestDay !== "01") status = "partial";
+
+          points.push({
+            monthIndex: index,
+            label,
+            fullLabel,
+            amount: parseRupiahToNumber(payload?.metrics?.revenueMonth),
+            transactionCount: payload?.metrics?.totalTransactions ?? 0,
+            status,
+          });
+        } catch (error) {
+          if ((error as Error)?.name === "AbortError") return;
+          points.push({ monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "unavailable" });
+        }
+      }
+      if (cancelled) return;
+      annualRevenueCacheRef.current.set(annualRevenueYear, points);
+      setAnnualRevenueData(points);
+    }
+
+    run()
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setAnnualRevenueLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [activeNav, annualRevenueYear, currentMonth, today, earliestTransactionDate]);
 
   useEffect(() => {
     if (activeNav !== "Webhook") return;
@@ -1321,20 +1563,29 @@ export default function DashboardPage() {
   const canSyncOlsera = Boolean(sessionUser?.allowedModules.includes("olsera"));
   const visibleNavItems = sessionUser
     ? isSupervisor
-      ? navItems
-      : navItems.filter((item) => sessionUser.allowedModules.includes(item.module))
+      ? navItems.filter((item) => item.label !== "Transaksi")
+      : navItems.filter((item) => item.label !== "Transaksi" && sessionUser.allowedModules.includes(item.module))
     : [];
+  // "Transaksi" sengaja disembunyikan dari sidebar (lihat visibleNavItems di
+  // atas) tapi tetap harus dapat diakses lewat tombol "Lihat Semua" pada
+  // Dashboard. Permission-nya dicek terpisah dari visibleNavItems supaya
+  // menyembunyikan menu tidak ikut menghapusnya dari registry izin —
+  // Supervisor selalu boleh, user biasa hanya bila modul "transaksi" dimiliki.
   const activeNavAllowed =
     activeNav === "Pengguna"
       ? isSupervisor
-      : Boolean(sessionUser) &&
-        visibleNavItems.some(
-          (item) =>
-            item.label === activeNav ||
-            ("subItems" in item && item.subItems?.some((sub) => sub.nav === activeNav)),
-        );
+      : activeNav === "Transaksi"
+        ? isSupervisor || Boolean(sessionUser?.allowedModules.includes("transaksi"))
+        : Boolean(sessionUser) &&
+          visibleNavItems.some(
+            (item) =>
+              item.label === activeNav ||
+              ("subItems" in item && item.subItems?.some((sub) => sub.nav === activeNav)),
+          );
 
   const metrics = dashboard?.metrics;
+  const recentRows = transactionRows.slice(0, 12);
+  const pendingCount = transactionRows.filter((row) => row.status === "Pending").length;
   const dateRangeInvalid = isInvalidDateRange(startDate, endDate);
   // Pagination & filtering kini dilakukan di server; transactionRows hanya berisi halaman aktif.
   const pagedRows = transactionRows;
@@ -1349,13 +1600,104 @@ export default function DashboardPage() {
       ].map((option) => [option.value, option] as const),
     ).values(),
   );
-  const serviceRows = dashboard?.topServices ?? [];
   const paymentRows = dashboard?.paymentBreakdown ?? [];
+  // Donut "Status Booking": reuse paymentBreakdown (Reservation/AYO Order/
+  // Pending/Cancelled) yang sudah ada, tanpa fetch/endpoint baru.
+  // "Pending" DIGABUNG ke Reservation: statusLabel() di file ini sendiri
+  // (baris lain) sudah memetakan status "Pending" → "Belum Bayar" — identik
+  // dengan makna Reservation ("Pemesanan belum dibayar"), jadi audit ini
+  // memenuhi syarat penggabungan. Reservation% dan Pending% berasal dari
+  // denominator paymentBreakdown yang sama (lihat app/api/dashboard/route.ts);
+  // dijumlah lalu direnormalisasi ke 3 kategori akhir, dikonversi ke jumlah
+  // eksak via largest-remainder terhadap metrics.totalTransactions. Catatan:
+  // booking yang sekaligus reservation-source & Pending-status berpotensi
+  // terhitung sekali secara agregat (bukan double count per baris) karena kita
+  // menjumlah dua persentase yang sudah eksis, bukan menghitung ulang baris
+  // mentah — ini pendekatan terbaik tanpa fetch tambahan (lihat laporan akhir).
+  const totalBookings = metrics?.totalTransactions ?? 0;
+  const bookingStatusShares = {
+    reservation:
+      (paymentRows.find((row) => row.name === "Reservation")?.value ?? 0) +
+      (paymentRows.find((row) => row.name === "Pending")?.value ?? 0),
+    ayoOrder: paymentRows.find((row) => row.name === "AYO Order")?.value ?? 0,
+    cancelled: paymentRows.find((row) => row.name === "Cancelled")?.value ?? 0,
+  };
+  const [reservationCount, ayoOrderCount, cancelledCount] = allocateIntegerCounts(
+    [bookingStatusShares.reservation, bookingStatusShares.ayoOrder, bookingStatusShares.cancelled],
+    totalBookings,
+  );
+  const bookingStatusItems: BookingStatusItem[] = [
+    { key: "reservation", label: "Reservation", description: "Pemesanan belum dibayar", value: reservationCount, color: "#fda4af" },
+    { key: "ayo-order", label: "AYO Order", description: "Pesanan yang sudah dibayar", value: ayoOrderCount, color: "#e11d48" },
+    { key: "cancelled", label: "Cancelled", description: "Pesanan yang dibatalkan", value: cancelledCount, color: "#7f1d1d" },
+  ];
   const eventRows = dashboard?.syncEvents ?? [];
   const courtOptions = dashboard?.branchOptions ?? [];
   const latestEvent = eventRows[0];
   const syncStatusLabel = latestEvent ? (latestEvent.tone.includes("teal") ? "OK" : "Gagal") : "-";
   const lastCheckpoint = latestEvent ? formatEventTime(latestEvent.time) : "-";
+
+  // Kartu "Performa Lapangan": reuse dashboard.topServices existing (sudah
+  // mengikuti filter Dashboard aktif, sudah revenue-eligible & tanpa
+  // cancelled — lihat app/api/dashboard/route.ts). Dinormalisasi ke 6
+  // lapangan Ayosera tetap (termasuk yang Rp0/0 pesanan) hanya untuk
+  // presentasi — field_name asli di database/API tidak diubah.
+  const courtRevenueByName = new Map<string, { revenueValue: number; count: number }>();
+  for (const service of dashboard?.topServices ?? []) {
+    const canonical = normalizeCourtName(service.name);
+    if (!canonical) continue;
+    const entry = courtRevenueByName.get(canonical) ?? { revenueValue: 0, count: 0 };
+    entry.revenueValue += service.revenueValue ?? 0;
+    entry.count += service.count ?? 0;
+    courtRevenueByName.set(canonical, entry);
+  }
+  const courtMaxRevenue = Math.max(1, ...COURT_DISPLAY_ORDER.map((name) => courtRevenueByName.get(name)?.revenueValue ?? 0));
+  const courtPerformance = COURT_DISPLAY_ORDER.map((name) => {
+    const entry = courtRevenueByName.get(name) ?? { revenueValue: 0, count: 0 };
+    return {
+      key: name,
+      label: name,
+      revenueValue: entry.revenueValue,
+      revenue: formatRupiah(entry.revenueValue),
+      count: entry.count,
+      progress: entry.revenueValue > 0 ? Math.max(4, Math.round((entry.revenueValue / courtMaxRevenue) * 100)) : 0,
+    };
+  }).sort((a, b) => b.revenueValue - a.revenueValue);
+  const courtTotalRevenue = courtPerformance.reduce((sum, item) => sum + item.revenueValue, 0);
+  const courtTotalOrders = courtPerformance.reduce((sum, item) => sum + item.count, 0);
+  const courtTopCourt = courtPerformance[0];
+  const courtTopLabel = courtTopCourt && courtTopCourt.revenueValue > 0 ? courtTopCourt.label : "-";
+  const courtTopContributionPercent =
+    courtTotalRevenue > 0 && courtTopCourt ? Math.round((courtTopCourt.revenueValue / courtTotalRevenue) * 100) : 0;
+
+  // Kartu "Pendapatan Bulanan": ringkasan tertinggi/terendah/total/rata-rata
+  // dari data yang sudah diagregasi di effect terkait (annualRevenueData) —
+  // tidak ada perhitungan/fetch tambahan di sini. Bulan "future"/"unavailable"
+  // (amount null) diabaikan; bulan "running"/"partial" tetap dihitung tapi
+  // labelnya tetap tampil di kartu ringkasan (lihat statusSuffix di
+  // annual-revenue-chart.tsx) supaya tidak dibandingkan tanpa keterangan.
+  const annualRevenueValidPoints = annualRevenueData.filter(
+    (point): point is MonthlyRevenuePoint & { amount: number } => point.amount !== null,
+  );
+  const annualRevenueHighestPoint = annualRevenueValidPoints.length
+    ? annualRevenueValidPoints.reduce((max, point) => (point.amount > max.amount ? point : max))
+    : null;
+  const annualRevenueLowestPoint = annualRevenueValidPoints.length
+    ? annualRevenueValidPoints.reduce((min, point) => (point.amount < min.amount ? point : min))
+    : null;
+  const annualRevenueHighest = annualRevenueHighestPoint
+    ? { label: annualRevenueHighestPoint.fullLabel, amount: annualRevenueHighestPoint.amount, status: annualRevenueHighestPoint.status }
+    : null;
+  const annualRevenueLowest = annualRevenueLowestPoint
+    ? { label: annualRevenueLowestPoint.fullLabel, amount: annualRevenueLowestPoint.amount, status: annualRevenueLowestPoint.status }
+    : null;
+  const annualRevenueTotal = annualRevenueValidPoints.reduce((sum, point) => sum + point.amount, 0);
+  const annualRevenueAverage =
+    annualRevenueValidPoints.length > 0 ? Math.round(annualRevenueTotal / annualRevenueValidPoints.length) : 0;
+  const annualRevenueYearOptions = Array.from(
+    { length: 4 },
+    (_, index) => String(Number(currentYear) - 3 + index),
+  );
 
   // Panel filter tanggal dark (halaman Transaksi) — handler & preset sama
   // persis dengan versi lama, hanya gaya visual yang berubah.
@@ -1437,12 +1779,12 @@ export default function DashboardPage() {
             ? "Monitoring Webhook AYO"
             : activeNav === "Pengguna"
               ? "Manajemen Pengguna"
-              : "Dasbor Transaksi Real-Time";
+              : "Dashboard AYO";
   const headerDescription =
     activeNav === "OlseraInventori"
       ? "Monitoring stok, mutasi, harga modal, dan nilai persediaan Olsera."
       : activeNav === "Dasbor"
-        ? "Monitoring transaksi, pendapatan, sinkronisasi, dan integrasi AYO."
+        ? "Pusat monitoring operasional dan transaksi AYO."
         : undefined;
 
   const sidebarItems = [
@@ -1592,6 +1934,8 @@ export default function DashboardPage() {
           lastCheckpoint={lastCheckpoint}
           actions={ayoSyncControl}
           onLogout={() => void redirectToLogin()}
+          mode={mode}
+          onToggleMode={() => setMode((current) => (current === "dark" ? "light" : "dark"))}
         />
       }
     >
@@ -1620,8 +1964,9 @@ export default function DashboardPage() {
           )}
 
           {activeNavAllowed && activeNav === "Dasbor" && (
+            <div>
             <DashboardOverview
-              presets={datePresetButtons}
+              presets={dashboardPresetButtons}
               activePreset={datePreset}
               onPreset={(value) => handleRangePreset(value as DatePreset)}
               filterMonth={filterMonth}
@@ -1639,20 +1984,45 @@ export default function DashboardPage() {
                   icon: Activity,
                 },
                 {
-                  title: "Pendapatan Hari Ini",
-                  value: metrics?.revenueToday ?? "Rp 0",
-                  detail: `Hari ini (${formatDisplayDate(today)})`,
+                  title: getRevenueCardTitle(datePreset, startDate, endDate, filterMonth),
+                  value: metrics?.revenueMonth ?? "Rp 0",
+                  detail: getRevenueFilterDetail(datePreset, startDate, endDate),
                   icon: BadgeCheck,
                 },
                 {
-                  title: "Pendapatan (Filter)",
-                  value: metrics?.revenueMonth ?? "Rp 0",
-                  detail: getRevenueFilterDetail(datePreset, startDate, endDate),
-                  icon: CalendarDays,
+                  title: "Perlu Dicek",
+                  value: String(pendingCount),
+                  detail: "Booking Belum Bayar pada filter aktif",
+                  icon: AlertTriangle,
                 },
               ]}
-              paymentRows={paymentRows}
-              serviceRows={serviceRows}
+              recentRows={recentRows.map((transaction) => ({
+                date: transaction.date ?? "-",
+                time: transaction.endTime ? `${transaction.time}–${transaction.endTime}` : transaction.time || "-",
+                id: transaction.id,
+                service: transaction.service,
+                customer: transaction.customer,
+                amount: transaction.amount,
+                statusVariant: statusVariant(transaction.status),
+                statusLabel: statusLabel(transaction.status),
+              }))}
+              recentLoading={false}
+              onViewAll={() => setActiveNav("Transaksi")}
+              bookingStatusItems={bookingStatusItems}
+              totalBookings={totalBookings}
+              annualRevenueData={annualRevenueData}
+              annualRevenueYear={annualRevenueYear}
+              onAnnualRevenueYearChange={setAnnualRevenueYear}
+              annualRevenueYearOptions={annualRevenueYearOptions}
+              annualRevenueLoading={annualRevenueLoading}
+              annualRevenueHighest={annualRevenueHighest}
+              annualRevenueLowest={annualRevenueLowest}
+              annualRevenueTotal={annualRevenueTotal}
+              annualRevenueAverage={annualRevenueAverage}
+              courtPerformance={courtPerformance}
+              courtTopLabel={courtTopLabel}
+              courtTotalOrders={courtTotalOrders}
+              courtTopContributionPercent={courtTopContributionPercent}
               syncStatusLabel={syncStatusLabel}
               latestEventText={
                 latestEvent ? `${latestEvent.label} · ${formatEventTime(latestEvent.time)}` : "Belum ada sinkronisasi"
@@ -1664,6 +2034,7 @@ export default function DashboardPage() {
                 ok: event.tone.includes("teal"),
               }))}
             />
+            </div>
           )}
 
           {activeNavAllowed && activeNav === "Transaksi" && (
@@ -1902,23 +2273,23 @@ export default function DashboardPage() {
           )}
 
           {activeNavAllowed && activeNav === "Olsera" && (
-          <div className="rd-legacy min-h-[calc(100vh-8rem)] bg-gradient-to-b from-slate-50 via-slate-50 to-rose-50/40 p-4 sm:p-5">
+          <div className="min-h-[calc(100vh-8rem)]">
           {/* Kartu sinkronisasi Olsera untuk semua user bermodul "olsera". */}
           {canSyncOlsera && (
-          <section className="mb-6">
-            <Card className={OLSERA_CARD}>
-              <CardHeader className={`${OLSERA_CARD_HEADER} flex flex-row items-start justify-between gap-3 space-y-0`}>
+          <section className="rd-enter mb-4">
+            <div className="rd-card relative rounded-2xl p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex items-start gap-3.5">
-                  <div className={`${OLSERA_ICON_CHIP} bg-rose-50 text-rose-600 ring-rose-100`}>
+                  <div className="rd-stat-icon rounded-xl p-2.5">
                     <RefreshCw className="h-5 w-5" />
                   </div>
                   <div>
-                    <CardTitle className={OLSERA_TITLE}>Sync Olsera</CardTitle>
-                    <CardDescription className={OLSERA_DESC}>
+                    <p className="text-[15px] font-semibold tracking-tight text-slate-50">Sync Olsera</p>
+                    <p className="mt-1 text-[13px] leading-relaxed text-slate-400">
                       {olseraSyncStatus?.lastFullySyncedDate ? (
                         <>
                           Data tersinkron{" "}
-                          <span className="font-medium text-slate-700">
+                          <span className="font-medium text-slate-200">
                             {formatDisplayDate(olseraSyncStatus.firstSyncedDate ?? olseraSyncStatus.lastFullySyncedDate)}
                             {" - "}
                             {formatDisplayDate(olseraSyncStatus.lastFullySyncedDate)}
@@ -1930,358 +2301,245 @@ export default function DashboardPage() {
                       ) : (
                         "Belum pernah sync — isi tanggal mulai dan selesai untuk sync pertama kali."
                       )}
-                    </CardDescription>
+                    </p>
                   </div>
                 </div>
                 {olseraSyncing ? (
-                  <Badge variant="info" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-sky-200/70">
+                  <span className="rd-chip">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     Running
-                  </Badge>
+                  </span>
                 ) : olseraSyncStatus?.lastSync ? (
                   olseraSyncStatus.lastSync.status === "success" ? (
-                    <Badge variant="success" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-emerald-200/70">
+                    <span className="rd-chip rd-chip-ok">
                       <CheckCircle2 className="h-3 w-3" />
                       Success
-                    </Badge>
+                    </span>
                   ) : olseraSyncStatus.lastSync.status === "partial" ? (
-                    <Badge variant="warning" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-amber-200/70">
+                    <span className="rd-chip border-amber-400/40 bg-amber-400/10 text-amber-300">
                       <AlertTriangle className="h-3 w-3" />
                       Partial
-                    </Badge>
+                    </span>
                   ) : (
-                    <Badge variant="danger" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-red-200/70">
+                    <span className="rd-chip rd-chip-danger">
                       <AlertTriangle className="h-3 w-3" />
                       Failed
-                    </Badge>
+                    </span>
                   )
                 ) : (
-                  <Badge variant="secondary" className="rounded-full px-2.5 ring-1 ring-inset ring-slate-200/70">
-                    Belum sync
-                  </Badge>
+                  <span className="rd-chip">Belum sync</span>
                 )}
-              </CardHeader>
-              <CardContent className={OLSERA_CARD_CONTENT}>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    type="button"
-                    className={OLSERA_PRIMARY_BTN}
-                    onClick={handleOlseraSync}
-                    disabled={olseraSyncing}
-                  >
-                    {olseraSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    {olseraSyncing ? "Menyinkronkan Olsera..." : "Sync Olsera"}
-                  </Button>
-                  <span className="text-xs text-slate-500">
-                    Memeriksa dan memperbarui data bulan berjalan secara otomatis.
-                  </span>
-                </div>
-                {olseraSyncMessage && (
-                  <p className="mt-3 text-sm text-slate-600" aria-live="polite">
-                    {olseraSyncMessage}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  className="rounded-lg bg-rose-600 font-medium text-white shadow-sm transition-colors hover:bg-rose-500 active:bg-rose-700"
+                  onClick={handleOlseraSync}
+                  disabled={olseraSyncing}
+                >
+                  {olseraSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  {olseraSyncing ? "Menyinkronkan Olsera..." : "Sync Olsera"}
+                </Button>
+                <span className="text-xs text-slate-500">
+                  Memeriksa dan memperbarui data bulan berjalan secara otomatis.
+                </span>
+              </div>
+              {olseraSyncMessage && (
+                <p className="mt-3 text-sm text-slate-300" aria-live="polite">
+                  {olseraSyncMessage}
+                </p>
+              )}
+            </div>
           </section>
           )}
 
-          <section className="mb-6">
-            <Card className={OLSERA_CARD}>
-              <CardHeader className={`${OLSERA_CARD_HEADER} flex flex-row items-start gap-3.5 space-y-0`}>
-                <div className={`${OLSERA_ICON_CHIP} bg-slate-100 text-slate-600 ring-slate-200/80`}>
+          <section className="rd-enter mb-4" style={{ animationDelay: "90ms" }}>
+            <div className="rd-card relative rounded-2xl p-5">
+              <div className="flex items-start gap-3.5">
+                <div className="rd-stat-icon rounded-xl p-2.5">
                   <FileSpreadsheet className="h-5 w-5" />
                 </div>
                 <div>
-                  <CardTitle className={OLSERA_TITLE}>Laporan Penjualan</CardTitle>
-                  <CardDescription className={OLSERA_DESC}>
+                  <p className="text-[15px] font-semibold tracking-tight text-slate-50">Laporan Penjualan</p>
+                  <p className="mt-1 text-[13px] leading-relaxed text-slate-400">
                     Pilih mode laporan, atur periodenya, lalu unduh export yang tersedia untuk mode tersebut.
-                  </CardDescription>
+                  </p>
                 </div>
-              </CardHeader>
-              <CardContent className={OLSERA_CARD_CONTENT}>
-                <div className="flex flex-wrap items-center gap-2.5">
-                  {/* Segmented control mode laporan — bulan & rentang tidak pernah aktif bersamaan. */}
-                  <div
-                    role="tablist"
-                    aria-label="Mode laporan Olsera"
-                    className="inline-flex h-10 items-center rounded-xl bg-slate-100/90 p-1 ring-1 ring-inset ring-slate-200/70"
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-2.5">
+                {/* Segmented control mode laporan — bulan & rentang tidak pernah aktif bersamaan. */}
+                <div
+                  role="tablist"
+                  aria-label="Mode laporan Olsera"
+                  className="rd-capsule-group inline-flex items-center rounded-full p-1"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={olseraReportMode === "range"}
+                    onClick={() => handleOlseraReportModeChange("range")}
+                    className={`rd-capsule inline-flex items-center gap-1.5 ${
+                      olseraReportMode === "range" ? "rd-capsule-active" : ""
+                    }`}
                   >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={olseraReportMode === "range"}
-                      onClick={() => handleOlseraReportModeChange("range")}
-                      className={`${OLSERA_SEGMENT_BTN} ${
-                        olseraReportMode === "range"
-                          ? "bg-rose-600 font-semibold text-white shadow-sm"
-                          : "font-medium text-slate-500 hover:bg-white/70 hover:text-slate-700"
-                      }`}
-                    >
-                      <CalendarRange className="h-4 w-4" />
-                      Rentang Tanggal
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={olseraReportMode === "monthly"}
-                      onClick={() => handleOlseraReportModeChange("monthly")}
-                      className={`${OLSERA_SEGMENT_BTN} ${
-                        olseraReportMode === "monthly"
-                          ? "bg-rose-600 font-semibold text-white shadow-sm"
-                          : "font-medium text-slate-500 hover:bg-white/70 hover:text-slate-700"
-                      }`}
-                    >
-                      <CalendarDays className="h-4 w-4" />
-                      Bulanan
-                    </button>
-                  </div>
+                    <CalendarRange className="h-4 w-4" />
+                    Rentang Tanggal
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={olseraReportMode === "monthly"}
+                    onClick={() => handleOlseraReportModeChange("monthly")}
+                    className={`rd-capsule inline-flex items-center gap-1.5 ${
+                      olseraReportMode === "monthly" ? "rd-capsule-active" : ""
+                    }`}
+                  >
+                    <CalendarDays className="h-4 w-4" />
+                    Bulanan
+                  </button>
+                </div>
 
-                  {olseraReportMode === "range" ? (
-                    <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className={`rounded-lg shadow-sm transition-colors ${
-                          olseraStart === olseraYesterday && olseraEnd === olseraYesterday
-                            ? "border-rose-200 bg-rose-50 font-medium text-rose-700 hover:bg-rose-100"
-                            : "border-slate-200 bg-white text-slate-600 hover:bg-rose-50 hover:text-rose-700"
-                        }`}
-                        onClick={handleOlseraYesterday}
-                      >
-                        Kemarin
-                      </Button>
-                      <div className={OLSERA_FIELD}>
-                        <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
-                        <Input
-                          type="date"
-                          aria-label="Tanggal mulai filter Olsera"
-                          value={olseraRangeStart}
-                          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-                          onClick={(event) => event.currentTarget.showPicker?.()}
-                          onChange={(event) => handleOlseraRangeChange(event.target.value, olseraRangeEnd)}
-                        />
-                        <span className="text-xs text-slate-400">s/d</span>
-                        <Input
-                          type="date"
-                          aria-label="Tanggal selesai filter Olsera"
-                          value={olseraRangeEnd}
-                          className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-                          onClick={(event) => event.currentTarget.showPicker?.()}
-                          onChange={(event) => handleOlseraRangeChange(olseraRangeStart, event.target.value)}
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <div className={OLSERA_FIELD}>
-                      <CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />
+                {olseraReportMode === "range" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleOlseraYesterday}
+                      className={`rd-capsule inline-flex items-center gap-1.5 ${
+                        olseraStart === olseraYesterday && olseraEnd === olseraYesterday ? "rd-capsule-active" : ""
+                      }`}
+                    >
+                      Kemarin
+                    </button>
+                    <div className="rd-field flex h-10 items-center gap-2 rounded-full px-3">
+                      <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
                       <Input
-                        type="month"
-                        aria-label="Filter bulan tertentu (Olsera)"
-                        value={olseraFilterMonth}
-                        className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                        type="date"
+                        aria-label="Tanggal mulai filter Olsera"
+                        value={olseraRangeStart}
+                        className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
                         onClick={(event) => event.currentTarget.showPicker?.()}
-                        onChange={(event) => handleOlseraMonthFilter(event.target.value)}
+                        onChange={(event) => handleOlseraRangeChange(event.target.value, olseraRangeEnd)}
+                      />
+                      <span className="text-xs text-slate-500">s/d</span>
+                      <Input
+                        type="date"
+                        aria-label="Tanggal selesai filter Olsera"
+                        value={olseraRangeEnd}
+                        className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
+                        onClick={(event) => event.currentTarget.showPicker?.()}
+                        onChange={(event) => handleOlseraRangeChange(olseraRangeStart, event.target.value)}
                       />
                     </div>
-                  )}
-
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-                    onClick={handleOlseraResetFilters}
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                    Reset
-                  </Button>
-
-                  {/* Tombol Export tunggal + dropdown yang mengikuti mode aktif. */}
-                  <div ref={olseraExportMenuRef} className="relative ml-auto w-full sm:w-auto">
-                    <Button
-                      type="button"
-                      className={`${OLSERA_PRIMARY_BTN} w-full sm:w-auto`}
-                      aria-haspopup="menu"
-                      aria-expanded={olseraExportMenuOpen}
-                      disabled={olseraAnyExporting || isInvalidDateRange(olseraStart, olseraEnd)}
-                      onClick={() => setOlseraExportMenuOpen((value) => !value)}
-                    >
-                      {olseraAnyExporting ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ArrowDownToLine className="h-4 w-4" />
-                      )}
-                      {olseraAnyExporting ? "Mengekspor..." : "Export"}
-                      <ChevronDown
-                        className={`h-4 w-4 transition-transform ${olseraExportMenuOpen ? "rotate-180" : ""}`}
-                      />
-                    </Button>
-                    {olseraExportMenuOpen && (
-                      <div
-                        role="menu"
-                        aria-label="Pilihan export Olsera"
-                        className="absolute right-0 z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl shadow-slate-900/10"
-                      >
-                        {/* Ketiga export selalu tersedia; Omset Kategori memakai
-                            bulan filter (mode bulanan) atau bulan startDate (mode rentang). */}
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className={OLSERA_MENU_ITEM}
-                          onClick={() => {
-                            setOlseraExportMenuOpen(false);
-                            handleOlseraItemExport();
-                          }}
-                        >
-                          <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
-                            <FileSpreadsheet className="h-4 w-4" />
-                          </span>
-                          <span>
-                            <span className="block font-medium">Export Rincian Penjualan</span>
-                            <span className="block text-xs text-slate-500">
-                              Detail transaksi pada rentang tanggal aktif
-                            </span>
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className={OLSERA_MENU_ITEM}
-                          onClick={() => {
-                            setOlseraExportMenuOpen(false);
-                            handleOlseraCategoryExport();
-                          }}
-                        >
-                          <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
-                            <FileSpreadsheet className="h-4 w-4" />
-                          </span>
-                          <span>
-                            <span className="block font-medium">Export Kategori Penjualan</span>
-                            <span className="block text-xs text-slate-500">
-                              Rincian item per kategori pada rentang tanggal aktif
-                            </span>
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className={OLSERA_MENU_ITEM}
-                          onClick={() => {
-                            setOlseraExportMenuOpen(false);
-                            handleOlseraOmsetKategoriExport();
-                          }}
-                        >
-                          <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
-                            <FileSpreadsheet className="h-4 w-4" />
-                          </span>
-                          <span>
-                            <span className="block font-medium">Export Omset Kategori</span>
-                            <span className="block text-xs text-slate-500">
-                              Rekap omset kategori untuk bulan yang dipilih
-                            </span>
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          disabled={olseraReportMode !== "monthly"}
-                          className={`${OLSERA_MENU_ITEM} ${
-                            olseraReportMode !== "monthly" ? "cursor-not-allowed opacity-50 hover:bg-transparent" : ""
-                          }`}
-                          onClick={() => {
-                            setOlseraExportMenuOpen(false);
-                            handleOlseraLabersExport();
-                          }}
-                        >
-                          <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
-                            <FileSpreadsheet className="h-4 w-4" />
-                          </span>
-                          <span>
-                            <span className="block font-medium">Export Pembagian Hasil LABERS</span>
-                            <span className="block text-xs text-slate-500">
-                              {olseraReportMode === "monthly"
-                                ? `Rekap penjualan LABERS & pembagian Padel/Labers bulan ${formatMonthLabel(olseraFilterMonth)}`
-                                : "Pilih mode Bulanan"}
-                            </span>
-                          </span>
-                        </button>
-                      </div>
-                    )}
+                  </>
+                ) : (
+                  <div className="rd-field flex h-10 items-center gap-2 rounded-full px-3">
+                    <CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />
+                    <Input
+                      type="month"
+                      aria-label="Filter bulan tertentu (Olsera)"
+                      value={olseraFilterMonth}
+                      className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
+                      onClick={(event) => event.currentTarget.showPicker?.()}
+                      onChange={(event) => handleOlseraMonthFilter(event.target.value)}
+                    />
                   </div>
-                </div>
+                )}
 
-                {olseraReportMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
-                  <p className="mt-3 text-sm text-red-600">Tanggal selesai tidak boleh sebelum tanggal mulai.</p>
-                )}
-                {olseraExportMessages.length > 0 && (
-                  <p className="mt-3 text-sm text-slate-600">{olseraExportMessages.join(" · ")}</p>
-                )}
-                {/* Export Excel (Omset+Laba) disembunyikan sementara — jangan hapus, tinggal ganti false -> true untuk memunculkan lagi. */}
-                {false && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleOlseraExport}
-                    disabled={olseraExporting || isInvalidDateRange(olseraStart, olseraEnd)}
-                  >
-                    <ArrowDownToLine className="h-4 w-4" />
-                    {olseraExporting ? "Mengekspor..." : "Export Excel"}
-                  </Button>
-                )}
-                {false && olseraExportMessage && <span className="text-sm text-slate-600">{olseraExportMessage}</span>}
-              </CardContent>
-            </Card>
+                <button
+                  type="button"
+                  onClick={handleOlseraResetFilters}
+                  className="rd-capsule inline-flex items-center gap-1.5"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reset
+                </button>
+
+                {/* Tombol Export tunggal + dropdown portal yang mengikuti mode aktif. */}
+                <div className="ml-auto w-full sm:w-auto">
+                  <OlseraExportMenu
+                    open={olseraExportMenuOpen}
+                    onOpenChange={setOlseraExportMenuOpen}
+                    exporting={olseraAnyExporting}
+                    disabled={olseraAnyExporting || isInvalidDateRange(olseraStart, olseraEnd)}
+                    monthlyMode={olseraReportMode === "monthly"}
+                    monthLabel={formatMonthLabel(olseraFilterMonth)}
+                    onExportItems={handleOlseraItemExport}
+                    onExportCategories={handleOlseraCategoryExport}
+                    onExportOmsetKategori={handleOlseraOmsetKategoriExport}
+                    onExportLabers={handleOlseraLabersExport}
+                  />
+                </div>
+              </div>
+
+              {olseraReportMode === "range" && isInvalidDateRange(olseraRangeStart, olseraRangeEnd) && (
+                <p className="mt-3 text-sm text-rose-400">Tanggal selesai tidak boleh sebelum tanggal mulai.</p>
+              )}
+              {olseraExportMessages.length > 0 && (
+                <p className="mt-3 text-sm text-slate-300">{olseraExportMessages.join(" · ")}</p>
+              )}
+              {/* Export Excel (Omset+Laba) disembunyikan sementara — jangan hapus, tinggal ganti false -> true untuk memunculkan lagi. */}
+              {false && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleOlseraExport}
+                  disabled={olseraExporting || isInvalidDateRange(olseraStart, olseraEnd)}
+                >
+                  <ArrowDownToLine className="h-4 w-4" />
+                  {olseraExporting ? "Mengekspor..." : "Export Excel"}
+                </Button>
+              )}
+              {false && olseraExportMessage && <span className="text-sm text-slate-400">{olseraExportMessage}</span>}
+            </div>
           </section>
 
-          <section>
-            <Card className={OLSERA_CARD}>
-              <CardHeader
-                className={`${OLSERA_CARD_HEADER} flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between`}
-              >
+          <section className="rd-enter" style={{ animationDelay: "180ms" }}>
+            <div className="rd-card relative rounded-2xl p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex items-start gap-3.5">
-                  <div className={`${OLSERA_ICON_CHIP} bg-rose-50 text-rose-600 ring-rose-100`}>
+                  <div className="rd-stat-icon rounded-xl p-2.5">
                     <Store className="h-5 w-5" />
                   </div>
                   <div>
-                    <CardTitle className={OLSERA_TITLE}>Penjualan per Kategori</CardTitle>
-                    <CardDescription className={OLSERA_DESC}>
+                    <p className="text-[15px] font-semibold tracking-tight text-slate-50">Penjualan per Kategori</p>
+                    <p className="mt-1 text-[13px] leading-relaxed text-slate-400">
                       Data hasil sync dari MongoDB — {getOlseraFilterDetail()}
-                    </CardDescription>
+                    </p>
                   </div>
                 </div>
                 {olseraRows.length > 0 && !olseraLoading && !olseraError && (
-                  <div className="flex shrink-0 items-center gap-5 rounded-xl border border-slate-200/70 bg-slate-50/80 px-4 py-2.5">
+                  <div className="flex shrink-0 items-center gap-5 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5">
                     <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Kategori</p>
-                      <p className="mt-0.5 text-sm font-semibold tabular-nums tracking-tight text-slate-900">
+                      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Kategori</p>
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums tracking-tight text-slate-100">
                         {olseraRows.length}
                       </p>
                     </div>
-                    <div className="h-8 w-px bg-slate-200" />
+                    <div className="h-8 w-px bg-white/10" />
                     <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Total Penjualan</p>
-                      <p className="mt-0.5 text-sm font-semibold tabular-nums tracking-tight text-rose-700">
+                      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Total Penjualan</p>
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums tracking-tight text-slate-50">
                         {formatRupiah(olseraRows.reduce((sum, row) => sum + row.totalPenjualan, 0))}
                       </p>
                     </div>
                   </div>
                 )}
-              </CardHeader>
-              <CardContent className={OLSERA_CARD_CONTENT}>
+              </div>
+              <div className="mt-5">
                 {(olseraSyncStatus?.unresolvedItemCount ?? 0) > 0 && (
-                  <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-200/80 border-l-4 border-l-amber-400 bg-amber-50/80 px-3.5 py-3">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                    <p className="text-sm text-amber-900">
+                  <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-400/25 border-l-4 border-l-amber-400/70 bg-amber-400/10 px-3.5 py-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                    <p className="text-sm text-amber-200">
                       Ada {olseraSyncStatus!.unresolvedItemCount} item yang belum memiliki mapping kategori.
                     </p>
                   </div>
                 )}
                 {olseraSyncStatus?.lastFullySyncedDate && olseraEnd > olseraSyncStatus.lastFullySyncedDate && (
-                  <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-200/80 border-l-4 border-l-amber-400 bg-amber-50/80 px-3.5 py-3">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-400/25 border-l-4 border-l-amber-400/70 bg-amber-400/10 px-3.5 py-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
                     <div>
-                      <p className="text-sm font-semibold text-amber-900">Data belum lengkap</p>
-                      <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
+                      <p className="text-sm font-semibold text-amber-200">Data belum lengkap</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-amber-200/80">
                         Data baru tersinkron sampai {formatDisplayDate(olseraSyncStatus.lastFullySyncedDate)}
                         {olseraSyncStatus.lastSync?.finishedAt &&
                           formatJakartaTime(olseraSyncStatus.lastSync.finishedAt) &&
@@ -2291,7 +2549,7 @@ export default function DashboardPage() {
                       {olseraSyncStatus.lastSync &&
                         olseraSyncStatus.lastSync.status !== "success" &&
                         olseraSyncStatus.lastSync.errorMessage && (
-                          <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
+                          <p className="mt-0.5 text-xs leading-relaxed text-amber-200/80">
                             {olseraSyncStatus.lastSync.errorMessage}
                           </p>
                         )}
@@ -2299,19 +2557,19 @@ export default function DashboardPage() {
                   </div>
                 )}
                 {olseraLoading ? (
-                  <div className="flex items-center gap-2 py-10 text-sm text-slate-500">
+                  <div className="flex items-center gap-2 py-10 text-sm text-slate-400">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Memuat data penjualan Olsera...
                   </div>
                 ) : olseraError ? (
-                  <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
                     {olseraError}
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-                    <table className="w-full min-w-[400px] text-sm">
-                      <thead className="bg-slate-50/90">
-                        <tr className="border-b border-slate-200/80 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <div className="overflow-x-auto rounded-xl border border-white/10">
+                    <table className="rd-table w-full min-w-[400px] text-sm">
+                      <thead>
+                        <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                           <th className="h-11 px-4">Kategori</th>
                           <th className="h-11 px-4 text-right">Qty</th>
                           <th className="h-11 px-4 text-right">Total Penjualan</th>
@@ -2320,15 +2578,12 @@ export default function DashboardPage() {
                       <tbody>
                         {olseraRows.length ? (
                           olseraRows.map((row) => (
-                            <tr
-                              key={row.kategori}
-                              className="border-b border-slate-100 transition-colors last:border-0 odd:bg-slate-50/50 hover:bg-rose-50/60"
-                            >
-                              <td className="px-4 py-3 font-medium text-slate-700">{row.kategori}</td>
-                              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-slate-500">
+                            <tr key={row.kategori}>
+                              <td className="px-4 py-3 font-medium text-slate-200">{row.kategori}</td>
+                              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-slate-400">
                                 {row.qty ?? "-"}
                               </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums tracking-tight text-slate-800">
+                              <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums tracking-tight text-slate-100">
                                 {formatRupiah(row.totalPenjualan)}
                               </td>
                             </tr>
@@ -2337,10 +2592,10 @@ export default function DashboardPage() {
                           <tr>
                             <td colSpan={3} className="px-4 py-12 text-center">
                               <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
-                                <span className="rounded-xl bg-slate-100 p-2.5 text-slate-400">
+                                <span className="rounded-xl bg-white/5 p-2.5 text-slate-500">
                                   <Search className="h-5 w-5" />
                                 </span>
-                                <p className="text-sm text-slate-500">
+                                <p className="text-sm text-slate-400">
                                   Tidak ada data penjualan pada periode ini. Jalankan sinkronisasi terlebih dahulu.
                                 </p>
                               </div>
@@ -2350,12 +2605,12 @@ export default function DashboardPage() {
                       </tbody>
                       {olseraRows.length > 0 && (
                         <tfoot>
-                          <tr className="border-t-2 border-rose-200/80 bg-rose-50/80">
-                            <td className="px-4 py-3.5 font-bold tracking-tight text-slate-900">Total</td>
-                            <td className="whitespace-nowrap px-4 py-3.5 text-right font-bold tabular-nums text-slate-900">
+                          <tr className="border-t-2 border-white/15 bg-white/[0.04]">
+                            <td className="px-4 py-3.5 font-bold tracking-tight text-slate-50">Total</td>
+                            <td className="whitespace-nowrap px-4 py-3.5 text-right font-bold tabular-nums text-slate-50">
                               {olseraRows.reduce((sum, row) => sum + (row.qty ?? 0), 0)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3.5 text-right font-bold tabular-nums tracking-tight text-rose-700">
+                            <td className="whitespace-nowrap px-4 py-3.5 text-right font-bold tabular-nums tracking-tight text-slate-50">
                               {formatRupiah(olseraRows.reduce((sum, row) => sum + row.totalPenjualan, 0))}
                             </td>
                           </tr>
@@ -2364,115 +2619,122 @@ export default function DashboardPage() {
                     </table>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </section>
 
           </div>
           )}
 
           {activeNavAllowed && activeNav === "OlseraInventori" && (
-            <div className="rd-legacy min-h-[calc(100vh-8rem)] bg-gradient-to-b from-slate-50 via-slate-50 to-rose-50/40 p-4 sm:p-5">
+            <div className="min-h-[calc(100vh-8rem)]">
               <OlseraInventoryPanel />
             </div>
           )}
 
           {activeNavAllowed && activeNav === "Webhook" && (
-          <div className="rd-legacy p-4 sm:p-5">
+          <div>
           <section className="grid gap-4 md:grid-cols-3">
             <MetricCard
               title="Status Route"
               value={webhookStatus === "active" ? "Aktif" : webhookStatus === "inactive" ? "Tidak Aktif" : "Memeriksa…"}
               detail="GET /api/webhooks/ayo"
               icon={Webhook}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+              valueClassName={
+                webhookStatus === "active"
+                  ? "text-emerald-300"
+                  : webhookStatus === "inactive"
+                    ? "text-rose-300"
+                    : "text-slate-300"
+              }
             />
             <MetricCard
               title="Total Webhook Diterima"
               value={String(webhookData?.total ?? 0)}
               detail="Sejak awal pencatatan"
               icon={DatabaseZap}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+              delay={90}
             />
             <MetricCard
               title="Webhook Terakhir"
               value={formatWebhookTime(webhookData?.lastReceivedAt)}
               detail="Waktu Asia/Jakarta"
               icon={Clock}
-              accent="bg-[rgb(var(--accent))] text-[rgb(var(--accent-foreground))]"
+              delay={180}
             />
           </section>
 
           <section className="mt-4">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <CardTitle>Log Webhook Terbaru</CardTitle>
-                    <CardDescription>20 payload terakhir yang diterima dari AYO</CardDescription>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => setWebhookRefresh((value) => value + 1)}
-                    disabled={webhookLoading}
-                    aria-label="Muat ulang log webhook"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${webhookLoading ? "animate-spin" : ""}`} />
-                  </Button>
+            <div className="rd-card rd-enter relative rounded-2xl p-5" style={{ animationDelay: "270ms" }}>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[15px] font-semibold tracking-tight text-slate-50">Log Webhook Terbaru</p>
+                  <p className="mt-1 text-[13px] leading-relaxed text-slate-400">
+                    20 payload terakhir yang diterima dari AYO
+                  </p>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] text-sm">
-                    <thead className="bg-white">
-                      <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
-                        <th className="h-10 px-2 font-medium">Waktu</th>
-                        <th className="h-10 px-2 font-medium">Status</th>
-                        <th className="h-10 px-2 font-medium">Item</th>
-                        <th className="h-10 px-2 font-medium">ID Terdeteksi</th>
-                        <th className="h-10 px-2 font-medium">Pesan</th>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0 border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white"
+                  onClick={() => setWebhookRefresh((value) => value + 1)}
+                  disabled={webhookLoading}
+                  aria-label="Muat ulang log webhook"
+                >
+                  <RefreshCw className={`h-4 w-4 ${webhookLoading ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <table className="rd-table w-full min-w-[900px] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
+                      <th className="h-10 px-2 font-medium">Waktu</th>
+                      <th className="h-10 px-2 font-medium">Status</th>
+                      <th className="h-10 px-2 font-medium">Item</th>
+                      <th className="h-10 px-2 font-medium">ID Terdeteksi</th>
+                      <th className="h-10 px-2 font-medium">Pesan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(webhookData?.logs ?? []).length ? (
+                      (webhookData?.logs ?? []).map((log, index) => {
+                        const style = webhookStatusStyle(log.status);
+                        const idText = Object.entries(log.ids)
+                          .flatMap(([key, list]) => list.map((value) => `${key}: ${value}`))
+                          .join(", ");
+                        return (
+                          <tr key={`${log.receivedAt}-${index}`} className="align-top">
+                            <td className="whitespace-nowrap px-2 py-2 text-slate-300">
+                              {formatWebhookTime(log.receivedAt)}
+                            </td>
+                            <td className="px-2 py-2">
+                              <span
+                                className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ${style.className}`}
+                              >
+                                {style.label}
+                              </span>
+                            </td>
+                            <td className="px-2 py-2 text-slate-300">{log.itemCount}</td>
+                            <td className="max-w-[280px] break-words px-2 py-2 text-slate-300" title={idText}>
+                              {idText || "—"}
+                            </td>
+                            <td className="max-w-[260px] break-words px-2 py-2 text-slate-400" title={log.message}>
+                              {log.message || "—"}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="h-[200px] text-center text-sm text-slate-400">
+                          {webhookLoading ? "Memuat…" : "Belum ada webhook yang diterima"}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {(webhookData?.logs ?? []).length ? (
-                        (webhookData?.logs ?? []).map((log, index) => {
-                          const style = webhookStatusStyle(log.status);
-                          const idText = Object.entries(log.ids)
-                            .flatMap(([key, list]) => list.map((value) => `${key}: ${value}`))
-                            .join(", ");
-                          return (
-                            <tr key={`${log.receivedAt}-${index}`} className="border-b align-top last:border-0">
-                              <td className="whitespace-nowrap px-2 py-2">{formatWebhookTime(log.receivedAt)}</td>
-                              <td className="px-2 py-2">
-                                <span
-                                  className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ${style.className}`}
-                                >
-                                  {style.label}
-                                </span>
-                              </td>
-                              <td className="px-2 py-2">{log.itemCount}</td>
-                              <td className="max-w-[200px] truncate px-2 py-2" title={idText}>
-                                {idText || "—"}
-                              </td>
-                              <td className="max-w-[220px] truncate px-2 py-2" title={log.message}>
-                                {log.message || "—"}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={5} className="h-[200px] text-center text-sm text-slate-500">
-                            {webhookLoading ? "Memuat…" : "Belum ada webhook yang diterima"}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </section>
           </div>
           )}
@@ -2481,34 +2743,37 @@ export default function DashboardPage() {
   );
 }
 
+// Kartu ringkasan dark halaman Webhook — data & sumber nilai tidak berubah,
+// hanya gaya. `valueClassName` opsional untuk memberi warna status pada nilai
+// utama (hijau aktif / merah bermasalah); default netral terang.
 function MetricCard({
   title,
   value,
   detail,
   icon: Icon,
-  accent,
+  valueClassName = "text-slate-50",
+  delay = 0,
 }: {
   title: string;
   value: string;
   detail: string;
   icon: ElementType;
-  accent: string;
+  valueClassName?: string;
+  delay?: number;
 }) {
   return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm text-slate-500">{title}</p>
-            <p className="mt-2 text-2xl font-semibold tracking-normal">{value}</p>
-            <p className="mt-1 text-xs text-slate-500">{detail}</p>
-          </div>
-          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md ${accent}`}>
-            <Icon className="h-5 w-5" />
-          </div>
+    <div className="rd-card rd-enter relative rounded-2xl" style={{ animationDelay: `${delay}ms` }}>
+      <div className="flex items-center justify-between gap-4 p-5">
+        <div className="min-w-0">
+          <p className="text-sm text-slate-400">{title}</p>
+          <p className={`mt-2 truncate text-2xl font-semibold tracking-tight ${valueClassName}`}>{value}</p>
+          <p className="mt-1 text-xs text-slate-500">{detail}</p>
         </div>
-      </CardContent>
-    </Card>
+        <div className="rd-stat-icon flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2525,9 +2790,11 @@ function formatWebhookTime(value: string | null | undefined) {
 }
 
 function webhookStatusStyle(status: WebhookLogRow["status"]) {
-  if (status === "received") return { label: "Diterima", className: "bg-emerald-100 text-emerald-800" };
-  if (status === "invalid") return { label: "JSON Invalid", className: "bg-amber-100 text-amber-800" };
-  return { label: "Error", className: "bg-rose-100 text-rose-800" };
+  if (status === "received")
+    return { label: "Diterima", className: "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300" };
+  if (status === "invalid")
+    return { label: "JSON Invalid", className: "border border-amber-400/30 bg-amber-400/10 text-amber-300" };
+  return { label: "Error", className: "border border-rose-400/30 bg-rose-400/10 text-rose-300" };
 }
 
 function formatEventTime(value: string) {

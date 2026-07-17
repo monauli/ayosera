@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* Font utama: Geist Sans, dimuat via next/font/google di app/layout.tsx
+   (variable --font-geist-sans, di-self-host — bukan @import CDN). `font-sans`
+   Tailwind diarahkan ke sini supaya berlaku global tanpa mengganti className
+   di tiap komponen. Fallback sesuai permintaan: Arial, Helvetica, sans-serif. */
+@theme inline {
+  --font-sans: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
 /* Tema default: Rosé (#FFD8DF dominan + putih) */
 :root,
 [data-theme="rose"] {
@@ -152,7 +160,28 @@
 body {
   background: rgb(var(--background));
   color: rgb(var(--foreground));
-  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* --- Skala typography redesign: judul/label/tabel/badge terbaca, tanpa
+   uppercase tracking berlebihan. Diterapkan terpusat lewat class rd-* yang
+   sudah dipakai bersama di seluruh halaman (Dashboard/Olsera/Inventori/
+   Webhook) — tidak perlu mengganti className di tiap file. --- */
+.rd-table thead th {
+  font-size: 0.6875rem; /* 11px */
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.rd-table tbody td {
+  font-size: 0.8125rem; /* 13px */
+}
+.rd-chip {
+  font-size: 0.75rem; /* 12px */
+  font-weight: 500;
+}
+.rd-capsule {
+  font-weight: 500;
 }
 
 button,
@@ -161,15 +190,90 @@ select {
   font: inherit;
 }
 
+/* Angka (KPI, nominal, tabel, waktu, jumlah transaksi) selalu tabular agar
+   kolom tidak "bergoyang" saat data berubah. */
+.tabular-nums,
+.rd-table td,
+.rd-chip,
+th[scope],
+.rd-num {
+  font-variant-numeric: tabular-nums;
+}
+
 /* ============================================================
-   AYOSERA REDESIGN (prototype dark shell) — semua class di bawah
-   ber-prefix rd- dan hanya berlaku di dalam .rd-shell. Token theme
-   lama ([data-theme]) sengaja TIDAK diubah.
+   AYOSERA REDESIGN — Light/Dark Mode
+   ============================================================
+   Semua class rd-* di bawah ber-prefix rd- dan hanya berlaku di dalam
+   .rd-shell. Mode gelap/terang dikontrol atribut [data-mode] pada <html>,
+   TERPISAH dari token warna skin lama ([data-theme], dipakai area
+   .rd-legacy) yang sengaja TIDAK diubah. Default gelap; nilai gelap di
+   bawah ini sengaja identik dengan warna hardcode sebelumnya supaya
+   tampilan Dark Mode tidak berubah sama sekali dari redesign sebelumnya.
    ============================================================ */
+:root,
+[data-mode="dark"] {
+  --rd-bg: 7 8 10;
+  --rd-card-from: 20 22 28;
+  --rd-card-to: 17 19 24;
+  --rd-card-border: 37 41 50;
+  --rd-card-border-hover: 58 64 76;
+  --rd-surface: 255 255 255;
+  --rd-surface-alpha: 0.04;
+  --rd-surface-alpha-strong: 0.1;
+  --rd-border: 148 163 184;
+  --rd-border-alpha: 0.16;
+  --rd-text: 248 250 252;
+  --rd-text-secondary: 226 232 240;
+  --rd-text-tertiary: 148 163 184;
+  --rd-text-muted: 100 116 139;
+  --rd-panel-bg: 13 15 19;
+  --rd-panel-alpha: 0.98;
+  --rd-sidebar-bg: 9 10 13;
+  --rd-sidebar-alpha: 0.94;
+  --rd-header-bg: 9 10 13;
+  --rd-header-alpha: 0.85;
+  --rd-input-bg: 255 255 255;
+  --rd-input-alpha: 0.05;
+  --rd-grid-line: 148 163 184;
+  --rd-grid-alpha: 0.09;
+  --rd-select-bg: 17 19 24;
+  --rd-select-text: 226 232 240;
+  color-scheme: dark;
+}
+
+[data-mode="light"] {
+  --rd-bg: 246 247 249;
+  --rd-card-from: 255 255 255;
+  --rd-card-to: 252 252 253;
+  --rd-card-border: 226 230 236;
+  --rd-card-border-hover: 203 210 220;
+  --rd-surface: 15 23 42;
+  --rd-surface-alpha: 0.035;
+  --rd-surface-alpha-strong: 0.06;
+  --rd-border: 100 116 139;
+  --rd-border-alpha: 0.16;
+  --rd-text: 15 23 42;
+  --rd-text-secondary: 30 41 59;
+  --rd-text-tertiary: 71 85 105;
+  --rd-text-muted: 100 116 139;
+  --rd-panel-bg: 255 255 255;
+  --rd-panel-alpha: 1;
+  --rd-sidebar-bg: 255 255 255;
+  --rd-sidebar-alpha: 0.98;
+  --rd-header-bg: 255 255 255;
+  --rd-header-alpha: 0.9;
+  --rd-input-bg: 15 23 42;
+  --rd-input-alpha: 0.035;
+  --rd-grid-line: 100 116 139;
+  --rd-grid-alpha: 0.12;
+  --rd-select-bg: 255 255 255;
+  --rd-select-text: 30 41 59;
+  color-scheme: light;
+}
 
 .rd-shell {
-  background: #07080a;
-  color: rgb(226 232 240);
+  background: rgb(var(--rd-bg));
+  color: rgb(var(--rd-text-secondary));
 }
 
 /* --- Background layers (Hero 2 + fading lines Hero 195) --- */
@@ -230,58 +334,58 @@ select {
 
 /* --- Sidebar --- */
 .rd-sidebar {
-  background: rgba(9, 10, 13, 0.94);
-  border-right: 1px solid #252932;
+  background: rgb(var(--rd-sidebar-bg) / var(--rd-sidebar-alpha));
+  border-right: 1px solid rgb(var(--rd-card-border));
   backdrop-filter: blur(14px);
-  box-shadow: 8px 0 30px -20px rgba(0, 0, 0, 0.8);
+  box-shadow: 8px 0 30px -20px rgba(0, 0, 0, 0.35);
 }
 .rd-logo {
-  background: #151820;
-  border: 1px solid #3a404c;
-  color: #f4f5f7;
-  box-shadow: 0 0 16px rgba(229, 231, 235, 0.08);
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
+  border: 1px solid rgb(var(--rd-card-border-hover));
+  color: rgb(var(--rd-text));
+  box-shadow: 0 0 16px rgb(var(--rd-surface) / 0.08);
 }
 .rd-nav-item {
-  color: rgb(148 163 184);
+  color: rgb(var(--rd-text-tertiary));
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 .rd-nav-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgb(241 245 249);
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
+  color: rgb(var(--rd-text));
 }
 .rd-nav-item-active {
-  background: rgba(255, 255, 255, 0.1);
-  color: #f4f5f7;
+  background: rgb(var(--rd-surface) / calc(var(--rd-surface-alpha-strong) * 1.4));
+  color: rgb(var(--rd-text));
   font-weight: 600;
-  box-shadow: inset 2px 0 0 0 rgba(229, 231, 235, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  box-shadow: inset 2px 0 0 0 rgb(225 29 72 / 0.85), inset 0 0 0 1px rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
 }
 .rd-nav-item-active-group {
-  color: #f4f5f7;
+  color: rgb(var(--rd-text));
   font-weight: 600;
 }
 .rd-nav-sub {
-  color: rgb(148 163 184);
+  color: rgb(var(--rd-text-tertiary));
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 .rd-nav-sub:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgb(241 245 249);
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
+  color: rgb(var(--rd-text));
 }
 .rd-nav-sub-active {
-  border-color: #e5e7eb;
-  background: rgba(255, 255, 255, 0.08);
-  color: #f4f5f7;
+  border-color: rgb(225 29 72);
+  background: rgb(225 29 72 / 0.1);
+  color: rgb(var(--rd-text));
   font-weight: 500;
 }
 .rd-sidebar-status {
   background: rgba(16, 185, 129, 0.08);
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 /* --- Header --- */
 .rd-header {
-  background: rgba(9, 10, 13, 0.85);
-  border-bottom: 1px solid #252932;
+  background: rgb(var(--rd-header-bg) / var(--rd-header-alpha));
+  border-bottom: 1px solid rgb(var(--rd-card-border));
   backdrop-filter: blur(14px);
 }
 
@@ -291,46 +395,59 @@ select {
   align-items: center;
   gap: 0.375rem;
   border-radius: 9999px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgb(var(--rd-border) / var(--rd-border-alpha));
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha));
   padding: 0.25rem 0.625rem;
   font-size: 0.75rem;
-  color: rgb(203 213 225);
+  color: rgb(var(--rd-text-secondary));
   white-space: nowrap;
 }
 .rd-chip-ok {
-  border-color: rgba(16, 185, 129, 0.35);
-  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.12);
+  color: rgb(5 150 105);
+}
+[data-mode="dark"] .rd-chip-ok {
   color: rgb(110 231 183);
 }
 .rd-chip-danger {
-  border-color: rgba(244, 63, 94, 0.35);
+  border-color: rgba(244, 63, 94, 0.4);
   background: rgba(244, 63, 94, 0.12);
+  color: rgb(190 18 60);
+}
+[data-mode="dark"] .rd-chip-danger {
   color: rgb(253 164 175);
 }
 
-/* --- Card gelap dengan glow (Hero 195) --- */
+/* --- Card (Hero 195) --- */
 /* Catatan: sengaja TANPA transform (baik hover maupun sisa animasi) —
    transform yang menetap membuat stacking context dan menyebabkan dropdown
    (mis. Export) tertimpa card lain. */
 .rd-card {
-  background: linear-gradient(180deg, #14161c, #111318);
-  border: 1px solid #252932;
+  background: linear-gradient(180deg, rgb(var(--rd-card-from)), rgb(var(--rd-card-to)));
+  border: 1px solid rgb(var(--rd-card-border));
+  box-shadow:
+    0 20px 50px -34px rgba(0, 0, 0, 0.45),
+    0 0 34px -26px rgb(var(--rd-surface) / 0.18);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+[data-mode="dark"] .rd-card {
   box-shadow:
     0 20px 50px -30px rgba(0, 0, 0, 0.9),
     0 0 34px -26px rgba(229, 231, 235, 0.25);
-  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 .rd-card:hover {
-  border-color: #3a404c;
+  border-color: rgb(var(--rd-card-border-hover));
+}
+[data-mode="dark"] .rd-card:hover {
   box-shadow:
     0 24px 60px -30px rgba(0, 0, 0, 0.95),
     0 0 40px -22px rgba(229, 231, 235, 0.3);
 }
 .rd-stat-icon {
-  background: rgba(255, 255, 255, 0.06);
-  color: #e5e7eb;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
+  color: rgb(var(--rd-text));
+  box-shadow: inset 0 0 0 1px rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
 }
 
 /* --- Border beam (Hero 195) --- */
@@ -381,37 +498,40 @@ select {
 
 /* --- Capsule tabs & field filter --- */
 .rd-capsule-group {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
+  border: 1px solid rgb(var(--rd-border) / var(--rd-border-alpha));
 }
 .rd-capsule {
   border-radius: 9999px;
   padding: 0.4rem 0.9rem;
   font-size: 0.875rem;
-  color: rgb(148 163 184);
+  color: rgb(var(--rd-text-tertiary));
   transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
 .rd-capsule:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgb(241 245 249);
+  background: rgb(var(--rd-surface) / calc(var(--rd-surface-alpha-strong) * 1.3));
+  color: rgb(var(--rd-text));
 }
 .rd-capsule-active {
-  background: rgba(255, 255, 255, 0.12);
-  color: #f4f5f7;
+  background: rgb(var(--rd-surface) / calc(var(--rd-surface-alpha-strong) * 1.8));
+  color: rgb(var(--rd-text));
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgb(var(--rd-surface) / calc(var(--rd-surface-alpha-strong) * 2));
 }
 .rd-field {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha));
+  border: 1px solid rgb(var(--rd-border) / var(--rd-border-alpha));
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .rd-field-active {
-  border-color: rgba(229, 231, 235, 0.4);
-  box-shadow: 0 0 12px rgba(229, 231, 235, 0.12);
+  border-color: rgb(var(--rd-text-tertiary) / 0.5);
+  box-shadow: 0 0 12px rgb(var(--rd-surface) / 0.12);
 }
 .rd-field input {
-  color-scheme: dark;
+  color-scheme: var(--rd-color-scheme, dark);
+}
+[data-mode="light"] .rd-field input {
+  color-scheme: light;
 }
 
 /* Hover row untuk list/tabel di area redesign. */
@@ -420,11 +540,12 @@ select {
   transition: background-color 0.2s ease;
 }
 .rd-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha));
 }
 
 /* Permukaan terang untuk halaman lama (Transaksi/Olsera/dll) di dalam
-   shell gelap — konten lama tampil persis seperti sebelumnya. */
+   shell gelap — konten lama tampil persis seperti sebelumnya (fixed light,
+   tidak ikut toggle, sama seperti sebelum Light/Dark Mode ditambahkan). */
 .rd-legacy {
   background: rgb(248 250 252);
   color: rgb(30 41 59);
@@ -433,52 +554,113 @@ select {
   overflow: clip;
 }
 
-/* --- Input/select kecil versi dark (filter kolom tabel, pagination) --- */
+/* --- Input/select kecil versi redesign (filter kolom tabel, pagination) --- */
 .rd-input {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgb(var(--rd-surface) / var(--rd-surface-alpha));
+  border: 1px solid rgb(var(--rd-border) / calc(var(--rd-border-alpha) + 0.04));
   border-radius: 0.375rem;
-  color: rgb(226 232 240);
-  color-scheme: dark;
+  color: rgb(var(--rd-text-secondary));
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
+[data-mode="dark"] .rd-input {
+  color-scheme: dark;
+}
+[data-mode="light"] .rd-input {
+  color-scheme: light;
+}
 .rd-input::placeholder {
-  color: rgb(100 116 139);
+  color: rgb(var(--rd-text-muted));
 }
 .rd-input:focus {
   outline: none;
-  border-color: rgba(229, 231, 235, 0.5);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.14);
+  border-color: rgb(var(--rd-text-tertiary) / 0.5);
+  box-shadow: 0 0 0 2px rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
 }
 .rd-input option {
-  background: #111318;
-  color: rgb(226 232 240);
+  background: rgb(var(--rd-select-bg));
+  color: rgb(var(--rd-select-text));
 }
 
-/* --- Panel dropdown dark (mis. menu Export) --- */
+/* --- Panel dropdown (mis. menu Export) --- */
 .rd-panel {
-  background: rgba(13, 15, 19, 0.98);
-  border: 1px solid #252932;
-  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.9), 0 0 34px -24px rgba(229, 231, 235, 0.25);
+  background: rgb(var(--rd-panel-bg) / var(--rd-panel-alpha));
+  border: 1px solid rgb(var(--rd-card-border));
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.35), 0 0 34px -24px rgb(var(--rd-surface) / 0.18);
   backdrop-filter: blur(12px);
 }
+[data-mode="dark"] .rd-panel {
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.9), 0 0 34px -24px rgba(229, 231, 235, 0.25);
+}
 
-/* --- Tabel dark premium --- */
+/* --- Tabel premium --- */
 .rd-table thead tr:first-child {
-  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  border-bottom: 1px solid rgb(var(--rd-border) / calc(var(--rd-border-alpha) - 0.01));
 }
 .rd-table tbody tr {
-  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  border-bottom: 1px solid rgb(var(--rd-border) / calc(var(--rd-border-alpha) / 2));
   transition: background-color 0.15s ease;
 }
 .rd-table tbody tr:last-child {
   border-bottom: 0;
 }
 .rd-table tbody tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.015);
+  background: rgb(var(--rd-surface) / calc(var(--rd-surface-alpha) / 2.5));
 }
 .rd-table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.045);
+  background: rgb(var(--rd-surface) / calc(var(--rd-surface-alpha) * 1.1));
+}
+
+/* ============================================================
+   Light Mode override untuk utility Tailwind hardcode "gelap-di-atas-gelap"
+   (text-slate-50..400, text-white, border-white/*, bg-white/*) yang dipakai
+   langsung di JSX komponen redesign (Dashboard, Olsera, Inventori, Webhook).
+   Aturan CSS di luar @layer Tailwind otomatis menang atas utility class
+   (cascade layers) sehingga tidak perlu mengganti setiap className satu per
+   satu di setiap file. Hanya menyasar warna yang secara desain dimaksudkan
+   untuk teks/permukaan terang DI ATAS latar gelap — text-slate-500 ke bawah
+   & .rd-legacy (area lama, selalu putih) sengaja tidak disentuh. */
+[data-mode="light"] .rd-shell .text-white,
+[data-mode="light"] .rd-shell .text-slate-50,
+[data-mode="light"] .rd-shell .text-slate-100 {
+  color: rgb(var(--rd-text));
+}
+[data-mode="light"] .rd-shell .text-slate-200,
+[data-mode="light"] .rd-shell .text-slate-300 {
+  color: rgb(var(--rd-text-secondary));
+}
+[data-mode="light"] .rd-shell .text-slate-400 {
+  color: rgb(var(--rd-text-tertiary));
+}
+[data-mode="light"] .rd-shell .text-slate-500 {
+  color: rgb(var(--rd-text-muted));
+}
+[data-mode="light"] .rd-shell .hover\:text-white:hover,
+[data-mode="light"] .rd-shell .hover\:text-slate-100:hover {
+  color: rgb(var(--rd-text));
+}
+[data-mode="light"] .rd-shell .border-white\/5,
+[data-mode="light"] .rd-shell .border-white\/10,
+[data-mode="light"] .rd-shell .border-white\/15 {
+  border-color: rgb(var(--rd-border) / var(--rd-border-alpha));
+}
+[data-mode="light"] .rd-shell .bg-white\/5,
+[data-mode="light"] .rd-shell .bg-white\/10,
+[data-mode="light"] .rd-shell .bg-white\/\[0\.04\],
+[data-mode="light"] .rd-shell .bg-white\/\[0\.06\] {
+  background-color: rgb(var(--rd-surface) / var(--rd-surface-alpha));
+}
+[data-mode="light"] .rd-shell .hover\:bg-white\/10:hover {
+  background-color: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
+}
+/* Grid/dotted background hero — sangat tipis di kedua mode, garis mengikuti --rd-grid-line. */
+[data-mode="light"] .rd-bg-grid {
+  background-image:
+    linear-gradient(to right, rgb(var(--rd-grid-line) / var(--rd-grid-alpha)) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(var(--rd-grid-line) / var(--rd-grid-alpha)) 1px, transparent 1px);
+}
+[data-mode="light"] .rd-bg-blob,
+[data-mode="light"] .rd-bg-noise {
+  opacity: 0.35;
 }
 
 /* Hormati preferensi pengguna: matikan semua animasi dekoratif. */

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, UserCog, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 const MODULE_OPTIONS = [
@@ -164,15 +163,15 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
   return (
     <div className="space-y-4">
       {(message || error) && (
-        <p className={`text-sm ${error ? "text-red-600" : "text-slate-600"}`}>{error || message}</p>
+        <p role={error ? "alert" : "status"} aria-live="polite" className={`rounded-lg px-3 py-2 text-sm ${error ? "rd-alert-danger" : "rd-alert-success"}`}>{error || message}</p>
       )}
 
-      <Card>
-        <CardHeader>
+      <div className="rd-card rd-enter relative rounded-2xl p-5">
+        <div className="border-b border-white/10 pb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle>Manajemen Pengguna</CardTitle>
-              <CardDescription>Kelola akun, modul yang diizinkan, dan status akses.</CardDescription>
+              <h1 className="text-lg font-semibold tracking-tight text-slate-50">Manajemen Pengguna</h1>
+              <p className="mt-1 text-sm text-slate-400">Kelola akun, modul yang diizinkan, dan status akses.</p>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" onClick={() => loadUsers()} disabled={loading} aria-label="Muat ulang">
@@ -184,11 +183,11 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
               </Button>
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
+        <div className="pt-4">
           {formOpen && (
-            <div className="mb-6 rounded-md border bg-slate-50 p-4">
-              <p className="mb-3 text-sm font-medium">Pengguna Baru (role: user)</p>
+            <div className="mb-6 rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <p className="mb-3 text-sm font-medium text-slate-200">Pengguna Baru (role: user)</p>
               <div className="grid gap-3 sm:grid-cols-3">
                 <Input
                   type="email"
@@ -214,7 +213,7 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
               <div className="mt-3 flex flex-wrap items-center gap-4">
                 <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Modul diizinkan:</span>
                 {MODULE_OPTIONS.map((option) => (
-                  <label key={option.value} className="flex items-center gap-1.5 text-sm">
+                    <label key={option.value} className="flex items-center gap-1.5 text-sm text-slate-300">
                     <input
                       type="checkbox"
                       checked={newModules.includes(option.value)}
@@ -238,9 +237,9 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
             </div>
           )}
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="bg-white">
+          <div className="overflow-x-auto rounded-xl border border-white/10">
+            <table className="rd-table w-full min-w-[760px] text-sm">
+              <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
                   <th className="h-10 px-2 font-medium">Email / Nama</th>
                   <th className="h-10 px-2 font-medium">Role</th>
@@ -258,7 +257,7 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
                   </tr>
                 ) : users.length ? (
                   users.map((user) => (
-                    <tr key={user.id} className="border-b align-top last:border-0">
+                    <tr key={user.id} className="align-top">
                       <td className="px-2 py-3">
                         <p className="font-medium">{user.email}</p>
                         <p className="text-xs text-slate-500">
@@ -338,7 +337,7 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
           </div>
 
           {editId && (
-            <div className="mt-4 rounded-md border bg-slate-50 p-4">
+            <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
               <p className="mb-3 text-sm font-medium">
                 Edit pengguna: {users.find((user) => user.id === editId)?.email}
               </p>
@@ -387,8 +386,8 @@ export function UsersPanel({ currentUserId }: { currentUserId: string }) {
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

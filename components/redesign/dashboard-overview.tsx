@@ -1,18 +1,32 @@
 import type { ElementType } from "react";
-import { CalendarDays, CalendarRange, RotateCcw } from "lucide-react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { ArrowRight, CalendarDays, CalendarRange, RotateCcw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  AnnualRevenueChart,
+  type MonthlyRevenuePoint,
+  type MonthlyRevenueSummaryItem,
+} from "@/components/redesign/annual-revenue-chart";
+import { BookingStatusDonut, type BookingStatusItem } from "@/components/redesign/booking-status-donut";
 import { BorderBeam } from "@/components/redesign/border-beam";
+import { CourtPerformance, type CourtPerformanceItem } from "@/components/redesign/court-performance";
 import { DashboardStatCard } from "@/components/redesign/dashboard-stat-card";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 
 type StatItem = { title: string; value: string; detail: string; icon: ElementType };
-type PaymentPoint = { name: string; value: number; color: string };
-type ServicePoint = { name: string; branch: string; revenue: string; count: number; progress: number };
 type EventItem = { label: string; detail: string; timeText: string; ok: boolean };
+type RecentRow = {
+  date: string;
+  time: string;
+  id: string;
+  service: string;
+  customer: string;
+  amount: string;
+  statusVariant: "success" | "warning" | "danger";
+  statusLabel: string;
+};
 
-// Layout Dashboard redesign (presentasi murni). Semua data & handler berasal
-// dari state/fetch lama di app/page.tsx — tidak ada fetch/logic baru di sini.
+// Layout modul Transaksi Real-Time (presentasi murni). Semua data & handler
+// berasal dari state/fetch lama di app/page.tsx — tidak ada fetch/logic baru di sini.
 export function DashboardOverview({
   presets,
   activePreset,
@@ -25,11 +39,27 @@ export function DashboardOverview({
   onResetFilters,
   customRangeInvalid,
   stats,
-  paymentRows,
-  serviceRows,
+  bookingStatusItems,
+  totalBookings,
+  annualRevenueData,
+  annualRevenueYear,
+  onAnnualRevenueYearChange,
+  annualRevenueYearOptions,
+  annualRevenueLoading,
+  annualRevenueHighest,
+  annualRevenueLowest,
+  annualRevenueTotal,
+  annualRevenueAverage,
+  courtPerformance,
+  courtTopLabel,
+  courtTotalOrders,
+  courtTopContributionPercent,
   syncStatusLabel,
   latestEventText,
   events,
+  recentRows,
+  recentLoading,
+  onViewAll,
 }: {
   presets: { label: string; value: string }[];
   activePreset: string;
@@ -42,15 +72,32 @@ export function DashboardOverview({
   onResetFilters: () => void;
   customRangeInvalid: boolean;
   stats: StatItem[];
-  paymentRows: PaymentPoint[];
-  serviceRows: ServicePoint[];
+  bookingStatusItems: BookingStatusItem[];
+  totalBookings: number;
+  annualRevenueData: MonthlyRevenuePoint[];
+  annualRevenueYear: string;
+  onAnnualRevenueYearChange: (value: string) => void;
+  annualRevenueYearOptions: string[];
+  annualRevenueLoading: boolean;
+  annualRevenueHighest: MonthlyRevenueSummaryItem;
+  annualRevenueLowest: MonthlyRevenueSummaryItem;
+  annualRevenueTotal: number;
+  annualRevenueAverage: number;
+  courtPerformance: CourtPerformanceItem[];
+  courtTopLabel: string;
+  courtTotalOrders: number;
+  courtTopContributionPercent: number;
   syncStatusLabel: string;
   latestEventText: string;
   events: EventItem[];
+  recentRows: RecentRow[];
+  recentLoading: boolean;
+  onViewAll: () => void;
 }) {
   return (
     <div className="space-y-4">
-      {/* Capsule tabs filter (Hero 195) — handler sama persis dengan filter lama. */}
+      {/* Filter ringkas: Hari / Minggu / Bulan / Rentang khusus. Input bulan
+          dan rentang hanya tampil saat modenya aktif — handler tetap yang lama. */}
       <div className="rd-enter flex flex-wrap items-center gap-2">
         <div className="rd-capsule-group inline-flex flex-wrap items-center gap-1 rounded-full p-1">
           {presets.map((preset) => (
@@ -63,38 +110,62 @@ export function DashboardOverview({
               {preset.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => onMonthFilter(filterMonth)}
+            className={`rd-capsule inline-flex items-center gap-1.5 ${
+              activePreset === "manualMonth" ? "rd-capsule-active" : ""
+            }`}
+          >
+            <CalendarDays className="h-4 w-4" />
+            Bulan
+          </button>
+          <button
+            type="button"
+            onClick={() => onCustomRangeChange(customRangeStart, customRangeEnd)}
+            className={`rd-capsule inline-flex items-center gap-1.5 ${
+              activePreset === "custom" ? "rd-capsule-active" : ""
+            }`}
+          >
+            <CalendarRange className="h-4 w-4" />
+            Rentang khusus
+          </button>
         </div>
-        <div className={`rd-field flex h-10 items-center gap-2 rounded-full px-3 ${activePreset === "manualMonth" ? "rd-field-active" : ""}`}>
-          <CalendarDays className="h-4 w-4 text-slate-400" />
-          <Input
-            type="month"
-            aria-label="Filter bulan tertentu"
-            value={filterMonth}
-            className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
-            onClick={(event) => event.currentTarget.showPicker?.()}
-            onChange={(event) => onMonthFilter(event.target.value)}
-          />
-        </div>
-        <div className={`rd-field flex h-10 items-center gap-2 rounded-full px-3 ${activePreset === "custom" ? "rd-field-active" : ""}`}>
-          <CalendarRange className="h-4 w-4 text-slate-400" />
-          <Input
-            type="date"
-            aria-label="Tanggal mulai filter custom"
-            value={customRangeStart}
-            className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
-            onClick={(event) => event.currentTarget.showPicker?.()}
-            onChange={(event) => onCustomRangeChange(event.target.value, customRangeEnd)}
-          />
-          <span className="text-xs text-slate-500">s/d</span>
-          <Input
-            type="date"
-            aria-label="Tanggal selesai filter custom"
-            value={customRangeEnd}
-            className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
-            onClick={(event) => event.currentTarget.showPicker?.()}
-            onChange={(event) => onCustomRangeChange(customRangeStart, event.target.value)}
-          />
-        </div>
+        {activePreset === "manualMonth" && (
+          <div className="rd-field rd-field-active flex h-10 items-center gap-2 rounded-full px-3">
+            <CalendarDays className="h-4 w-4 text-slate-400" />
+            <Input
+              type="month"
+              aria-label="Filter bulan tertentu"
+              value={filterMonth}
+              className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
+              onClick={(event) => event.currentTarget.showPicker?.()}
+              onChange={(event) => onMonthFilter(event.target.value)}
+            />
+          </div>
+        )}
+        {activePreset === "custom" && (
+          <div className="rd-field rd-field-active flex h-10 items-center gap-2 rounded-full px-3">
+            <CalendarRange className="h-4 w-4 text-slate-400" />
+            <Input
+              type="date"
+              aria-label="Tanggal mulai filter custom"
+              value={customRangeStart}
+              className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
+              onClick={(event) => event.currentTarget.showPicker?.()}
+              onChange={(event) => onCustomRangeChange(event.target.value, customRangeEnd)}
+            />
+            <span className="text-xs text-slate-500">s/d</span>
+            <Input
+              type="date"
+              aria-label="Tanggal selesai filter custom"
+              value={customRangeEnd}
+              className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
+              onClick={(event) => event.currentTarget.showPicker?.()}
+              onChange={(event) => onCustomRangeChange(customRangeStart, event.target.value)}
+            />
+          </div>
+        )}
         <button type="button" onClick={onResetFilters} className="rd-capsule inline-flex items-center gap-1.5">
           <RotateCcw className="h-4 w-4" />
           Reset
@@ -110,94 +181,123 @@ export function DashboardOverview({
         ))}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-2">
+      {/* Susunan analitik: Status Booking (1fr) | Perbandingan Pendapatan Bulanan
+          (1.6fr, lebih lebar) | Performa Lapangan (1fr). Turun ke 2 kolom pada
+          tablet, 1 kolom pada mobile — tidak ada horizontal overflow. */}
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1.6fr_1fr]">
         <div className="rd-card rd-enter relative overflow-hidden rounded-2xl p-5" style={{ animationDelay: "180ms" }}>
-          <h2 className="text-sm font-semibold text-slate-100">Rincian Pembayaran</h2>
-          <p className="text-xs text-slate-500">Pembagian pendapatan per metode pembayaran</p>
-          <div className="h-[236px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={paymentRows} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88} paddingAngle={4} stroke="none">
-                  {paymentRows.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ borderRadius: 10, borderColor: "#252932", background: "#111318", color: "#e2e8f0" }}
-                  formatter={(value) => [`${value}%`, "Porsi"]}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {paymentRows.map((item) => (
-              <div key={item.name} className="flex items-center gap-2 text-sm">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                <span className="text-slate-400">{item.name}</span>
-                <span className="ml-auto font-medium text-slate-200">{item.value}%</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rd-card rd-enter relative overflow-hidden rounded-2xl p-5" style={{ animationDelay: "260ms" }}>
           <BorderBeam />
-          <h2 className="text-sm font-semibold text-slate-100">Layanan Terlaris</h2>
-          <p className="text-xs text-slate-500">Diurutkan berdasarkan pendapatan pada filter</p>
-          <div className="mt-4 space-y-4">
-            {serviceRows.length ? (
-              serviceRows.map((service) => (
-                <div key={service.name} className="space-y-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-slate-200">{service.name}</p>
-                      <p className="text-xs text-slate-500">
-                        {service.branch} · {service.count} pesanan
-                      </p>
-                    </div>
-                    <span className="text-sm font-semibold text-slate-100">{service.revenue}</span>
-                  </div>
-                  <Progress value={service.progress} className="bg-white/10" />
-                </div>
-              ))
-            ) : (
-              <p className="py-6 text-center text-sm text-slate-500">Belum ada data layanan pada filter ini.</p>
-            )}
+          <h2 className="text-[15px] font-semibold text-slate-100">Status Booking</h2>
+          <p className="text-xs text-slate-500">Reservation, AYO Order, dan Cancelled pada filter aktif</p>
+          <div className="mt-3">
+            <BookingStatusDonut items={bookingStatusItems} total={totalBookings} />
           </div>
         </div>
-      </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
+        <div
+          className="rd-card rd-enter relative overflow-hidden rounded-2xl p-5 md:col-span-2 xl:col-span-1"
+          style={{ animationDelay: "260ms" }}
+        >
+          <AnnualRevenueChart
+            data={annualRevenueData}
+            year={annualRevenueYear}
+            onYearChange={onAnnualRevenueYearChange}
+            yearOptions={annualRevenueYearOptions}
+            loading={annualRevenueLoading}
+            highest={annualRevenueHighest}
+            lowest={annualRevenueLowest}
+            total={annualRevenueTotal}
+            average={annualRevenueAverage}
+          />
+        </div>
+
         <div className="rd-card rd-enter relative overflow-hidden rounded-2xl p-5" style={{ animationDelay: "340ms" }}>
-          <h2 className="text-sm font-semibold text-slate-100">Kesehatan Sinkronisasi</h2>
-          <div className="mt-3 flex items-center gap-2">
-            <span className={`h-2.5 w-2.5 rounded-full ${syncStatusLabel === "Gagal" ? "bg-rose-400" : "bg-emerald-400"}`} />
-            <span className={`rd-chip ${syncStatusLabel === "Gagal" ? "rd-chip-danger" : "rd-chip-ok"}`}>{syncStatusLabel}</span>
-          </div>
-          <p className="mt-2 text-xs text-slate-500">{latestEventText}</p>
-        </div>
-
-        <div className="rd-card rd-enter relative overflow-hidden rounded-2xl p-5 xl:col-span-2" style={{ animationDelay: "420ms" }}>
-          <h2 className="text-sm font-semibold text-slate-100">Aktivitas Sinkronisasi Terbaru</h2>
-          <p className="text-xs text-slate-500">Riwayat event sync dari data dashboard yang sama</p>
-          {events.length ? (
-            <ul className="mt-3 divide-y divide-white/5">
-              {events.map((event, index) => (
-                <li key={`${event.label}-${index}`} className="rd-row flex items-center gap-3 px-2 py-2.5 text-sm">
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${event.ok ? "bg-emerald-400" : "bg-rose-400"}`} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-slate-200">{event.label}</span>
-                    <span className="block truncate text-xs text-slate-500">{event.detail}</span>
-                  </span>
-                  <span className="shrink-0 text-xs tabular-nums text-slate-400">{event.timeText}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-4 py-4 text-center text-sm text-slate-500">Belum ada aktivitas sinkronisasi.</p>
-          )}
+          <CourtPerformance
+            items={courtPerformance}
+            topLabel={courtTopLabel}
+            totalOrders={courtTotalOrders}
+            topContributionPercent={courtTopContributionPercent}
+          />
         </div>
       </section>
+
+      <section className="grid gap-4 xl:grid-cols-[1.8fr_1fr]">
+        <div className="rd-card rd-enter relative rounded-2xl p-5" style={{ animationDelay: "420ms" }}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-[15px] font-semibold text-slate-100">Transaksi Terbaru</h2>
+              <p className="text-xs text-slate-500">Transaksi paling baru pada filter aktif</p>
+            </div>
+            <button
+              type="button"
+              onClick={onViewAll}
+              className="rd-capsule inline-flex items-center gap-1.5"
+            >
+              Lihat Semua
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <table className="rd-table w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
+                  <th className="h-9 px-2 font-medium">Tanggal</th>
+                  <th className="h-9 px-2 font-medium">Jam</th>
+                  <th className="h-9 px-2 font-medium">ID Booking</th>
+                  <th className="h-9 px-2 font-medium">Court</th>
+                  <th className="h-9 px-2 font-medium">Pelanggan</th>
+                  <th className="h-9 px-2 text-right font-medium">Nominal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentLoading && !recentRows.length ? (
+                  <tr>
+                    <td colSpan={6} className="h-[120px] text-center text-sm text-slate-400">
+                      Memuat transaksi…
+                    </td>
+                  </tr>
+                ) : recentRows.length ? (
+                  recentRows.map((row) => (
+                    <tr key={row.id}>
+                      <td className="whitespace-nowrap px-2 py-2 text-slate-300">{row.date}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-slate-400">{row.time}</td>
+                      <td className="whitespace-nowrap px-2 py-2 font-medium text-slate-200">{row.id}</td>
+                      <td className="max-w-[200px] truncate px-2 py-2 text-slate-300">{row.service}</td>
+                      <td className="max-w-[160px] truncate px-2 py-2 text-slate-300">{row.customer}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-right font-medium tabular-nums text-slate-100">
+                        {row.amount}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="h-[120px] text-center text-sm text-slate-400">
+                      Tidak ada transaksi pada filter ini.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="rd-card rd-enter relative rounded-2xl p-5" style={{ animationDelay: "480ms" }}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-[15px] font-semibold text-slate-100">Status Transaksi Terbaru</h2>
+              <p className="text-xs text-slate-500">Ringkasan transaksi terbaru</p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {recentRows.length ? recentRows.map((row) => (
+              <div key={`status-${row.id}`} className="rd-row flex items-center justify-between gap-3 rounded-lg px-3 py-2">
+                <span className="min-w-0 truncate text-sm text-slate-300">{row.customer}</span>
+                <Badge variant={row.statusVariant}>{row.statusLabel}</Badge>
+              </div>
+            )) : <p className="py-8 text-center text-sm text-slate-500">Tidak ada transaksi.</p>}
+          </div>
+        </div>
+      </section>
+
     </div>
   );
 }

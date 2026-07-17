@@ -1,16 +1,14 @@
 "use client";
 
 // Panel halaman "Inventori Olsera" — modul read-only terpisah dari Kategori
-// Penjualan. Tema visual Soft Slate + Rose mengikuti halaman Kategori Penjualan.
+// Penjualan. Tema visual dark hitam–graphite mengikuti Dashboard, Transaksi
+// AYO, dan Kategori Penjualan Olsera (kelas rd-* di globals.css).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
-  ArrowDownToLine,
   Boxes,
   CalendarRange,
-  ChevronDown,
-  FileSpreadsheet,
   Loader2,
   PackageSearch,
   RefreshCw,
@@ -18,27 +16,23 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { InventoryExportMenu } from "@/components/redesign/inventory-export-menu";
 import { OLSERA_INVENTORY_BASELINE_DATE } from "@/lib/olsera-baseline";
 
-const CARD =
-  "rounded-2xl border-slate-200 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_14px_36px_-22px_rgba(15,23,42,0.3)]";
-const CARD_HEADER = "rounded-t-2xl border-b border-slate-100 bg-gradient-to-r from-slate-50/90 via-white to-rose-50/50";
-const TITLE = "text-[15px] font-semibold tracking-tight text-slate-900";
-const DESC = "mt-1 text-[13px] leading-relaxed text-slate-500";
-const ICON_CHIP = "rounded-xl p-2.5 ring-1 ring-inset";
-const FIELD =
-  "flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 shadow-sm transition-colors focus-within:border-rose-300 focus-within:ring-2 focus-within:ring-rose-200";
+const TITLE = "text-[15px] font-semibold tracking-tight text-slate-50";
+const DESC = "mt-1 text-[13px] leading-relaxed text-slate-400";
+const ICON_CHIP = "rd-stat-icon rounded-xl p-2.5";
+const FIELD = "rd-field flex h-10 items-center gap-2 rounded-full px-3";
 const PRIMARY_BTN =
-  "rounded-lg bg-rose-600 font-medium text-white shadow-sm transition-colors hover:bg-rose-700 active:bg-rose-800";
-const SEGMENT_BTN =
-  "inline-flex h-8 items-center gap-1.5 rounded-lg px-3.5 text-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400";
-const MENU_ITEM =
-  "flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-slate-700 transition-colors hover:bg-rose-50 focus-visible:bg-rose-50 focus-visible:outline-none";
-const SELECT_CLASS =
-  "h-10 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-200";
-const TH = "h-11 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500";
+  "rounded-lg bg-rose-600 font-medium text-white shadow-sm transition-colors hover:bg-rose-500 active:bg-rose-700";
+const SELECT_CLASS = "rd-input h-10 px-2 text-sm";
+const TH = "h-11 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400";
+const WARNING_BOX =
+  "flex items-start gap-3 rounded-lg border border-amber-400/25 border-l-4 border-l-amber-400/70 bg-amber-400/10 px-3.5 py-3";
+const NOTE_BOX =
+  "flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-3";
+const PAGE_BTN = "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white";
 
 const BASELINE_DATE = OLSERA_INVENTORY_BASELINE_DATE;
 
@@ -238,24 +232,9 @@ export function OlseraInventoryPanel() {
 
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
+  // Dropdown Export kini dirender lewat portal (InventoryExportMenu) —
+  // penutupan klik-luar/Escape ditangani komponen tersebut.
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!exportMenuOpen) return;
-    function onPointerDown(event: MouseEvent) {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) setExportMenuOpen(false);
-    }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setExportMenuOpen(false);
-    }
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [exportMenuOpen]);
 
   // Ringkasan + status
   useEffect(() => {
@@ -523,10 +502,10 @@ export function OlseraInventoryPanel() {
     ? [
         { label: "Total Produk", value: String(summary.totalProducts) },
         { label: "Produk Aktif", value: String(summary.activeProducts) },
-        { label: "Stok Habis", value: String(summary.outOfStock), accent: "text-red-600" },
-        { label: "Stok Hampir Habis", value: String(summary.lowStock), accent: "text-amber-600" },
+        { label: "Stok Habis", value: String(summary.outOfStock), accent: "text-rose-400" },
+        { label: "Stok Hampir Habis", value: String(summary.lowStock), accent: "text-amber-300" },
         { label: "Total Stok", value: String(summary.totalStock) },
-        { label: "Total Nilai Persediaan", value: formatRupiah(summary.totalValue), accent: "text-rose-700" },
+        { label: "Total Nilai Persediaan", value: formatRupiah(summary.totalValue) },
         { label: "Terakhir Sync", value: state?.lastSuccessfulSyncAt ? formatDateTime(state.lastSuccessfulSyncAt) : "-" },
       ]
     : [];
@@ -544,103 +523,110 @@ export function OlseraInventoryPanel() {
   return (
     <>
       {/* Sync Inventori */}
-      <section className="mb-6">
-        <Card className={CARD}>
-          <CardHeader className={`${CARD_HEADER} flex flex-row items-start justify-between gap-3 space-y-0`}>
+      <section className="rd-enter mb-4">
+        <div className="rd-card relative rounded-2xl p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-start gap-3.5">
-              <div className={`${ICON_CHIP} bg-rose-50 text-rose-600 ring-rose-100`}>
+              <div className={ICON_CHIP}>
                 <RefreshCw className="h-5 w-5" />
               </div>
               <div>
-                <CardTitle className={TITLE}>Sync Inventori</CardTitle>
-                <CardDescription className={DESC}>
+                <p className={TITLE}>Sync Inventori</p>
+                <p className={DESC}>
                   {state?.lastSuccessfulSyncAt ? (
                     <>
                       Terakhir sync{" "}
-                      <span className="font-medium text-slate-700">{formatDateTime(state.lastSuccessfulSyncAt)}</span>
+                      <span className="font-medium text-slate-200">{formatDateTime(state.lastSuccessfulSyncAt)}</span>
                       {" · "}
                       {syncStatus?.productCount ?? 0} produk · {syncStatus?.movementCount ?? 0} mutasi
                     </>
                   ) : (
                     `Belum pernah sync — sync pertama memeriksa ${formatDate(BASELINE_DATE)} sampai hari ini.`
                   )}
-                </CardDescription>
+                </p>
               </div>
             </div>
             {syncing || run?.status === "running" ? (
-              <Badge variant="info" className="gap-1.5 rounded-full px-2.5 ring-1 ring-inset ring-sky-200/70">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Running
-              </Badge>
-            ) : run?.status === "success" ? (
-              <Badge variant="success" className="rounded-full px-2.5 ring-1 ring-inset ring-emerald-200/70">Success</Badge>
-            ) : run?.status === "partial" ? (
-              <Badge variant="warning" className="rounded-full px-2.5 ring-1 ring-inset ring-amber-200/70">Partial</Badge>
-            ) : run?.status === "failed" ? (
-              <Badge variant="danger" className="rounded-full px-2.5 ring-1 ring-inset ring-red-200/70">Failed</Badge>
-            ) : (
-              <Badge variant="secondary" className="rounded-full px-2.5 ring-1 ring-inset ring-slate-200/70">Idle</Badge>
-            )}
-          </CardHeader>
-          <CardContent className="pt-5">
-            <div className="flex flex-wrap items-center gap-3">
-              <Button type="button" className={PRIMARY_BTN} onClick={handleSync} disabled={syncing}>
-                {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                {syncing ? "Menyinkronkan Inventori..." : "Sync Inventori"}
-              </Button>
-              <span className="text-xs text-slate-500">
-                Baseline {formatDate(BASELINE_DATE)} — sync berikutnya melanjutkan otomatis dari checkpoint.
-              </span>
-            </div>
-            {syncMessage ? (
-              <p className="mt-3 text-sm text-slate-600" aria-live="polite">
-                {syncMessage}
-              </p>
-            ) : (
-              !syncing &&
-              run &&
-              run.status !== "running" &&
-              run.status !== "success" &&
-              run.errorMessage && (
-                <p className="mt-3 text-sm text-slate-600" aria-live="polite">
-                  {run.errorMessage}
-                </p>
+              run?.isStale && !syncing ? (
+                <span className="rd-chip rd-chip-danger">
+                  <AlertTriangle className="h-3 w-3" />
+                  Stale
+                </span>
+              ) : (
+                <span className="rd-chip">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Running
+                </span>
               )
+            ) : run?.status === "success" ? (
+              <span className="rd-chip rd-chip-ok">Success</span>
+            ) : run?.status === "partial" ? (
+              <span className="rd-chip border-amber-400/40 bg-amber-400/10 text-amber-300">Partial</span>
+            ) : run?.status === "failed" ? (
+              <span className="rd-chip rd-chip-danger">Failed</span>
+            ) : (
+              <span className="rd-chip">Idle</span>
             )}
-            <div className="mt-4 rounded-lg border border-slate-200/80 bg-slate-50/70 px-3.5 py-3">
-              <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-                {coverageRows.map((row) => (
-                  <div key={row.label} className="flex items-baseline justify-between gap-3 text-xs sm:justify-start">
-                    <dt className="text-slate-500">{row.label}</dt>
-                    <dd className="font-medium text-slate-700">{row.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-            <div className="mt-3 flex items-start gap-3 rounded-lg border border-amber-200/80 border-l-4 border-l-amber-400 bg-amber-50/80 px-3.5 py-3">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-              <p className="text-xs leading-relaxed text-amber-700">
-                API Olsera tidak menyediakan histori lengkap untuk stok masuk, adjustment, transfer, retur, serta
-                saldo sebelum dan sesudah. Riwayat yang tersedia terutama berasal dari transaksi penjualan dan
-                snapshot stok aplikasi.
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button type="button" className={PRIMARY_BTN} onClick={handleSync} disabled={syncing}>
+              {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {syncing ? "Menyinkronkan Inventori..." : "Sync Inventori"}
+            </Button>
+            <span className="text-xs text-slate-500">
+              Baseline {formatDate(BASELINE_DATE)} — sync berikutnya melanjutkan otomatis dari checkpoint.
+            </span>
+          </div>
+          {syncMessage ? (
+            <p className="mt-3 text-sm text-slate-300" aria-live="polite">
+              {syncMessage}
+            </p>
+          ) : (
+            !syncing &&
+            run &&
+            run.status !== "running" &&
+            run.status !== "success" &&
+            run.errorMessage && (
+              <p className="mt-3 text-sm text-slate-300" aria-live="polite">
+                {run.errorMessage}
               </p>
-            </div>
-          </CardContent>
-        </Card>
+            )
+          )}
+          <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-3">
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+              {coverageRows.map((row) => (
+                <div key={row.label} className="flex items-baseline justify-between gap-3 text-xs sm:justify-start">
+                  <dt className="text-slate-500">{row.label}</dt>
+                  <dd className="font-medium text-slate-300">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+          <div className={`mt-3 ${WARNING_BOX}`}>
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+            <p className="text-xs leading-relaxed text-amber-200/90">
+              API Olsera tidak menyediakan histori lengkap untuk stok masuk, adjustment, transfer, retur, serta
+              saldo sebelum dan sesudah. Riwayat yang tersedia terutama berasal dari transaksi penjualan dan
+              snapshot stok aplikasi.
+            </p>
+          </div>
+        </div>
       </section>
 
       {/* Ringkasan */}
       {summary && (
-        <section className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-          {summaryCards.map((card) => (
-            <Card key={card.label} className={CARD}>
-              <CardContent className="p-4">
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">{card.label}</p>
-                <p className={`mt-1 text-lg font-semibold tabular-nums tracking-tight ${card.accent ?? "text-slate-900"}`}>
-                  {card.value}
-                </p>
-              </CardContent>
-            </Card>
+        <section className="mb-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+          {summaryCards.map((card, index) => (
+            <div
+              key={card.label}
+              className="rd-card rd-enter relative rounded-2xl p-4"
+              style={{ animationDelay: `${index * 60}ms` }}
+            >
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{card.label}</p>
+              <p className={`mt-1 text-lg font-semibold tabular-nums tracking-tight ${card.accent ?? "text-slate-50"}`}>
+                {card.value}
+              </p>
+            </div>
           ))}
           {summary.usesDefaultThreshold && (
             <p className="col-span-2 -mt-1 text-xs text-slate-500 md:col-span-4">
@@ -651,79 +637,43 @@ export function OlseraInventoryPanel() {
       )}
 
       {/* Data inventori */}
-      <section>
-        <Card className={CARD}>
-          <CardHeader className={`${CARD_HEADER} flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between`}>
+      <section className="rd-enter" style={{ animationDelay: "180ms" }}>
+        <div className="rd-card relative rounded-2xl p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3.5">
-              <div className={`${ICON_CHIP} bg-slate-100 text-slate-600 ring-slate-200/80`}>
+              <div className={ICON_CHIP}>
                 <Boxes className="h-5 w-5" />
               </div>
               <div>
-                <CardTitle className={TITLE}>Data Inventori</CardTitle>
-                <CardDescription className={DESC}>
+                <p className={TITLE}>Data Inventori</p>
+                <p className={DESC}>
                   Stok saat ini, riwayat mutasi, dan konsistensi sistem dari database hasil sync.
-                </CardDescription>
+                </p>
               </div>
             </div>
-            <div ref={exportMenuRef} className="relative">
-              <Button
-                type="button"
-                className={PRIMARY_BTN}
-                aria-haspopup="menu"
-                aria-expanded={exportMenuOpen}
-                disabled={exporting}
-                onClick={() => setExportMenuOpen((value) => !value)}
-              >
-                {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
-                {exporting ? "Mengekspor..." : "Export"}
-                <ChevronDown className={`h-4 w-4 transition-transform ${exportMenuOpen ? "rotate-180" : ""}`} />
-              </Button>
-              {exportMenuOpen && (
-                <div
-                  role="menu"
-                  aria-label="Pilihan export inventori"
-                  className="absolute right-0 z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl shadow-slate-900/10"
-                >
-                  {[
-                    { label: "Export Stok Saat Ini", detail: "Mengikuti pencarian & kategori aktif", onClick: handleExportStock },
-                    {
-                      label: "Export Riwayat Mutasi",
-                      detail: `Periode ${formatDate(movementStart)} - ${formatDate(movementEnd)}`,
-                      onClick: handleExportMovements,
-                    },
-                    { label: "Export Konsistensi Inventori", detail: "Perhitungan konsistensi sistem", onClick: handleExportConsistency },
-                  ].map((item) => (
-                    <button
-                      key={item.label}
-                      type="button"
-                      role="menuitem"
-                      className={MENU_ITEM}
-                      onClick={() => {
-                        setExportMenuOpen(false);
-                        item.onClick();
-                      }}
-                    >
-                      <span className="mt-0.5 rounded-md bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-100">
-                        <FileSpreadsheet className="h-4 w-4" />
-                      </span>
-                      <span>
-                        <span className="block font-medium">{item.label}</span>
-                        <span className="block text-xs text-slate-500">{item.detail}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="pt-5">
-            {exportMessage && <p className="mb-3 text-sm text-slate-600">{exportMessage}</p>}
+            <InventoryExportMenu
+              open={exportMenuOpen}
+              onOpenChange={setExportMenuOpen}
+              exporting={exporting}
+              items={[
+                { label: "Export Stok Saat Ini", detail: "Mengikuti pencarian & kategori aktif", onClick: handleExportStock },
+                {
+                  label: "Export Riwayat Mutasi",
+                  detail: `Periode ${formatDate(movementStart)} - ${formatDate(movementEnd)}`,
+                  onClick: handleExportMovements,
+                },
+                { label: "Export Konsistensi Inventori", detail: "Perhitungan konsistensi sistem", onClick: handleExportConsistency },
+              ]}
+            />
+          </div>
+          <div className="mt-5">
+            {exportMessage && <p className="mb-3 text-sm text-slate-300">{exportMessage}</p>}
 
             {/* Tab */}
             <div
               role="tablist"
               aria-label="Bagian inventori"
-              className="mb-4 inline-flex h-10 items-center rounded-xl bg-slate-100/90 p-1 ring-1 ring-inset ring-slate-200/70"
+              className="rd-capsule-group mb-4 inline-flex items-center rounded-full p-1"
             >
               {(
                 [
@@ -738,11 +688,7 @@ export function OlseraInventoryPanel() {
                   role="tab"
                   aria-selected={tab === item.key}
                   onClick={() => setTab(item.key)}
-                  className={`${SEGMENT_BTN} ${
-                    tab === item.key
-                      ? "bg-rose-600 font-semibold text-white shadow-sm"
-                      : "font-medium text-slate-500 hover:bg-white/70 hover:text-slate-700"
-                  }`}
+                  className={`rd-capsule ${tab === item.key ? "rd-capsule-active" : ""}`}
                 >
                   {item.label}
                 </button>
@@ -758,7 +704,7 @@ export function OlseraInventoryPanel() {
                       aria-label="Cari SKU atau nama produk"
                       placeholder="Cari SKU / nama produk"
                       value={stockSearch}
-                      className="h-8 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                      className="h-8 border-0 bg-transparent px-1 text-slate-200 shadow-none placeholder:text-slate-500 focus-visible:ring-0"
                       onChange={(event) => {
                         setStockSearch(event.target.value);
                         setStockPage(1);
@@ -797,10 +743,10 @@ export function OlseraInventoryPanel() {
                     <option value="nolengkap">Data Tidak Lengkap</option>
                   </select>
                 </div>
-                <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-                  <table className="w-full min-w-[1180px] text-sm">
-                    <thead className="bg-slate-50/90">
-                      <tr className="border-b border-slate-200/80">
+                <div className="overflow-x-auto rounded-xl border border-white/10">
+                  <table className="rd-table w-full min-w-[1180px] text-sm">
+                    <thead>
+                      <tr>
                         <th className={TH}>SKU</th>
                         <th className={TH}>Produk</th>
                         <th className={TH}>Varian</th>
@@ -811,7 +757,7 @@ export function OlseraInventoryPanel() {
                         <th className={`${TH} text-right`}>
                           <button
                             type="button"
-                            className="uppercase tracking-wider hover:text-slate-900"
+                            className="uppercase tracking-wider transition-colors hover:text-slate-100"
                             onClick={() =>
                               setStockSort((prev) =>
                                 prev.key === "stock" ? { key: "stock", dir: prev.dir === "asc" ? "desc" : "asc" } : { key: "stock", dir: "asc" },
@@ -828,7 +774,7 @@ export function OlseraInventoryPanel() {
                         <th className={`${TH} text-right`}>
                           <button
                             type="button"
-                            className="uppercase tracking-wider hover:text-slate-900"
+                            className="uppercase tracking-wider transition-colors hover:text-slate-100"
                             onClick={() =>
                               setStockSort((prev) =>
                                 prev.key === "value" ? { key: "value", dir: prev.dir === "asc" ? "desc" : "asc" } : { key: "value", dir: "desc" },
@@ -853,11 +799,9 @@ export function OlseraInventoryPanel() {
                       ) : stockRows.length ? (
                         stockRows.map((row) => (
                           <tr
-                            key={row.id}
-                            className="border-b border-slate-100 transition-colors last:border-0 odd:bg-slate-50/50 hover:bg-rose-50/60"
-                          >
+                            key={row.id}>
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.sku ?? "-"}</td>
-                            <td className="max-w-[240px] truncate px-3 py-2.5 font-medium text-slate-700" title={row.name}>
+                            <td className="max-w-[240px] truncate px-3 py-2.5 font-medium text-slate-200" title={row.name}>
                               {row.name}
                             </td>
                             <td className="max-w-[120px] truncate px-3 py-2.5 text-slate-500">{row.variantName ?? "-"}</td>
@@ -867,7 +811,7 @@ export function OlseraInventoryPanel() {
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-400" title="Tidak tersedia dari API Olsera">
                               -
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-800">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-100">
                               {row.trackInventory ? row.stockQty : "-"}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
@@ -883,7 +827,7 @@ export function OlseraInventoryPanel() {
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
                               {formatRupiah(row.buyPrice)}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-800">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-100">
                               {row.trackInventory ? formatRupiah(row.value) : "-"}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-500">{row.modifiedTime ?? "-"}</td>
@@ -893,7 +837,7 @@ export function OlseraInventoryPanel() {
                         <tr>
                           <td colSpan={13} className="px-4 py-12 text-center">
                             <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
-                              <span className="rounded-xl bg-slate-100 p-2.5 text-slate-400">
+                              <span className="rounded-xl bg-white/5 p-2.5 text-slate-500">
                                 <PackageSearch className="h-5 w-5" />
                               </span>
                               <p className="text-sm text-slate-500">
@@ -912,9 +856,9 @@ export function OlseraInventoryPanel() {
 
             {tab === "movements" && (
               <>
-                <div className="mb-4 flex items-start gap-3 rounded-lg border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                  <p className="text-xs leading-relaxed text-slate-600">
+                <div className={`mb-4 ${NOTE_BOX}`}>
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+                  <p className="text-xs leading-relaxed text-slate-400">
                     Riwayat yang tersedia berasal dari transaksi penjualan Olsera. Histori stok masuk, adjustment,
                     transfer, retur, dan saldo sebelum/sesudah tidak tersedia dari API.
                   </p>
@@ -926,7 +870,7 @@ export function OlseraInventoryPanel() {
                       type="date"
                       aria-label="Tanggal awal mutasi"
                       value={movementStart}
-                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
                       onClick={(event) => event.currentTarget.showPicker?.()}
                       onChange={(event) => {
                         setMovementStart(event.target.value);
@@ -938,7 +882,7 @@ export function OlseraInventoryPanel() {
                       type="date"
                       aria-label="Tanggal akhir mutasi"
                       value={movementEnd}
-                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
                       onClick={(event) => event.currentTarget.showPicker?.()}
                       onChange={(event) => {
                         setMovementEnd(event.target.value);
@@ -968,7 +912,7 @@ export function OlseraInventoryPanel() {
                       aria-label="Cari produk, SKU, atau referensi"
                       placeholder="Produk / SKU / referensi"
                       value={movementSearch}
-                      className="h-8 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+                      className="h-8 border-0 bg-transparent px-1 text-slate-200 shadow-none placeholder:text-slate-500 focus-visible:ring-0"
                       onChange={(event) => {
                         setMovementSearch(event.target.value);
                         setMovementPage(1);
@@ -976,13 +920,13 @@ export function OlseraInventoryPanel() {
                     />
                   </div>
                   {movementStart > movementEnd && (
-                    <span className="text-sm text-red-600">Tanggal akhir tidak boleh sebelum tanggal awal.</span>
+                    <span className="text-sm text-rose-400">Tanggal akhir tidak boleh sebelum tanggal awal.</span>
                   )}
                 </div>
-                <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-                  <table className="w-full min-w-[1000px] text-sm">
-                    <thead className="bg-slate-50/90">
-                      <tr className="border-b border-slate-200/80">
+                <div className="overflow-x-auto rounded-xl border border-white/10">
+                  <table className="rd-table w-full min-w-[1000px] text-sm">
+                    <thead>
+                      <tr>
                         <th className={TH}>Tanggal</th>
                         <th className={TH}>SKU</th>
                         <th className={TH}>Produk</th>
@@ -1005,18 +949,16 @@ export function OlseraInventoryPanel() {
                       ) : movementRows.length ? (
                         movementRows.map((row) => (
                           <tr
-                            key={row.id}
-                            className="border-b border-slate-100 transition-colors last:border-0 odd:bg-slate-50/50 hover:bg-rose-50/60"
-                          >
-                            <td className="whitespace-nowrap px-3 py-2.5 text-slate-600">{row.movementAt}</td>
+                            key={row.id}>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-slate-300">{row.movementAt}</td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.sku ?? "-"}</td>
-                            <td className="max-w-[240px] truncate px-3 py-2.5 font-medium text-slate-700" title={row.productName}>
+                            <td className="max-w-[240px] truncate px-3 py-2.5 font-medium text-slate-200" title={row.productName}>
                               {row.productName}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 capitalize text-slate-600">{row.type}</td>
+                            <td className="whitespace-nowrap px-3 py-2.5 capitalize text-slate-300">{row.type}</td>
                             <td
                               className={`whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums ${
-                                row.qtyChange < 0 ? "text-red-600" : "text-emerald-600"
+                                row.qtyChange < 0 ? "text-rose-400" : "text-emerald-400"
                               }`}
                             >
                               {row.qtyChange > 0 ? `+${row.qtyChange}` : row.qtyChange}
@@ -1024,7 +966,7 @@ export function OlseraInventoryPanel() {
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
                               {row.costPrice === null ? "-" : formatRupiah(row.costPrice)}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-800">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-100">
                               {row.value === null ? "-" : formatRupiah(row.value)}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.reference ?? "-"}</td>
@@ -1037,7 +979,7 @@ export function OlseraInventoryPanel() {
                         <tr>
                           <td colSpan={9} className="px-4 py-12 text-center">
                             <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
-                              <span className="rounded-xl bg-slate-100 p-2.5 text-slate-400">
+                              <span className="rounded-xl bg-white/5 p-2.5 text-slate-500">
                                 <PackageSearch className="h-5 w-5" />
                               </span>
                               <p className="text-sm text-slate-500">Tidak ada mutasi pada filter ini.</p>
@@ -1055,15 +997,15 @@ export function OlseraInventoryPanel() {
             {tab === "consistency" && (
               <>
                 {consistencyNote && (
-                  <div className="mb-4 flex items-start gap-3 rounded-lg border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                    <p className="text-xs leading-relaxed text-slate-600">{consistencyNote}</p>
+                  <div className={`mb-4 ${NOTE_BOX}`}>
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+                    <p className="text-xs leading-relaxed text-slate-400">{consistencyNote}</p>
                   </div>
                 )}
-                <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-                  <table className="w-full min-w-[900px] text-sm">
-                    <thead className="bg-slate-50/90">
-                      <tr className="border-b border-slate-200/80">
+                <div className="overflow-x-auto rounded-xl border border-white/10">
+                  <table className="rd-table w-full min-w-[900px] text-sm">
+                    <thead>
+                      <tr>
                         <th className={TH}>SKU</th>
                         <th className={TH}>Produk</th>
                         <th className={TH}>Kategori</th>
@@ -1085,24 +1027,22 @@ export function OlseraInventoryPanel() {
                       ) : consistencyRows.length ? (
                         consistencyRows.map((row) => (
                           <tr
-                            key={row.key}
-                            className="border-b border-slate-100 transition-colors last:border-0 odd:bg-slate-50/50 hover:bg-rose-50/60"
-                          >
+                            key={row.key}>
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.sku ?? "-"}</td>
-                            <td className="max-w-[240px] truncate px-3 py-2.5 font-medium text-slate-700" title={row.name}>
+                            <td className="max-w-[240px] truncate px-3 py-2.5 font-medium text-slate-200" title={row.name}>
                               {row.name}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.category}</td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
                               {row.startSnapshotQty ?? "Tidak tersedia"}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-red-600">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-rose-400">
                               {row.recordedSales ?? "Tidak tersedia"}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-700">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-200">
                               {row.endSnapshotQty ?? "Tidak tersedia"}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-700">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-200">
                               {row.snapshotChange ?? "Tidak tersedia"}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5">{consistencyBadge(row.status)}</td>
@@ -1112,7 +1052,7 @@ export function OlseraInventoryPanel() {
                         <tr>
                           <td colSpan={8} className="px-4 py-12 text-center">
                             <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
-                              <span className="rounded-xl bg-slate-100 p-2.5 text-slate-400">
+                              <span className="rounded-xl bg-white/5 p-2.5 text-slate-500">
                                 <PackageSearch className="h-5 w-5" />
                               </span>
                               <p className="text-sm text-slate-500">
@@ -1127,8 +1067,8 @@ export function OlseraInventoryPanel() {
                 </div>
               </>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </section>
     </>
   );
@@ -1147,20 +1087,27 @@ function PaginationRow({
 }) {
   const currentPage = Math.min(page, Math.max(1, meta.totalPages));
   return (
-    <div className="mt-4 flex flex-col items-center justify-between gap-3 text-sm sm:flex-row">
-      <span className="text-slate-500">
+    <div className="mt-4 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-4 text-sm sm:flex-row">
+      <span className="text-slate-400">
         {meta.total} {unit}
       </span>
       <div className="flex items-center gap-3">
-        <Button type="button" variant="outline" onClick={() => onPage(Math.max(1, currentPage - 1))} disabled={currentPage <= 1}>
+        <Button
+          type="button"
+          variant="outline"
+          className={PAGE_BTN}
+          onClick={() => onPage(Math.max(1, currentPage - 1))}
+          disabled={currentPage <= 1}
+        >
           Sebelumnya
         </Button>
-        <span className="text-slate-500">
+        <span className="text-slate-400">
           Halaman {currentPage} / {Math.max(1, meta.totalPages)}
         </span>
         <Button
           type="button"
           variant="outline"
+          className={PAGE_BTN}
           onClick={() => onPage(Math.min(meta.totalPages, currentPage + 1))}
           disabled={currentPage >= meta.totalPages}
         >
