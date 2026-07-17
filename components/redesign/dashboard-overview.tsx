@@ -222,7 +222,7 @@ export function DashboardOverview({
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.8fr_1fr]">
-        <div className="rd-card rd-enter relative rounded-2xl p-5" style={{ animationDelay: "420ms" }}>
+        <div className="rd-card rd-enter relative min-w-0 rounded-2xl p-5" style={{ animationDelay: "420ms" }}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-[15px] font-semibold text-slate-100">Transaksi Terbaru</h2>
@@ -280,7 +280,7 @@ export function DashboardOverview({
             </table>
           </div>
         </div>
-        <div className="rd-card rd-enter relative rounded-2xl p-5" style={{ animationDelay: "480ms" }}>
+        <div className="rd-card rd-enter relative min-w-0 rounded-2xl p-5" style={{ animationDelay: "480ms" }}>
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-[15px] font-semibold text-slate-100">Status Transaksi Terbaru</h2>
