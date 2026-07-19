@@ -12,7 +12,14 @@ import { CourtPerformance, type CourtPerformanceItem } from "@/components/redesi
 import { DashboardStatCard } from "@/components/redesign/dashboard-stat-card";
 import { Input } from "@/components/ui/input";
 
-type StatItem = { title: string; value: string; detail: string; icon: ElementType };
+type StatItem = {
+  title: string;
+  value: string;
+  detail: string;
+  icon: ElementType;
+  /** Bila diisi, seluruh card jadi interaktif (klik/Enter/Space). Opsional — dua stat lain tetap statis. */
+  onClick?: () => void;
+};
 type EventItem = { label: string; detail: string; timeText: string; ok: boolean };
 type RecentRow = {
   date: string;
@@ -23,7 +30,30 @@ type RecentRow = {
   amount: string;
   statusVariant: "success" | "warning" | "danger";
   statusLabel: string;
+  /** Tanggal diterima sistem, compact (mis. "18 Jul", Asia/Jakarta) — lihat receivedDateLabel di app/page.tsx. */
+  receivedDate: string;
+  /** Jam diterima sistem (HH:mm, Asia/Jakarta) — lihat receivedTimeLabel di app/page.tsx. */
+  receivedTime: string;
+  /** Nilai timestamp mentah (ms epoch) untuk sorting — lihat receivedAtMs di app/page.tsx. null bila tidak tersedia. */
+  receivedAtMs: number | null;
 };
+
+/**
+ * Urutkan "Status Transaksi Terbaru" dari timestamp diterima sistem paling
+ * baru ke paling lama, memakai nilai ms mentah (receivedAtMs) — bukan string
+ * jam "HH:mm" yang sudah diformat (string itu tidak membawa info tanggal,
+ * jadi tidak valid untuk sorting kronologis). Baris tanpa timestamp valid
+ * (null) selalu diletakkan paling bawah, di antara sesama baris null urutan
+ * relatif aslinya dipertahankan (Array.prototype.sort stabil di V8/Node).
+ */
+function sortByReceivedAtDesc(rows: RecentRow[]): RecentRow[] {
+  return [...rows].sort((a, b) => {
+    if (a.receivedAtMs == null && b.receivedAtMs == null) return 0;
+    if (a.receivedAtMs == null) return 1;
+    if (b.receivedAtMs == null) return -1;
+    return b.receivedAtMs - a.receivedAtMs;
+  });
+}
 
 // Layout modul Transaksi Real-Time (presentasi murni). Semua data & handler
 // berasal dari state/fetch lama di app/page.tsx — tidak ada fetch/logic baru di sini.
@@ -94,6 +124,10 @@ export function DashboardOverview({
   recentLoading: boolean;
   onViewAll: () => void;
 }) {
+  // Hanya untuk widget "Status Transaksi Terbaru" — tabel "Transaksi Terbaru"
+  // di atas tetap memakai urutan `recentRows` apa adanya (tidak diubah).
+  const sortedStatusRows = sortByReceivedAtDesc(recentRows);
+
   return (
     <div className="space-y-4">
       {/* Filter ringkas: Hari / Minggu / Bulan / Rentang khusus. Input bulan
@@ -187,7 +221,7 @@ export function DashboardOverview({
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1.6fr_1fr]">
         <div className="rd-card rd-enter relative overflow-hidden rounded-2xl p-5" style={{ animationDelay: "180ms" }}>
           <BorderBeam />
-          <h2 className="text-[15px] font-semibold text-slate-100">Status Booking</h2>
+          <h2 className="text-base font-semibold text-slate-100">Status Booking</h2>
           <p className="text-xs text-slate-500">Reservation, AYO Order, dan Cancelled pada filter aktif</p>
           <div className="mt-3">
             <BookingStatusDonut items={bookingStatusItems} total={totalBookings} />
@@ -225,7 +259,7 @@ export function DashboardOverview({
         <div className="rd-card rd-enter relative min-w-0 rounded-2xl p-5" style={{ animationDelay: "420ms" }}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-[15px] font-semibold text-slate-100">Transaksi Terbaru</h2>
+              <h2 className="text-base font-semibold text-slate-100">Transaksi Terbaru</h2>
               <p className="text-xs text-slate-500">Transaksi paling baru pada filter aktif</p>
             </div>
             <button
@@ -237,41 +271,44 @@ export function DashboardOverview({
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-3 overflow-x-auto">
-            <table className="rd-table w-full min-w-[760px] text-sm">
+          {/* Desktop/laptop (lg+): tabel compact. Di bawah lg, lebar kolom tidak
+              cukup untuk enam kolom secara nyaman, jadi tablet/mobile memakai
+              daftar card di bawah — bukan sekadar scroll horizontal. */}
+          <div className="mt-3 hidden overflow-x-auto lg:block">
+            <table className="rd-table w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
-                  <th className="h-9 px-2 font-medium">Tanggal</th>
-                  <th className="h-9 px-2 font-medium">Jam</th>
-                  <th className="h-9 px-2 font-medium">ID Booking</th>
-                  <th className="h-9 px-2 font-medium">Court</th>
-                  <th className="h-9 px-2 font-medium">Pelanggan</th>
-                  <th className="h-9 px-2 text-right font-medium">Nominal</th>
+                <tr className="text-left text-[13px] uppercase tracking-wide text-slate-400">
+                  <th className="h-8 px-2 font-medium">Tanggal &amp; Jam</th>
+                  <th className="h-8 px-2 font-medium">ID Booking</th>
+                  <th className="h-8 px-2 font-medium">Court</th>
+                  <th className="h-8 px-2 font-medium">Pelanggan</th>
+                  <th className="h-8 px-2 text-right font-medium">Nominal</th>
                 </tr>
               </thead>
               <tbody>
                 {recentLoading && !recentRows.length ? (
                   <tr>
-                    <td colSpan={6} className="h-[120px] text-center text-sm text-slate-400">
+                    <td colSpan={5} className="h-[120px] text-center text-sm text-slate-400">
                       Memuat transaksi…
                     </td>
                   </tr>
                 ) : recentRows.length ? (
                   recentRows.map((row) => (
                     <tr key={row.id}>
-                      <td className="whitespace-nowrap px-2 py-2 text-slate-300">{row.date}</td>
-                      <td className="whitespace-nowrap px-2 py-2 text-slate-400">{row.time}</td>
-                      <td className="whitespace-nowrap px-2 py-2 font-medium text-slate-200">{row.id}</td>
-                      <td className="max-w-[200px] truncate px-2 py-2 text-slate-300">{row.service}</td>
-                      <td className="max-w-[160px] truncate px-2 py-2 text-slate-300">{row.customer}</td>
-                      <td className="whitespace-nowrap px-2 py-2 text-right font-medium tabular-nums text-slate-100">
+                      <td className="whitespace-nowrap px-2 py-1.5 text-sm text-slate-400">
+                        {row.date} <span className="text-slate-600">·</span> {row.time}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-sm font-medium text-slate-200">{row.id}</td>
+                      <td className="max-w-[160px] truncate px-2 py-1.5 text-sm text-slate-300">{row.service}</td>
+                      <td className="max-w-[140px] truncate px-2 py-1.5 text-sm text-slate-300">{row.customer}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-right text-sm font-medium tabular-nums text-slate-100">
                         {row.amount}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="h-[120px] text-center text-sm text-slate-400">
+                    <td colSpan={5} className="h-[120px] text-center text-sm text-slate-400">
                       Tidak ada transaksi pada filter ini.
                     </td>
                   </tr>
@@ -279,18 +316,52 @@ export function DashboardOverview({
               </tbody>
             </table>
           </div>
+
+          {/* Tablet/mobile (di bawah lg): card/list compact, bukan tabel sempit. */}
+          <div className="mt-3 space-y-1.5 lg:hidden">
+            {recentLoading && !recentRows.length ? (
+              <p className="py-8 text-center text-sm text-slate-400">Memuat transaksi…</p>
+            ) : recentRows.length ? (
+              recentRows.map((row) => (
+                <div key={row.id} className="rd-row rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-[15px] font-medium text-slate-200">{row.customer}</span>
+                    <span className="shrink-0 text-[15px] font-semibold tabular-nums text-slate-100">{row.amount}</span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-500">
+                    <span className="min-w-0 truncate">
+                      {row.date} · {row.time} · {row.service}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-slate-400">{row.id}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="py-8 text-center text-sm text-slate-500">Tidak ada transaksi pada filter ini.</p>
+            )}
+          </div>
         </div>
         <div className="rd-card rd-enter relative min-w-0 rounded-2xl p-5" style={{ animationDelay: "480ms" }}>
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-[15px] font-semibold text-slate-100">Status Transaksi Terbaru</h2>
-              <p className="text-xs text-slate-500">Ringkasan transaksi terbaru</p>
+              <h2 className="text-base font-semibold text-slate-100">Status Transaksi Terbaru</h2>
+              <p className="text-xs text-slate-500">Diurutkan dari waktu diterima paling baru</p>
             </div>
           </div>
-          <div className="mt-3 space-y-2">
-            {recentRows.length ? recentRows.map((row) => (
-              <div key={`status-${row.id}`} className="rd-row flex items-center justify-between gap-3 rounded-lg px-3 py-2">
-                <span className="min-w-0 truncate text-sm text-slate-300">{row.customer}</span>
+          {sortedStatusRows.length > 0 && (
+            <div className="mt-3 flex items-center gap-2.5 px-3 text-[13px] font-medium uppercase tracking-wide text-slate-400">
+              <span className="w-24 shrink-0">Tanggal &amp; Jam</span>
+              <span className="min-w-0 flex-1">Nama</span>
+              <span className="shrink-0">Status</span>
+            </div>
+          )}
+          <div className="mt-1.5 space-y-1.5">
+            {sortedStatusRows.length ? sortedStatusRows.map((row) => (
+              <div key={`status-${row.id}`} className="rd-row flex items-center gap-2.5 rounded-lg px-3 py-2">
+                <span className="w-24 shrink-0 whitespace-nowrap tabular-nums text-[13px] text-slate-400">
+                  {row.receivedDate} <span className="text-slate-600">·</span> {row.receivedTime}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[15px] text-slate-300">{row.customer}</span>
                 <Badge variant={row.statusVariant}>{row.statusLabel}</Badge>
               </div>
             )) : <p className="py-8 text-center text-sm text-slate-500">Tidak ada transaksi.</p>}

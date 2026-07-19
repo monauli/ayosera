@@ -512,6 +512,10 @@ export default function DashboardPage() {
   const currentMonth = today.slice(0, 7);
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [transactionRows, setTransactionRows] = useState<TransactionRow[]>([]);
+  // Penanda "request paling baru" untuk loadData() — mencegah response yang
+  // lebih lambat dari request LAMA menimpa state dengan data basi bila
+  // datang belakangan daripada response request BARU (race condition).
+  const loadRequestIdRef = useRef(0);
   const [txnMeta, setTxnMeta] = useState<{ total: number; totalPages: number }>({ total: 0, totalPages: 1 });
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
@@ -675,6 +679,14 @@ export default function DashboardPage() {
   async function loadData(range = { startDate, endDate }) {
     if (isInvalidDateRange(range.startDate, range.endDate)) return;
 
+    // Guard race condition: tanpa ini, request lama (mis. rentang lebar
+    // seperti "Bulan" yang query-nya lebih berat) bisa selesai SETELAH
+    // request baru (mis. "Hari", query ringan) dan menimpa transactionRows
+    // dengan data basi — persis gejala panel "Transaksi Terbaru" menampilkan
+    // tanggal di luar filter aktif. requestId dibandingkan lagi setelah
+    // Promise.all selesai; response yang bukan lagi "yang terbaru" dibuang.
+    const requestId = ++loadRequestIdRef.current;
+
     const params = buildFilterParams(range);
     // Cache buster: pastikan browser/CDN tidak mengembalikan data lama.
     params.set("_t", String(Date.now()));
@@ -701,6 +713,11 @@ export default function DashboardPage() {
       fetch(transactionPath, { cache: "no-store" }),
     ]);
 
+    // Sudah ada request lebih baru yang berjalan (mis. user pindah filter
+    // lagi sebelum request ini selesai) — buang hasilnya, biarkan request
+    // terbaru yang menentukan state.
+    if (requestId !== loadRequestIdRef.current) return;
+
     if (dashboardResponse.status === 401 || transactionsResponse.status === 401) {
       await redirectToLogin();
       return;
@@ -714,6 +731,7 @@ export default function DashboardPage() {
         total: number;
         totalPages: number;
       };
+      if (requestId !== loadRequestIdRef.current) return;
       setTransactionRows(payload.data);
       setTxnMeta({ total: payload.total, totalPages: payload.totalPages });
       // Server mengoreksi halaman bila melebihi total; sinkronkan agar UI konsisten.
@@ -942,6 +960,25 @@ export default function DashboardPage() {
     setColumnFilters(emptyColumnFilters);
     setPage(1);
   }
+
+  // `columnFilters` (termasuk `status` yang diisi "Pending" oleh card "Belum
+  // Bayar" atau dropdown filter kolom Transaksi) dan `page` adalah state
+  // khusus tabel Transaksi — tapi disimpan di komponen ini dan dipakai
+  // bersama oleh `transactionRows`, yang juga menjadi sumber widget Dashboard
+  // (Transaksi Terbaru, Status Transaksi Terbaru, pendingCount). Tanpa reset,
+  // filter itu "bocor": kembali ke Dasbor tetap membawa transactionRows hasil
+  // fetch ber-filter Pending, membuat kedua widget itu tampak kosong. Reset
+  // HANYA saat benar-benar keluar dari tab Transaksi, dan HANYA state
+  // filter/pagination tabel — datePreset/startDate/endDate (filter
+  // Hari/Minggu/Bulan/Rentang khusus Dashboard) sengaja tidak disentuh.
+  const previousNavRef = useRef(activeNav);
+  useEffect(() => {
+    if (previousNavRef.current === "Transaksi" && activeNav !== "Transaksi") {
+      setColumnFilters(emptyColumnFilters);
+      setPage(1);
+    }
+    previousNavRef.current = activeNav;
+  }, [activeNav]);
 
   useEffect(() => {
     // Debounce 350ms: mencegah request bertubi-tubi saat mengetik pencarian.
@@ -1584,7 +1621,11 @@ export default function DashboardPage() {
           );
 
   const metrics = dashboard?.metrics;
-  const recentRows = transactionRows.slice(0, 12);
+  // 18 item (bukan 12) supaya card "Transaksi Terbaru" & "Status Transaksi
+  // Terbaru" mengisi tinggi card secara proporsional — masih data existing
+  // (transactionRows sudah menampung sampai `limit`=50 per halaman), tidak
+  // ada fetch/pagination baru.
+  const recentRows = transactionRows.slice(0, 18);
   const pendingCount = transactionRows.filter((row) => row.status === "Pending").length;
   const dateRangeInvalid = isInvalidDateRange(startDate, endDate);
   // Pagination & filtering kini dilakukan di server; transactionRows hanya berisi halaman aktif.
@@ -1990,10 +2031,18 @@ export default function DashboardPage() {
                   icon: BadgeCheck,
                 },
                 {
-                  title: "Perlu Dicek",
+                  title: "Belum Bayar",
                   value: String(pendingCount),
-                  detail: "Booking Belum Bayar pada filter aktif",
+                  detail: "Booking yang belum dibayar pada filter aktif",
                   icon: AlertTriangle,
+                  onClick: () => {
+                    // Buka Transaksi (mekanisme "Lihat Semua" existing) dengan
+                    // filter kolom "Status" existing diset ke Pending — tanpa
+                    // endpoint/route baru, mengikuti aturan izin activeNavAllowed
+                    // yang sudah menangani akses Supervisor & modul "transaksi".
+                    setColumnFilter("status", "Pending");
+                    setActiveNav("Transaksi");
+                  },
                 },
               ]}
               recentRows={recentRows.map((transaction) => ({
@@ -2005,6 +2054,9 @@ export default function DashboardPage() {
                 amount: transaction.amount,
                 statusVariant: statusVariant(transaction.status),
                 statusLabel: statusLabel(transaction.status),
+                receivedDate: receivedDateLabel(transaction),
+                receivedTime: receivedTimeLabel(transaction),
+                receivedAtMs: receivedAtMs(transaction),
               }))}
               recentLoading={false}
               onViewAll={() => setActiveNav("Transaksi")}
@@ -2804,4 +2856,53 @@ function formatEventTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+/**
+ * Resolusi timestamp "diterima sistem" mentah (Date) untuk satu transaksi —
+ * dipakai bersama oleh receivedTimeLabel/receivedDateLabel/receivedAtMs di
+ * bawah supaya ketiganya selalu merujuk field yang SAMA untuk baris yang sama.
+ * TransactionRow tidak punya field receivedAt/webhookReceivedAt terpisah (itu
+ * hanya ada di log webhook), jadi prioritasnya: createdAt (booking.created_at
+ * dari AYO, sudah lengkap tanggal+jam) → syncedAt (jam dokumen terakhir
+ * ditulis ke DB kami) → null bila keduanya kosong/tidak valid. Tidak pernah
+ * jatuh ke waktu render (Date.now()).
+ */
+function resolveReceivedAt(transaction: Pick<TransactionRow, "createdAt" | "syncedAt">): Date | null {
+  for (const candidate of [transaction.createdAt, transaction.syncedAt]) {
+    if (!candidate || candidate === "-") continue;
+    const date = new Date(candidate);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return null;
+}
+
+/** Jam "diterima sistem" (HH:mm, Asia/Jakarta) — dipakai pada widget "Status Transaksi Terbaru". */
+function receivedTimeLabel(transaction: Pick<TransactionRow, "createdAt" | "syncedAt">) {
+  const date = resolveReceivedAt(transaction);
+  if (!date) return "-";
+  return new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+/**
+ * Tanggal compact "diterima sistem" (mis. "18 Jul", Asia/Jakarta) — dipakai
+ * berdampingan dengan receivedTimeLabel supaya urutan terbaru→terlama pada
+ * "Status Transaksi Terbaru" tetap terlihat masuk akal walau data merentang
+ * lebih dari satu hari (mis. filter Minggu/Bulan ini).
+ */
+function receivedDateLabel(transaction: Pick<TransactionRow, "createdAt" | "syncedAt">) {
+  const date = resolveReceivedAt(transaction);
+  if (!date) return "-";
+  return new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short" }).format(date);
+}
+
+/**
+ * Nilai timestamp mentah (ms epoch) untuk SORTING "Status Transaksi Terbaru" —
+ * bukan string jam/tanggal yang sudah diformat (string itu tidak valid untuk
+ * sorting kronologis). Prioritas sama persis dengan resolveReceivedAt di
+ * atas. Pemanggil menempatkan hasil null di posisi paling bawah, bukan
+ * memakai waktu render sebagai pengganti.
+ */
+function receivedAtMs(transaction: Pick<TransactionRow, "createdAt" | "syncedAt">): number | null {
+  return resolveReceivedAt(transaction)?.getTime() ?? null;
 }

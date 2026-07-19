@@ -1,11 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 
 // Donut "Status Booking" — komponen presentasi murni. Menerima data siap
 // pakai lewat props; tidak melakukan fetch sendiri, sehingga otomatis
 // mengikuti filter Dashboard yang sudah mengubah `items`/`total` di pemanggil.
+//
+// Catatan desain: detail status aktif TIDAK ditampilkan lewat tooltip
+// floating recharts (posisinya sulit dikontrol pada donut sekecil ini dan
+// akan menimpa label tengah). Sebagai gantinya, hover/klik pada segmen atau
+// baris daftar menampilkan detail pada panel tetap di bawah donut — bagian
+// dari alur dokumen biasa, bukan elemen mengambang.
 export type BookingStatusItem = {
   key: "reservation" | "ayo-order" | "cancelled";
   label: string;
@@ -19,30 +25,6 @@ const EMPTY_RING_COLOR = "rgba(255, 255, 255, 0.08)";
 function safePercent(value: number, total: number) {
   if (!total || total <= 0) return 0;
   return Math.round((value / total) * 100);
-}
-
-function DonutTooltip({
-  active,
-  payload,
-  total,
-}: {
-  active?: boolean;
-  payload?: { payload: BookingStatusItem }[];
-  total: number;
-}) {
-  if (!active || !payload?.length) return null;
-  const item = payload[0].payload;
-  return (
-    <div className="rd-panel rounded-lg px-3 py-2.5 text-xs">
-      <p className="font-semibold text-slate-100">{item.label}</p>
-      <p className="mt-0.5 max-w-[180px] text-slate-400">{item.description}</p>
-      <p className="mt-1.5 flex items-center gap-2 text-slate-200">
-        <span className="font-medium tabular-nums">{item.value} booking</span>
-        <span className="text-slate-600">·</span>
-        <span className="tabular-nums">{safePercent(item.value, total)}%</span>
-      </p>
-    </div>
-  );
 }
 
 export function BookingStatusDonut({ items, total }: { items: BookingStatusItem[]; total: number }) {
@@ -78,10 +60,13 @@ export function BookingStatusDonut({ items, total }: { items: BookingStatusItem[
                 />
               ))}
             </Pie>
-            {!isEmpty && <Tooltip content={<DonutTooltip total={total} />} wrapperStyle={{ outline: "none" }} />}
           </PieChart>
         </ResponsiveContainer>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-4 text-center">
+        <div
+          className={`pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-4 text-center transition-opacity duration-150 ${
+            active ? "opacity-40" : "opacity-100"
+          }`}
+        >
           <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
             {active ? active.label : "Total Booking"}
           </span>
@@ -95,9 +80,43 @@ export function BookingStatusDonut({ items, total }: { items: BookingStatusItem[
       </div>
 
       {isEmpty ? (
-        <p className="mt-3 text-center text-sm text-slate-500">Belum ada booking pada periode ini.</p>
+        <p className="mt-3 flex h-20 items-center text-center text-sm text-slate-500">Belum ada booking pada periode ini.</p>
       ) : (
-        <div className="mt-4 w-full space-y-1.5">
+        // Tinggi TETAP (bukan min-h): baik state aktif (3 baris) maupun placeholder
+        // (1-2 baris) harus selalu merender ke tinggi yang sama persis, supaya
+        // card ini (yang jadi acuan tinggi baris grid analitik) tidak pernah
+        // berubah tinggi saat hover — itu yang membuat card lain di baris yang
+        // sama ikut "goyang" (grid default `align-items: stretch` mengikuti
+        // tinggi cell tertinggi). overflow-hidden jadi jaring pengaman kalau
+        // ada teks tak terduga, bukan mekanisme utama (baris sudah truncate/clamp).
+        <div
+          className="mt-4 flex h-20 w-full flex-col justify-center overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-xs"
+          aria-live="polite"
+        >
+          {active ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <p className="flex min-w-0 items-center gap-1.5 font-semibold text-slate-100">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: active.color }} />
+                  <span className="truncate">{active.label}</span>
+                </p>
+                <p className="shrink-0 tabular-nums text-slate-200">
+                  <span className="font-semibold">{active.value}</span> booking
+                </p>
+              </div>
+              <p className="mt-1 truncate text-slate-400">{active.description}</p>
+              <p className="mt-1 tabular-nums text-slate-500">{safePercent(active.value, total)}% dari total booking</p>
+            </>
+          ) : (
+            <p className="line-clamp-2 text-slate-500">
+              Arahkan kursor ke salah satu status di bawah untuk melihat detail lengkap.
+            </p>
+          )}
+        </div>
+      )}
+
+      {!isEmpty && (
+        <div className="mt-3 w-full space-y-1.5">
           {items.map((item, index) => {
             const pct = safePercent(item.value, total);
             return (

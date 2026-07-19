@@ -81,9 +81,9 @@ function SummaryTile({
 }) {
   return (
     <div className="min-w-0">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-0.5 truncate text-sm font-semibold tabular-nums tracking-tight text-slate-100">{value}</p>
-      {detail && <p className="truncate text-[11px] text-slate-500">{detail}</p>}
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-0.5 truncate text-[15px] font-semibold tabular-nums tracking-tight text-slate-100">{value}</p>
+      {detail && <p className="truncate text-xs text-slate-500">{detail}</p>}
     </div>
   );
 }
@@ -113,7 +113,7 @@ export function AnnualRevenueChart({
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-[15px] font-semibold text-slate-100">Pendapatan Bulanan</h2>
+          <h2 className="text-base font-semibold text-slate-100">Pendapatan Bulanan</h2>
           <p className="text-xs text-slate-500">Perbandingan total pendapatan setiap bulan pada tahun yang dipilih</p>
         </div>
         <Select value={year} onValueChange={onYearChange}>
