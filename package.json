@@ -13,7 +13,7 @@
     "test:olsera-resolver": "node --no-warnings --experimental-strip-types --test lib/olsera-category-resolver.test.ts",
     "test:olsera-addon": "node --no-warnings --experimental-strip-types --test lib/olsera-addon.test.ts",
     "test:olsera-export-addon": "node --no-warnings --experimental-strip-types --test lib/olsera-export-addon.test.ts",
-    "test:unit": "npm run test:revenue && npm run test:olsera-audit && npm run test:olsera-inventory && npm run test:olsera-resolver && npm run test:olsera-addon && npm run test:olsera-export-addon && npm run test:cron-olsera-sync",
+    "test:unit": "npm run test:revenue && npm run test:olsera-audit && npm run test:olsera-inventory && npm run test:olsera-resolver && npm run test:olsera-addon && npm run test:olsera-export-addon && npm run test:cron-olsera-sync && npm run test:olsera-inventory-monthly",
     "sync:prod": "node --no-warnings --experimental-strip-types scripts/sync-prod.ts",
     "sync:auto": "node --no-warnings --experimental-strip-types scripts/auto-sync.ts",
     "explore:olsera": "node --no-warnings --experimental-strip-types scripts/explore-olsera.ts",
@@ -25,6 +25,7 @@
     "patch:olsera-category-override-DF0226022700000852": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/patch-olsera-category-override-DF0226022700000852.ts",
     "test:olsera-day-audit": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/test-olsera-day-audit.ts",
     "test:cron-olsera-sync": "node --no-warnings --experimental-strip-types --experimental-test-module-mocks --import ./scripts/alias-register.mjs --test lib/cron-olsera-sync.test.ts",
+    "test:olsera-inventory-monthly": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs --test lib/olsera-inventory-monthly-core.test.ts lib/olsera-inventory-monthly-export.test.ts",
     "start": "next start",
     "lint": "next lint"
   },
