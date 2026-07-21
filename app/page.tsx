@@ -2680,7 +2680,7 @@ export default function DashboardPage() {
 
           {activeNavAllowed && activeNav === "OlseraInventori" && (
             <div className="min-h-[calc(100vh-8rem)]">
-              <OlseraInventoryPanel />
+              <OlseraInventoryPanel isSupervisor={isSupervisor} />
             </div>
           )}
 

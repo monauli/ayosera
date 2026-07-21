@@ -638,6 +638,95 @@ th[scope],
 [data-mode="light"] .rd-shell .hover\:text-slate-100:hover {
   color: rgb(var(--rd-text));
 }
+
+/* ============================================================
+   Panel Inventori Olsera (.inv-panel) — penyesuaian LOKAL saja (tidak
+   memengaruhi Dashboard/Transaksi/halaman lain):
+   1. Typography sedikit lebih besar & nyaman dibaca (judul/tabel/tab/badge).
+   2. Light mode: teks sekunder dibuat lebih gelap/terbaca (bukan abu pucat) —
+      aksen rose dan Dark Mode existing TIDAK disentuh.
+   Selektor .inv-panel menambah specificity sehingga menang atas aturan
+   .rd-table global tanpa mengubahnya. */
+.inv-panel .rd-table tbody td {
+  font-size: 0.875rem; /* 14px (dari 13px) */
+}
+.inv-panel .rd-table thead th {
+  font-size: 0.75rem; /* 12px (dari 11px) */
+}
+/* Light mode: sekunder lebih gelap dari --rd-text-muted yang terlalu pucat. */
+[data-mode="light"] .rd-shell .inv-panel .text-slate-400 {
+  color: rgb(51 65 85); /* slate-800 — sekunder gelap, terbaca */
+}
+[data-mode="light"] .rd-shell .inv-panel .text-slate-500 {
+  color: rgb(71 85 105); /* slate-600 — bukan abu pucat */
+}
+
+/* --- Badge status stok Inventori (Aman / Hampir Habis / Habis) ---
+   Kontras diatur EKSPLISIT per mode supaya keduanya terbaca: background tetap
+   lembut, teks dibuat gelap di light mode dan terang di dark mode. Aksen
+   rose/amber/emerald existing dipertahankan. Hanya berlaku di .inv-panel —
+   variant Badge global (Dashboard/Transaksi) tidak disentuh. */
+.inv-panel .inv-badge {
+  border: 1px solid transparent;
+  font-weight: 600;
+}
+/* Light mode: teks gelap di atas background lembut. */
+[data-mode="light"] .rd-shell .inv-panel .inv-badge-ok {
+  background-color: rgb(209 250 229); /* emerald-100 */
+  color: rgb(6 78 59); /* emerald-900 */
+  border-color: rgb(110 231 183); /* emerald-300 */
+}
+[data-mode="light"] .rd-shell .inv-panel .inv-badge-warning {
+  background-color: rgb(254 243 199); /* amber-100 */
+  color: rgb(120 53 15); /* amber-900 */
+  border-color: rgb(252 211 77); /* amber-300 */
+}
+[data-mode="light"] .rd-shell .inv-panel .inv-badge-danger {
+  background-color: rgb(255 228 230); /* rose-100 */
+  color: rgb(136 19 55); /* rose-900 */
+  border-color: rgb(253 164 175); /* rose-300 */
+}
+/* Dark mode: background transparan lembut + teks terang (pola rd-chip existing). */
+[data-mode="dark"] .rd-shell .inv-panel .inv-badge-ok,
+:root .rd-shell .inv-panel .inv-badge-ok {
+  background-color: rgb(16 185 129 / 0.14);
+  color: rgb(110 231 183); /* emerald-300 */
+  border-color: rgb(16 185 129 / 0.35);
+}
+[data-mode="dark"] .rd-shell .inv-panel .inv-badge-warning,
+:root .rd-shell .inv-panel .inv-badge-warning {
+  background-color: rgb(245 158 11 / 0.16);
+  color: rgb(252 211 77); /* amber-300 */
+  border-color: rgb(245 158 11 / 0.4);
+}
+[data-mode="dark"] .rd-shell .inv-panel .inv-badge-danger,
+:root .rd-shell .inv-panel .inv-badge-danger {
+  background-color: rgb(244 63 94 / 0.16);
+  color: rgb(253 164 175); /* rose-300 */
+  border-color: rgb(244 63 94 / 0.4);
+}
+/* Light mode menang atas default :root di atas. */
+[data-mode="light"] .rd-shell .inv-panel .inv-badge-ok {
+  background-color: rgb(209 250 229);
+  color: rgb(6 78 59);
+}
+[data-mode="light"] .rd-shell .inv-panel .inv-badge-warning {
+  background-color: rgb(254 243 199);
+  color: rgb(120 53 15);
+}
+[data-mode="light"] .rd-shell .inv-panel .inv-badge-danger {
+  background-color: rgb(255 228 230);
+  color: rgb(136 19 55);
+}
+
+/* --- Angka statistik Stok Habis / Stok Hampir Habis ---
+   text-rose-400 / text-amber-300 terlalu pucat di atas kartu putih. */
+[data-mode="light"] .rd-shell .inv-panel .text-rose-400 {
+  color: rgb(159 18 57); /* rose-800 */
+}
+[data-mode="light"] .rd-shell .inv-panel .text-amber-300 {
+  color: rgb(146 64 14); /* amber-800 */
+}
 [data-mode="light"] .rd-shell .border-white\/5,
 [data-mode="light"] .rd-shell .border-white\/10,
 [data-mode="light"] .rd-shell .border-white\/15 {

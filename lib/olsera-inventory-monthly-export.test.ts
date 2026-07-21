@@ -275,3 +275,33 @@ test("buildMonthlyInventoryWorkbook: jumlah kolom hari mengikuti jumlah hari bul
   // 6 kolom tetap (Group..Barang Masuk) + 30 hari + 5 kolom akhir (Penjualan/Keluar/StockAkhir/Aktual/Selisih)
   assert.equal(sheet.columnCount, 6 + 30 + 5);
 });
+
+// ---- File download user: HANYA sheet laporan utama (tanpa "Diagnostik Import") ----
+
+test("buildMonthlyInventoryWorkbook: default menyertakan sheet 'Diagnostik Import' (tooling internal)", () => {
+  const { rows, diagnostics } = buildFixtureRows();
+  const workbook = buildMonthlyInventoryWorkbook({
+    year: 2026,
+    month: 6,
+    days: 30,
+    rows,
+    diagnostics: { headerErrors: [], skippedBlankRows: 0, rowsOutsidePeriod: [], duplicates: [], ...diagnostics } as MonthlyImportDiagnostics,
+  });
+  assert.equal(workbook.worksheets.length, 2);
+  assert.ok(workbook.getWorksheet("Diagnostik Import"));
+});
+
+test("buildMonthlyInventoryWorkbook: includeDiagnosticsSheet=false -> HANYA sheet laporan utama (JUN'26), tanpa 'Diagnostik Import'", () => {
+  const { rows, diagnostics } = buildFixtureRows();
+  const workbook = buildMonthlyInventoryWorkbook({
+    year: 2026,
+    month: 6,
+    days: 30,
+    rows,
+    includeDiagnosticsSheet: false,
+    diagnostics: { headerErrors: [], skippedBlankRows: 0, rowsOutsidePeriod: [], duplicates: [], ...diagnostics } as MonthlyImportDiagnostics,
+  });
+  assert.equal(workbook.worksheets.length, 1);
+  assert.equal(workbook.getWorksheet("Diagnostik Import"), undefined);
+  assert.equal(workbook.worksheets[0].name, "JUN'26");
+});

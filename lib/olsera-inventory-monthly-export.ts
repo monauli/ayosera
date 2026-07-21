@@ -409,6 +409,14 @@ export function buildMonthlyInventoryWorkbook(input: {
   diagnostics: MonthlyImportDiagnostics;
   /** Label sumber data pembanding di sheet Diagnostik — "Olsera (file)" (default, jalur upload manual) atau "Olsera Open API" (jalur otomatis). */
   sourceLabel?: string;
+  /**
+   * Ikut menuliskan sheet "Diagnostik Import" ke workbook. Default true agar
+   * tooling internal/validasi tetap bisa memakainya. File yang DIUNDUH user
+   * memakai false — diagnostik tetap DIHITUNG (dan boleh dicatat ke Mongo/log),
+   * hanya tidak ikut sebagai sheet di file download. Sheet laporan utama
+   * (format/warna/border/grouping/urutan/formula/total) tidak berubah.
+   */
+  includeDiagnosticsSheet?: boolean;
 }): ExcelJS.Workbook {
   const workbook = new ExcelJS.Workbook();
   const sheetName = `${MONTH_NAMES[input.month - 1].slice(0, 3).toUpperCase()}'${String(input.year).slice(2)}`;
@@ -577,7 +585,9 @@ export function buildMonthlyInventoryWorkbook(input: {
   sheet.getColumn(aktualCol).width = 10;
   sheet.getColumn(selisihCol).width = 10;
 
-  buildDiagnosticsSheet(workbook, input.diagnostics, input.sourceLabel ?? "Olsera (file)");
+  if (input.includeDiagnosticsSheet ?? true) {
+    buildDiagnosticsSheet(workbook, input.diagnostics, input.sourceLabel ?? "Olsera (file)");
+  }
   return workbook;
 }
 
@@ -788,6 +798,10 @@ export async function generateMonthlyInventoryExport(input: {
     month: input.month,
     days,
     rows,
+    // File download user: hanya sheet laporan utama. Diagnostik tetap dihitung
+    // di atas (buildMonthlyRows) dan boleh dipakai internal, tapi TIDAK ikut
+    // sebagai sheet di file yang diunduh.
+    includeDiagnosticsSheet: false,
     diagnostics: { headerErrors: [], skippedBlankRows: parsed.skippedBlankRows, rowsOutsidePeriod, duplicates, ...diagnostics },
   });
 
@@ -891,6 +905,10 @@ export async function generateMonthlyInventoryExportAuto(input: {
     days,
     rows,
     sourceLabel: "Olsera Open API",
+    // File download user: hanya sheet laporan utama (JUN'26 dst.). Seluruh
+    // diagnostik tetap DIHITUNG di bawah (dan boleh dicatat ke Mongo/log untuk
+    // validasi internal), hanya tidak ikut sebagai sheet "Diagnostik Import".
+    includeDiagnosticsSheet: false,
     diagnostics: {
       headerErrors: [],
       skippedBlankRows: unresolvedNullProductSales,

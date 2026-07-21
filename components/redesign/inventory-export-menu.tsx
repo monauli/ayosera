@@ -19,11 +19,13 @@ export function InventoryExportMenu({
   onOpenChange,
   exporting,
   items,
+  label = "Export",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   exporting: boolean;
   items: { label: string; detail: string; onClick: () => void }[];
+  label?: string;
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [style, setStyle] = useState<CSSProperties | null>(null);
@@ -77,7 +79,7 @@ export function InventoryExportMenu({
         className="rounded-lg bg-rose-600 font-medium text-white shadow-sm transition-colors hover:bg-rose-500 active:bg-rose-700"
       >
         {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
-        {exporting ? "Mengekspor..." : "Export"}
+        {exporting ? "Mengekspor..." : label}
         <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
       </Button>
       {open &&
