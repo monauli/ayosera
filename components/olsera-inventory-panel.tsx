@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   Boxes,
   CalendarRange,
+  ClipboardList,
   Loader2,
   PackageSearch,
   RefreshCw,
@@ -235,6 +236,13 @@ export function OlseraInventoryPanel() {
   // Dropdown Export kini dirender lewat portal (InventoryExportMenu) —
   // penutupan klik-luar/Escape ditangani komponen tersebut.
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+
+  // Laporan Stock Opname Bulanan — export utama OTOMATIS (bulan+tahun saja,
+  // tanpa upload file): Open API Olsera (stockmovement) menggantikan file
+  // summary manual. Terpisah dari state export tabel di atas.
+  const [monthlyReportMonth, setMonthlyReportMonth] = useState(today.slice(0, 7));
+  const [monthlyReportExporting, setMonthlyReportExporting] = useState(false);
+  const [monthlyReportMessage, setMonthlyReportMessage] = useState("");
 
   // Ringkasan + status
   useEffect(() => {
@@ -495,6 +503,50 @@ export function OlseraInventoryPanel() {
     void downloadExport(params.toString(), `Konsistensi Inventori-${start}__${today}.xlsx`);
   }
 
+  // Laporan Stock Opname Bulanan: hanya bulan+tahun, tidak ada upload file —
+  // endpoint terpisah dari /api/olsera/inventory/export (yang dipakai tabel
+  // Stok/Mutasi/Konsistensi di atas).
+  async function handleExportMonthlyStockOpname() {
+    const [yearStr, monthStr] = monthlyReportMonth.split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (!year || !month) {
+      setMonthlyReportMessage("Pilih bulan terlebih dahulu.");
+      return;
+    }
+    setMonthlyReportExporting(true);
+    setMonthlyReportMessage("");
+    try {
+      const response = await fetch(`/api/olsera/inventory/export/monthly-auto?year=${year}&month=${month}`, {
+        cache: "no-store",
+      });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setMonthlyReportMessage(payload?.error || "Gagal membuat Laporan Stock Opname Bulanan.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
+      link.download = match?.[1] || `Laporan Stock Opname Bulanan-${monthlyReportMonth}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      setMonthlyReportMessage("Laporan selesai diunduh.");
+    } catch {
+      setMonthlyReportMessage("Tidak dapat terhubung ke server. Coba lagi.");
+    } finally {
+      setMonthlyReportExporting(false);
+    }
+  }
+
   const state = syncStatus?.state;
   const run = syncStatus?.run;
 
@@ -610,6 +662,53 @@ export function OlseraInventoryPanel() {
               snapshot stok aplikasi.
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* Laporan Stock Opname Bulanan — export utama, otomatis dari Open API */}
+      <section className="rd-enter mb-4" style={{ animationDelay: "80ms" }}>
+        <div className="rd-card relative rounded-2xl p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-3.5">
+              <div className={ICON_CHIP}>
+                <ClipboardList className="h-5 w-5" />
+              </div>
+              <div>
+                <p className={TITLE}>Laporan Stock Opname Bulanan</p>
+                <p className={DESC}>
+                  Pilih bulan, Excel langsung terunduh. Stok Awal/Barang Masuk/Keluar/Sisa diambil otomatis dari Open
+                  API Olsera — tidak perlu upload file summary manual.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <div className={FIELD}>
+              <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
+              <Input
+                type="month"
+                aria-label="Bulan Laporan Stock Opname"
+                value={monthlyReportMonth}
+                className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
+                onClick={(event) => event.currentTarget.showPicker?.()}
+                onChange={(event) => setMonthlyReportMonth(event.target.value)}
+              />
+            </div>
+            <Button
+              type="button"
+              className={PRIMARY_BTN}
+              onClick={() => void handleExportMonthlyStockOpname()}
+              disabled={monthlyReportExporting || !monthlyReportMonth}
+            >
+              {monthlyReportExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
+              {monthlyReportExporting ? "Membuat Laporan..." : "Export Laporan Stock Opname Bulanan"}
+            </Button>
+          </div>
+          {monthlyReportMessage && (
+            <p className="mt-3 text-sm text-slate-300" aria-live="polite">
+              {monthlyReportMessage}
+            </p>
+          )}
         </div>
       </section>
 

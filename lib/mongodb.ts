@@ -333,6 +333,44 @@ export type OlseraInventorySyncRunDocument = {
   updatedAt: Date;
 };
 
+/**
+ * Ledger stok BULANAN per produk (bukan snapshot harian — lihat
+ * OlseraInventorySnapshotDocument untuk itu). Satu dokumen = satu produk pada
+ * satu bulan, dengan opening/closing + rincian arus (incoming/return/sales/
+ * outgoing) — sumber Stok Awal/Stock Akhir Export Stock Opname Bulanan
+ * OTOMATIS, MENGGANTIKAN fallback stockQty katalog hari ini (lihat
+ * lib/olsera-inventory-monthly-snapshot-core.ts & lib/olsera-inventory-monthly-snapshot-store.ts).
+ * closing bulan N = opening bulan N+1 (rantai berkelanjutan Februari 2026 s/d
+ * bulan berjalan, lihat OLSERA_INVENTORY_BASELINE_DATE).
+ */
+export type OlseraInventoryMonthlySnapshotDocument = {
+  /** `${storeId}:${year}:${String(month).padStart(2,"0")}:${productId}:${variantId ?? 0}` */
+  _id: string;
+  storeId: number;
+  year: number;
+  month: number;
+  /** Tanggal akhir bulan (YYYY-MM-DD) — tanggal yang direpresentasikan closingQty. */
+  snapshotDate: string;
+  productId: number;
+  variantId: number | null;
+  /** productId setelah resolusi olsera_product_aliases; null bila sama dengan productId (tidak pernah berubah). */
+  canonicalProductId: number | null;
+  productName: string;
+  productSku: string | null;
+  groupName: string;
+  openingQty: number | null;
+  incomingQty: number | null;
+  returnQty: number | null;
+  salesQty: number | null;
+  outgoingQty: number | null;
+  closingQty: number | null;
+  source: "baseline-file" | "stockmovement-backward" | "stockmovement-forward" | "carry-forward";
+  status: "complete" | "boundary-only" | "incomplete";
+  diagnostics: string[];
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type OlseraInventoryStateDocument = {
   _id: "olsera-inventory";
   /** Diperbarui hanya saat run selesai sukses penuh. */
@@ -419,6 +457,7 @@ export async function collections() {
     olseraCategoryOverrides: db.collection<OlseraCategoryOverrideDocument>("olsera_category_overrides"),
     olseraInventoryProducts: db.collection<OlseraInventoryProductDocument>("olsera_inventory_products"),
     olseraInventorySnapshots: db.collection<OlseraInventorySnapshotDocument>("olsera_inventory_snapshots"),
+    olseraInventoryMonthlySnapshots: db.collection<OlseraInventoryMonthlySnapshotDocument>("olsera_inventory_monthly_snapshots"),
     olseraInventoryMovements: db.collection<OlseraInventoryMovementDocument>("olsera_inventory_movements"),
     olseraInventorySyncRuns: db.collection<OlseraInventorySyncRunDocument>("olsera_inventory_sync_runs"),
     olseraInventoryState: db.collection<OlseraInventoryStateDocument>("olsera_inventory_state"),
@@ -456,6 +495,7 @@ async function createIndexes() {
     olseraProductAliases,
     olseraInventoryProducts,
     olseraInventorySnapshots,
+    olseraInventoryMonthlySnapshots,
     olseraInventoryMovements,
     olseraInventorySyncRuns,
   } = await collections();
@@ -488,6 +528,11 @@ async function createIndexes() {
     olseraInventoryProducts.createIndex({ storeId: 1 }),
     olseraInventorySnapshots.createIndex({ date: 1 }),
     olseraInventorySnapshots.createIndex({ productId: 1, variantId: 1, date: 1 }),
+    // Unique: satu dokumen per toko+bulan+produk+variant — upsert bootstrap/backfill aman diulang (idempotent).
+    olseraInventoryMonthlySnapshots.createIndex(
+      { storeId: 1, year: 1, month: 1, productId: 1, variantId: 1 },
+      { unique: true },
+    ),
     olseraInventoryMovements.createIndex({ date: 1 }),
     olseraInventoryMovements.createIndex({ productId: 1, variantId: 1, date: 1 }),
     olseraInventoryMovements.createIndex({ sku: 1 }),

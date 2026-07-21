@@ -25,7 +25,7 @@
     "patch:olsera-category-override-DF0226022700000852": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/patch-olsera-category-override-DF0226022700000852.ts",
     "test:olsera-day-audit": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/test-olsera-day-audit.ts",
     "test:cron-olsera-sync": "node --no-warnings --experimental-strip-types --experimental-test-module-mocks --import ./scripts/alias-register.mjs --test lib/cron-olsera-sync.test.ts",
-    "test:olsera-inventory-monthly": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs --test lib/olsera-inventory-monthly-core.test.ts lib/olsera-inventory-monthly-export.test.ts",
+    "test:olsera-inventory-monthly": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs --test lib/olsera-inventory-monthly-core.test.ts lib/olsera-inventory-monthly-export.test.ts lib/olsera-inventory-monthly-auto.test.ts lib/olsera-inventory-monthly-snapshot-core.test.ts lib/olsera-inventory-monthly-snapshot-store.test.ts",
     "start": "next start",
     "lint": "next lint"
   },

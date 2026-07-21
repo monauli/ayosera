@@ -220,8 +220,8 @@ test("buildMonthlyInventoryWorkbook: row Total menjumlahkan Stok Awal/Barang Mas
   const totalRow = sheet.getRow(totalRowNumber);
   assert.equal(totalRow.getCell(1).value, "Total");
 
-  const expectedStokAwal = rows.reduce((sum, r) => sum + r.stokAwal, 0);
-  const expectedStockAkhir = rows.reduce((sum, r) => sum + r.stockAkhirSistem, 0);
+  const expectedStokAwal = rows.reduce((sum, r) => sum + (r.stokAwal ?? 0), 0);
+  const expectedStockAkhir = rows.reduce((sum, r) => sum + (r.stockAkhirSistem ?? 0), 0);
   assert.equal(totalRow.getCell(5).value, expectedStokAwal);
   assert.equal(totalRow.getCell(sheet.columnCount - 2).value, expectedStockAkhir);
 });

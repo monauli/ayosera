@@ -155,6 +155,15 @@ const candidates: [string, string, Record<string, string>][] = [
   ["report-stockcard", `${EN_PREFIX}/report/stockcard`, { from: WEEK_AGO, to: TODAY }],
   ["report-inventorymovement", `${EN_PREFIX}/report/inventorymovement`, { from: WEEK_AGO, to: TODAY }],
   ["report-currentstock", `${EN_PREFIX}/report/currentstock`, {}],
+  [
+    "inventory-stockmovement",
+    `${EN_PREFIX}/inventory/stockmovement`,
+    {
+      per_page: "2",
+      start_date: WEEK_AGO,
+      end_date: TODAY,
+    },
+  ],
 ];
 for (const [label, pathName, params] of candidates) {
   await probe(label, pathName, params, FULL);

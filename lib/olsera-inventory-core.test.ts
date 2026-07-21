@@ -500,6 +500,66 @@ test("selectMovementProduct: 8. productId ambigu (banyak variant) tanpa variantI
   assert.equal(result.method, "ambiguous-name");
 });
 
+// --- Regresi: nama produk mirip TIDAK boleh tertukar (kasus nyata Juni 2026:
+// "YONEX MENS SHORTS # SM-P061-3085-RW2-S" vs "YONEX SHORTS MEN #
+// SM-J035-2906-RW1-S" — penjualan salah satunya sempat tercatat kurang dari
+// laporan resmi Backoffice; diaudit sampai ke fungsi matching ini untuk
+// memastikan logika-nya sendiri TIDAK menjadi sumber salah atribusi bila
+// productId/nama order item cocok persis). ---
+
+test("selectMovementProduct: regresi — dua produk nama sangat mirip (YONEX SHORTS) tidak pernah tertukar via productId", () => {
+  const catalog = [
+    makeProduct({ _id: "1:5001:0", productId: 5001, name: "YONEX MENS SHORTS # SM-P061-3085-RW2-S" }),
+    makeProduct({ _id: "1:5002:0", productId: 5002, name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S" }),
+  ];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+
+  const itemA = movementIdentity({ itemName: "YONEX MENS SHORTS # SM-P061-3085-RW2-S", productId: 5001, variantId: null });
+  const resultA = selectMovementProduct(itemA, idIndex, nameIndex);
+  assert.equal(resultA.product?._id, "1:5001:0");
+
+  const itemB = movementIdentity({ itemName: "YONEX SHORTS MEN # SM-J035-2906-RW1-S", productId: 5002, variantId: null });
+  const resultB = selectMovementProduct(itemB, idIndex, nameIndex);
+  assert.equal(resultB.product?._id, "1:5002:0");
+});
+
+test("selectMovementProduct: regresi — nama order item PERSIS cocok tanpa productId tetap ke produk yang benar (bukan yang mirip)", () => {
+  const catalog = [
+    makeProduct({ _id: "1:5001:0", productId: 5001, name: "YONEX MENS SHORTS # SM-P061-3085-RW2-S" }),
+    makeProduct({ _id: "1:5002:0", productId: 5002, name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S" }),
+  ];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  // productId hilang dari payload (skenario yang diduga menyebabkan "kurang 3 unit" —
+  // lihat audit) — fallback nama HARUS tetap tepat, bukan ambigu/tertukar,
+  // karena kedua nama full (termasuk suffix SKU) berbeda persis.
+  const item = movementIdentity({ itemName: "YONEX SHORTS MEN # SM-J035-2906-RW1-S", productId: null, variantId: null });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product?._id, "1:5002:0");
+  assert.equal(result.method, "name");
+});
+
+test("selectMovementProduct: regresi — nama order item TERPOTONG (tanpa suffix SKU) tidak cocok ke produk manapun — unmatched, bukan tebakan salah", () => {
+  // Hipotesis akar masalah "kurang 3 unit": bila Olsera mengirim item_name
+  // terpotong ("YONEX SHORTS MEN" saja, tanpa "# SM-J035-2906-RW1-S") dan
+  // productId juga kosong, fallback nama TIDAK exact match -> item unresolved
+  // (dikecualikan dari olsera_inventory_movements), BUKAN tertukar ke produk
+  // lain. Ini bukti bahwa logika matching-nya sendiri aman (tidak salah
+  // atribusi) — akar masalah (bila hipotesis ini benar) ada di data mentah
+  // Olsera (item_name terpotong/productId kosong), di luar jangkauan fungsi ini.
+  const catalog = [
+    makeProduct({ _id: "1:5001:0", productId: 5001, name: "YONEX MENS SHORTS # SM-P061-3085-RW2-S" }),
+    makeProduct({ _id: "1:5002:0", productId: 5002, name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S" }),
+  ];
+  const idIndex = buildMovementIdentityIndex(catalog);
+  const nameIndex = buildMovementNameIndex(catalog);
+  const item = movementIdentity({ itemName: "YONEX SHORTS MEN", productId: null, variantId: null });
+  const result = selectMovementProduct(item, idIndex, nameIndex);
+  assert.equal(result.product, null);
+  assert.equal(result.method, "unmatched");
+});
+
 // --- Orphan cleanup: planMovementReconciliation ---
 
 test("planMovementReconciliation: 13. tanggal belum fully synced -> cleanup dilewati, alasan tercatat", () => {
