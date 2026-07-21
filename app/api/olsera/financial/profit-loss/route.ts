@@ -1,0 +1,3 @@
+import { getProfitLoss } from "@/lib/olsera-financial-client"; import { normalizeProfitLossPayload, validatePeriod } from "@/lib/olsera-financial-core"; import { guard, json, errorJson } from "../_shared";
+export const runtime = "nodejs"; export const dynamic = "force-dynamic";
+export async function GET(req: Request) { await guard(); try { const u = new URL(req.url), period = validatePeriod(u.searchParams.get("year"), u.searchParams.get("month")), rawPayload = await getProfitLoss(period); return json({ status: "success", period, reportType: "profit-loss", normalizedPayload: normalizeProfitLossPayload(rawPayload), rawPayload }); } catch (e) { return errorJson(e); } }
