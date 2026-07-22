@@ -116,6 +116,10 @@ export type OlseraSyncLogDocument = {
   startedAt: Date;
   finishedAt: Date | null;
 };
+export type OlseraFinancialMonthlyReportDocument = { _id: string; storeId: number; period: string; year: number; month: number; reportType: "balance-sheet" | "profit-loss" | "cash-flow" | "ledger-summary"; normalizedPayload: Record<string, unknown>; rawPayload: Record<string, unknown>; sourceEndpoint: string; currency: "IDR"; validated: boolean; validationNote: string | null; syncedAt: Date; createdAt: Date; updatedAt: Date };
+export type OlseraFinancialAccountDocument = { _id: string; storeId: number; accountId: string | number | null; accountCode: string | null; accountName: string | null; classification: string | null; parentId: string | number | null; isActive: boolean; rawPayload: Record<string, unknown>; syncedAt: Date; createdAt: Date; updatedAt: Date };
+export type OlseraFinancialLedgerEntryDocument = { _id: string; storeId: number; period: string; accountCode: string; accountName: string | null; transactionDate: string | null; formattedTransactionDate: string | null; transactionNo: string | null; description: string | null; debit: number; credit: number; balance: number | null; isOpeningBalance: boolean; rawPayload: Record<string, unknown>; syncedAt: Date; createdAt: Date; updatedAt: Date };
+export type OlseraFinancialSyncLogDocument = { _id: string; storeId: number; period: string; status: "running" | "success" | "partial" | "failed"; phase: "accounts" | "monthly-reports" | "ledger-details" | "completed"; accountCursor: number; accountCodes: string[]; reportsCompleted: string[]; recordsProcessed: number; accountsProcessed: number; errorMessage: string | null; startedAt: Date; updatedAt: Date; completedAt: Date | null };
 
 export type OlseraSyncedDayDocument = {
   /** Tanggal (YYYY-MM-DD, WIB) yang sudah tuntas disync penuh. */
@@ -461,6 +465,10 @@ export async function collections() {
     olseraInventoryMovements: db.collection<OlseraInventoryMovementDocument>("olsera_inventory_movements"),
     olseraInventorySyncRuns: db.collection<OlseraInventorySyncRunDocument>("olsera_inventory_sync_runs"),
     olseraInventoryState: db.collection<OlseraInventoryStateDocument>("olsera_inventory_state"),
+    olseraFinancialMonthlyReports: db.collection<OlseraFinancialMonthlyReportDocument>("olsera_financial_monthly_reports"),
+    olseraFinancialAccounts: db.collection<OlseraFinancialAccountDocument>("olsera_financial_accounts"),
+    olseraFinancialLedgerEntries: db.collection<OlseraFinancialLedgerEntryDocument>("olsera_financial_ledger_entries"),
+    olseraFinancialSyncLogs: db.collection<OlseraFinancialSyncLogDocument>("olsera_financial_sync_logs"),
   };
 }
 
@@ -498,6 +506,10 @@ async function createIndexes() {
     olseraInventoryMonthlySnapshots,
     olseraInventoryMovements,
     olseraInventorySyncRuns,
+    olseraFinancialMonthlyReports,
+    olseraFinancialAccounts,
+    olseraFinancialLedgerEntries,
+    olseraFinancialSyncLogs,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -545,6 +557,19 @@ async function createIndexes() {
       { status: 1 },
       { unique: true, partialFilterExpression: { status: "running" } },
     ),
+    olseraFinancialMonthlyReports.createIndex({ storeId: 1, period: 1, reportType: 1 }, { unique: true }),
+    olseraFinancialMonthlyReports.createIndex({ period: -1 }),
+    olseraFinancialMonthlyReports.createIndex({ syncedAt: -1 }),
+    olseraFinancialAccounts.createIndex({ storeId: 1, accountCode: 1 }),
+    olseraFinancialAccounts.createIndex({ storeId: 1, accountId: 1 }),
+    olseraFinancialAccounts.createIndex({ accountName: 1 }),
+    olseraFinancialLedgerEntries.createIndex({ storeId: 1, period: 1, accountCode: 1 }),
+    olseraFinancialLedgerEntries.createIndex({ storeId: 1, transactionNo: 1 }),
+    olseraFinancialLedgerEntries.createIndex({ transactionDate: 1 }),
+    olseraFinancialLedgerEntries.createIndex({ period: 1, accountCode: 1, transactionDate: 1 }),
+    olseraFinancialSyncLogs.createIndex({ startedAt: -1 }),
+    olseraFinancialSyncLogs.createIndex({ storeId: 1, period: 1 }),
+    olseraFinancialSyncLogs.createIndex({ status: 1, updatedAt: -1 }),
   ]);
 }
 

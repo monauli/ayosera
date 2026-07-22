@@ -3,7 +3,7 @@ import { requireModule } from "@/lib/auth";
 import { appendAnd, buildBookingFilter } from "@/lib/booking-query";
 import { toTransactionRow } from "@/lib/booking-mapper";
 import { collections, withMongo } from "@/lib/mongodb";
-import { isDisplayEligibleTransaction } from "@/lib/revenue";
+import { isCancelledTransaction, isDisplayEligibleTransaction } from "@/lib/revenue";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 
 // Data transaksi selalu realtime: nonaktifkan cache Next.js/Vercel.
@@ -50,6 +50,14 @@ export async function GET(request: Request) {
 
     const filter = buildBookingFilter(searchParams);
 
+    // Status "cancelled" tidak difilter di level MongoDB (lihat buildBookingFilter) —
+    // deteksi memakai isCancelledTransaction() di JS, sumber kebenaran yang sama
+    // dengan Dashboard, supaya angka Cancelled selalu identik di kedua halaman.
+    const normalizedStatus = searchParams.get("status")?.toLowerCase();
+    const isCancelledStatusFilter = Boolean(
+      normalizedStatus && ["cancelled", "canceled", "dibatalkan", "batal"].includes(normalizedStatus),
+    );
+
     const bookingId = searchParams.get("bookingId")?.trim();
     if (bookingId) {
       appendAnd(filter, { booking_id: { $regex: escapeRegex(bookingId), $options: "i" } });
@@ -78,7 +86,9 @@ export async function GET(request: Request) {
       // Query sudah dibatasi rentang tanggal + filter, jadi set ini terbatas.
       const matched = await bookings.find(filter).sort(sortSpec).toArray();
       // Eligibility tampil (Rp0 / Internal Use) memakai rule yang sama seperti dashboard.
-      const displayRows = matched.filter(isDisplayEligibleTransaction);
+      const displayRows = matched
+        .filter(isDisplayEligibleTransaction)
+        .filter((booking) => !isCancelledStatusFilter || isCancelledTransaction(booking));
       const total = displayRows.length;
       const totalPages = Math.max(1, Math.ceil(total / limit));
       const safePage = Math.min(page, totalPages);

@@ -1,0 +1,3 @@
+import { getBalanceSheet } from "@/lib/olsera-financial-client"; import { normalizeBalanceSheetPayload, validatePeriod } from "@/lib/olsera-financial-core"; import { guard, json, errorJson } from "../_shared";
+export const runtime = "nodejs"; export const dynamic = "force-dynamic";
+export async function GET(req: Request) { await guard(); try { const u = new URL(req.url), period = validatePeriod(u.searchParams.get("year"), u.searchParams.get("month")), rawPayload = await getBalanceSheet(period); return json({ status: "success", period, reportType: "balance-sheet", normalizedPayload: normalizeBalanceSheetPayload(rawPayload), rawPayload }); } catch (e) { return errorJson(e); } }

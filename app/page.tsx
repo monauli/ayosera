@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { OlseraFinancialPanel } from "@/components/olsera-financial-panel";
 import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
 import { UsersPanel } from "@/components/users-panel";
 import { AyoseraHeader } from "@/components/redesign/ayosera-header";
@@ -181,6 +182,7 @@ const navItems = [
     subItems: [
       { label: "Kategori Penjualan", nav: "Olsera" },
       { label: "Inventori", nav: "OlseraInventori" },
+      { label: "Laporan Keuangan", nav: "OlseraKeuangan" },
     ],
   },
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
@@ -411,29 +413,6 @@ const MONTH_FULL_LABELS = [
   "November",
   "Desember",
 ];
-
-/**
- * Largest-remainder rounding: distribusikan `total` (integer eksak, mis.
- * metrics.totalTransactions) ke proporsi `shares` (persentase yang sudah
- * dihitung server) sehingga hasilnya menjumlah persis `total` — dipakai untuk
- * menurunkan jumlah booking per kategori pada donut Status Booking dari
- * persentase paymentBreakdown yang sudah ada (tanpa fetch atau endpoint baru).
- */
-function allocateIntegerCounts(shares: number[], total: number): number[] {
-  const shareSum = shares.reduce((sum, value) => sum + value, 0);
-  if (shareSum <= 0 || total <= 0) return shares.map(() => 0);
-  const raw = shares.map((value) => (value / shareSum) * total);
-  const floors = raw.map((value) => Math.floor(value));
-  let remainder = total - floors.reduce((sum, value) => sum + value, 0);
-  const order = raw
-    .map((value, index) => ({ index, frac: value - Math.floor(value) }))
-    .sort((a, b) => b.frac - a.frac);
-  const result = [...floors];
-  for (let i = 0; i < order.length && remainder > 0; i++, remainder--) {
-    result[order[i].index] += 1;
-  }
-  return result;
-}
 
 // Enam lapangan Ayosera untuk kartu Performa Lapangan — presentasi saja,
 // TIDAK mengubah nama field_name di database/API. Deteksi Pickleball & nomor
@@ -1643,34 +1622,28 @@ export default function DashboardPage() {
   );
   const paymentRows = dashboard?.paymentBreakdown ?? [];
   // Donut "Status Booking": reuse paymentBreakdown (Reservation/AYO Order/
-  // Pending/Cancelled) yang sudah ada, tanpa fetch/endpoint baru.
+  // Pending/Cancelled/Completed) yang sudah ada, tanpa fetch/endpoint baru.
   // "Pending" DIGABUNG ke Reservation: statusLabel() di file ini sendiri
   // (baris lain) sudah memetakan status "Pending" → "Belum Bayar" — identik
   // dengan makna Reservation ("Pemesanan belum dibayar"), jadi audit ini
-  // memenuhi syarat penggabungan. Reservation% dan Pending% berasal dari
-  // denominator paymentBreakdown yang sama (lihat app/api/dashboard/route.ts);
-  // dijumlah lalu direnormalisasi ke 3 kategori akhir, dikonversi ke jumlah
-  // eksak via largest-remainder terhadap metrics.totalTransactions. Catatan:
-  // booking yang sekaligus reservation-source & Pending-status berpotensi
-  // terhitung sekali secara agregat (bukan double count per baris) karena kita
-  // menjumlah dua persentase yang sudah eksis, bukan menghitung ulang baris
-  // mentah — ini pendekatan terbaik tanpa fetch tambahan (lihat laporan akhir).
+  // memenuhi syarat penggabungan. `row.value` dari backend adalah RAW COUNT
+  // booking (bukan persentase) dan kelima kategori saling eksklusif — jadi
+  // penjumlahan di bawah ini sudah pasti angka eksak, tidak perlu rescaling/
+  // pembulatan apa pun lagi di sini. Titik pembulatan HANYA ada satu di
+  // seluruh alur: persentase tampilan (`safePercent`) di dalam
+  // BookingStatusDonut, dihitung dari count eksak ini saat dirender.
   const totalBookings = metrics?.totalTransactions ?? 0;
-  const bookingStatusShares = {
-    reservation:
-      (paymentRows.find((row) => row.name === "Reservation")?.value ?? 0) +
-      (paymentRows.find((row) => row.name === "Pending")?.value ?? 0),
-    ayoOrder: paymentRows.find((row) => row.name === "AYO Order")?.value ?? 0,
-    cancelled: paymentRows.find((row) => row.name === "Cancelled")?.value ?? 0,
-  };
-  const [reservationCount, ayoOrderCount, cancelledCount] = allocateIntegerCounts(
-    [bookingStatusShares.reservation, bookingStatusShares.ayoOrder, bookingStatusShares.cancelled],
-    totalBookings,
-  );
+  const reservationCount =
+    (paymentRows.find((row) => row.name === "Reservation")?.value ?? 0) +
+    (paymentRows.find((row) => row.name === "Pending")?.value ?? 0);
+  const ayoOrderCount = paymentRows.find((row) => row.name === "AYO Order")?.value ?? 0;
+  const cancelledCount = paymentRows.find((row) => row.name === "Cancelled")?.value ?? 0;
+  const completedCount = paymentRows.find((row) => row.name === "Completed")?.value ?? 0;
   const bookingStatusItems: BookingStatusItem[] = [
     { key: "reservation", label: "Reservation", description: "Pemesanan belum dibayar", value: reservationCount, color: "#fda4af" },
     { key: "ayo-order", label: "AYO Order", description: "Pesanan yang sudah dibayar", value: ayoOrderCount, color: "#e11d48" },
     { key: "cancelled", label: "Cancelled", description: "Pesanan yang dibatalkan", value: cancelledCount, color: "#7f1d1d" },
+    { key: "completed", label: "Selesai", description: "Pesanan yang sudah selesai", value: completedCount, color: "#10b981" },
   ];
   const eventRows = dashboard?.syncEvents ?? [];
   const courtOptions = dashboard?.branchOptions ?? [];
@@ -1816,17 +1789,21 @@ export default function DashboardPage() {
         ? "Kategori Penjualan Olsera"
         : activeNav === "OlseraInventori"
           ? "Inventori Olsera"
-          : activeNav === "Webhook"
-            ? "Monitoring Webhook AYO"
-            : activeNav === "Pengguna"
-              ? "Manajemen Pengguna"
-              : "Dashboard AYO";
+          : activeNav === "OlseraKeuangan"
+            ? "Laporan Keuangan Olsera"
+            : activeNav === "Webhook"
+              ? "Monitoring Webhook AYO"
+              : activeNav === "Pengguna"
+                ? "Manajemen Pengguna"
+                : "Dashboard AYO";
   const headerDescription =
     activeNav === "OlseraInventori"
       ? "Monitoring stok, mutasi, harga modal, dan nilai persediaan Olsera."
-      : activeNav === "Dasbor"
-        ? "Pusat monitoring operasional dan transaksi AYO."
-        : undefined;
+      : activeNav === "OlseraKeuangan"
+        ? "Neraca, Laba Rugi, Arus Kas, dan Buku Besar dari snapshot sinkronisasi Olsera."
+        : activeNav === "Dasbor"
+          ? "Pusat monitoring operasional dan transaksi AYO."
+          : undefined;
 
   const sidebarItems = [
     ...visibleNavItems,
@@ -1836,7 +1813,7 @@ export default function DashboardPage() {
   // Dropdown Sync AYO lama — handler & endpoint tidak berubah, hanya dipindah
   // ke variabel agar bisa disuntikkan sebagai slot `actions` di header baru.
   const ayoSyncControl =
-    canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "Pengguna" ? (
+    canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "OlseraKeuangan" && activeNav !== "Pengguna" ? (
             <div className="relative">
               <Button
                 className={OLSERA_PRIMARY_BTN}
@@ -2681,6 +2658,12 @@ export default function DashboardPage() {
           {activeNavAllowed && activeNav === "OlseraInventori" && (
             <div className="min-h-[calc(100vh-8rem)]">
               <OlseraInventoryPanel isSupervisor={isSupervisor} />
+            </div>
+          )}
+
+          {activeNavAllowed && activeNav === "OlseraKeuangan" && (
+            <div className="min-h-[calc(100vh-8rem)]">
+              <OlseraFinancialPanel />
             </div>
           )}
 

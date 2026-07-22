@@ -112,13 +112,27 @@ export async function GET(request: Request) {
         progress: Math.max(8, Math.round((service.revenueValue / topRevenue) * 100)),
       }));
 
+      // "Reservation"/"AYO Order" merepresentasikan booking yang BELUM dibayar (belum
+      // final, belum cancelled) — bukan sekadar label kanal booking_source, supaya
+      // booking lama yang sudah SUCCESS/FINISHED tidak nyangkut selamanya di kategori
+      // ini. Kelima kategori di bawah saling eksklusif (partition dari displayFiltered)
+      // agar totalnya selalu sama dengan jumlah booking pada filter aktif.
+      const isFinalStatus = (item: AnalyzedBooking) => mapStatus(item.booking.status) === "Completed";
+      const isPendingStatus = (item: AnalyzedBooking) => mapStatus(item.booking.status) === "Pending";
+      const isUnpaid = (item: AnalyzedBooking) => !item.cancelled && !isFinalStatus(item) && !isPendingStatus(item);
+
+      // value = RAW COUNT booking (bukan persentase) — sengaja, supaya konversi ke
+      // persentase HANYA terjadi sekali, di frontend (app/page.tsx), saat dirender.
+      // Mengirim persentase yang sudah dibulatkan di sini lalu dibulatkan LAGI di
+      // frontend (allocateIntegerCounts) menghasilkan pembulatan ganda yang membuat
+      // angka tampilan meleset dari data asli (mis. Cancelled 175 tampil jadi 169).
       const paymentBreakdown = [
-        { name: "Reservation", value: displayFiltered.filter((item) => item.booking.booking_source === "reservation").length, color: "#ec4899" },
-        { name: "AYO Order", value: displayFiltered.filter((item) => item.booking.booking_source === "order").length, color: "#f9a8c2" },
-        { name: "Pending", value: displayFiltered.filter((item) => mapStatus(item.booking.status) === "Pending").length, color: "#f59e0b" },
+        { name: "Reservation", value: displayFiltered.filter((item) => isUnpaid(item) && item.booking.booking_source === "reservation").length, color: "#ec4899" },
+        { name: "AYO Order", value: displayFiltered.filter((item) => isUnpaid(item) && item.booking.booking_source === "order").length, color: "#f9a8c2" },
+        { name: "Pending", value: displayFiltered.filter((item) => !item.cancelled && isPendingStatus(item)).length, color: "#f59e0b" },
         { name: "Cancelled", value: displayFiltered.filter((item) => item.cancelled).length, color: "#e11d48" },
+        { name: "Completed", value: displayFiltered.filter((item) => !item.cancelled && isFinalStatus(item)).length, color: "#10b981" },
       ];
-      const totalBreakdown = paymentBreakdown.reduce((sum, item) => sum + item.value, 0) || 1;
 
       return {
         metrics: {
@@ -131,10 +145,7 @@ export async function GET(request: Request) {
         },
         hourlyTransactions: hourly,
         topServices,
-        paymentBreakdown: paymentBreakdown.map((item) => ({
-          ...item,
-          value: Math.round((item.value / totalBreakdown) * 100),
-        })),
+        paymentBreakdown,
         revenueTrend: Array.from({ length: 6 }, (_, index) => {
           const day = (index + 1) * 4;
           const amount = displayFiltered
