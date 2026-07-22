@@ -22,6 +22,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  describeFinancialResponse,
+  parseLedgerResponse,
+  parseSnapshotResponse,
+  type FinancialResponseInput,
+} from "@/lib/olsera-financial-response";
 
 const TITLE = "text-[16px] font-semibold tracking-tight text-slate-50";
 const DESC = "mt-1 text-[13.5px] leading-relaxed text-slate-400";
@@ -85,6 +91,12 @@ async function redirectToLogin() {
     // tetap arahkan ke login
   }
   window.location.href = "/login";
+}
+
+/** Baca body sebagai teks (bukan langsung .json()) supaya parser bisa membedakan JSON rusak dari shape salah. */
+async function readResponse(response: Response): Promise<FinancialResponseInput> {
+  const bodyText = await response.text().catch(() => "");
+  return { httpStatus: response.status, contentType: response.headers.get("content-type"), bodyText };
 }
 
 type NormalizedNode = { name: string | null; accountCode: string | null; amount: number; formattedAmount: string | null; children: NormalizedNode[] };
@@ -273,20 +285,27 @@ export function OlseraFinancialPanel() {
     setSnapshotLoading(true);
     setSnapshotError("");
     fetch(`/api/olsera/financial/snapshot?period=${period}&_t=${Date.now()}`, { cache: "no-store" })
-      .then(async (response) => {
-        if (response.status === 401) {
-          await redirectToLogin();
-          return null;
-        }
-        return (await response.json().catch(() => null)) as SnapshotResponse | null;
-      })
-      .then((payload) => {
-        if (cancelled || !payload) return;
-        if (payload.status !== "success") {
-          setSnapshotError(payload.message || "Gagal memuat data laporan keuangan.");
+      .then(readResponse)
+      .then(async (input) => {
+        if (cancelled) return;
+        const result = parseSnapshotResponse<SnapshotResponse>(input);
+        if (result.kind === "unauthorized") {
+          if (result.httpStatus === 401) {
+            await redirectToLogin();
+            return;
+          }
+          setSnapshotError(result.message);
           setSnapshot(null);
           return;
         }
+        if (result.kind !== "success") {
+          // Diagnostic aman: hanya status/content-type/panjang/nama key — tanpa nilai laporan.
+          console.info("[financial-snapshot-ui]", result.kind, describeFinancialResponse(input));
+          setSnapshotError(result.message);
+          setSnapshot(null);
+          return;
+        }
+        const payload = result.payload;
         setSnapshot(payload);
         // Default ke periode terakhir yang berhasil disinkronkan — hanya sebelum
         // pengguna memilih periode sendiri (lihat requirement #4).
@@ -319,16 +338,20 @@ export function OlseraFinancialPanel() {
     setLedgerLoading(true);
     const params = new URLSearchParams({ period, accountCode: selectedAccountCode, page: String(ledgerPage), limit: "50", _t: String(Date.now()) });
     fetch(`/api/olsera/financial/snapshot/ledger?${params.toString()}`, { cache: "no-store" })
-      .then(async (response) => {
-        if (response.status === 401) {
+      .then(readResponse)
+      .then(async (input) => {
+        if (cancelled) return;
+        const result = parseLedgerResponse<LedgerResponse>(input);
+        if (result.kind === "unauthorized" && result.httpStatus === 401) {
           await redirectToLogin();
-          return null;
+          return;
         }
-        return (await response.json().catch(() => null)) as LedgerResponse | null;
-      })
-      .then((payload) => {
-        if (cancelled || !payload) return;
-        setLedgerData(payload.status === "success" ? payload : null);
+        if (result.kind !== "success") {
+          console.info("[financial-ledger-ui]", result.kind, describeFinancialResponse(input));
+          setLedgerData(null);
+          return;
+        }
+        setLedgerData(result.payload);
       })
       .catch(() => undefined)
       .finally(() => {

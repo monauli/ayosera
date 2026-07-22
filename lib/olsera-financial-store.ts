@@ -282,9 +282,14 @@ export async function getLatestSuccessfulFinancialSyncLog(context?: FinancialCol
   });
 }
 
-/** Sync log untuk satu periode spesifik (untuk mendeteksi run yang masih "running" saat halaman dibuka/direfresh). */
+/**
+ * Sync log untuk satu periode spesifik (untuk mendeteksi run yang masih "running" saat halaman dibuka/direfresh).
+ * accountCodes SENGAJA disertakan (tidak diproyeksikan keluar): route snapshot memakai
+ * accountCodes.length sebagai accountsTotal — memproyeksikannya keluar pernah menyebabkan
+ * TypeError runtime setelah semua read sukses (HTTP 200 dengan pesan error generik).
+ */
 export async function getFinancialSyncLogForPeriod(period: string, context?: FinancialCollections): Promise<FinancialSyncRun | null> {
-  return runWithReadCollections(context, (fc) => fc.syncLogs.findOne({ _id: financialSyncRunId(period) }, { projection: { accountCodes: 0 } }));
+  return runWithReadCollections(context, (fc) => fc.syncLogs.findOne({ _id: financialSyncRunId(period) }));
 }
 
 export type FinancialLedgerEntryDocument = {

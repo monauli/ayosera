@@ -59,10 +59,10 @@ export async function GET(req: Request) {
             status: syncLog.status,
             phase: syncLog.phase,
             accountsProcessed: syncLog.accountsProcessed,
-            accountsTotal: syncLog.accountCodes.length,
+            accountsTotal: syncLog.accountCodes?.length ?? 0,
             recordsProcessed: syncLog.recordsProcessed,
             errorMessage: syncLog.errorMessage,
-            completedAt: syncLog.completedAt,
+            completedAt: syncLog.completedAt ? new Date(syncLog.completedAt).toISOString() : null,
           }
         : null,
       reports: {
