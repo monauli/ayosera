@@ -5,7 +5,7 @@ import {
   getMonthlyReportsForPeriod,
   listFinancialAccounts,
 } from "@/lib/olsera-financial-store";
-import { guard, json, errorJson } from "../_shared";
+import { guard, json, isDatabaseTimeoutError } from "../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,9 +77,9 @@ export async function GET(req: Request) {
     });
   } catch (error) {
     if (error instanceof Response) return error;
-    if (error instanceof Error && error.message.includes("timeout")) {
+    if (isDatabaseTimeoutError(error)) {
       return json({ status: "timeout", message: "Snapshot laporan keuangan belum merespons dalam batas waktu aman." }, { status: 504 });
     }
-    return errorJson(error);
+    return json({ status: "upstream-error", message: "Gagal membaca snapshot laporan keuangan. Coba lagi." });
   }
 }
