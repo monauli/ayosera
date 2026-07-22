@@ -412,29 +412,6 @@ const MONTH_FULL_LABELS = [
   "Desember",
 ];
 
-/**
- * Largest-remainder rounding: distribusikan `total` (integer eksak, mis.
- * metrics.totalTransactions) ke proporsi `shares` (persentase yang sudah
- * dihitung server) sehingga hasilnya menjumlah persis `total` — dipakai untuk
- * menurunkan jumlah booking per kategori pada donut Status Booking dari
- * persentase paymentBreakdown yang sudah ada (tanpa fetch atau endpoint baru).
- */
-function allocateIntegerCounts(shares: number[], total: number): number[] {
-  const shareSum = shares.reduce((sum, value) => sum + value, 0);
-  if (shareSum <= 0 || total <= 0) return shares.map(() => 0);
-  const raw = shares.map((value) => (value / shareSum) * total);
-  const floors = raw.map((value) => Math.floor(value));
-  let remainder = total - floors.reduce((sum, value) => sum + value, 0);
-  const order = raw
-    .map((value, index) => ({ index, frac: value - Math.floor(value) }))
-    .sort((a, b) => b.frac - a.frac);
-  const result = [...floors];
-  for (let i = 0; i < order.length && remainder > 0; i++, remainder--) {
-    result[order[i].index] += 1;
-  }
-  return result;
-}
-
 // Enam lapangan Ayosera untuk kartu Performa Lapangan — presentasi saja,
 // TIDAK mengubah nama field_name di database/API. Deteksi Pickleball & nomor
 // lapangan mengikuti pola canonical yang sama dengan lib/omzet-export.ts
@@ -1643,34 +1620,28 @@ export default function DashboardPage() {
   );
   const paymentRows = dashboard?.paymentBreakdown ?? [];
   // Donut "Status Booking": reuse paymentBreakdown (Reservation/AYO Order/
-  // Pending/Cancelled) yang sudah ada, tanpa fetch/endpoint baru.
+  // Pending/Cancelled/Completed) yang sudah ada, tanpa fetch/endpoint baru.
   // "Pending" DIGABUNG ke Reservation: statusLabel() di file ini sendiri
   // (baris lain) sudah memetakan status "Pending" → "Belum Bayar" — identik
   // dengan makna Reservation ("Pemesanan belum dibayar"), jadi audit ini
-  // memenuhi syarat penggabungan. Reservation% dan Pending% berasal dari
-  // denominator paymentBreakdown yang sama (lihat app/api/dashboard/route.ts);
-  // dijumlah lalu direnormalisasi ke 3 kategori akhir, dikonversi ke jumlah
-  // eksak via largest-remainder terhadap metrics.totalTransactions. Catatan:
-  // booking yang sekaligus reservation-source & Pending-status berpotensi
-  // terhitung sekali secara agregat (bukan double count per baris) karena kita
-  // menjumlah dua persentase yang sudah eksis, bukan menghitung ulang baris
-  // mentah — ini pendekatan terbaik tanpa fetch tambahan (lihat laporan akhir).
+  // memenuhi syarat penggabungan. `row.value` dari backend adalah RAW COUNT
+  // booking (bukan persentase) dan kelima kategori saling eksklusif — jadi
+  // penjumlahan di bawah ini sudah pasti angka eksak, tidak perlu rescaling/
+  // pembulatan apa pun lagi di sini. Titik pembulatan HANYA ada satu di
+  // seluruh alur: persentase tampilan (`safePercent`) di dalam
+  // BookingStatusDonut, dihitung dari count eksak ini saat dirender.
   const totalBookings = metrics?.totalTransactions ?? 0;
-  const bookingStatusShares = {
-    reservation:
-      (paymentRows.find((row) => row.name === "Reservation")?.value ?? 0) +
-      (paymentRows.find((row) => row.name === "Pending")?.value ?? 0),
-    ayoOrder: paymentRows.find((row) => row.name === "AYO Order")?.value ?? 0,
-    cancelled: paymentRows.find((row) => row.name === "Cancelled")?.value ?? 0,
-  };
-  const [reservationCount, ayoOrderCount, cancelledCount] = allocateIntegerCounts(
-    [bookingStatusShares.reservation, bookingStatusShares.ayoOrder, bookingStatusShares.cancelled],
-    totalBookings,
-  );
+  const reservationCount =
+    (paymentRows.find((row) => row.name === "Reservation")?.value ?? 0) +
+    (paymentRows.find((row) => row.name === "Pending")?.value ?? 0);
+  const ayoOrderCount = paymentRows.find((row) => row.name === "AYO Order")?.value ?? 0;
+  const cancelledCount = paymentRows.find((row) => row.name === "Cancelled")?.value ?? 0;
+  const completedCount = paymentRows.find((row) => row.name === "Completed")?.value ?? 0;
   const bookingStatusItems: BookingStatusItem[] = [
     { key: "reservation", label: "Reservation", description: "Pemesanan belum dibayar", value: reservationCount, color: "#fda4af" },
     { key: "ayo-order", label: "AYO Order", description: "Pesanan yang sudah dibayar", value: ayoOrderCount, color: "#e11d48" },
     { key: "cancelled", label: "Cancelled", description: "Pesanan yang dibatalkan", value: cancelledCount, color: "#7f1d1d" },
+    { key: "completed", label: "Selesai", description: "Pesanan yang sudah selesai", value: completedCount, color: "#10b981" },
   ];
   const eventRows = dashboard?.syncEvents ?? [];
   const courtOptions = dashboard?.branchOptions ?? [];

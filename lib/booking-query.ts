@@ -1,20 +1,4 @@
 import type { BookingDocument } from "@/lib/mongodb";
-import { CANCELLED_STATUS_PATTERN_SOURCE } from "@/lib/revenue";
-
-const CANCELLED_STATUS_FIELDS = [
-  "status",
-  "payment",
-  "status_label",
-  "source_status",
-  "payment_status",
-  "raw.status",
-  "raw.payment",
-  "raw.payment.status",
-  "raw.payment.status_label",
-  "raw.payment_status",
-  "raw.status_label",
-  "raw.source_status",
-];
 
 export function buildBookingFilter(searchParams: URLSearchParams) {
   const status = searchParams.get("status");
@@ -31,13 +15,11 @@ export function buildBookingFilter(searchParams: URLSearchParams) {
       Completed: ["SUCCESS", "FINISHED"],
       Pending: ["PENDING"],
     };
-    if (["cancelled", "canceled", "dibatalkan", "batal"].includes(normalizedStatus)) {
-      appendAnd(filter, {
-        $or: CANCELLED_STATUS_FIELDS.map((field) => ({
-          [field]: { $regex: CANCELLED_STATUS_PATTERN_SOURCE, $options: "i" },
-        })),
-      });
-    } else {
+    // Filter "cancelled" TIDAK dilakukan di level MongoDB query (lihat
+    // app/api/transactions/route.ts) — status cancelled ditentukan via
+    // isCancelledTransaction() di JS agar identik dengan Dashboard, karena
+    // struktur data nested tidak selalu cocok dengan regex path tetap di sini.
+    if (!["cancelled", "canceled", "dibatalkan", "batal"].includes(normalizedStatus)) {
       filter.status = statusMap[status] ? { $in: statusMap[status] } : status;
     }
   }

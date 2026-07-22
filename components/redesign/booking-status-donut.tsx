@@ -13,7 +13,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 // baris daftar menampilkan detail pada panel tetap di bawah donut — bagian
 // dari alur dokumen biasa, bukan elemen mengambang.
 export type BookingStatusItem = {
-  key: "reservation" | "ayo-order" | "cancelled";
+  key: "reservation" | "ayo-order" | "cancelled" | "completed";
   label: string;
   description: string;
   value: number;
