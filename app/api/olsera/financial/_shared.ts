@@ -4,5 +4,5 @@ import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { FinancialClientError } from "@/lib/olsera-financial-client";
 export const guard = async () => { await requireModule("olsera"); await requireSupervisor(); };
 export const safeError = (e: unknown) => e instanceof FinancialClientError ? e.safe : { status: "upstream-error", message: "Server Olsera sedang bermasalah. Coba lagi." };
-export const json = (body: unknown) => NextResponse.json(body, { headers: NO_CACHE_HEADERS });
+export const json = (body: unknown, init?: ResponseInit) => NextResponse.json(body, { ...init, headers: { ...NO_CACHE_HEADERS, ...(init?.headers ?? {}) } });
 export const errorJson = (e: unknown) => json(safeError(e));

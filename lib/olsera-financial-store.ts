@@ -69,6 +69,22 @@ async function runWithCollections<T>(
   });
 }
 
+/** Jalur baca snapshot tidak memicu ensureIndexes global untuk seluruh aplikasi. */
+async function runWithReadCollections<T>(
+  context: FinancialCollections | undefined,
+  handler: (fc: FinancialCollections) => Promise<T>,
+): Promise<T> {
+  if (context) return handler(context);
+  const { collections } = await import("./mongodb");
+  const c = await collections();
+  return handler({
+    monthlyReports: c.olseraFinancialMonthlyReports,
+    accounts: c.olseraFinancialAccounts,
+    ledgerEntries: c.olseraFinancialLedgerEntries,
+    syncLogs: c.olseraFinancialSyncLogs,
+  });
+}
+
 export async function upsertMonthlyReport(input: FinancialMonthlyReportInput, context?: FinancialCollections): Promise<void> {
   return runWithCollections(context, async (fc) => {
     const id = monthlyReportId(storeId(), input.period, input.reportType);
@@ -212,4 +228,125 @@ export async function updateFinancialSyncRun(
   return runWithCollections(context, (fc) =>
     fc.syncLogs.findOneAndUpdate({ _id: runId }, { $set: { ...patch, updatedAt: new Date() } }, { returnDocument: "after" }),
   );
+}
+
+// ---- Read-only helpers untuk UI Laporan Keuangan (Tahap 4B) ----
+// Semua fungsi di bawah HANYA membaca snapshot MongoDB yang sudah tersimpan
+// (tidak pernah memanggil Olsera live) — dipakai oleh app/api/olsera/financial/snapshot/*.
+
+/** ID sync run deterministik yang sama seperti dipakai createFinancialSyncRun. */
+export const financialSyncRunId = (period: string) => `financial:${storeId()}:${period}`;
+
+export type FinancialMonthlyReportDocument = FinancialMonthlyReportInput & {
+  _id: string;
+  storeId: number;
+  syncedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/** Keempat laporan bulanan (bila ada) untuk satu periode, dikelompokkan per reportType. */
+export async function getMonthlyReportsForPeriod(
+  period: string,
+  context?: FinancialCollections,
+): Promise<Partial<Record<FinancialMonthlyReportInput["reportType"], FinancialMonthlyReportDocument>>> {
+  return runWithReadCollections(context, async (fc) => {
+    const docs = await fc.monthlyReports.find({ storeId: storeId(), period }, { projection: { rawPayload: 0 } }).maxTimeMS(8000).toArray();
+    const byType: Partial<Record<FinancialMonthlyReportInput["reportType"], FinancialMonthlyReportDocument>> = {};
+    for (const doc of docs) byType[doc.reportType as FinancialMonthlyReportInput["reportType"]] = doc;
+    return byType;
+  });
+}
+
+/** Katalog akun tersimpan (tidak per-periode — snapshot terbaru storeId). */
+export async function listFinancialAccounts(context?: FinancialCollections): Promise<any[]> {
+  return runWithReadCollections(context, (fc) =>
+    fc.accounts
+      .find({ storeId: storeId() }, { projection: { rawPayload: 0 } })
+      .sort({ accountCode: 1 })
+      .maxTimeMS(8000)
+      .toArray(),
+  );
+}
+
+/** Periode terakhir yang sync-nya berstatus success — dipakai default month-picker UI. */
+export async function getLatestSuccessfulFinancialSyncLog(context?: FinancialCollections): Promise<FinancialSyncRun | null> {
+  return runWithReadCollections(context, async (fc) => {
+    const rows = await fc.syncLogs
+      .find({ storeId: storeId(), status: "success" }, { projection: { accountCodes: 0 } })
+      .sort({ period: -1 })
+      .limit(1)
+      .maxTimeMS(8000)
+      .toArray();
+    return rows[0] ?? null;
+  });
+}
+
+/** Sync log untuk satu periode spesifik (untuk mendeteksi run yang masih "running" saat halaman dibuka/direfresh). */
+export async function getFinancialSyncLogForPeriod(period: string, context?: FinancialCollections): Promise<FinancialSyncRun | null> {
+  return runWithReadCollections(context, (fc) => fc.syncLogs.findOne({ _id: financialSyncRunId(period) }, { projection: { accountCodes: 0 } }));
+}
+
+export type FinancialLedgerEntryDocument = {
+  _id: string;
+  storeId: number;
+  period: string;
+  accountCode: string;
+  accountName: string | null;
+  transactionDate: string | null;
+  formattedTransactionDate: string | null;
+  transactionNo: string | null;
+  description: string | null;
+  debit: number;
+  credit: number;
+  balance: number | null;
+  isOpeningBalance: boolean;
+  syncedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/** Satu halaman baris buku besar (akun+periode), diurutkan saldo awal dulu lalu tanggal. */
+export async function listFinancialLedgerEntriesPage(
+  period: string,
+  accountCode: string,
+  page: number,
+  limit: number,
+  context?: FinancialCollections,
+): Promise<{ data: FinancialLedgerEntryDocument[]; total: number }> {
+  return runWithReadCollections(context, async (fc) => {
+    const filter = { storeId: storeId(), period, accountCode };
+    const total = await fc.ledgerEntries.countDocuments(filter, { maxTimeMS: 8000 });
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.max(1, limit);
+    const data = await fc.ledgerEntries
+      .find(filter, { projection: { rawPayload: 0 } })
+      .sort({ isOpeningBalance: -1, transactionDate: 1, _id: 1 })
+      .skip((safePage - 1) * safeLimit)
+      .limit(safeLimit)
+      .maxTimeMS(8000)
+      .toArray();
+    return { data, total };
+  });
+}
+
+/**
+ * Total debit/kredit buku besar SATU periode (bukan hanya halaman aktif),
+ * mengecualikan baris saldo awal — dipakai untuk "Pergerakan Periode"
+ * (debit dikurangi kredit), BUKAN saldo berjalan (famount).
+ */
+export async function getFinancialLedgerMovementTotals(
+  period: string,
+  accountCode: string,
+  context?: FinancialCollections,
+): Promise<{ debit: number; credit: number }> {
+  return runWithReadCollections(context, async (fc) => {
+    const rows = await fc.ledgerEntries
+      .aggregate([
+        { $match: { storeId: storeId(), period, accountCode, isOpeningBalance: { $ne: true } } },
+        { $group: { _id: null, debit: { $sum: "$debit" }, credit: { $sum: "$credit" } } },
+      ], { maxTimeMS: 8000 })
+      .toArray();
+    return { debit: rows[0]?.debit ?? 0, credit: rows[0]?.credit ?? 0 };
+  });
 }

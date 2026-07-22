@@ -27,6 +27,7 @@
     "validate:olsera-backfill": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/validate-olsera-backfill.ts",
     "validate:financial-live": "tsx --conditions=react-server scripts/validate-olsera-financial-live.ts",
     "validate:financial-sync": "tsx --conditions=react-server scripts/validate-olsera-financial-sync.ts",
+    "diagnose:financial-production": "tsx --conditions=react-server scripts/diagnose-financial-production.ts",
     "test:olsera-inventory-sync": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/test-olsera-inventory-sync.ts",
     "backfill:olsera-inventory-movements": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/backfill-olsera-inventory-movements.ts",
     "patch:olsera-category-override-DF0226022700000852": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/patch-olsera-category-override-DF0226022700000852.ts",

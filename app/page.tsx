@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { OlseraFinancialPanel } from "@/components/olsera-financial-panel";
 import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
 import { UsersPanel } from "@/components/users-panel";
 import { AyoseraHeader } from "@/components/redesign/ayosera-header";
@@ -181,6 +182,7 @@ const navItems = [
     subItems: [
       { label: "Kategori Penjualan", nav: "Olsera" },
       { label: "Inventori", nav: "OlseraInventori" },
+      { label: "Laporan Keuangan", nav: "OlseraKeuangan" },
     ],
   },
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
@@ -1787,17 +1789,21 @@ export default function DashboardPage() {
         ? "Kategori Penjualan Olsera"
         : activeNav === "OlseraInventori"
           ? "Inventori Olsera"
-          : activeNav === "Webhook"
-            ? "Monitoring Webhook AYO"
-            : activeNav === "Pengguna"
-              ? "Manajemen Pengguna"
-              : "Dashboard AYO";
+          : activeNav === "OlseraKeuangan"
+            ? "Laporan Keuangan Olsera"
+            : activeNav === "Webhook"
+              ? "Monitoring Webhook AYO"
+              : activeNav === "Pengguna"
+                ? "Manajemen Pengguna"
+                : "Dashboard AYO";
   const headerDescription =
     activeNav === "OlseraInventori"
       ? "Monitoring stok, mutasi, harga modal, dan nilai persediaan Olsera."
-      : activeNav === "Dasbor"
-        ? "Pusat monitoring operasional dan transaksi AYO."
-        : undefined;
+      : activeNav === "OlseraKeuangan"
+        ? "Neraca, Laba Rugi, Arus Kas, dan Buku Besar dari snapshot sinkronisasi Olsera."
+        : activeNav === "Dasbor"
+          ? "Pusat monitoring operasional dan transaksi AYO."
+          : undefined;
 
   const sidebarItems = [
     ...visibleNavItems,
@@ -1807,7 +1813,7 @@ export default function DashboardPage() {
   // Dropdown Sync AYO lama — handler & endpoint tidak berubah, hanya dipindah
   // ke variabel agar bisa disuntikkan sebagai slot `actions` di header baru.
   const ayoSyncControl =
-    canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "Pengguna" ? (
+    canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "OlseraKeuangan" && activeNav !== "Pengguna" ? (
             <div className="relative">
               <Button
                 className={OLSERA_PRIMARY_BTN}
@@ -2652,6 +2658,12 @@ export default function DashboardPage() {
           {activeNavAllowed && activeNav === "OlseraInventori" && (
             <div className="min-h-[calc(100vh-8rem)]">
               <OlseraInventoryPanel isSupervisor={isSupervisor} />
+            </div>
+          )}
+
+          {activeNavAllowed && activeNav === "OlseraKeuangan" && (
+            <div className="min-h-[calc(100vh-8rem)]">
+              <OlseraFinancialPanel />
             </div>
           )}
 
