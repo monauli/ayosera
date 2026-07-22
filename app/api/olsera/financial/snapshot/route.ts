@@ -5,7 +5,7 @@ import {
   getMonthlyReportsForPeriod,
   listFinancialAccounts,
 } from "@/lib/olsera-financial-store";
-import { guard, json, isDatabaseTimeoutError } from "../_shared";
+import { guard, json, isDatabaseTimeoutError, withDatabaseRetry } from "../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,12 +37,14 @@ export async function GET(req: Request) {
     const [yearText, monthText] = periodParam.split("-");
     const period = validatePeriod(yearText, monthText);
 
-    const [reports, accounts, syncLog, latestSuccessfulRun] = await Promise.all([
-      timed("monthlyReports", getMonthlyReportsForPeriod(period)),
-      timed("accounts", listFinancialAccounts()),
-      timed("syncLog", getFinancialSyncLogForPeriod(period)),
-      timed("latestSyncLog", getLatestSuccessfulFinancialSyncLog()),
-    ]);
+    const [reports, accounts, syncLog, latestSuccessfulRun] = await withDatabaseRetry(() =>
+      Promise.all([
+        timed("monthlyReports", getMonthlyReportsForPeriod(period)),
+        timed("accounts", listFinancialAccounts()),
+        timed("syncLog", getFinancialSyncLogForPeriod(period)),
+        timed("latestSyncLog", getLatestSuccessfulFinancialSyncLog()),
+      ]),
+    );
 
     const hasData = Object.keys(reports).length > 0;
 

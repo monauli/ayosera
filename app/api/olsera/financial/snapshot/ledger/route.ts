@@ -1,6 +1,6 @@
 import { validatePeriod } from "@/lib/olsera-financial-core";
 import { getFinancialLedgerMovementTotals, listFinancialAccounts, listFinancialLedgerEntriesPage } from "@/lib/olsera-financial-store";
-import { guard, json, isDatabaseTimeoutError } from "../../_shared";
+import { guard, json, isDatabaseTimeoutError, withDatabaseRetry } from "../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,11 +35,13 @@ export async function GET(req: Request) {
     const page = Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1));
     const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(url.searchParams.get("limit")) || 50)));
 
-    const [{ data, total }, movementTotals, accounts] = await Promise.all([
-      timed("ledgerQuery", listFinancialLedgerEntriesPage(period, accountCode, page, limit)),
-      timed("movementTotals", getFinancialLedgerMovementTotals(period, accountCode)),
-      timed("accounts", listFinancialAccounts()),
-    ]);
+    const [{ data, total }, movementTotals, accounts] = await withDatabaseRetry(() =>
+      Promise.all([
+        timed("ledgerQuery", listFinancialLedgerEntriesPage(period, accountCode, page, limit)),
+        timed("movementTotals", getFinancialLedgerMovementTotals(period, accountCode)),
+        timed("accounts", listFinancialAccounts()),
+      ]),
+    );
 
     const account = accounts.find((row: any) => row.accountCode === accountCode);
     const accountName = account?.accountName ?? data.find((row) => row.accountName)?.accountName ?? null;
