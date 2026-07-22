@@ -24,7 +24,9 @@ import {
   STOCK_STATUS_BADGE_CLASS,
   displayValue,
   hasAnyMeaningfulValue,
+  hiddenInventoryRowCount,
   stockStatusBadgeLabel,
+  visibleInventoryRows,
   visibleInventoryTabs,
 } from "@/lib/olsera-inventory-ui";
 
@@ -226,6 +228,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [stockStatusFilter, setStockStatusFilter] = useState("");
   const [stockSort, setStockSort] = useState<{ key: "name" | "stock" | "value"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [stockPage, setStockPage] = useState(1);
+  const [showHiddenItems, setShowHiddenItems] = useState(false);
   const [stockMeta, setStockMeta] = useState({ total: 0, totalPages: 1 });
   const [stockLoading, setStockLoading] = useState(false);
 
@@ -569,6 +572,8 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   // bermakna (null/undefined/""/"-"); tetap tampil bila minimal satu baris
   // valid. Dihitung per-tabel. Field-nya tetap ada di database & export
   // internal — ini murni tampilan.
+  const hiddenStockRowCount = hiddenInventoryRowCount(stockRows);
+  const visibleStockRows = visibleInventoryRows(stockRows, showHiddenItems);
   const showStockSku = hasAnyMeaningfulValue(stockRows.map((row) => row.sku));
   const showStockUom = hasAnyMeaningfulValue(stockRows.map((row) => row.uom));
   const showStockWarehouse = hasAnyMeaningfulValue(stockRows.map((row) => row.warehouseName));
@@ -861,7 +866,23 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                     <option value="habis">Habis</option>
                     <option value="nolengkap">Data Tidak Lengkap</option>
                   </select>
+                  <Button
+                    type="button"
+                    variant={showHiddenItems ? "secondary" : "outline"}
+                    aria-pressed={showHiddenItems}
+                    title="Item tersembunyi tetap tersimpan dan tetap digunakan oleh laporan serta export."
+                    className={showHiddenItems ? "border border-rose-400/40 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25" : PAGE_BTN}
+                    onClick={() => {
+                      setShowHiddenItems((current) => !current);
+                      setStockPage(1);
+                    }}
+                  >
+                    Hidden Item{hiddenStockRowCount > 0 ? ` (${hiddenStockRowCount})` : ""}
+                  </Button>
                 </div>
+                <p className="-mt-1 mb-4 text-xs leading-relaxed text-slate-500">
+                  Item tersembunyi tetap tersimpan dan tetap digunakan oleh laporan serta export.
+                </p>
                 <div className="overflow-x-auto rounded-xl border border-white/10">
                   <table className="rd-table w-full min-w-[980px] text-sm">
                     <thead>
@@ -914,8 +935,8 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                             Memuat stok...
                           </td>
                         </tr>
-                      ) : stockRows.length ? (
-                        stockRows.map((row) => (
+                      ) : visibleStockRows.length ? (
+                        visibleStockRows.map((row) => (
                           <tr
                             key={row.id}>
                             {showStockSku && (
@@ -960,7 +981,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                                 <PackageSearch className="h-5 w-5" />
                               </span>
                               <p className="text-sm text-slate-500">
-                                Belum ada data produk. Jalankan Sync Inventori terlebih dahulu.
+                                {stockRows.length && hiddenStockRowCount
+                                  ? "Semua hasil pada halaman ini sedang tersembunyi. Aktifkan Hidden Item untuk menampilkannya kembali."
+                                  : "Belum ada data produk. Jalankan Sync Inventori terlebih dahulu."}
                               </p>
                             </div>
                           </td>

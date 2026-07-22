@@ -1,6 +1,7 @@
 // @ts-nocheck
 import "server-only";
 import { createHash } from "node:crypto";
+import { reconcileLedgerSummaryWithDetails } from "./olsera-financial-core";
 
 /**
  * Adapter koleksi financial — bentuk minimal yang dibutuhkan store ini, TIDAK
@@ -93,6 +94,20 @@ export async function upsertMonthlyReport(input: FinancialMonthlyReportInput, co
       { _id: id },
       { $set: { ...input, storeId: storeId(), syncedAt: now, updatedAt: now }, $setOnInsert: { _id: id, createdAt: now } },
       { upsert: true },
+    );
+  });
+}
+
+export async function updateMonthlyReportNormalizedPayload(
+  period: string,
+  reportType: FinancialMonthlyReportInput["reportType"],
+  normalizedPayload: Record<string, unknown>,
+  context?: FinancialCollections,
+): Promise<void> {
+  return runWithCollections(context, async (fc) => {
+    await fc.monthlyReports.updateOne(
+      { _id: monthlyReportId(storeId(), period, reportType) },
+      { $set: { normalizedPayload, updatedAt: new Date() } },
     );
   });
 }
@@ -251,11 +266,32 @@ export async function getMonthlyReportsForPeriod(
   context?: FinancialCollections,
 ): Promise<Partial<Record<FinancialMonthlyReportInput["reportType"], FinancialMonthlyReportDocument>>> {
   return runWithReadCollections(context, async (fc) => {
-    const docs = await fc.monthlyReports.find({ storeId: storeId(), period }, { projection: { rawPayload: 0 } }).maxTimeMS(8000).toArray();
+    let cursor = fc.monthlyReports.find({ storeId: storeId(), period }, { projection: { rawPayload: 0 } });
+    if (typeof cursor.maxTimeMS === "function") cursor = cursor.maxTimeMS(8000);
+    const docs = await cursor.toArray();
     const byType: Partial<Record<FinancialMonthlyReportInput["reportType"], FinancialMonthlyReportDocument>> = {};
     for (const doc of docs) byType[doc.reportType as FinancialMonthlyReportInput["reportType"]] = doc;
     return byType;
   });
+}
+
+/**
+ * Memperbaiki snapshot ledger summary dari detail periode yang sudah ada.
+ * Fungsi ini baca detail snapshot lalu menulis hanya normalizedPayload
+ * ledger-summary; tidak pernah memanggil Olsera live.
+ */
+export async function reconcileLedgerSummarySnapshot(
+  period: string,
+  context?: FinancialCollections,
+): Promise<void> {
+  const [reports, entries] = await Promise.all([
+    getMonthlyReportsForPeriod(period, context),
+    listAllFinancialLedgerEntriesForPeriod(period, context),
+  ]);
+  const report = reports["ledger-summary"];
+  if (!report) return;
+  const normalizedPayload = reconcileLedgerSummaryWithDetails(report.normalizedPayload, entries);
+  await updateMonthlyReportNormalizedPayload(period, "ledger-summary", normalizedPayload, context);
 }
 
 /** Katalog akun tersimpan (tidak per-periode — snapshot terbaru storeId). */
@@ -332,6 +368,26 @@ export async function listFinancialLedgerEntriesPage(
       .maxTimeMS(8000)
       .toArray();
     return { data, total };
+  });
+}
+
+/**
+ * SELURUH baris buku besar SATU periode (semua akun, TANPA pagination) —
+ * dipakai HANYA oleh export Buku Besar Detail server-side (lib/olsera-financial-export.ts)
+ * supaya laporan tidak terpotong pada halaman pertama API pagination
+ * (lihat instruksi Tahap 4C). Diurutkan per akun (accountCode) lalu saldo awal
+ * dulu lalu tanggal — deterministik, sama seperti halaman UI per akun.
+ * rawPayload diproyeksikan keluar (tidak pernah dikirim ke client).
+ */
+export async function listAllFinancialLedgerEntriesForPeriod(
+  period: string,
+  context?: FinancialCollections,
+): Promise<FinancialLedgerEntryDocument[]> {
+  return runWithReadCollections(context, async (fc) => {
+    let cursor = fc.ledgerEntries.find({ storeId: storeId(), period }, { projection: { rawPayload: 0 } });
+    if (typeof cursor.sort === "function") cursor = cursor.sort({ accountCode: 1, isOpeningBalance: -1, transactionDate: 1, _id: 1 });
+    if (typeof cursor.maxTimeMS === "function") cursor = cursor.maxTimeMS(20000);
+    return cursor.toArray();
   });
 }
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deduplicateFinancialAccounts, mapFinancialError, normalizeBalanceSheetPayload, normalizeCashFlowPayload, normalizeLedgerDetailPayload, normalizeLedgerSummaryPayload, normalizeProfitLossPayload, parseFinancialAmount, validatePeriod } from "./olsera-financial-core.ts";
+import { deduplicateFinancialAccounts, mapFinancialError, normalizeBalanceSheetPayload, normalizeCashFlowPayload, normalizeLedgerDetailPayload, normalizeLedgerSummaryPayload, normalizeProfitLossPayload, parseFinancialAmount, reconcileLedgerSummaryWithDetails, validatePeriod } from "./olsera-financial-core.ts";
 
 test("financial parser handles Indonesian formats and nullish values", () => {
   assert.equal(parseFinancialAmount("IDR 15.000"), 15000);
@@ -66,6 +66,19 @@ test("cash flow production normalizer validates May 2026 fixture", () => {
 test("ledger normalizer handles numeric object keys, preserves zero rows and precision", () => {
   const rows = normalizeLedgerSummaryPayload({ "0": { account_id: 11105, account_code: "11105", account_name: "BANK BCA 7195-332266", fdebit: "370.361.513,75", fcredit: "120.030.000,00", famount: "250.331.513,75", int_amount: 1 }, "1": { account_code: "20001", account_name: "Zero", fdebit: "0,00", fcredit: "0,00", famount: "0,00" }, meta: { total: 85 } });
   assert.equal(rows.length, 2); assert.equal(rows[0].accountCode, "11105"); assert.equal(rows[0].debit, 370361513.75); assert.equal(rows[0].credit, 120030000); assert.equal(rows[0].balance, 250331513.75); assert.equal(rows[1].balance, 0); assert.equal((rows[0] as any).int_amount, undefined);
+});
+
+test("ledger summary reconciliation keeps 11105 decimals from detail and does not round", () => {
+  const summary = normalizeLedgerSummaryPayload({
+    "0": { account_code: "11105", account_name: "BANK BCA 7195-332266", fdebit: "370.361.514", fcredit: "120.030.000", famount: "250.331.513,75" },
+  });
+  const reconciled = reconcileLedgerSummaryWithDetails(summary, [
+    { accountCode: "11105", debit: 370361513.75, credit: 120030000, isOpeningBalance: false },
+  ]);
+  assert.equal(reconciled[0].debit, 370361513.75);
+  assert.equal(reconciled[0].credit, 120030000);
+  assert.equal(reconciled[0].balance, 250331513.75);
+  assert.equal(reconciled[0].formattedDebit, "370361513.75");
 });
 
 test("ledger detail normalizer detects opening balance and excludes it from movement totals", () => {

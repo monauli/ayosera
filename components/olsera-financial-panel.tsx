@@ -9,8 +9,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowDownToLine,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
+  FileSpreadsheet,
+  FileText,
   Landmark,
   Loader2,
   RefreshCw,
@@ -279,6 +283,10 @@ export function OlseraFinancialPanel() {
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerPage, setLedgerPage] = useState(1);
 
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState("");
+
   // Snapshot MongoDB untuk periode aktif — satu-satunya sumber data laporan.
   useEffect(() => {
     let cancelled = false;
@@ -466,6 +474,55 @@ export function OlseraFinancialPanel() {
     }
   }, [period, snapshot?.syncLog]);
 
+  // Download export (Excel gabungan / PDF per laporan) — mengikuti periode aktif.
+  // Selalu memakai snapshot MongoDB (endpoint export baca-only), tidak menyentuh
+  // Olsera live. Respons error dikembalikan sebagai JSON aman oleh server.
+  const DOWNLOAD_OPTIONS = useMemo(
+    () =>
+      [
+        { key: "excel", label: "Excel Semua Laporan", desc: "5 sheet dalam satu berkas", icon: "excel" as const, url: `/api/olsera/financial/export/excel?period=${period}` },
+        { key: "neraca", label: "PDF Neraca", desc: "Total Aset = Kewajiban dan Modal", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=neraca` },
+        { key: "laba-rugi", label: "PDF Laba Rugi", desc: "Pendapatan hingga Laba Bersih", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=laba-rugi` },
+        { key: "arus-kas", label: "PDF Arus Kas", desc: "Operasional, Investasi, Pendanaan", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=arus-kas` },
+        { key: "ringkasan-buku-besar", label: "PDF Ringkasan Buku Besar", desc: "Debit/Kredit/Saldo per akun", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=ringkasan-buku-besar` },
+        { key: "buku-besar-detail", label: "PDF Buku Besar Detail", desc: "Seluruh jurnal periode (multi-halaman)", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=buku-besar-detail` },
+      ] as const,
+    [period],
+  );
+
+  const handleDownload = useCallback(async (option: { key: string; url: string }) => {
+    setDownloadMenuOpen(false);
+    setDownloadError("");
+    setDownloading(option.key);
+    try {
+      const response = await fetch(option.url, { cache: "no-store" });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok || contentType.includes("application/json")) {
+        const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+        setDownloadError(payload?.message || "Gagal mengunduh laporan. Coba lagi.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
+      link.download = match?.[1] ?? `laporan-keuangan-${period}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch {
+      setDownloadError("Tidak dapat terhubung ke server untuk mengunduh laporan.");
+    } finally {
+      setDownloading(null);
+    }
+  }, [period]);
+
   const isSyncRunningRemotely = snapshot?.syncLog?.status === "running";
   const bs = snapshot?.reports.balanceSheet ?? null;
   const pl = snapshot?.reports.profitLoss ?? null;
@@ -591,24 +648,77 @@ export function OlseraFinancialPanel() {
         snapshot && (
           <section className="rd-enter" style={{ animationDelay: "80ms" }}>
             <div className="rd-card relative rounded-2xl p-5">
-              <div
-                role="tablist"
-                aria-label="Bagian laporan keuangan"
-                className="rd-capsule-group mb-4 inline-flex flex-wrap items-center gap-1 rounded-full p-1"
-              >
-                {TABS.map((item) => (
-                  <button
-                    key={item.key}
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div
+                  role="tablist"
+                  aria-label="Bagian laporan keuangan"
+                  className="rd-capsule-group inline-flex flex-wrap items-center gap-1 rounded-full p-1"
+                >
+                  {TABS.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={tab === item.key}
+                      onClick={() => setTab(item.key)}
+                      className={`rd-capsule ${tab === item.key ? "rd-capsule-active" : ""}`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Download export — mengikuti periode aktif, dari snapshot MongoDB. */}
+                <div className="relative">
+                  <Button
                     type="button"
-                    role="tab"
-                    aria-selected={tab === item.key}
-                    onClick={() => setTab(item.key)}
-                    className={`rd-capsule ${tab === item.key ? "rd-capsule-active" : ""}`}
+                    aria-haspopup="menu"
+                    aria-expanded={downloadMenuOpen}
+                    disabled={downloading !== null}
+                    onClick={() => setDownloadMenuOpen((open) => !open)}
+                    className={PRIMARY_BTN}
                   >
-                    {item.label}
-                  </button>
-                ))}
+                    {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
+                    {downloading ? "Menyiapkan..." : "Download"}
+                    <ChevronDown className={`h-4 w-4 transition-transform ${downloadMenuOpen ? "rotate-180" : ""}`} />
+                  </Button>
+                  {downloadMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-[9998]" aria-hidden="true" onClick={() => setDownloadMenuOpen(false)} />
+                      <div
+                        role="menu"
+                        aria-label="Pilihan download laporan keuangan"
+                        className="rd-panel absolute right-0 z-[9999] mt-2 w-80 rounded-lg p-1.5"
+                      >
+                        {DOWNLOAD_OPTIONS.map((option) => (
+                          <button
+                            key={option.key}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => void handleDownload(option)}
+                            className="flex w-full items-start gap-3 rounded-md px-2 py-2 text-left text-[13px] text-slate-200 transition-colors hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+                          >
+                            <span className="mt-0.5 shrink-0 rounded-md border border-white/10 bg-white/5 p-1.5 text-slate-300">
+                              {option.icon === "excel" ? <FileSpreadsheet className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block font-medium">{option.label}</span>
+                              <span className="block text-[11px] font-normal text-slate-500">{option.desc}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
+
+              {downloadError && (
+                <div className="mb-4 flex items-start gap-2 rounded-lg border border-rose-400/30 bg-rose-400/10 px-3.5 py-2.5">
+                  <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+                  <p className="text-[13px] text-rose-100/80">{downloadError}</p>
+                </div>
+              )}
 
               {tab === "summary" && (
                 <div className="grid gap-4 md:grid-cols-2">

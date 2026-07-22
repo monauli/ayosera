@@ -42,6 +42,42 @@ export function displayValue(value: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// Item yang disembunyikan dari daftar Inventori (tampilan saja)
+// ---------------------------------------------------------------------------
+
+/**
+ * Kategori ini adalah katalog penjualan non-stok. Daftar ini sengaja eksplisit
+ * dan dicocokkan secara persis setelah normalisasi agar kategori lain yang
+ * kebetulan mengandung kata serupa tidak ikut tersembunyi.
+ */
+export const HIDDEN_INVENTORY_CATEGORIES = ["LABERS", "JASA HOST"] as const;
+
+/** Normalisasi tunggal untuk perbandingan nama kategori di UI. */
+export function normalizeInventoryCategory(category: unknown): string {
+  return String(category ?? "").trim().toLocaleUpperCase("id-ID");
+}
+
+/** True hanya untuk kategori yang persis ada dalam daftar tampilan tersembunyi. */
+export function isHiddenInventoryCategory(category: unknown): boolean {
+  return (HIDDEN_INVENTORY_CATEGORIES as readonly string[]).includes(normalizeInventoryCategory(category));
+}
+
+type InventoryCategoryRow = { category: unknown };
+
+/**
+ * Menyaring salinan baris untuk tabel UI. Input tidak pernah diubah dan helper
+ * ini tidak dipakai oleh API, MongoDB, sync, maupun export.
+ */
+export function visibleInventoryRows<T extends InventoryCategoryRow>(rows: readonly T[], showHiddenItems: boolean): T[] {
+  return showHiddenItems ? [...rows] : rows.filter((row) => !isHiddenInventoryCategory(row.category));
+}
+
+/** Jumlah item pada data yang sedang dirender dan akan disembunyikan. */
+export function hiddenInventoryRowCount<T extends InventoryCategoryRow>(rows: readonly T[]): number {
+  return rows.filter((row) => isHiddenInventoryCategory(row.category)).length;
+}
+
+// ---------------------------------------------------------------------------
 // Status stok
 // ---------------------------------------------------------------------------
 

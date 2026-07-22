@@ -6,15 +6,20 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  HIDDEN_INVENTORY_CATEGORIES,
   REMOVED_MOVEMENT_COLUMNS,
   REMOVED_STOCK_COLUMNS,
   STOCK_STATUS_BADGE_CLASS,
   displayValue,
   hasAnyMeaningfulSku,
   hasAnyMeaningfulValue,
+  hiddenInventoryRowCount,
+  isHiddenInventoryCategory,
   isMeaningfulSku,
   isMeaningfulValue,
+  normalizeInventoryCategory,
   stockStatusBadgeLabel,
+  visibleInventoryRows,
   visibleInventoryTabs,
 } from "./olsera-inventory-ui.ts";
 
@@ -47,6 +52,52 @@ test("displayValue: nilai valid dikembalikan apa adanya (di-trim), data asli tid
   assert.equal(displayValue("PCS"), "PCS");
   assert.equal(displayValue("  GUDANG A  "), "GUDANG A");
   assert.equal(displayValue(0), "0");
+});
+
+// ---- 1b. Hidden Item hanya untuk daftar Inventori UI ----------------------
+
+test("Hidden Item: LABERS dan JASA HOST tersembunyi secara default dengan pencocokan kategori persis", () => {
+  assert.deepEqual(HIDDEN_INVENTORY_CATEGORIES, ["LABERS", "JASA HOST"]);
+  assert.equal(normalizeInventoryCategory("  jasa host  "), "JASA HOST");
+  assert.equal(isHiddenInventoryCategory("labers"), true);
+  assert.equal(isHiddenInventoryCategory(" JASA HOST "), true);
+  assert.equal(isHiddenInventoryCategory("LABERS PREMIUM"), false);
+  assert.equal(isHiddenInventoryCategory("GELAS/CUP"), false);
+});
+
+test("Hidden Item: toggle menampilkan kembali item tersembunyi tanpa mengubah data sumber", () => {
+  const source = [
+    { id: "labers", category: "LABERS" },
+    { id: "host", category: "jasa host" },
+    { id: "cup", category: "GELAS/CUP" },
+  ];
+  const before = structuredClone(source);
+
+  assert.deepEqual(visibleInventoryRows(source, false).map((row) => row.id), ["cup"]);
+  assert.equal(hiddenInventoryRowCount(source), 2);
+  assert.deepEqual(visibleInventoryRows(source, true).map((row) => row.id), ["labers", "host", "cup"]);
+  assert.deepEqual(source, before);
+});
+
+test("panel: Hidden Item hanya memengaruhi render, reset pagination, dan tetap responsif", () => {
+  const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes("const visibleStockRows = visibleInventoryRows(stockRows, showHiddenItems);"));
+  assert.ok(source.includes("setStockPage(1);"));
+  assert.ok(source.includes("aria-pressed={showHiddenItems}"));
+  assert.ok(source.includes("Item tersembunyi tetap tersimpan dan tetap digunakan oleh laporan serta export."));
+  assert.ok(source.includes("flex flex-wrap items-center gap-2.5"));
+  assert.ok(source.includes("w-full sm:w-64"));
+  assert.ok(source.includes("<PaginationRow page={stockPage} meta={stockMeta}"));
+  assert.ok(source.includes("if (stockSearch.trim()) params.set(\"q\", stockSearch.trim());"));
+});
+
+test("Hidden Item tidak mengubah endpoint atau jalur export Inventori", () => {
+  const panel = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  const exportModule = readFileSync(new URL("./olsera-inventory-export.ts", import.meta.url), "utf8");
+  assert.ok(panel.includes("/api/olsera/inventory/products?${params.toString()}"));
+  assert.ok(panel.includes("/api/olsera/inventory/export?${query}"));
+  assert.equal(exportModule.includes("HIDDEN_INVENTORY_CATEGORIES"), false);
+  assert.equal(exportModule.includes("visibleInventoryRows"), false);
 });
 
 // ---- 2. Kolom SKU / Satuan / Gudang kondisional ---------------------------

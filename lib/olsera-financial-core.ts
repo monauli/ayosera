@@ -91,6 +91,51 @@ export function normalizeLedgerSummaryPayload(rawPayload: unknown) {
   });
   return rows;
 }
+
+export type LedgerMovementInput = {
+  accountCode?: string | number | null;
+  debit?: number | null;
+  credit?: number | null;
+  isOpeningBalance?: boolean | null;
+};
+
+/**
+ * Rekonsiliasi Debit/Kredit ringkasan dengan Buku Besar Detail tersimpan.
+ * Endpoint ringkasan dapat mengirim angka yang sudah dibulatkan, sedangkan
+ * detail periode menyimpan pecahan asli. Saldo tidak disentuh karena itu
+ * posisi akun, bukan total pergerakan periode.
+ */
+export function reconcileLedgerSummaryWithDetails(
+  summary: unknown,
+  entries: LedgerMovementInput[] | null | undefined,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(summary)) return [];
+  const totals = new Map<string, { debit: number; credit: number }>();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry || entry.isOpeningBalance === true) continue;
+    const code = String(entry.accountCode ?? "").trim();
+    if (!code) continue;
+    const debit = typeof entry.debit === "number" && Number.isFinite(entry.debit) ? entry.debit : 0;
+    const credit = typeof entry.credit === "number" && Number.isFinite(entry.credit) ? entry.credit : 0;
+    const current = totals.get(code) ?? { debit: 0, credit: 0 };
+    current.debit += debit;
+    current.credit += credit;
+    totals.set(code, current);
+  }
+  return summary.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object").map((row) => {
+    const code = String(row.accountCode ?? "").trim();
+    const movement = totals.get(code);
+    if (!movement) return row;
+    return {
+      ...row,
+      debit: movement.debit,
+      credit: movement.credit,
+      formattedDebit: String(movement.debit),
+      formattedCredit: String(movement.credit),
+    };
+  });
+}
+
 function rowsFromPayload(rawPayload: unknown): Record<string, unknown>[] {
   if (Array.isArray(rawPayload)) return rawPayload.map(asObject);
   const root = asObject(rawPayload);
