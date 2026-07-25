@@ -10,6 +10,9 @@ import {
   syncOlseraSalesByCategory,
   todayJakarta,
 } from "@/lib/olsera-sync";
+import { withOlseraSyncLock } from "@/lib/olsera-cron-lock";
+
+const MANUAL_SALES_LEASE_MS = 5 * 60 * 1000;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,8 +73,16 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-      const audit = await auditAndSyncOlseraDay(body.date);
-      return NextResponse.json(audit, { headers: NO_CACHE_HEADERS });
+      const outcome = await withOlseraSyncLock("sales", "manual", MANUAL_SALES_LEASE_MS, () =>
+        auditAndSyncOlseraDay(body.date as string),
+      );
+      if (outcome.locked) {
+        return NextResponse.json(
+          { status: "sync-in-progress", activeModule: outcome.activeModule, runId: outcome.runId },
+          { status: 409, headers: NO_CACHE_HEADERS },
+        );
+      }
+      return NextResponse.json(outcome.result, { headers: NO_CACHE_HEADERS });
     }
 
     // Mode finalize: catat ringkasan run bulan berjalan sebagai log status terakhir.
@@ -117,8 +128,16 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await syncOlseraSalesByCategory(startDate, endDate, { force: body.force });
-    return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
+    const outcome = await withOlseraSyncLock("sales", "manual", MANUAL_SALES_LEASE_MS, () =>
+      syncOlseraSalesByCategory(startDate as string, endDate, { force: body.force }),
+    );
+    if (outcome.locked) {
+      return NextResponse.json(
+        { status: "sync-in-progress", activeModule: outcome.activeModule, runId: outcome.runId },
+        { status: 409, headers: NO_CACHE_HEADERS },
+      );
+    }
+    return NextResponse.json(outcome.result, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) {

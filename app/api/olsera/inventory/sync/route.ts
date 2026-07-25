@@ -3,6 +3,9 @@ import { z } from "zod";
 import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { getInventorySyncStatus, startInventorySync, stepInventorySync } from "@/lib/olsera-inventory";
+import { withOlseraSyncLock } from "@/lib/olsera-cron-lock";
+
+const MANUAL_INVENTORY_LEASE_MS = 6 * 60 * 1000;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,11 +35,24 @@ export async function POST(request: Request) {
     const body = bodySchema.parse(await request.json().catch(() => ({})));
 
     if (body.action === "start") {
-      const run = await startInventorySync();
-      return NextResponse.json({ run }, { headers: NO_CACHE_HEADERS });
+      const outcome = await withOlseraSyncLock("inventory", "manual", MANUAL_INVENTORY_LEASE_MS, () => startInventorySync());
+      if (outcome.locked) {
+        return NextResponse.json(
+          { status: "sync-in-progress", activeModule: outcome.activeModule, runId: outcome.runId },
+          { status: 409, headers: NO_CACHE_HEADERS },
+        );
+      }
+      return NextResponse.json({ run: outcome.result }, { headers: NO_CACHE_HEADERS });
     }
 
-    const result = await stepInventorySync();
+    const outcome = await withOlseraSyncLock("inventory", "manual", MANUAL_INVENTORY_LEASE_MS, () => stepInventorySync());
+    if (outcome.locked) {
+      return NextResponse.json(
+        { status: "sync-in-progress", activeModule: outcome.activeModule, runId: outcome.runId },
+        { status: 409, headers: NO_CACHE_HEADERS },
+      );
+    }
+    const result = outcome.result;
     if ("error" in result) {
       return NextResponse.json({ error: result.error }, { status: 409, headers: NO_CACHE_HEADERS });
     }

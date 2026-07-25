@@ -26,6 +26,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { acquireOlseraSyncLock, releaseOlseraSyncLock, subscribeOlseraSyncLock } from "@/lib/olsera-sync-lock";
 import {
   describeFinancialResponse,
   parseLedgerResponse,
@@ -276,6 +277,10 @@ export function OlseraFinancialPanel() {
   );
   const [connectionExpired, setConnectionExpired] = useState(false);
   const syncRunningRef = useRef(false);
+  // "Sync Semua Olsera" (orkestrator di app/page.tsx) berbagi lock ini agar
+  // tombol modul ini tidak bisa jalan bersamaan dengan sync modul lain.
+  const [externallyLocked, setExternallyLocked] = useState(false);
+  useEffect(() => subscribeOlseraSyncLock(setExternallyLocked), []);
 
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [selectedAccountCode, setSelectedAccountCode] = useState<string | null>(null);
@@ -377,7 +382,7 @@ export function OlseraFinancialPanel() {
   // Sync bertahap: start (atau lanjutkan run "running" yang sudah ada) → step
   // berulang sampai selesai → baca status kanonis → refresh snapshot periode aktif.
   const handleSync = useCallback(async () => {
-    if (syncRunningRef.current) return;
+    if (syncRunningRef.current || !acquireOlseraSyncLock()) return;
     syncRunningRef.current = true;
     setSyncing(true);
     setConnectionExpired(false);
@@ -469,6 +474,7 @@ export function OlseraFinancialPanel() {
       setSyncMessage("Tidak dapat terhubung ke server — klik Sync lagi untuk melanjutkan.");
     } finally {
       syncRunningRef.current = false;
+      releaseOlseraSyncLock();
       setSyncing(false);
       setRefreshTick((value) => value + 1);
     }
@@ -601,11 +607,14 @@ export function OlseraFinancialPanel() {
                 }}
               />
             </div>
-            <Button type="button" className={PRIMARY_BTN} onClick={() => void handleSync()} disabled={syncing}>
+            <Button type="button" className={PRIMARY_BTN} onClick={() => void handleSync()} disabled={syncing || externallyLocked}>
               {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {syncing ? "Menyinkronkan..." : isSyncRunningRemotely ? "Lanjutkan Sync" : "Sync Sekarang"}
             </Button>
           </div>
+          {externallyLocked && !syncing ? (
+            <p className="mt-3 text-sm text-amber-400">Sinkronisasi Olsera lain sedang berjalan (mis. Sync Semua Olsera) — tunggu hingga selesai.</p>
+          ) : null}
           {(syncMessage || syncProgress) && (
             <p className="mt-3 text-sm text-slate-300" aria-live="polite">
               {syncProgress && (syncing || isSyncRunningRemotely)

@@ -86,3 +86,41 @@ test("ledger detail normalizer detects opening balance and excludes it from move
   const normalized = normalizeLedgerDetailPayload({ data: [{ transaction_description: "Saldo awal", fdebit: "999,00", fcredit: "999,00", famount: "0,00" }, ...transactions] }, "11105");
   assert.equal(normalized.totalRecords, 91); assert.equal(normalized.entries.filter((entry) => entry.isOpeningBalance).length, 1); assert.equal(normalized.totalDebit, 370361513.75); assert.equal(normalized.totalCredit, 120030000); assert.equal(normalized.entries[1].transactionNo?.startsWith("JU"), true); assert.equal(normalized.entries[1].description, "Transaksi");
 });
+
+test("ledger detail normalizer preserves negative credit sign (reversal entries)", () => {
+  const normalized = normalizeLedgerDetailPayload({ data: [
+    { transaction_date: "2026-05-10", transaction_no: "PB260500001", transaction_description: "Pembelian PT LIM SIANG HUAT", fdebit: "0,00", fcredit: "162.000,00", famount: "162.000,00" },
+    { transaction_date: "2026-05-31", transaction_no: "CL26062100001341", transaction_description: "Transaksi tutup buku", fdebit: "0,00", fcredit: "-162.000,00", famount: "0,00" },
+  ] }, "50500");
+  assert.equal(normalized.entries[0].credit, 162000);
+  assert.equal(normalized.entries[1].credit, -162000);
+  assert.equal(normalized.totalCredit, 0);
+  assert.equal(normalized.totalDebit, 0);
+  assert.equal(normalized.calculatedClosingBalance, 0);
+});
+
+test("ledger detail normalizer preserves negative debit sign", () => {
+  const normalized = normalizeLedgerDetailPayload({ data: [
+    { transaction_date: "2026-05-05", transaction_no: "JU2605000001", transaction_description: "Transaksi", fdebit: "100.000,00", fcredit: "0,00", famount: "100.000,00" },
+    { transaction_date: "2026-05-06", transaction_no: "JU2605000002", transaction_description: "Koreksi", fdebit: "-100.000,00", fcredit: "0,00", famount: "0,00" },
+  ] }, "50500");
+  assert.equal(normalized.entries[0].debit, 100000);
+  assert.equal(normalized.entries[1].debit, -100000);
+  assert.equal(normalized.totalDebit, 0);
+});
+
+test("ledger detail normalizer: reversal entry does not double an account with no other movement", () => {
+  const normalized = normalizeLedgerDetailPayload({ data: [
+    { transaction_date: "2026-05-31", transaction_no: "CL26062100001341", transaction_description: "Transaksi tutup buku", fdebit: "0,00", fcredit: "-500.000,00", famount: "0,00" },
+  ] }, "50500");
+  assert.equal(normalized.totalCredit, -500000);
+  assert.notEqual(Math.abs(normalized.totalCredit), 1000000);
+});
+
+test("ledger detail normalizer: normal account without reversal is unchanged by the fix", () => {
+  const transactions = Array.from({ length: 90 }, (_, index) => ({ transaction_date: `2026-05-${String(Math.min(index + 1, 31)).padStart(2, "0")}`, transaction_no: `JU2605${String(index).padStart(8, "0")}`, transaction_description: "Transaksi", fdebit: index === 0 ? "370.361.513,75" : "0,00", fcredit: index === 0 ? "120.030.000,00" : "0,00", famount: index === 89 ? "250.331.513,75" : "1.000,00" }));
+  const normalized = normalizeLedgerDetailPayload({ data: transactions }, "11105");
+  assert.equal(normalized.totalDebit, 370361513.75);
+  assert.equal(normalized.totalCredit, 120030000);
+  assert.equal(normalized.calculatedClosingBalance, 250331513.75);
+});

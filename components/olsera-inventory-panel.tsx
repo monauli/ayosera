@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InventoryExportMenu } from "@/components/redesign/inventory-export-menu";
 import { OLSERA_INVENTORY_BASELINE_DATE } from "@/lib/olsera-baseline";
+import { acquireOlseraSyncLock, releaseOlseraSyncLock, subscribeOlseraSyncLock } from "@/lib/olsera-sync-lock";
 import {
   STOCK_STATUS_BADGE_CLASS,
   displayValue,
@@ -217,6 +218,10 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const syncRunningRef = useRef(false);
+  // "Sync Semua Olsera" (orkestrator di app/page.tsx) berbagi lock ini agar
+  // tombol modul ini tidak bisa jalan bersamaan dengan sync modul lain.
+  const [externallyLocked, setExternallyLocked] = useState(false);
+  useEffect(() => subscribeOlseraSyncLock(setExternallyLocked), []);
 
   const [tab, setTab] = useState<"stock" | "movements" | "consistency">("stock");
 
@@ -399,7 +404,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
 
   // Sync bertahap: start lalu step berulang sampai selesai (aman untuk Vercel).
   const handleSync = useCallback(async () => {
-    if (syncRunningRef.current) return;
+    if (syncRunningRef.current || !acquireOlseraSyncLock()) return;
     syncRunningRef.current = true;
     setSyncing(true);
     setSyncMessage("Memulai sync inventori...");
@@ -464,6 +469,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       setSyncMessage("Tidak dapat terhubung ke server — klik Sync Inventori untuk melanjutkan dari checkpoint.");
     } finally {
       syncRunningRef.current = false;
+      releaseOlseraSyncLock();
       setSyncing(false);
       setRefreshTick((value) => value + 1);
     }
@@ -659,7 +665,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
             )}
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button type="button" className={PRIMARY_BTN} onClick={handleSync} disabled={syncing}>
+            <Button type="button" className={PRIMARY_BTN} onClick={handleSync} disabled={syncing || externallyLocked}>
               {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {syncing ? "Menyinkronkan Inventori..." : "Sync Inventori"}
             </Button>
@@ -667,6 +673,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               Baseline {formatDate(BASELINE_DATE)} — sync berikutnya melanjutkan otomatis dari checkpoint.
             </span>
           </div>
+          {externallyLocked && !syncing ? (
+            <p className="mt-3 text-sm text-amber-400">Sinkronisasi Olsera lain sedang berjalan (mis. Sync Semua Olsera) — tunggu hingga selesai.</p>
+          ) : null}
           {syncMessage ? (
             <p className="mt-3 text-sm text-slate-300" aria-live="polite">
               {syncMessage}

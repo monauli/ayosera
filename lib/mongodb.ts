@@ -389,6 +389,23 @@ export type OlseraInventoryStateDocument = {
   updatedAt: Date;
 };
 
+/**
+ * Distributed lock/lease untuk mencegah sync Olsera (kategori/penjualan,
+ * inventori, keuangan) berjalan bersamaan lintas instance Vercel — dipakai
+ * baik oleh cron server-side (app/api/cron/olsera/*) maupun tombol manual
+ * (Sync Semua Olsera / sync per modul). Satu dokumen singleton (_id tetap),
+ * diambil alih secara atomik bila lockedUntil sudah lewat (proses lama
+ * dianggap mati) — lihat lib/olsera-cron-lock.ts.
+ */
+export type OlseraSyncLockDocument = {
+  _id: "olsera-sync";
+  runId: string;
+  module: "sales" | "inventory" | "financial";
+  source: "cron" | "manual";
+  lockedAt: Date;
+  lockedUntil: Date;
+};
+
 function parseDirectHosts(value: string | undefined) {
   return (
     value
@@ -469,6 +486,7 @@ export async function collections() {
     olseraFinancialAccounts: db.collection<OlseraFinancialAccountDocument>("olsera_financial_accounts"),
     olseraFinancialLedgerEntries: db.collection<OlseraFinancialLedgerEntryDocument>("olsera_financial_ledger_entries"),
     olseraFinancialSyncLogs: db.collection<OlseraFinancialSyncLogDocument>("olsera_financial_sync_logs"),
+    olseraSyncLocks: db.collection<OlseraSyncLockDocument>("olsera_sync_locks"),
   };
 }
 
@@ -510,6 +528,7 @@ async function createIndexes() {
     olseraFinancialAccounts,
     olseraFinancialLedgerEntries,
     olseraFinancialSyncLogs,
+    olseraSyncLocks,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -570,6 +589,10 @@ async function createIndexes() {
     olseraFinancialSyncLogs.createIndex({ startedAt: -1 }),
     olseraFinancialSyncLogs.createIndex({ storeId: 1, period: 1 }),
     olseraFinancialSyncLogs.createIndex({ status: 1, updatedAt: -1 }),
+    // TTL jaga-jaga: dokumen lock singleton dibersihkan otomatis lama setelah
+    // lease kedaluwarsa (release/acquire tetap bekerja tanpa TTL — ini hanya
+    // housekeeping, bukan mekanisme utama lock).
+    olseraSyncLocks.createIndex({ lockedUntil: 1 }),
   ]);
 }
 

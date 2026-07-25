@@ -34,6 +34,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { OlseraFinancialPanel } from "@/components/olsera-financial-panel";
 import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
+import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-sync-lock";
+import { runOlseraSyncAll, type StageId, type StageStatus } from "@/lib/olsera-sync-orchestrator";
 import { UsersPanel } from "@/components/users-panel";
 import { AyoseraHeader } from "@/components/redesign/ayosera-header";
 import { AyoseraShell } from "@/components/redesign/ayosera-shell";
@@ -560,6 +562,15 @@ export default function DashboardPage() {
   const [olseraSyncRefresh, setOlseraSyncRefresh] = useState(0);
   // Guard klik ganda tombol Sync Olsera — state React async, ref langsung akurat.
   const olseraSyncRunRef = useRef(false);
+  // Tahap 6 — orkestrator "Sync Semua Olsera" (Kategori/Penjualan -> Inventori -> Laporan Keuangan, berurutan).
+  const olseraSyncAllRunRef = useRef(false);
+  const [olseraSyncAllRunning, setOlseraSyncAllRunning] = useState(false);
+  const [olseraSyncAllMessage, setOlseraSyncAllMessage] = useState("");
+  const [olseraSyncAllStages, setOlseraSyncAllStages] = useState<Record<StageId, StageStatus>>({
+    kategori: "Menunggu",
+    inventori: "Menunggu",
+    keuangan: "Menunggu",
+  });
   const [olseraExporting, setOlseraExporting] = useState(false);
   const [olseraExportMessage, setOlseraExportMessage] = useState("");
   const [olseraItemExporting, setOlseraItemExporting] = useState(false);
@@ -1208,12 +1219,12 @@ export default function DashboardPage() {
   // REQUEST (aman di Vercel — tidak ada satu proses server panjang). Backend
   // membandingkan API Olsera vs MongoDB dan hanya menarik ulang tanggal yang
   // belum lengkap; upsert menjamin tidak ada duplikat walau di-klik berulang.
-  async function handleOlseraSync() {
-    if (olseraSyncRunRef.current) return;
-    olseraSyncRunRef.current = true;
-    setOlseraSyncing(true);
+  // Inti loop sync Kategori/Penjualan, TANPA guard lock/ref — dipakai baik
+  // oleh tombol "Sync Olsera" (handleOlseraSync, yang menambahkan lock+ref)
+  // maupun oleh orkestrator "Sync Semua Olsera" (yang sudah memegang lock
+  // sendiri sebelum memanggil tahap ini, sehingga tidak boleh mengunci lagi).
+  async function runKategoriPenjualanCore(): Promise<{ ok: boolean; message: string }> {
     setOlseraSyncMessage("");
-
     const runStartedAt = new Date().toISOString();
     const startedMs = Date.now();
     const monthStart = `${today.slice(0, 7)}-01`;
@@ -1241,7 +1252,7 @@ export default function DashboardPage() {
           });
           if (response.status === 401) {
             await redirectToLogin();
-            return;
+            return { ok: false, message: "Sesi berakhir — silakan login kembali." };
           }
           const payload = (await response.json().catch(() => null)) as
             | {
@@ -1294,18 +1305,193 @@ export default function DashboardPage() {
       const durationSec = Math.max(1, Math.round((Date.now() - startedMs) / 1000));
       // Sync tidak dilaporkan mulus bila ada item baru tanpa mapping kategori.
       const unresolvedNote = unresolvedNew > 0 ? ` Peringatan: ${unresolvedNew} item belum memiliki mapping kategori.` : "";
-      setOlseraSyncMessage(
-        failedDates.length
-          ? `Sync sebagian selesai: ${matched + updated} tanggal cocok, ${failedDates.length} tanggal gagal (${failedDates
-              .map(formatDisplayDate)
-              .join(", ")}). Durasi ${durationSec} detik.${unresolvedNote}`
-          : `Sync selesai: ${dates.length} tanggal diperiksa, ${updated} tanggal diperbarui, ${processedOrders} transaksi diproses. Durasi ${durationSec} detik.${unresolvedNote}`,
-      );
+      const finalMessage = failedDates.length
+        ? `Sync sebagian selesai: ${matched + updated} tanggal cocok, ${failedDates.length} tanggal gagal (${failedDates
+            .map(formatDisplayDate)
+            .join(", ")}). Durasi ${durationSec} detik.${unresolvedNote}`
+        : `Sync selesai: ${dates.length} tanggal diperiksa, ${updated} tanggal diperbarui, ${processedOrders} transaksi diproses. Durasi ${durationSec} detik.${unresolvedNote}`;
+      setOlseraSyncMessage(finalMessage);
+      return { ok: failedDates.length === 0, message: finalMessage };
     } finally {
-      olseraSyncRunRef.current = false;
-      setOlseraSyncing(false);
       // Refresh tabel kategori, status sync, dan warning tanpa reload browser.
       setOlseraSyncRefresh((value) => value + 1);
+    }
+  }
+
+  async function handleOlseraSync() {
+    if (olseraSyncRunRef.current || !acquireOlseraSyncLock()) return;
+    olseraSyncRunRef.current = true;
+    setOlseraSyncing(true);
+    try {
+      await runKategoriPenjualanCore();
+    } finally {
+      olseraSyncRunRef.current = false;
+      releaseOlseraSyncLock();
+      setOlseraSyncing(false);
+    }
+  }
+
+  // ==========================================================================
+  // Tahap 6 — "Sync Semua Olsera": orkestrator berurutan
+  // Kategori/Penjualan -> Inventori -> Laporan Keuangan.
+  //
+  // Ketiga fungsi runner di bawah memanggil ENDPOINT LAMA yang sama persis
+  // dengan yang dipakai tombol per-modul (tidak ada jalur sync baru). Mereka
+  // TIDAK mengambil/melepas lock sendiri — lock sudah dipegang orkestrator
+  // (handleSyncAllOlsera) selama seluruh 3 tahap berjalan, sehingga tombol
+  // per-modul individual tidak bisa berjalan bersamaan (lihat externallyLocked
+  // di olsera-inventory-panel.tsx / olsera-financial-panel.tsx, dan
+  // olseraSyncRunRef di atas untuk Kategori/Penjualan).
+  // ==========================================================================
+
+  async function runInventoriSyncStage(): Promise<{ ok: boolean; status: "success" | "partial" | "failed" | "connection-expired"; message: string }> {
+    type SyncRun = {
+      status?: string;
+      phase?: string;
+      totalProducts?: number;
+      totalDays?: number;
+      totalMovements?: number;
+      failedDates?: string[];
+      errorMessage?: string | null;
+    };
+    try {
+      const startResponse = await fetch("/api/olsera/inventory/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start" }),
+      });
+      if (startResponse.status === 401) {
+        await redirectToLogin();
+        return { ok: false, status: "failed", message: "Sesi berakhir — silakan login kembali." };
+      }
+      const startPayload = (await startResponse.json().catch(() => null)) as { run?: SyncRun; error?: string } | null;
+      if (!startResponse.ok || !startPayload?.run) {
+        return { ok: false, status: "failed", message: startPayload?.error || "Gagal memulai sync inventori." };
+      }
+
+      let lastRun: SyncRun = startPayload.run;
+      for (;;) {
+        const stepResponse = await fetch("/api/olsera/inventory/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "step" }),
+        });
+        if (stepResponse.status === 401) {
+          await redirectToLogin();
+          return { ok: false, status: "failed", message: "Sesi berakhir — silakan login kembali." };
+        }
+        const stepPayload = (await stepResponse.json().catch(() => null)) as { done?: boolean; run?: SyncRun; error?: string } | null;
+        if (!stepResponse.ok || !stepPayload?.run) {
+          return { ok: false, status: "failed", message: stepPayload?.error || "Sync inventori terputus — klik Sync Inventori untuk melanjutkan dari checkpoint." };
+        }
+        lastRun = stepPayload.run;
+        if (stepPayload.done) break;
+      }
+
+      if (lastRun.status === "success") {
+        return {
+          ok: true,
+          status: "success",
+          message: `Inventori: ${lastRun.totalProducts ?? 0} produk, ${lastRun.totalDays ?? 0} hari diperiksa, ${lastRun.totalMovements ?? 0} mutasi diproses.`,
+        };
+      }
+      if (lastRun.status === "partial") {
+        return {
+          ok: false,
+          status: "partial",
+          message: `Sync inventori sebagian selesai: ${lastRun.failedDates?.length ?? 0} tanggal gagal.`,
+        };
+      }
+      return { ok: false, status: "failed", message: lastRun.errorMessage || "Sync inventori gagal." };
+    } catch {
+      return { ok: false, status: "failed", message: "Tidak dapat terhubung ke server saat sync inventori." };
+    } finally {
+      // Panel Inventori (bila sedang mounted di tab lain) akan menampilkan
+      // data terbaru saat dibuka kembali — tidak perlu memaksa refresh di sini.
+    }
+  }
+
+  async function runKeuanganSyncStage(): Promise<{ ok: boolean; status: "success" | "partial" | "failed" | "connection-expired"; message: string }> {
+    type StepPayload = { status?: string; message?: string; phase?: string; accountsProcessed?: number; recordsProcessed?: number };
+    try {
+      const [year, month] = today.slice(0, 7).split("-");
+      const startResponse = await fetch("/api/olsera/financial/sync/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year: Number(year), month: Number(month) }),
+      });
+      if (startResponse.status === 401) {
+        await redirectToLogin();
+        return { ok: false, status: "failed", message: "Sesi berakhir — silakan login kembali." };
+      }
+      const startPayload = (await startResponse.json().catch(() => null)) as
+        | { status?: string; message?: string; runId?: string; accounts?: number }
+        | null;
+      if (startPayload?.status === "connection-expired") {
+        return { ok: false, status: "connection-expired", message: startPayload.message || "Koneksi Olsera kedaluwarsa." };
+      }
+      if (!startResponse.ok || !startPayload?.runId) {
+        return { ok: false, status: "failed", message: startPayload?.message || "Gagal memulai sync laporan keuangan." };
+      }
+      const runId = startPayload.runId;
+
+      let status = "running";
+      for (;;) {
+        const stepResponse = await fetch("/api/olsera/financial/sync/step", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runId }),
+        });
+        if (stepResponse.status === 401) {
+          await redirectToLogin();
+          return { ok: false, status: "failed", message: "Sesi berakhir — silakan login kembali." };
+        }
+        const stepPayload = (await stepResponse.json().catch(() => null)) as StepPayload | null;
+        if (stepPayload?.status === "connection-expired") {
+          return { ok: false, status: "connection-expired", message: stepPayload.message || "Koneksi Olsera kedaluwarsa." };
+        }
+        if (!stepResponse.ok || !stepPayload?.status) {
+          return { ok: false, status: "failed", message: stepPayload?.message || "Sync laporan keuangan terputus — klik Sync lagi untuk melanjutkan." };
+        }
+        status = stepPayload.status;
+        if (status !== "running") break;
+      }
+
+      if (status === "success") return { ok: true, status: "success", message: "Laporan keuangan selesai disinkronkan." };
+      if (status === "partial") return { ok: false, status: "partial", message: "Sync laporan keuangan sebagian selesai — sebagian Buku Besar Detail gagal." };
+      return { ok: false, status: "failed", message: "Sync laporan keuangan gagal." };
+    } catch {
+      return { ok: false, status: "failed", message: "Tidak dapat terhubung ke server saat sync laporan keuangan." };
+    }
+  }
+
+  async function handleSyncAllOlsera() {
+    if (olseraSyncAllRunRef.current) return;
+    olseraSyncAllRunRef.current = true;
+    setOlseraSyncAllRunning(true);
+    setOlseraSyncAllMessage("");
+    setOlseraSyncAllStages({ kategori: "Menunggu", inventori: "Menunggu", keuangan: "Menunggu" });
+    try {
+      const result = await runOlseraSyncAll({
+        acquireLock: acquireOlseraSyncLock,
+        releaseLock: releaseOlseraSyncLock,
+        runKategori: async () => {
+          const core = await runKategoriPenjualanCore();
+          return { ok: core.ok, status: core.ok ? "success" : "failed", message: core.message };
+        },
+        runInventori: runInventoriSyncStage,
+        runKeuangan: runKeuanganSyncStage,
+        onStageChange: (stage, status) => setOlseraSyncAllStages((prev) => ({ ...prev, [stage]: status })),
+      });
+      setOlseraSyncAllMessage(result.message);
+      if (result.ok) {
+        // Semua tahap berhasil — refresh data UI terkait (tabel/kategori Kategori-Penjualan;
+        // panel Inventori/Keuangan membaca ulang snapshot MongoDB sendiri saat dibuka/mount).
+        setOlseraSyncRefresh((value) => value + 1);
+      }
+    } finally {
+      olseraSyncAllRunRef.current = false;
+      setOlseraSyncAllRunning(false);
     }
   }
 
@@ -2303,6 +2489,73 @@ export default function DashboardPage() {
 
           {activeNavAllowed && activeNav === "Olsera" && (
           <div className="min-h-[calc(100vh-8rem)]">
+          {/* Tahap 6 — tombol utama "Sync Semua Olsera" (Kategori/Penjualan -> Inventori -> Laporan Keuangan, berurutan). Sync AYO TIDAK termasuk di sini. */}
+          {canSyncOlsera && (
+          <section className="rd-enter mb-4">
+            <div className="rd-card relative rounded-2xl p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-start gap-3.5">
+                  <div className="rd-stat-icon rounded-xl p-2.5">
+                    <RefreshCw className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[15px] font-semibold tracking-tight text-slate-50">Sync Semua Olsera</p>
+                    <p className="mt-1 text-[13px] leading-relaxed text-slate-400">
+                      Menjalankan Kategori/Penjualan → Inventori → Laporan Keuangan secara berurutan. Sync AYO terpisah, tidak termasuk.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  className="rounded-lg bg-rose-600 font-medium text-white shadow-sm transition-colors hover:bg-rose-500 active:bg-rose-700"
+                  onClick={handleSyncAllOlsera}
+                  disabled={olseraSyncAllRunning || olseraSyncing}
+                >
+                  {olseraSyncAllRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  {olseraSyncAllRunning ? "Menyinkronkan Semua Olsera..." : "Sync Semua Olsera"}
+                </Button>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-4">
+                {(
+                  [
+                    ["kategori", "Kategori/Penjualan"],
+                    ["inventori", "Inventori"],
+                    ["keuangan", "Laporan Keuangan"],
+                  ] as const
+                ).map(([key, label]) => {
+                  const stageStatus = olseraSyncAllStages[key];
+                  const chipClass =
+                    stageStatus === "Berhasil"
+                      ? "rd-chip rd-chip-ok"
+                      : stageStatus === "Gagal"
+                        ? "rd-chip rd-chip-danger"
+                        : stageStatus === "Sedang Sinkron"
+                          ? "rd-chip"
+                          : "rd-chip border-slate-600/40 bg-slate-600/10 text-slate-400";
+                  return (
+                    <div key={key} className="flex items-center gap-2 text-[13px] text-slate-300">
+                      <span>{label}:</span>
+                      <span className={chipClass}>
+                        {stageStatus === "Sedang Sinkron" && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {stageStatus === "Berhasil" && <CheckCircle2 className="h-3 w-3" />}
+                        {stageStatus === "Gagal" && <AlertTriangle className="h-3 w-3" />}
+                        {stageStatus}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {olseraSyncAllMessage && (
+                <p className="mt-3 text-sm text-slate-300" aria-live="polite">
+                  {olseraSyncAllMessage}
+                </p>
+              )}
+            </div>
+          </section>
+          )}
+
           {/* Kartu sinkronisasi Olsera untuk semua user bermodul "olsera". */}
           {canSyncOlsera && (
           <section className="rd-enter mb-4">
@@ -2364,7 +2617,7 @@ export default function DashboardPage() {
                   type="button"
                   className="rounded-lg bg-rose-600 font-medium text-white shadow-sm transition-colors hover:bg-rose-500 active:bg-rose-700"
                   onClick={handleOlseraSync}
-                  disabled={olseraSyncing}
+                  disabled={olseraSyncing || olseraSyncAllRunning}
                 >
                   {olseraSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                   {olseraSyncing ? "Menyinkronkan Olsera..." : "Sync Olsera"}
