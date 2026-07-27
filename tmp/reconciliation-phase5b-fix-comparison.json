@@ -1,0 +1,1107 @@
+{
+  "generatedAt": "2026-07-27T09:32:40.105Z",
+  "scope": {
+    "periods": [
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07"
+    ],
+    "storeId": 324175,
+    "domains": [
+      "CATEGORY",
+      "PRODUCT",
+      "INVENTORY",
+      "SNAPSHOT"
+    ]
+  },
+  "perMonth": {
+    "2026-02": {
+      "before": {
+        "totalFindings": 192,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 192,
+          "byStatus": {
+            "MATCH": 162,
+            "AMBIGUOUS": 6,
+            "MISSING_IN_SNAPSHOT": 23,
+            "MISMATCH": 1
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 56
+            },
+            "PRODUCT": {
+              "MATCH": 48,
+              "AMBIGUOUS": 6,
+              "MISSING_IN_SNAPSHOT": 2
+            },
+            "INVENTORY": {
+              "MATCH": 28,
+              "MISSING_IN_SNAPSHOT": 21,
+              "MISMATCH": 1
+            },
+            "SNAPSHOT": {
+              "MATCH": 30
+            }
+          },
+          "requiresManualAdjustmentCount": 6,
+          "matchLikeCount": 162,
+          "notCheckedCount": 0,
+          "finalCount": 162,
+          "nonFinalCount": 30,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 162,
+            "WARNING": 8,
+            "ERROR": 22
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 184,
+            "LOW": 6,
+            "MEDIUM": 2
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 0
+      },
+      "after": {
+        "totalFindings": 222,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 222,
+          "byStatus": {
+            "MATCH": 162,
+            "AMBIGUOUS": 6,
+            "MISSING_IN_SNAPSHOT": 53,
+            "MISMATCH": 1
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 56
+            },
+            "PRODUCT": {
+              "MATCH": 48,
+              "AMBIGUOUS": 6,
+              "MISSING_IN_SNAPSHOT": 2
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 51,
+              "MATCH": 28,
+              "MISMATCH": 1
+            },
+            "SNAPSHOT": {
+              "MATCH": 30
+            }
+          },
+          "requiresManualAdjustmentCount": 6,
+          "matchLikeCount": 162,
+          "notCheckedCount": 0,
+          "finalCount": 162,
+          "nonFinalCount": 60,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 162,
+            "WARNING": 38,
+            "ERROR": 22
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 184,
+            "LOW": 6,
+            "MEDIUM": 32
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 30
+      },
+      "delta": {
+        "totalFindings": 30,
+        "MATCH": 0,
+        "AMBIGUOUS": 0,
+        "MISSING_IN_SNAPSHOT": 30,
+        "MISMATCH": 0,
+        "impactERROR": 0,
+        "impactWARNING": 30,
+        "impactINFO": 0,
+        "requiresManualAdjustment": 30,
+        "movementNullCount": 30
+      },
+      "beforeFull": {
+        "total": 192,
+        "byStatus": {
+          "MATCH": 162,
+          "AMBIGUOUS": 6,
+          "MISSING_IN_SNAPSHOT": 23,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 162,
+          "WARNING": 8,
+          "ERROR": 22
+        },
+        "byConfidence": {
+          "HIGH": 184,
+          "LOW": 6,
+          "MEDIUM": 2
+        },
+        "requiresManualAdjustment": 6
+      },
+      "afterFull": {
+        "total": 222,
+        "byStatus": {
+          "MATCH": 162,
+          "AMBIGUOUS": 6,
+          "MISSING_IN_SNAPSHOT": 53,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 162,
+          "WARNING": 38,
+          "ERROR": 22
+        },
+        "byConfidence": {
+          "HIGH": 184,
+          "LOW": 6,
+          "MEDIUM": 32
+        },
+        "requiresManualAdjustment": 36
+      }
+    },
+    "2026-03": {
+      "before": {
+        "totalFindings": 189,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 189,
+          "byStatus": {
+            "MATCH": 156,
+            "AMBIGUOUS": 10,
+            "MISSING_IN_SNAPSHOT": 22,
+            "MISMATCH": 1
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 55
+            },
+            "PRODUCT": {
+              "MATCH": 44,
+              "AMBIGUOUS": 10,
+              "MISSING_IN_SNAPSHOT": 1
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 21,
+              "MATCH": 24,
+              "MISMATCH": 1
+            },
+            "SNAPSHOT": {
+              "MATCH": 33
+            }
+          },
+          "requiresManualAdjustmentCount": 10,
+          "matchLikeCount": 156,
+          "notCheckedCount": 0,
+          "finalCount": 156,
+          "nonFinalCount": 33,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 156,
+            "WARNING": 11,
+            "ERROR": 22
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 178,
+            "LOW": 10,
+            "MEDIUM": 1
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 0
+      },
+      "after": {
+        "totalFindings": 299,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 299,
+          "byStatus": {
+            "MATCH": 156,
+            "AMBIGUOUS": 10,
+            "MISSING_IN_SNAPSHOT": 132,
+            "MISMATCH": 1
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 55
+            },
+            "PRODUCT": {
+              "MATCH": 44,
+              "AMBIGUOUS": 10,
+              "MISSING_IN_SNAPSHOT": 1
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 131,
+              "MATCH": 24,
+              "MISMATCH": 1
+            },
+            "SNAPSHOT": {
+              "MATCH": 33
+            }
+          },
+          "requiresManualAdjustmentCount": 10,
+          "matchLikeCount": 156,
+          "notCheckedCount": 0,
+          "finalCount": 156,
+          "nonFinalCount": 143,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 156,
+            "WARNING": 121,
+            "ERROR": 22
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 178,
+            "LOW": 10,
+            "MEDIUM": 111
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 110
+      },
+      "delta": {
+        "totalFindings": 110,
+        "MATCH": 0,
+        "AMBIGUOUS": 0,
+        "MISSING_IN_SNAPSHOT": 110,
+        "MISMATCH": 0,
+        "impactERROR": 0,
+        "impactWARNING": 110,
+        "impactINFO": 0,
+        "requiresManualAdjustment": 110,
+        "movementNullCount": 110
+      },
+      "beforeFull": {
+        "total": 189,
+        "byStatus": {
+          "MATCH": 156,
+          "AMBIGUOUS": 10,
+          "MISSING_IN_SNAPSHOT": 22,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 156,
+          "WARNING": 11,
+          "ERROR": 22
+        },
+        "byConfidence": {
+          "HIGH": 178,
+          "LOW": 10,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 10
+      },
+      "afterFull": {
+        "total": 299,
+        "byStatus": {
+          "MATCH": 156,
+          "AMBIGUOUS": 10,
+          "MISSING_IN_SNAPSHOT": 132,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 156,
+          "WARNING": 121,
+          "ERROR": 22
+        },
+        "byConfidence": {
+          "HIGH": 178,
+          "LOW": 10,
+          "MEDIUM": 111
+        },
+        "requiresManualAdjustment": 120
+      }
+    },
+    "2026-04": {
+      "before": {
+        "totalFindings": 218,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 218,
+          "byStatus": {
+            "MATCH": 176,
+            "AMBIGUOUS": 13,
+            "MISSING_IN_SNAPSHOT": 28,
+            "MISMATCH": 1
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 64
+            },
+            "PRODUCT": {
+              "AMBIGUOUS": 13,
+              "MATCH": 50,
+              "MISSING_IN_SNAPSHOT": 1
+            },
+            "INVENTORY": {
+              "MATCH": 25,
+              "MISSING_IN_SNAPSHOT": 27,
+              "MISMATCH": 1
+            },
+            "SNAPSHOT": {
+              "MATCH": 37
+            }
+          },
+          "requiresManualAdjustmentCount": 13,
+          "matchLikeCount": 176,
+          "notCheckedCount": 0,
+          "finalCount": 176,
+          "nonFinalCount": 42,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 176,
+            "WARNING": 14,
+            "ERROR": 28
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 204,
+            "LOW": 13,
+            "MEDIUM": 1
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 0
+      },
+      "after": {
+        "totalFindings": 400,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 400,
+          "byStatus": {
+            "MATCH": 176,
+            "AMBIGUOUS": 13,
+            "MISSING_IN_SNAPSHOT": 210,
+            "MISMATCH": 1
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 64
+            },
+            "PRODUCT": {
+              "AMBIGUOUS": 13,
+              "MATCH": 50,
+              "MISSING_IN_SNAPSHOT": 1
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 209,
+              "MATCH": 25,
+              "MISMATCH": 1
+            },
+            "SNAPSHOT": {
+              "MATCH": 37
+            }
+          },
+          "requiresManualAdjustmentCount": 13,
+          "matchLikeCount": 176,
+          "notCheckedCount": 0,
+          "finalCount": 176,
+          "nonFinalCount": 224,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 176,
+            "WARNING": 196,
+            "ERROR": 28
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 204,
+            "LOW": 13,
+            "MEDIUM": 183
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 182
+      },
+      "delta": {
+        "totalFindings": 182,
+        "MATCH": 0,
+        "AMBIGUOUS": 0,
+        "MISSING_IN_SNAPSHOT": 182,
+        "MISMATCH": 0,
+        "impactERROR": 0,
+        "impactWARNING": 182,
+        "impactINFO": 0,
+        "requiresManualAdjustment": 182,
+        "movementNullCount": 182
+      },
+      "beforeFull": {
+        "total": 218,
+        "byStatus": {
+          "MATCH": 176,
+          "AMBIGUOUS": 13,
+          "MISSING_IN_SNAPSHOT": 28,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 176,
+          "WARNING": 14,
+          "ERROR": 28
+        },
+        "byConfidence": {
+          "HIGH": 204,
+          "LOW": 13,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 13
+      },
+      "afterFull": {
+        "total": 400,
+        "byStatus": {
+          "MATCH": 176,
+          "AMBIGUOUS": 13,
+          "MISSING_IN_SNAPSHOT": 210,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 176,
+          "WARNING": 196,
+          "ERROR": 28
+        },
+        "byConfidence": {
+          "HIGH": 204,
+          "LOW": 13,
+          "MEDIUM": 183
+        },
+        "requiresManualAdjustment": 195
+      }
+    },
+    "2026-05": {
+      "before": {
+        "totalFindings": 276,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 276,
+          "byStatus": {
+            "MATCH": 225,
+            "AMBIGUOUS": 11,
+            "MISSING_IN_SNAPSHOT": 39,
+            "MISMATCH": 1
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 75
+            },
+            "PRODUCT": {
+              "MATCH": 63,
+              "AMBIGUOUS": 11,
+              "MISSING_IN_SNAPSHOT": 1
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 38,
+              "MATCH": 27,
+              "MISMATCH": 1
+            },
+            "SNAPSHOT": {
+              "MATCH": 60
+            }
+          },
+          "requiresManualAdjustmentCount": 11,
+          "matchLikeCount": 225,
+          "notCheckedCount": 0,
+          "finalCount": 225,
+          "nonFinalCount": 51,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 225,
+            "WARNING": 12,
+            "ERROR": 39
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 264,
+            "LOW": 11,
+            "MEDIUM": 1
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 0
+      },
+      "after": {
+        "totalFindings": 311,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 311,
+          "byStatus": {
+            "MATCH": 225,
+            "AMBIGUOUS": 11,
+            "MISSING_IN_SNAPSHOT": 74,
+            "MISMATCH": 1
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 75
+            },
+            "PRODUCT": {
+              "MATCH": 63,
+              "AMBIGUOUS": 11,
+              "MISSING_IN_SNAPSHOT": 1
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 73,
+              "MATCH": 27,
+              "MISMATCH": 1
+            },
+            "SNAPSHOT": {
+              "MATCH": 60
+            }
+          },
+          "requiresManualAdjustmentCount": 11,
+          "matchLikeCount": 225,
+          "notCheckedCount": 0,
+          "finalCount": 225,
+          "nonFinalCount": 86,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 225,
+            "WARNING": 47,
+            "ERROR": 39
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 264,
+            "LOW": 11,
+            "MEDIUM": 36
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 35
+      },
+      "delta": {
+        "totalFindings": 35,
+        "MATCH": 0,
+        "AMBIGUOUS": 0,
+        "MISSING_IN_SNAPSHOT": 35,
+        "MISMATCH": 0,
+        "impactERROR": 0,
+        "impactWARNING": 35,
+        "impactINFO": 0,
+        "requiresManualAdjustment": 35,
+        "movementNullCount": 35
+      },
+      "beforeFull": {
+        "total": 276,
+        "byStatus": {
+          "MATCH": 225,
+          "AMBIGUOUS": 11,
+          "MISSING_IN_SNAPSHOT": 39,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 225,
+          "WARNING": 12,
+          "ERROR": 39
+        },
+        "byConfidence": {
+          "HIGH": 264,
+          "LOW": 11,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 11
+      },
+      "afterFull": {
+        "total": 311,
+        "byStatus": {
+          "MATCH": 225,
+          "AMBIGUOUS": 11,
+          "MISSING_IN_SNAPSHOT": 74,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 225,
+          "WARNING": 47,
+          "ERROR": 39
+        },
+        "byConfidence": {
+          "HIGH": 264,
+          "LOW": 11,
+          "MEDIUM": 36
+        },
+        "requiresManualAdjustment": 46
+      }
+    },
+    "2026-06": {
+      "before": {
+        "totalFindings": 266,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 266,
+          "byStatus": {
+            "MATCH": 226,
+            "AMBIGUOUS": 3,
+            "MISSING_IN_SNAPSHOT": 37
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 69
+            },
+            "PRODUCT": {
+              "MATCH": 65,
+              "AMBIGUOUS": 3,
+              "MISSING_IN_SNAPSHOT": 1
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 36,
+              "MATCH": 32
+            },
+            "SNAPSHOT": {
+              "MATCH": 60
+            }
+          },
+          "requiresManualAdjustmentCount": 3,
+          "matchLikeCount": 226,
+          "notCheckedCount": 0,
+          "finalCount": 226,
+          "nonFinalCount": 40,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 226,
+            "WARNING": 4,
+            "ERROR": 36
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 262,
+            "LOW": 3,
+            "MEDIUM": 1
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 0
+      },
+      "after": {
+        "totalFindings": 268,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 268,
+          "byStatus": {
+            "MATCH": 226,
+            "AMBIGUOUS": 3,
+            "MISSING_IN_SNAPSHOT": 39
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 69
+            },
+            "PRODUCT": {
+              "MATCH": 65,
+              "AMBIGUOUS": 3,
+              "MISSING_IN_SNAPSHOT": 1
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 38,
+              "MATCH": 32
+            },
+            "SNAPSHOT": {
+              "MATCH": 60
+            }
+          },
+          "requiresManualAdjustmentCount": 3,
+          "matchLikeCount": 226,
+          "notCheckedCount": 0,
+          "finalCount": 226,
+          "nonFinalCount": 42,
+          "isDraftPeriod": false,
+          "impactSummary": {
+            "INFO": 226,
+            "WARNING": 6,
+            "ERROR": 36
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 262,
+            "LOW": 3,
+            "MEDIUM": 3
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 2
+      },
+      "delta": {
+        "totalFindings": 2,
+        "MATCH": 0,
+        "AMBIGUOUS": 0,
+        "MISSING_IN_SNAPSHOT": 2,
+        "MISMATCH": 0,
+        "impactERROR": 0,
+        "impactWARNING": 2,
+        "impactINFO": 0,
+        "requiresManualAdjustment": 2,
+        "movementNullCount": 2
+      },
+      "beforeFull": {
+        "total": 266,
+        "byStatus": {
+          "MATCH": 226,
+          "AMBIGUOUS": 3,
+          "MISSING_IN_SNAPSHOT": 37
+        },
+        "byImpact": {
+          "INFO": 226,
+          "WARNING": 4,
+          "ERROR": 36
+        },
+        "byConfidence": {
+          "HIGH": 262,
+          "LOW": 3,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 3
+      },
+      "afterFull": {
+        "total": 268,
+        "byStatus": {
+          "MATCH": 226,
+          "AMBIGUOUS": 3,
+          "MISSING_IN_SNAPSHOT": 39
+        },
+        "byImpact": {
+          "INFO": 226,
+          "WARNING": 6,
+          "ERROR": 36
+        },
+        "byConfidence": {
+          "HIGH": 262,
+          "LOW": 3,
+          "MEDIUM": 3
+        },
+        "requiresManualAdjustment": 5
+      }
+    },
+    "2026-07": {
+      "before": {
+        "totalFindings": 258,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 258,
+          "byStatus": {
+            "MATCH": 144,
+            "AMBIGUOUS": 3,
+            "MISSING_IN_SNAPSHOT": 96,
+            "MISMATCH": 15
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 66
+            },
+            "PRODUCT": {
+              "MATCH": 63,
+              "AMBIGUOUS": 3
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 35,
+              "MISMATCH": 15,
+              "MATCH": 15
+            },
+            "SNAPSHOT": {
+              "MISSING_IN_SNAPSHOT": 61
+            }
+          },
+          "requiresManualAdjustmentCount": 3,
+          "matchLikeCount": 144,
+          "notCheckedCount": 0,
+          "finalCount": 144,
+          "nonFinalCount": 114,
+          "isDraftPeriod": true,
+          "impactSummary": {
+            "INFO": 144,
+            "WARNING": 3,
+            "ERROR": 111
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 255,
+            "LOW": 3
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 0
+      },
+      "after": {
+        "totalFindings": 259,
+        "summary": {
+          "reconciliationType": "INTERNAL_OLSERA",
+          "totalFindings": 259,
+          "byStatus": {
+            "MATCH": 144,
+            "AMBIGUOUS": 3,
+            "MISSING_IN_SNAPSHOT": 97,
+            "MISMATCH": 15
+          },
+          "byDomain": {
+            "CATEGORY": {
+              "MATCH": 66
+            },
+            "PRODUCT": {
+              "MATCH": 63,
+              "AMBIGUOUS": 3
+            },
+            "INVENTORY": {
+              "MISSING_IN_SNAPSHOT": 36,
+              "MISMATCH": 15,
+              "MATCH": 15
+            },
+            "SNAPSHOT": {
+              "MISSING_IN_SNAPSHOT": 61
+            }
+          },
+          "requiresManualAdjustmentCount": 3,
+          "matchLikeCount": 144,
+          "notCheckedCount": 0,
+          "finalCount": 144,
+          "nonFinalCount": 115,
+          "isDraftPeriod": true,
+          "impactSummary": {
+            "INFO": 240,
+            "WARNING": 4,
+            "ERROR": 15
+          },
+          "highestImpact": "ERROR",
+          "confidenceSummary": {
+            "HIGH": 255,
+            "LOW": 3,
+            "MEDIUM": 1
+          },
+          "overallConfidence": "LOW"
+        },
+        "movementNullCount": 1
+      },
+      "delta": {
+        "totalFindings": 1,
+        "MATCH": 0,
+        "AMBIGUOUS": 0,
+        "MISSING_IN_SNAPSHOT": 1,
+        "MISMATCH": 0,
+        "impactERROR": -96,
+        "impactWARNING": 1,
+        "impactINFO": 96,
+        "requiresManualAdjustment": 1,
+        "movementNullCount": 1
+      },
+      "beforeFull": {
+        "total": 258,
+        "byStatus": {
+          "MATCH": 144,
+          "AMBIGUOUS": 3,
+          "MISSING_IN_SNAPSHOT": 96,
+          "MISMATCH": 15
+        },
+        "byImpact": {
+          "INFO": 144,
+          "WARNING": 3,
+          "ERROR": 111
+        },
+        "byConfidence": {
+          "HIGH": 255,
+          "LOW": 3
+        },
+        "requiresManualAdjustment": 3
+      },
+      "afterFull": {
+        "total": 259,
+        "byStatus": {
+          "MATCH": 144,
+          "AMBIGUOUS": 3,
+          "MISSING_IN_SNAPSHOT": 97,
+          "MISMATCH": 15
+        },
+        "byImpact": {
+          "INFO": 240,
+          "WARNING": 4,
+          "ERROR": 15
+        },
+        "byConfidence": {
+          "HIGH": 255,
+          "LOW": 3,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 4
+      }
+    }
+  },
+  "movementNullTotals": {
+    "beforeSum": 0,
+    "afterSum": 360,
+    "perMonthBefore": {
+      "2026-02": 0,
+      "2026-03": 0,
+      "2026-04": 0,
+      "2026-05": 0,
+      "2026-06": 0,
+      "2026-07": 0
+    },
+    "perMonthAfter": {
+      "2026-02": 30,
+      "2026-03": 110,
+      "2026-04": 182,
+      "2026-05": 35,
+      "2026-06": 2,
+      "2026-07": 1
+    },
+    "expectedFromKnownCase": 37,
+    "noteOnScope": "Known Case 37 dihitung untuk rentang 2026-05-01..2026-07-13 (bukan kalender bulanan penuh); jumlah kalender-bulan-penuh (Mei+Jun+Jul = 38) sedikit lebih besar karena mencakup 14-31 Juli juga."
+  },
+  "recurringAnomaly116138490": {
+    "before": {
+      "2026-02": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 30
+        },
+        "actual": {
+          "actualQty": 0
+        }
+      },
+      "2026-03": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 36
+        },
+        "actual": {
+          "actualQty": 0
+        }
+      },
+      "2026-04": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 51
+        },
+        "actual": {
+          "actualQty": 0
+        }
+      },
+      "2026-05": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 55
+        },
+        "actual": {
+          "actualQty": 12
+        }
+      },
+      "2026-06": {
+        "status": "MATCH",
+        "impact": "INFO",
+        "expected": {
+          "expectedQty": 46
+        },
+        "actual": {
+          "actualQty": 46
+        }
+      },
+      "2026-07": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 8
+        },
+        "actual": {
+          "actualQty": 10
+        }
+      }
+    },
+    "after": {
+      "2026-02": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 30
+        },
+        "actual": {
+          "actualQty": 0
+        }
+      },
+      "2026-03": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 36
+        },
+        "actual": {
+          "actualQty": 0
+        }
+      },
+      "2026-04": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 51
+        },
+        "actual": {
+          "actualQty": 0
+        }
+      },
+      "2026-05": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 55
+        },
+        "actual": {
+          "actualQty": 12
+        }
+      },
+      "2026-06": {
+        "status": "MATCH",
+        "impact": "INFO",
+        "expected": {
+          "expectedQty": 46
+        },
+        "actual": {
+          "actualQty": 46
+        }
+      },
+      "2026-07": {
+        "status": "MISMATCH",
+        "impact": "ERROR",
+        "expected": {
+          "expectedQty": 8
+        },
+        "actual": {
+          "actualQty": 10
+        }
+      }
+    }
+  },
+  "julyDraftPeriodCap": {
+    "before": {
+      "impactSummary": {
+        "INFO": 144,
+        "WARNING": 3,
+        "ERROR": 111
+      },
+      "highestImpact": "ERROR"
+    },
+    "after": {
+      "impactSummary": {
+        "INFO": 240,
+        "WARNING": 4,
+        "ERROR": 15
+      },
+      "highestImpact": "ERROR"
+    },
+    "totalFindingsCapped": 96,
+    "cappedByReason": {
+      "current-month": 35,
+      "missing-next-month-snapshot": 61
+    }
+  }
+}

@@ -206,6 +206,42 @@ export type MonthlyStepBackwardResult = {
   stopped: string[];
 };
 
+// ---------------------------------------------------------------------------
+// Kontradiksi carry-forward — terverifikasi live 2026-07-27 (audit
+// movement-qty:116138490:0): stockmovement API Open API Olsera kadang TIDAK
+// mengembalikan baris SAMA SEKALI untuk suatu productId pada bulan tertentu
+// (carry-forward dipakai, salesQty dipaksa 0), padahal olsera_inventory_movements
+// (ledger penjualan AYOSERA sendiri, independen dari API tsb) MEMBUKTIKAN ada
+// penjualan nyata pada productId+bulan yang sama — root cause TERBUKTI:
+// productId 116138490 ("BOLA PADEL ODEA ROSE") sebelumnya bernama/berID
+// "BOLA PADEL ODEA" dengan product_id Olsera LAMA 106817649 (lihat
+// olsera_order_items.raw.product_id Feb-Apr 2026), tapi tidak ada dokumen
+// olsera_product_aliases yang menjembatani rename ini — sehingga baris
+// stockmovement API bulan tsb (yang masih memakai productId LAMA) gagal
+// match identity/SKU/nama ke katalog kanonik & dianggap "tidak ada movement".
+// carry-forward TETAP dipakai (TIDAK menebak/mengisi salesQty) — HANYA status
+// diubah dari "complete" ke "incomplete" + diagnostic eksplisit, supaya
+// konsumen (mis. Modul Rekonsiliasi) tahu angka 0 ini TIDAK bisa dipercaya
+// penuh sampai alias historis diverifikasi & direbuild ulang secara eksplisit.
+// ---------------------------------------------------------------------------
+
+/** key sama seperti `anchors`/`matched` (`${storeId}:${productId}:${variantId ?? 0}`) -> total abs(qtyChange) olsera_inventory_movements bulan ini (evidence independen, BUKAN dari stockmovement API). */
+export type RawSalesActivityByKey = Map<string, number>;
+
+function carryForwardStatusAndDiagnostic(key: string, rawSalesActivityByKey: RawSalesActivityByKey | undefined): { status: MonthlyLedgerStatus; diagnostic: string } {
+  const rawSales = rawSalesActivityByKey?.get(key);
+  if (rawSales !== undefined && rawSales > 0) {
+    return {
+      status: "incomplete",
+      diagnostic: `Tidak ada baris stockmovement API pada bulan ini, TAPI olsera_inventory_movements (ledger penjualan independen) mencatat aktivitas sumAbsQty=${rawSales} untuk productId ini pada bulan yang sama — kemungkinan productId berubah di sisi Olsera tanpa alias yang menjembatani (lihat olsera_product_aliases). salesQty=0 pada entri ini TIDAK BOLEH dipercaya sebagai final; perlu verifikasi manual/alias sebelum rebuild eksplisit.`,
+    };
+  }
+  return {
+    status: "complete",
+    diagnostic: "Tidak ada baris stockmovement API pada bulan ini — saldo dibawa sama (carry-forward), didukung bukti riwayat pada/sebelum bulan ini.",
+  };
+}
+
 /**
  * Satu langkah mundur (bulan N, closing SUDAH diketahui dari anchor) →
  * hitung opening bulan N via formula, jadikan opening itu closing anchor utk
@@ -215,12 +251,17 @@ export type MonthlyStepBackwardResult = {
  * movement bulan ini: dibawa rata (carry-forward) HANYA bila
  * `hasEvidenceBeforeOrDuring` membuktikan produk itu sudah eksis pada/​
  * sebelum bulan ini (mis. ada olsera_order_items) — bila tidak, dihentikan
- * (TIDAK dipaksa masuk laporan bulan yang belum eksis).
+ * (TIDAK dipaksa masuk laporan bulan yang belum eksis). `rawSalesActivityByKey`
+ * (opsional, additive — default tanpa perubahan bila tidak diisi) menandai
+ * carry-forward yang KONTRADIKTIF dengan bukti penjualan independen sebagai
+ * status "incomplete" (lihat carryForwardStatusAndDiagnostic) — TIDAK PERNAH
+ * mengubah angka openingQty/salesQty/closingQty itu sendiri.
  */
 export function computeMonthlyStepBackward(input: {
   anchors: Map<string, BackwardAnchor>;
   matched: Map<string, MatchedMovement>;
   hasEvidenceBeforeOrDuring: (productKeyId: string) => boolean;
+  rawSalesActivityByKey?: RawSalesActivityByKey;
 }): MonthlyStepBackwardResult {
   const entries = new Map<string, MonthlyLedgerEntry>();
   const nextAnchors = new Map<string, BackwardAnchor>();
@@ -256,6 +297,7 @@ export function computeMonthlyStepBackward(input: {
       });
       nextAnchors.set(key, { closingQty: opening, productName: anchor.productName, productSku: anchor.productSku, groupName: anchor.groupName });
     } else if (input.hasEvidenceBeforeOrDuring(key)) {
+      const { status, diagnostic } = carryForwardStatusAndDiagnostic(key, input.rawSalesActivityByKey);
       entries.set(key, {
         productId: stable.productId,
         variantId: stable.variantId,
@@ -270,8 +312,8 @@ export function computeMonthlyStepBackward(input: {
         outgoingQty: 0,
         closingQty: anchor.closingQty,
         source: "carry-forward",
-        status: "complete",
-        diagnostics: ["Tidak ada baris stockmovement API pada bulan ini — saldo dibawa sama (carry-forward), didukung bukti riwayat pada/sebelum bulan ini."],
+        status,
+        diagnostics: [diagnostic],
       });
       nextAnchors.set(key, anchor);
     } else {
@@ -296,11 +338,13 @@ export type MonthlyStepForwardResult = {
  * tapi belum punya anchor: dimasukkan HANYA karena `matched` sudah berarti
  * ada baris stockmovement API sungguhan bulan ini (bukti eksistensi nyata,
  * bukan tebakan) — openingQty-nya dipercaya langsung dari beginning_qty API.
+ * `rawSalesActivityByKey` (opsional, additive) — lihat computeMonthlyStepBackward.
  */
 export function computeMonthlyStepForward(input: {
   anchors: Map<string, ForwardAnchor>;
   matched: Map<string, MatchedMovement>;
   catalogById: Map<string, InventoryProductInput>;
+  rawSalesActivityByKey?: RawSalesActivityByKey;
 }): MonthlyStepForwardResult {
   const entries = new Map<string, MonthlyLedgerEntry>();
   const nextAnchors = new Map<string, ForwardAnchor>();
@@ -337,6 +381,7 @@ export function computeMonthlyStepForward(input: {
       });
       nextAnchors.set(key, { openingQty: closing, productName: anchor.productName, productSku: anchor.productSku, groupName: anchor.groupName });
     } else {
+      const { status, diagnostic } = carryForwardStatusAndDiagnostic(key, input.rawSalesActivityByKey);
       entries.set(key, {
         productId: stable.productId,
         variantId: stable.variantId,
@@ -351,8 +396,8 @@ export function computeMonthlyStepForward(input: {
         outgoingQty: 0,
         closingQty: anchor.openingQty,
         source: "carry-forward",
-        status: "complete",
-        diagnostics: ["Tidak ada baris stockmovement API pada bulan ini — saldo dibawa sama (carry-forward)."],
+        status,
+        diagnostics: [diagnostic],
       });
       nextAnchors.set(key, anchor);
     }

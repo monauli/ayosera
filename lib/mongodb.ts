@@ -1,5 +1,6 @@
 import "./mongodb-dns.ts";
 import { MongoClient, type Db } from "mongodb";
+import type { ReconciliationConfidence, ReconciliationDomain, ReconciliationImpact, ReconciliationStatus, ReconciliationType } from "./reconciliation-types.ts";
 
 declare global {
   var __mongoClient: MongoClient | undefined;
@@ -406,6 +407,133 @@ export type OlseraSyncLockDocument = {
   lockedUntil: Date;
 };
 
+// ---------------------------------------------------------------------------
+// Modul Rekonsiliasi (Phase 5A) — lihat docs/reconciliation-design.md dan
+// lib/reconciliation-types.ts (status/jenis/domain), lib/reconciliation-rules.ts
+// (rule engine murni), lib/reconciliation-store.ts (service read-only).
+// Koleksi BARU, tidak menyentuh koleksi lama.
+// ---------------------------------------------------------------------------
+
+/**
+ * Satu dokumen run rekonsiliasi. Phase 5A menulis `_id` unik per eksekusi;
+ * Phase 5B (lib/reconciliation-runner.ts, background job internal) memakai
+ * `_id` DETERMINISTIK berdasarkan cakupan (`${reconciliationType}:${storeId}:${scope}:${period}:${domain-set}:v${runVersion}`,
+ * TANPA timestamp) supaya rerun pada cakupan yang sama meng-upsert dokumen
+ * YANG SAMA (idempotent) alih-alih membuat histori baru — `startedAt` tetap
+ * dari eksekusi pertama, `updatedAt`/`completedAt` mengikuti eksekusi terakhir.
+ */
+export type ReconciliationRunDocument = {
+  /** Lihat catatan di atas — deterministik (Phase 5B) atau unik-per-eksekusi (Phase 5A manual). */
+  _id: string;
+  reconciliationType: ReconciliationType;
+  storeId: number;
+  /** "daily" (per tanggal, dipakai CROSS_SYSTEM_COURT_REVENUE) atau "monthly" (per periode, dipakai INTERNAL_OLSERA snapshot/ledger). */
+  scope: "daily" | "monthly";
+  /** Nilai cakupan: tanggal YYYY-MM-DD (daily) atau periode YYYY-MM (monthly). */
+  period: string;
+  /** Sumber data yang dibaca run ini, mis. ["ayo","olsera"] atau ["olsera"] — TIDAK PERNAH mencampur AYO ke dalam run INTERNAL_OLSERA. */
+  sourceSystems: string[];
+  status: "running" | "success" | "partial" | "failed";
+  summary: {
+    totalFindings: number;
+    byStatus: Partial<Record<ReconciliationStatus, number>>;
+    byDomain: Partial<Record<ReconciliationDomain, Partial<Record<ReconciliationStatus, number>>>>;
+    requiresManualAdjustmentCount: number;
+    matchLikeCount: number;
+    notCheckedCount: number;
+    finalCount: number;
+    nonFinalCount: number;
+    /** true bila `period` = bulan berjalan (Asia/Jakarta) — hasil non-final, bisa berubah sampai bulan ditutup (lihat lib/olsera-financial-core.ts isCurrentJakartaPeriod). */
+    isDraftPeriod: boolean;
+    /** Ringkasan impact seluruh finding di run ini (lihat lib/reconciliation-aggregate.ts summaryImpact) — dasar Dashboard/Priority. */
+    impactSummary: Partial<Record<ReconciliationImpact, number>>;
+    /** Impact tertinggi di run ini (CRITICAL > ERROR > WARNING > INFO). */
+    highestImpact: ReconciliationImpact;
+    /** Ringkasan confidence seluruh finding di run ini (lihat summaryConfidence). */
+    confidenceSummary: Partial<Record<ReconciliationConfidence, number>>;
+    /** Confidence keseluruhan run ini (paling lemah menang — lihat overallConfidence). */
+    overallConfidence: ReconciliationConfidence;
+  };
+  /** Checkpoint proses bertahap (pola sama cron finansial/inventori) — null bila run selesai dalam satu langkah. */
+  checkpoint: { cursor: string | null; stage: string | null; completedDomains: ReconciliationDomain[] } | null;
+  /** Versi rule engine yang menghasilkan run ini — naikkan bila logika rule berubah signifikan. */
+  version: number;
+  errorMessage: string | null;
+  startedAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
+};
+
+/** Satu dokumen per TEMUAN (satu entitas yang dibandingkan) — upsert idempoten via `_id` deterministik. */
+export type ReconciliationFindingDocument = {
+  /** `${reconciliationType}:${storeId}:${scope}:${scopeKey}:${domain}:${entityKey}` — deterministik, upsert aman diulang. */
+  _id: string;
+  reconciliationType: ReconciliationType;
+  domain: ReconciliationDomain;
+  ruleId: string;
+  /** _id run TERAKHIR yang menghasilkan status ini (lihat ReconciliationRunDocument). */
+  runId: string;
+  storeId: number;
+  scope: "daily" | "monthly";
+  period: string;
+  status: ReconciliationStatus;
+  /** Dampak finding ini bila dibiarkan — WAJIB diisi (lihat lib/reconciliation-types.ts STATUS_IMPACT & rule engine untuk override per sub-case). */
+  impact: ReconciliationImpact;
+  /** Seberapa yakin hasil matching/rule ini (HIGH=deterministik, MEDIUM=historical/alias/fallback, LOW=ambigu/butuh tinjauan). */
+  confidence: ReconciliationConfidence;
+  /** Referensi id/collection dari tiap sisi (mis. {bookingId, orderNo}) — BUKAN payload mentah/credential. */
+  sourceRefs: Record<string, unknown>;
+  entityKey: string;
+  expected: Record<string, unknown>;
+  actual: Record<string, unknown>;
+  difference: Record<string, unknown> | null;
+  diagnostics: Record<string, unknown>;
+  candidates: Array<{ label: string; value: unknown; note?: string }>;
+  knownCaseRef: string | null;
+  requiresManualAdjustment: boolean;
+  /** _id resolusi manual terakhir (ReconciliationManualResolutionDocument) — null bila belum pernah diputuskan manusia. */
+  manualResolutionId: string | null;
+  firstDetectedAt: Date;
+  lastCheckedAt: Date;
+  /** Berapa kali finding ini terlihat lagi pada run berikutnya (naik tiap kali di-upsert ulang, TIDAK PERNAH direset) — Phase 5B. */
+  occurrenceCount: number;
+  /** Waktu finding ini berhenti muncul pada rerun (TIDAK dihapus, hanya ditandai) — null bila masih aktif/terlihat pada run terakhir. Phase 5B (lib/reconciliation-runner.ts). */
+  supersededAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/**
+ * Keputusan manusia atas satu finding — APPEND-ONLY (tidak diedit/dihapus,
+ * hanya "superseded" oleh entri baru). Kunci = findingId, BUKAN aturan global
+ * by-name (pola sama olsera_category_overrides): satu keputusan HANYA berlaku
+ * untuk satu finding spesifik. Skema disiapkan Phase 5A; BELUM ada jalur
+ * tulis (API/service) yang membuat dokumen ini — lihat docs/reconciliation-design.md.
+ */
+export type ReconciliationManualResolutionDocument = {
+  _id: string;
+  findingId: string;
+  decision: "confirmed-match" | "confirmed-mismatch" | "chosen-candidate" | "acknowledged-known-case" | "needs-source-fix";
+  chosenCandidateEntityKey: string | null;
+  reason: string;
+  userId: string;
+  createdAt: Date;
+  /** _id resolusi berikutnya bila keputusan ini sudah digantikan — null bila masih berlaku. */
+  supersededBy: string | null;
+};
+
+/** Audit trail APPEND-ONLY atas seluruh perubahan status finding (sistem maupun manusia). Skema disiapkan Phase 5A; belum ada penulis otomatis. */
+export type ReconciliationAuditLogDocument = {
+  _id: string;
+  findingId: string;
+  previousStatus: ReconciliationStatus | null;
+  newStatus: ReconciliationStatus;
+  /** "system" atau userId. */
+  changedBy: string;
+  reason: string | null;
+  createdAt: Date;
+};
+
 function parseDirectHosts(value: string | undefined) {
   return (
     value
@@ -487,6 +615,10 @@ export async function collections() {
     olseraFinancialLedgerEntries: db.collection<OlseraFinancialLedgerEntryDocument>("olsera_financial_ledger_entries"),
     olseraFinancialSyncLogs: db.collection<OlseraFinancialSyncLogDocument>("olsera_financial_sync_logs"),
     olseraSyncLocks: db.collection<OlseraSyncLockDocument>("olsera_sync_locks"),
+    reconciliationRuns: db.collection<ReconciliationRunDocument>("reconciliation_runs"),
+    reconciliationFindings: db.collection<ReconciliationFindingDocument>("reconciliation_findings"),
+    reconciliationManualResolutions: db.collection<ReconciliationManualResolutionDocument>("reconciliation_manual_resolutions"),
+    reconciliationAuditLog: db.collection<ReconciliationAuditLogDocument>("reconciliation_audit_log"),
   };
 }
 
@@ -529,6 +661,10 @@ async function createIndexes() {
     olseraFinancialLedgerEntries,
     olseraFinancialSyncLogs,
     olseraSyncLocks,
+    reconciliationRuns,
+    reconciliationFindings,
+    reconciliationManualResolutions,
+    reconciliationAuditLog,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -593,6 +729,19 @@ async function createIndexes() {
     // lease kedaluwarsa (release/acquire tetap bekerja tanpa TTL — ini hanya
     // housekeeping, bukan mekanisme utama lock).
     olseraSyncLocks.createIndex({ lockedUntil: 1 }),
+    // Modul Rekonsiliasi (Phase 5A) — collection BARU, index BARU saja (tidak
+    // menyentuh index koleksi lama manapun). `_id` sudah unik secara native
+    // (runId/findingId/resolutionId/auditId deterministik, lihat lib/mongodb.ts
+    // dokumentasi tipe di atas) — index tambahan di bawah untuk pola query.
+    reconciliationRuns.createIndex({ storeId: 1, period: 1, reconciliationType: 1 }),
+    reconciliationRuns.createIndex({ startedAt: -1 }),
+    reconciliationFindings.createIndex({ storeId: 1, period: 1, reconciliationType: 1 }),
+    reconciliationFindings.createIndex({ runId: 1, domain: 1, status: 1 }),
+    reconciliationFindings.createIndex({ runId: 1 }),
+    reconciliationFindings.createIndex({ createdAt: -1 }),
+    reconciliationManualResolutions.createIndex({ findingId: 1, createdAt: -1 }),
+    reconciliationAuditLog.createIndex({ findingId: 1, createdAt: -1 }),
+    reconciliationAuditLog.createIndex({ createdAt: -1 }),
   ]);
 }
 

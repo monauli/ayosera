@@ -1,0 +1,55 @@
+{
+  "generatedAt": "2026-07-27T00:00:00.000Z",
+  "storeId": 324175,
+  "methodology": "Untuk setiap bulan Feb-Jul 2026, seluruh entity (union productId:variantId dari olsera_inventory_monthly_snapshots DAN olsera_inventory_movements storeId={storeId,null}) diklasifikasikan via lib/inventory-snapshot-pipeline-audit-core.ts classifySnapshotEntity — membandingkan dokumen snapshot existing terhadap sumAbsQty ledger penjualan independen (olsera_inventory_movements), memperhitungkan trackInventory (barang non-stok seperti minuman LABERS/SEWA RAKET/COURT FEE sengaja dikecualikan dari rantai ledger), dan status bulan berjalan (Asia/Jakarta). Sumber: scripts/audit-inventory-snapshot-rebuild.ts (read-only), output mentah di tmp/inventory-snapshot-pipeline-scan-2026-{02..07}.json.",
+  "perMonth": {
+    "2026-02": { "totalEntities": 51, "byClassification": { "EXPECTED_NO_ACTION": 50, "STALE_SNAPSHOT": 1 } },
+    "2026-03": { "totalEntities": 54, "byClassification": { "EXPECTED_NO_ACTION": 53, "STALE_SNAPSHOT": 1 } },
+    "2026-04": { "totalEntities": 64, "byClassification": { "EXPECTED_NO_ACTION": 63, "STALE_SNAPSHOT": 1 } },
+    "2026-05": { "totalEntities": 98, "byClassification": { "EXPECTED_NO_ACTION": 97, "SOURCE_DATA_INCOMPLETE": 1 } },
+    "2026-06": { "totalEntities": 96, "byClassification": { "EXPECTED_NO_ACTION": 95, "SOURCE_DATA_INCOMPLETE": 1 } },
+    "2026-07": { "totalEntities": 96, "byClassification": { "BOUNDARY_CURRENT_MONTH": 45, "EXPECTED_NO_ACTION": 50, "STALE_SNAPSHOT": 1 } }
+  },
+  "findingsRequiringAttention": [
+    {
+      "productId": 116138490,
+      "variantId": null,
+      "productName": "BOLA PADEL ODEA ROSE",
+      "monthsAffected": ["2026-02", "2026-03", "2026-04", "2026-05"],
+      "classification": { "2026-02": "STALE_SNAPSHOT", "2026-03": "STALE_SNAPSHOT", "2026-04": "STALE_SNAPSHOT", "2026-05": "SOURCE_DATA_INCOMPLETE" },
+      "rootCause": "productId Olsera berganti dari 106817649 (nama lama 'BOLA PADEL ODEA', terlihat di olsera_order_items.raw.product_id) menjadi 116138490 ('BOLA PADEL ODEA ROSE') TANPA dokumen olsera_product_aliases yang menjembatani — stockmovement API Open API Olsera Feb-Apr masih melaporkan productId lama sehingga gagal identity/SKU/nama-match ke katalog kanonik, jatuh ke carry-forward (salesQty dipaksa 0). Mei: API sudah melaporkan productId baru (match identity) tapi salesQty API (12) tetap berbeda dari ledger independen (55) — indikasi API baru 'mengejar' bertahap, cocok persis di Juni (46=46).",
+      "codeFix": "carryForwardStatusAndDiagnostic (lib/olsera-inventory-monthly-snapshot-core.ts) — carry-forward yang kontradiktif dengan bukti penjualan independen kini ditandai status 'incomplete' (bukan 'complete') otomatis pada REBUILD BERIKUTNYA. Dokumen Feb-Apr yang SUDAH TERSIMPAN belum berubah (tidak ada rebuild dijalankan sesi ini) — karenanya masih terklasifikasi STALE_SNAPSHOT (dokumen lama, kode baru).",
+      "manualActionNeeded": "Verifikasi manual rename productId 106817649->116138490 lalu tambahkan dokumen olsera_product_aliases (butuh persetujuan) untuk memperbaiki root cause API-level; setelah itu jalankan rebuild eksplisit."
+    },
+    {
+      "productId": 118420650,
+      "variantId": null,
+      "productName": "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate",
+      "monthsAffected": ["2026-06"],
+      "classification": { "2026-06": "SOURCE_DATA_INCOMPLETE" },
+      "rootCause": "Diagnostic script (scripts/audit-inventory-snapshot-rebuild.ts) mengelompokkan olsera_inventory_movements per productId APA ADANYA (tanpa resolusi alias) — 3 movement Juni untuk SKU ini kemungkinan tersimpan dengan productId LAMA (106743815, sebelum alias 106743815->118420650) di collection movements, sehingga tidak terhitung pada key 118420650 oleh script diagnostic ini. Snapshot baseline-file (salesQty=3) sudah diverifikasi manual terhadap file resmi — TIDAK ada indikasi salah di pipeline snapshot itu sendiri, ini keterbatasan diagnostic script (belum menerapkan resolusi alias saat agregasi read-only).",
+      "codeFix": "Tidak ada — magnitude kecil (3 unit), sudah diverifikasi manual sebelumnya (lihat scripts/bootstrap-monthly-snapshot-baseline.ts).",
+      "manualActionNeeded": "Tidak mendesak — dicatat sebagai keterbatasan diagnostic script, bukan bug pipeline produksi."
+    },
+    {
+      "productId": 106743466,
+      "variantId": null,
+      "productName": "YONEX MEN SOCKS SSM-1855ID-MP6-SR",
+      "monthsAffected": ["2026-07"],
+      "classification": { "2026-07": "STALE_SNAPSHOT" },
+      "rootCause": "Satu penjualan (2026-07-24) baru 3 hari sebelum audit ini (2026-07-27) — stockmovement API belum sempat mengejar, wajar untuk bulan berjalan (draft). productId TIDAK berganti (order_items.raw.product_id == resolvedProductId == 106743466, terverifikasi).",
+      "codeFix": "Sama seperti 116138490 — akan otomatis tertandai 'incomplete' pada rebuild berikutnya bila API masih belum mengejar saat itu.",
+      "manualActionNeeded": "Tidak ada — tunggu bulan tutup + backfill rutin."
+    }
+  ],
+  "classificationBucketDefinitions": {
+    "BUG_PIPELINE": "Ditemukan 0 kasus — tidak ada bug logika pipeline yang terbukti pada audit ini.",
+    "STALE_SNAPSHOT": "Dokumen snapshot tersimpan dibuat SEBELUM perbaikan kode (carryForwardStatusAndDiagnostic) atau bulan tutup tanpa dokumen sama sekali (barang trackInventory:true) — perlu rebuild eksplisit, BUKAN backfill otomatis.",
+    "SOURCE_DATA_INCOMPLETE": "Snapshot sudah 'complete' (API MELAPORKAN baris) tapi berbeda dari ledger independen — dua sumber data tidak sepakat, di luar kendali kode rekonsiliasi/pipeline snapshot.",
+    "LEGACY_STORE_ID_NULL": "Ditemukan 0 kasus bulan ini — Known Case 37 sudah tertangani oleh fetchRawSalesActivityByMonth (storeId:{$in:[storeId,null]}).",
+    "PRODUCT_IDENTITY_AMBIGUOUS": "Carry-forward kontradiktif YANG SUDAH ditandai kode terbaru (status incomplete) — kemungkinan productId rename tanpa alias. 0 kasus ditemukan pada dokumen TERSIMPAN (karena belum ada yang direbuild dgn kode baru); akan muncul otomatis begitu rebuild eksplisit dijalankan untuk entity 116138490.",
+    "BOUNDARY_CURRENT_MONTH": "Selisih/ketiadaan dokumen yang wajar karena bulan masih berjalan (Juli 2026) — 45-80 entity per scan Juli, seluruhnya timing biasa.",
+    "REQUIRES_MANUAL_ADJUSTMENT": "Ditemukan 0 kasus generik di luar 116138490 (yang sudah punya jalur klasifikasi lebih spesifik).",
+    "EXPECTED_NO_ACTION": "Mayoritas entity (>95% pada bulan tutup) — snapshot cocok dengan ledger independen ATAU memang barang non-stok (trackInventory:false)."
+  }
+}

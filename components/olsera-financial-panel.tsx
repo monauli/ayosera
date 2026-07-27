@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock, subscribeOlseraSyncLock } from "@/lib/olsera-sync-lock";
+import { isCurrentJakartaPeriod, jakartaCurrentPeriod as sharedJakartaCurrentPeriod } from "@/lib/olsera-financial-core";
 import {
   describeFinancialResponse,
   parseLedgerResponse,
@@ -77,9 +78,7 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 function jakartaCurrentPeriod() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" })
-    .format(new Date())
-    .slice(0, 7);
+  return sharedJakartaCurrentPeriod();
 }
 
 function clampPeriod(period: string) {
@@ -562,7 +561,14 @@ export function OlseraFinancialPanel() {
                 <RefreshCw className="h-5 w-5" />
               </div>
               <div>
-                <p className={TITLE}>Sync Laporan Keuangan</p>
+                <p className={TITLE}>
+                  Sync Laporan Keuangan
+                  {isCurrentJakartaPeriod(period) && (
+                    <span className="ml-2 rd-chip border-amber-400/40 bg-amber-400/10 align-middle text-[11px] font-semibold text-amber-300">
+                      Bulan Berjalan / Belum Final
+                    </span>
+                  )}
+                </p>
                 <p className={DESC}>
                   Periode{" "}
                   <span className="font-medium text-slate-200">{formatPeriodLabel(period)}</span>
@@ -573,6 +579,9 @@ export function OlseraFinancialPanel() {
                     </>
                   )}
                 </p>
+                {isCurrentJakartaPeriod(period) && (
+                  <p className="mt-1 text-[12.5px] text-amber-300/90">Data sementara sampai tanggal sinkron terakhir</p>
+                )}
               </div>
             </div>
             {syncing || isSyncRunningRemotely ? (

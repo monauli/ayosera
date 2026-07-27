@@ -13,6 +13,7 @@ import {
   buildLedgerDetailGroups,
   buildLedgerSummaryRows,
   buildProfitLossLines,
+  draftReportNotice,
   formatPeriodDateRangeEN,
   formatPeriodLabelID,
   type BalanceSheetPayload,
@@ -30,6 +31,7 @@ const GROUP_FILL = "FFE5E7EB"; // gray-200
 const TOTAL_FILL = "FFD1D5DB"; // gray-300
 const HEADER_FILL = "FF374151"; // slate-700
 const BLACK = "FF000000";
+const DRAFT_RED = "FFB91C1C";
 
 function fill(argb: string): ExcelJS.FillPattern {
   return { type: "pattern", pattern: "solid", fgColor: { argb } };
@@ -41,11 +43,11 @@ function topBottomBorder(): Partial<ExcelJS.Borders> {
   return { top: { style: "thin", color: { argb: BLACK } }, bottom: { style: "double", color: { argb: BLACK } } };
 }
 
-function configurePrint(sheet: ExcelJS.Worksheet, lastColumn: string) {
-  sheet.views = [{ state: "frozen", ySplit: 5 }];
+function configurePrint(sheet: ExcelJS.Worksheet, lastColumn: string, headerRow = 5) {
+  sheet.views = [{ state: "frozen", ySplit: headerRow }];
   sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   sheet.pageSetup.printArea = `A1:${lastColumn}${sheet.rowCount}`;
-  sheet.pageSetup.printTitlesRow = "5:5";
+  sheet.pageSetup.printTitlesRow = `${headerRow}:${headerRow}`;
 }
 
 export interface FinancialExcelInput {
@@ -57,9 +59,18 @@ export interface FinancialExcelInput {
   ledgerSummary: LedgerSummaryRow[] | null;
   ledgerEntries: LedgerEntryInput[];
   accountNameByCode?: Map<string, string>;
+  /** Waktu sinkron terakhir (ISO/Date) — dipakai hanya untuk label bulan berjalan. */
+  lastSyncedAt?: string | Date | null;
 }
 
-function titleBlock(sheet: ExcelJS.Worksheet, companyName: string, reportTitle: string, periodText: string, lastCol: number) {
+function titleBlock(
+  sheet: ExcelJS.Worksheet,
+  companyName: string,
+  reportTitle: string,
+  periodText: string,
+  lastCol: number,
+  draftLines?: string[],
+): number {
   const company = sheet.addRow([companyName]);
   company.font = { name: FONT, bold: true, size: 14 };
   company.alignment = { horizontal: "center" };
@@ -75,7 +86,18 @@ function titleBlock(sheet: ExcelJS.Worksheet, companyName: string, reportTitle: 
   period.alignment = { horizontal: "center" };
   sheet.mergeCells(period.number, 1, period.number, lastCol);
 
+  // Bulan berjalan / belum final — hanya digambar bila periode adalah bulan
+  // berjalan (lihat draftReportNotice di olsera-financial-export-core.ts).
+  // Baris laporan bulan lain/lama tidak bertambah dan tidak berubah.
+  for (const line of draftLines ?? []) {
+    const draftRow = sheet.addRow([line]);
+    draftRow.font = { name: FONT, bold: true, size: 11, color: { argb: DRAFT_RED } };
+    draftRow.alignment = { horizontal: "center" };
+    sheet.mergeCells(draftRow.number, 1, draftRow.number, lastCol);
+  }
+
   sheet.addRow([]);
+  return sheet.rowCount + 1;
 }
 
 /** Sheet laporan berstruktur (Neraca/Laba Rugi/Arus Kas) dari StatementLine[]. */
@@ -87,10 +109,11 @@ function renderStatementSheet(
   companyName: string,
   lines: StatementLine[],
   layout: "code-name-amount" | "name-amount",
+  draftLines?: string[],
 ) {
   const sheet = workbook.addWorksheet(sheetName);
   const amountCol = layout === "code-name-amount" ? 3 : 2;
-  titleBlock(sheet, companyName, reportTitle, periodText, amountCol);
+  const headerRow = titleBlock(sheet, companyName, reportTitle, periodText, amountCol, draftLines);
 
   // Header kolom
   const header =
@@ -176,13 +199,13 @@ function renderStatementSheet(
     sheet.getColumn(1).width = 52;
     sheet.getColumn(2).width = 22;
   }
-  configurePrint(sheet, amountCol === 3 ? "C" : "B");
+  configurePrint(sheet, amountCol === 3 ? "C" : "B", headerRow);
   return sheet;
 }
 
-function renderLedgerSummarySheet(workbook: ExcelJS.Workbook, input: FinancialExcelInput, periodText: string) {
+function renderLedgerSummarySheet(workbook: ExcelJS.Workbook, input: FinancialExcelInput, periodText: string, draftLines?: string[]) {
   const sheet = workbook.addWorksheet("Ringkasan Buku Besar");
-  titleBlock(sheet, input.companyName, "Ringkasan Buku Besar", periodText, 6);
+  const headerRow = titleBlock(sheet, input.companyName, "Ringkasan Buku Besar", periodText, 6, draftLines);
 
   const header = sheet.addRow(["Nomor Akun", "Nama Akun", "Klasifikasi", "Debit", "Kredit", "Saldo"]);
   header.eachCell((cell, colNumber) => {
@@ -217,12 +240,12 @@ function renderLedgerSummarySheet(workbook: ExcelJS.Workbook, input: FinancialEx
   sheet.getColumn(4).width = 18;
   sheet.getColumn(5).width = 18;
   sheet.getColumn(6).width = 18;
-  configurePrint(sheet, "F");
+  configurePrint(sheet, "F", headerRow);
 }
 
-function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExcelInput, periodText: string) {
+function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExcelInput, periodText: string, draftLines?: string[]) {
   const sheet = workbook.addWorksheet("Buku Besar Detail");
-  titleBlock(sheet, input.companyName, "Buku Besar Detail", periodText, 5);
+  const headerRow = titleBlock(sheet, input.companyName, "Buku Besar Detail", periodText, 5, draftLines);
 
   const header = sheet.addRow(["Tanggal", "No. Jurnal", "Deskripsi", "Debit", "Kredit"]);
   header.eachCell((cell, colNumber) => {
@@ -278,7 +301,7 @@ function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExc
   sheet.getColumn(3).width = 56;
   sheet.getColumn(4).width = 18;
   sheet.getColumn(5).width = 18;
-  configurePrint(sheet, "E");
+  configurePrint(sheet, "E", headerRow);
 }
 
 /** Susun workbook gabungan 5-sheet. Urutan sheet mengikuti spesifikasi Tahap 4C. */
@@ -286,8 +309,10 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "AYOSERA";
   const periodLabel = formatPeriodLabelID(input.period);
+  const notice = draftReportNotice(input.period, input.lastSyncedAt);
+  const draftLines = notice.isDraft ? [notice.label, notice.detail] : undefined;
 
-  renderLedgerSummarySheet(workbook, input, periodLabel);
+  renderLedgerSummarySheet(workbook, input, periodLabel, draftLines);
 
   renderStatementSheet(
     workbook,
@@ -297,6 +322,7 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     input.companyName,
     input.cashFlow ? buildCashFlowLines(input.cashFlow) : [],
     "name-amount",
+    draftLines,
   );
 
   renderStatementSheet(
@@ -307,6 +333,7 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     input.companyName,
     input.profitLoss ? buildProfitLossLines(input.profitLoss) : [],
     "code-name-amount",
+    draftLines,
   );
 
   renderStatementSheet(
@@ -317,9 +344,10 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     input.companyName,
     input.balanceSheet ? buildBalanceSheetLines(input.balanceSheet) : [],
     "code-name-amount",
+    draftLines,
   );
 
-  renderLedgerDetailSheet(workbook, input, periodLabel);
+  renderLedgerDetailSheet(workbook, input, periodLabel, draftLines);
 
   return workbook;
 }

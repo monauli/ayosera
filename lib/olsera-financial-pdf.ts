@@ -15,6 +15,7 @@ import {
   buildLedgerDetailGroups,
   buildLedgerSummaryRows,
   buildProfitLossLines,
+  draftReportNotice,
   formatAccountingID,
   formatPeriodDateRangeEN,
   formatPeriodLabelID,
@@ -49,6 +50,8 @@ const MUTED = rgb(0.42, 0.45, 0.5);
 const RULE = rgb(0.7, 0.72, 0.75);
 const GROUP_BG = rgb(0.93, 0.94, 0.95);
 const TOTAL_BG = rgb(0.85, 0.87, 0.89);
+const DRAFT_INK = rgb(0.72, 0.24, 0.1);
+const DRAFT_LINE_HEIGHT = 13;
 
 /**
  * Normalisasi teks untuk font standar PDF (WinAnsi).
@@ -155,6 +158,13 @@ interface ReportOptions {
   periodText: string;
   /** Header kolom tabel yang digambar ulang di tiap halaman (opsional). */
   columns?: Column[];
+  /**
+   * Baris peringatan "bulan berjalan / belum final" (opsional) — HANYA diisi
+   * bila periode laporan adalah bulan berjalan (lihat draftReportNotice di
+   * olsera-financial-export-core.ts). Menambah tinggi blok header hanya untuk
+   * dokumen ini; laporan bulan lain/lama tidak terpengaruh.
+   */
+  draftLines?: string[];
 }
 
 class ReportPdf {
@@ -164,6 +174,7 @@ class ReportPdf {
   private opts: ReportOptions;
   private pageW: number;
   private pageH: number;
+  private headerBlockHeight: number;
   page!: PDFPage;
   private y = 0;
 
@@ -174,6 +185,8 @@ class ReportPdf {
     this.opts = opts;
     this.pageW = pageW;
     this.pageH = pageH;
+    const draftLineCount = opts.draftLines?.length ?? 0;
+    this.headerBlockHeight = HEADER_BLOCK_HEIGHT + (draftLineCount > 0 ? draftLineCount * DRAFT_LINE_HEIGHT + 6 : 0);
   }
 
   static async create(opts: ReportOptions): Promise<ReportPdf> {
@@ -200,7 +213,7 @@ class ReportPdf {
   private newPage() {
     this.page = this.doc.addPage([this.pageW, this.pageH]);
     this.drawTitleBlock();
-    this.y = this.pageH - MARGIN - HEADER_BLOCK_HEIGHT - HEADER_TABLE_GAP;
+    this.y = this.pageH - MARGIN - this.headerBlockHeight - HEADER_TABLE_GAP;
     if (this.opts.columns) this.drawColumnHeader();
   }
 
@@ -209,23 +222,24 @@ class ReportPdf {
     // Kotak header
     this.page.drawRectangle({
       x: MARGIN,
-      y: top - HEADER_BLOCK_HEIGHT,
+      y: top - this.headerBlockHeight,
       width: this.pageW - MARGIN * 2,
-      height: HEADER_BLOCK_HEIGHT,
+      height: this.headerBlockHeight,
       borderColor: RULE,
       borderWidth: 1,
     });
     const centerX = this.pageW / 2;
-    const lines: Array<{ text: string; font: PDFFont; size: number }> = [
+    const lines: Array<{ text: string; font: PDFFont; size: number; color?: ReturnType<typeof rgb> }> = [
       { text: this.opts.companyName, font: this.bold, size: 13 },
       { text: this.opts.title, font: this.regular, size: 11 },
       { text: this.opts.periodText, font: this.regular, size: 11 },
+      ...(this.opts.draftLines ?? []).map((text) => ({ text, font: this.bold, size: 9.5, color: DRAFT_INK })),
     ];
     let ly = top - 20;
     for (const line of lines) {
       const text = pdfText(line.text, line.font);
       const width = line.font.widthOfTextAtSize(text, line.size);
-      this.page.drawText(text, { x: centerX - width / 2, y: ly - line.size, size: line.size, font: line.font, color: INK });
+      this.page.drawText(text, { x: centerX - width / 2, y: ly - line.size, size: line.size, font: line.font, color: line.color ?? INK });
       ly -= line.size + 4;
     }
   }
@@ -361,8 +375,9 @@ async function renderStatementPdf(
   periodText: string,
   lines: StatementLine[],
   layout: "code-name-amount" | "name-amount",
+  draftLines?: string[],
 ): Promise<Uint8Array> {
-  const report = await ReportPdf.create({ orientation: "portrait", companyName, title, periodText });
+  const report = await ReportPdf.create({ orientation: "portrait", companyName, title, periodText, draftLines });
   const left = report.contentLeft;
   const right = report.contentRight;
   const codeX = left;
@@ -407,14 +422,20 @@ async function renderStatementPdf(
   return report.finalize();
 }
 
-export function renderNeracaPdf(companyName: string, period: string, balanceSheet: BalanceSheetPayload): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Neraca", formatPeriodLabelID(period), buildBalanceSheetLines(balanceSheet), "code-name-amount");
+/** Baris peringatan bulan berjalan untuk header PDF, atau undefined bila bukan draft. */
+function draftLinesFor(period: string, lastSyncedAt: string | Date | null | undefined): string[] | undefined {
+  const notice = draftReportNotice(period, lastSyncedAt);
+  return notice.isDraft ? [notice.label, notice.detail] : undefined;
 }
-export function renderLabaRugiPdf(companyName: string, period: string, profitLoss: ProfitLossPayload): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Laba Rugi", formatPeriodLabelID(period), buildProfitLossLines(profitLoss), "code-name-amount");
+
+export function renderNeracaPdf(companyName: string, period: string, balanceSheet: BalanceSheetPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
+  return renderStatementPdf(companyName, "Laporan Neraca", formatPeriodLabelID(period), buildBalanceSheetLines(balanceSheet), "code-name-amount", draftLinesFor(period, lastSyncedAt));
 }
-export function renderArusKasPdf(companyName: string, period: string, cashFlow: CashFlowPayload): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Arus Kas", formatPeriodDateRangeEN(period), buildCashFlowLines(cashFlow), "name-amount");
+export function renderLabaRugiPdf(companyName: string, period: string, profitLoss: ProfitLossPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
+  return renderStatementPdf(companyName, "Laporan Laba Rugi", formatPeriodLabelID(period), buildProfitLossLines(profitLoss), "code-name-amount", draftLinesFor(period, lastSyncedAt));
+}
+export function renderArusKasPdf(companyName: string, period: string, cashFlow: CashFlowPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
+  return renderStatementPdf(companyName, "Laporan Arus Kas", formatPeriodDateRangeEN(period), buildCashFlowLines(cashFlow), "name-amount", draftLinesFor(period, lastSyncedAt));
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +446,7 @@ export async function renderRingkasanBukuBesarPdf(
   companyName: string,
   period: string,
   ledgerSummary: LedgerSummaryRow[] | null,
+  lastSyncedAt?: string | Date | null,
 ): Promise<Uint8Array> {
   const pageW = A4.h;
   const tableRight = pageW - MARGIN - 6;
@@ -445,6 +467,7 @@ export async function renderRingkasanBukuBesarPdf(
     title: "Ringkasan Buku Besar",
     periodText: formatPeriodLabelID(period),
     columns,
+    draftLines: draftLinesFor(period, lastSyncedAt),
   });
 
   for (const row of buildLedgerSummaryRows(ledgerSummary)) {
@@ -471,6 +494,7 @@ export async function renderBukuBesarDetailPdf(
   period: string,
   entries: LedgerEntryInput[],
   accountNameByCode: Map<string, string> = new Map(),
+  lastSyncedAt?: string | Date | null,
 ): Promise<Uint8Array> {
   const pageW = A4.h;
   const usable = pageW - MARGIN * 2;
@@ -492,6 +516,7 @@ export async function renderBukuBesarDetailPdf(
     title: "Buku Besar Detail",
     periodText: formatPeriodLabelID(period),
     columns,
+    draftLines: draftLinesFor(period, lastSyncedAt),
   });
 
   const groups = buildLedgerDetailGroups(entries, accountNameByCode);

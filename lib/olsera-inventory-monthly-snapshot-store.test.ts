@@ -14,9 +14,13 @@ import { buildMatchingContext, type MatchingContext } from "./olsera-inventory-m
 import {
   backfillBackwardRange,
   backfillForwardRange,
+  docsToBackwardAnchors,
   docsToForwardAnchors,
+  fetchRawSalesActivityByMonth,
   ensureMonthlySnapshotChain,
+  runBackwardBackfillMonth,
   runForwardBackfillMonth,
+  type MinimalMovementReadCollection,
   type MonthlySnapshotRepo,
 } from "./olsera-inventory-monthly-snapshot-store.ts";
 import type { OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
@@ -339,6 +343,110 @@ test("ensureMonthlySnapshotChain: tidak ada anchor sama sekali -> error, bukan f
   const result = await ensureMonthlySnapshotChain({ year: 2026, month: 9, repo, matchingContext });
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /anchor|bootstrap/i);
+});
+
+// ---- fetchRawSalesActivityByMonth (fake koleksi, tanpa Mongo asli) ----
+
+type FakeMovementDoc = { _id: string; storeId: number | null; productId: number | null; variantId: number | null; date: string; qtyChange: number };
+
+function createFakeMovementCollection(docs: FakeMovementDoc[]): MinimalMovementReadCollection {
+  return {
+    find(filter: Record<string, unknown>) {
+      const storeFilter = filter.storeId as { $in: (number | null)[] } | undefined;
+      const dateFilter = filter.date as { $gte: string; $lte: string } | undefined;
+      const matched = docs.filter((d) => {
+        if (storeFilter && !storeFilter.$in.includes(d.storeId)) return false;
+        if (dateFilter && (d.date < dateFilter.$gte || d.date > dateFilter.$lte)) return false;
+        return true;
+      });
+      return {
+        project() {
+          return { async toArray() { return matched as unknown as Record<string, unknown>[]; } };
+        },
+      };
+    },
+  };
+}
+
+test("fetchRawSalesActivityByMonth: storeId toko sendiri DAN storeId:null (legacy) ikut terhitung, storeId toko lain TIDAK (Known Case 37)", async () => {
+  const collection = createFakeMovementCollection([
+    { _id: "sale:1", storeId: 1, productId: 100, variantId: null, date: "2026-02-10", qtyChange: -3 },
+    { _id: "sale:2", storeId: null, productId: 100, variantId: null, date: "2026-02-11", qtyChange: -2 }, // legacy belum distempel
+    { _id: "sale:3", storeId: 999, productId: 100, variantId: null, date: "2026-02-12", qtyChange: -5 }, // toko lain — TIDAK boleh ikut
+  ]);
+  const map = await fetchRawSalesActivityByMonth(1, "2026-02-01", "2026-02-28", collection);
+  assert.equal(map.get("1:100:0"), 5); // 3 + 2, BUKAN +5 dari toko lain
+});
+
+test("fetchRawSalesActivityByMonth: boundary akhir bulan — tanggal akhir bulan inklusif, tanggal 1 bulan berikutnya TIDAK ikut", async () => {
+  const collection = createFakeMovementCollection([
+    { _id: "sale:1", storeId: 1, productId: 100, variantId: null, date: "2026-02-28", qtyChange: -1 }, // akhir Februari — ikut
+    { _id: "sale:2", storeId: 1, productId: 100, variantId: null, date: "2026-03-01", qtyChange: -9 }, // awal Maret — TIDAK boleh ikut
+  ]);
+  const map = await fetchRawSalesActivityByMonth(1, "2026-02-01", "2026-02-28", collection);
+  assert.equal(map.get("1:100:0"), 1);
+});
+
+test("fetchRawSalesActivityByMonth: dua movement berbeda (_id beda) pada produk+bulan sama -> keduanya IKUT dijumlah (bukan duplicate, bukan double-count)", async () => {
+  const collection = createFakeMovementCollection([
+    { _id: "sale:1", storeId: 1, productId: 100, variantId: null, date: "2026-02-05", qtyChange: -1 },
+    { _id: "sale:2", storeId: 1, productId: 100, variantId: null, date: "2026-02-06", qtyChange: -1 },
+  ]);
+  const map = await fetchRawSalesActivityByMonth(1, "2026-02-01", "2026-02-28", collection);
+  assert.equal(map.get("1:100:0"), 2); // dua penjualan berbeda, bukan 1 (bukan dedup keliru)
+});
+
+test("fetchRawSalesActivityByMonth: variantId=0 literal tetap masuk key yang sama seperti variantId null (konsisten dgn seluruh pipeline)", async () => {
+  const collection = createFakeMovementCollection([{ _id: "sale:1", storeId: 1, productId: 200, variantId: 0, date: "2026-02-05", qtyChange: -4 }]);
+  const map = await fetchRawSalesActivityByMonth(1, "2026-02-01", "2026-02-28", collection);
+  assert.equal(map.get("1:200:0"), 4);
+});
+
+test("fetchRawSalesActivityByMonth: productId null dilewati (tidak masuk key manapun, sudah ditangani jalur productId-null terpisah)", async () => {
+  const collection = createFakeMovementCollection([{ _id: "sale:1", storeId: 1, productId: null, variantId: null, date: "2026-02-05", qtyChange: -1 }]);
+  const map = await fetchRawSalesActivityByMonth(1, "2026-02-01", "2026-02-28", collection);
+  assert.equal(map.size, 0);
+});
+
+// ---- runBackwardBackfillMonth dengan rawSalesActivityFetcher (opt-in) ----
+
+test("runBackwardBackfillMonth: rawSalesActivityFetcher terpasang & ada kontradiksi -> dokumen ditulis dengan status 'incomplete' (bukan angka ditebak)", async (t) => {
+  mockFetchStockmovementByMonth(t, {}); // stockmovement API kosong bulan ini (memicu carry-forward)
+  const repo = createFakeRepo();
+  const matchingContext = matchingContextForOneProduct();
+  const anchors = docsToBackwardAnchors([{ ...seedMayDoc(), status: "complete", closingQty: 45 }]);
+  const result = await runBackwardBackfillMonth({
+    month: { year: 2026, month: 4 },
+    storeId: 1,
+    anchors,
+    matchingContext,
+    earliestByProductId: new Map([[100, "2026-01-01"]]),
+    repo,
+    rawSalesActivityFetcher: async () => new Map([["1:100:0", 51]]),
+  });
+  assert.equal(result.ok, true);
+  const april = await repo.findMonth(1, 2026, 4);
+  assert.equal(april[0].status, "incomplete");
+  assert.equal(april[0].salesQty, 0); // TIDAK diisi/ditebak dari sumAbsQty
+  assert.equal(april[0].closingQty, 45); // angka rantai TIDAK berubah
+});
+
+test("runBackwardBackfillMonth: TANPA rawSalesActivityFetcher (default, tidak diisi) -> status tetap 'complete' seperti sebelum perbaikan (regresi)", async (t) => {
+  mockFetchStockmovementByMonth(t, {});
+  const repo = createFakeRepo();
+  const matchingContext = matchingContextForOneProduct();
+  const anchors = docsToBackwardAnchors([{ ...seedMayDoc(), status: "complete", closingQty: 45 }]);
+  const result = await runBackwardBackfillMonth({
+    month: { year: 2026, month: 4 },
+    storeId: 1,
+    anchors,
+    matchingContext,
+    earliestByProductId: new Map([[100, "2026-01-01"]]),
+    repo,
+  });
+  assert.equal(result.ok, true);
+  const april = await repo.findMonth(1, 2026, 4);
+  assert.equal(april[0].status, "complete");
 });
 
 test("runForwardBackfillMonth: baris stockmovement yang tidak cocok ke katalog manapun dilaporkan di unmatchedOrAmbiguous, tidak menggagalkan bulan lain", async (t) => {

@@ -8,7 +8,13 @@
 // Jalankan: node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/backfill-monthly-snapshot.ts
 import { OLSERA_INVENTORY_BASELINE_DATE } from "../lib/olsera-baseline.ts";
 import { dominantStoreId } from "../lib/olsera-inventory-monthly-snapshot-core.ts";
-import { backfillBackwardRange, backfillForwardRange, fetchMatchingContext, getMongoMonthlySnapshotRepo } from "../lib/olsera-inventory-monthly-snapshot-store.ts";
+import {
+  backfillBackwardRange,
+  backfillForwardRange,
+  fetchMatchingContext,
+  fetchRawSalesActivityByMonth,
+  getMongoMonthlySnapshotRepo,
+} from "../lib/olsera-inventory-monthly-snapshot-store.ts";
 
 function todayJakarta(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -34,6 +40,7 @@ async function main() {
     storeId,
     matchingContext,
     repo,
+    rawSalesActivityFetcher: (start, end) => fetchRawSalesActivityByMonth(storeId, start, end),
   });
   for (const s of backward) {
     if (s.ok) console.log(`  ${fmt(s.month)}: OK — ${s.docsWritten} dokumen, ${s.stopped.length} produk dihentikan (belum ada bukti eksistensi).`);
@@ -49,6 +56,7 @@ async function main() {
     storeId,
     matchingContext,
     repo,
+    rawSalesActivityFetcher: (start, end) => fetchRawSalesActivityByMonth(storeId, start, end),
   });
   for (const s of forward) {
     if (s.ok) console.log(`  ${fmt(s.month)}: OK — ${s.docsWritten} dokumen.`);

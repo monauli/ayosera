@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-07-27T00:00:00.000Z",
+  "storeId": 324175,
+  "scope": "Perbandingan sebelum vs sesudah perbaikan carryForwardStatusAndDiagnostic (lib/olsera-inventory-monthly-snapshot-core.ts) dan fetchRawSalesActivityByMonth (lib/olsera-inventory-monthly-snapshot-store.ts). TIDAK ADA rebuild/backfill/write dijalankan sesi ini — dokumen olsera_inventory_monthly_snapshots TIDAK BERUBAH.",
+  "snapshotPreviewBeforeVsAfter": {
+    "note": "'Sebelum' = kode LAMA (status carry-forward selalu 'complete'). 'Sesudah' = kode BARU (status carry-forward 'incomplete' bila ada bukti kontradiksi) — HANYA dievaluasi via scripts/audit-inventory-snapshot-rebuild.ts (preview, tidak menulis). Dokumen tersimpan di production TETAP 'complete' sampai rebuild eksplisit dijalankan (di luar scope sesi ini).",
+    "entity116138490": {
+      "2026-02": { "before_status": "complete", "after_status_if_rebuilt": "incomplete", "salesQty_unchanged": 0, "rawEvidence": 30 },
+      "2026-03": { "before_status": "complete", "after_status_if_rebuilt": "incomplete", "salesQty_unchanged": 0, "rawEvidence": 36 },
+      "2026-04": { "before_status": "complete", "after_status_if_rebuilt": "incomplete", "salesQty_unchanged": 0, "rawEvidence": 51 },
+      "2026-05": { "before_status": "complete", "after_status_if_rebuilt": "complete (source=stockmovement-backward, bukan carry-forward — cap tidak berlaku, diklasifikasikan SOURCE_DATA_INCOMPLETE)", "salesQty_unchanged": 12, "rawEvidence": 55 }
+    },
+    "entity106743466_July": {
+      "2026-07": { "before_status": "complete", "after_status_if_rebuilt": "incomplete", "salesQty_unchanged": 0, "rawEvidence": 1 }
+    }
+  },
+  "movementNullKnownCase37": {
+    "status": "TETAP TERBACA — tidak ada regresi",
+    "verification": "fetchRawSalesActivityByMonth (baru) DAN loadInventoryMovementFindings (Phase 5B, sesi sebelumnya) keduanya memakai filter storeId:{$in:[storeId,null]} secara independen — konsisten, tidak saling menimpa."
+  },
+  "phase5bReconciliationRerun": {
+    "method": "npm run reconciliation:internal -- --period=2026-XX --domains=CATEGORY,PRODUCT,INVENTORY,SNAPSHOT --dry-run, dibandingkan terhadap tmp/reconciliation-phase5b-rerun-2026-XX.json (hasil sesi sebelumnya, setelah 3 perbaikan draft-cap/storeId-null/Known-Case-37)",
+    "result": {
+      "2026-02": { "findingsBefore": 222, "findingsAfter": 222, "summaryIdentical": true },
+      "2026-03": { "findingsBefore": 299, "findingsAfter": 299, "summaryIdentical": true },
+      "2026-04": { "findingsBefore": 400, "findingsAfter": 400, "summaryIdentical": true },
+      "2026-05": { "findingsBefore": 311, "findingsAfter": 311, "summaryIdentical": true },
+      "2026-06": { "findingsBefore": 268, "findingsAfter": 268, "summaryIdentical": true },
+      "2026-07": { "findingsBefore": 259, "findingsAfter": 259, "summaryIdentical": true }
+    },
+    "conclusion": "TIDAK ADA PERUBAHAN sama sekali pada hasil Phase 5B — diharapkan, karena perbaikan sesi ini HANYA menyentuh kode generator snapshot (lib/olsera-inventory-monthly-snapshot-*.ts), TIDAK menyentuh reconciliation-sources.ts/reconciliation-runner.ts/reconciliation-rules.ts, dan TIDAK ADA rebuild/write yang mengubah dokumen olsera_inventory_monthly_snapshots yang dibaca Phase 5B. Juli tetap diperlakukan sebagai draft (isDraftPeriod=true, impact di-cap sesuai desain sesi sebelumnya)."
+  },
+  "noImpactRegressionOrLostFindings": true,
+  "noFalseImpactReduction": true
+}

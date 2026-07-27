@@ -10,7 +10,12 @@ export const SUPERVISOR_EMAIL = "timunemas@ayo.local";
 
 export type AppRole = "supervisor" | "user";
 
-export const APP_MODULES = ["dasbor", "transaksi", "olsera", "webhook"] as const;
+// "rekonsiliasi" (Modul Rekonsiliasi, Phase 5A) ditambahkan paling akhir agar
+// TIDAK mengubah urutan/nilai module yang sudah dipakai user existing —
+// hanya supervisor yang otomatis mendapatkannya (lihat normalizeModules di
+// bawah); user biasa TIDAK mendapat akses ini kecuali diberi eksplisit
+// (default paling ketat, sesuai docs/reconciliation-design.md).
+export const APP_MODULES = ["dasbor", "transaksi", "olsera", "webhook", "rekonsiliasi"] as const;
 export type AppModule = (typeof APP_MODULES)[number];
 
 type AuthUserDocument = {

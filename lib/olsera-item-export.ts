@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import type { OlseraOrderItemDocument } from "./mongodb.ts";
-import { safeSheetName } from "./olsera-category-export.ts";
+import { escapeExcelFormulaPrefix, safeSheetName } from "./olsera-category-export.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
 const DATE_TIME_FMT = "dd-mmm-yyyy\nhh:mm:ss";
@@ -70,7 +70,7 @@ function exportDateText() {
 function safeText(value: string | null | undefined) {
   const text = String(value ?? "").trim();
   if (!text || /^\d+$/.test(text) || text === "[object Object]") return "";
-  return text;
+  return escapeExcelFormulaPrefix(text);
 }
 
 type InputRow = Pick<
@@ -251,12 +251,12 @@ function buildDailySalesSheet(
     ws.mergeCells(`Q${rowNumber}:R${rowNumber}`);
 
     const values: Record<string, ExcelJS.CellValue> = {
-      A: first.orderNo,
+      A: escapeExcelFormulaPrefix(first.orderNo),
       B: /[T ]\d{1,2}:\d{2}/.test(first.orderDate) ? dateTimeText(date) : dateOnlyText(date),
       D: safeText(first.salesByName),
-      E: first.customerId ?? "",
+      E: escapeExcelFormulaPrefix(String(first.customerId ?? "")),
       F: safeText(first.customerName),
-      G: String(first.tableNo ?? "").trim(),
+      G: escapeExcelFormulaPrefix(String(first.tableNo ?? "").trim()),
       H: qty,
       I: amount,
       K: addon,

@@ -30,6 +30,7 @@ import {
   type MonthKey,
   type MonthlyLedgerEntry,
   type ProductAliasEntry,
+  type RawSalesActivityByKey,
 } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchStockMovementRange } from "./olsera-inventory-stockmovement.ts";
 
@@ -113,6 +114,46 @@ function hasEvidenceFactory(catalogById: Map<string, InventoryProductInput>, ear
   };
 }
 
+/** (start,end) YYYY-MM-DD -> RawSalesActivityByKey — dipanggil oleh backfillBackwardRange/backfillForwardRange bila diinject (opsional, lihat determineDraftCapReason di reconciliation-runner.ts untuk pola serupa). */
+export type RawSalesActivityFetcher = (start: string, end: string) => Promise<RawSalesActivityByKey>;
+
+/** Bentuk koleksi minimal (pola sama lib/reconciliation-sources.ts MinimalReadCollection) — supaya testable dgn koleksi tiruan tanpa Mongo. */
+export type MinimalMovementReadCollection = {
+  find(filter: Record<string, unknown>): { project(p: Record<string, 1>): { toArray(): Promise<Record<string, unknown>[]> } };
+};
+
+/**
+ * Evidence independen (olsera_inventory_movements, ledger penjualan AYOSERA
+ * sendiri — BUKAN stockmovement API Olsera) untuk mendeteksi carry-forward
+ * yang kontradiktif (lihat komentar carryForwardStatusAndDiagnostic di
+ * lib/olsera-inventory-monthly-snapshot-core.ts, kasus movement-qty:116138490:0).
+ * storeId juga menerima `null` (data legacy belum distempel — Known Case 37,
+ * pola sama lib/reconciliation-sources.ts loadInventoryMovementFindings),
+ * TIDAK PERNAH membaca storeId toko lain. Movement dengan productId null
+ * dilewati (tidak ikut key manapun — sudah ditangani jalur productId-null
+ * terpisah, lihat recoverNullProductIdSales). `collectionOverride` opsional
+ * (injeksi tes, tanpa Mongo asli) — default membaca olsera_inventory_movements live.
+ */
+export async function fetchRawSalesActivityByMonth(
+  storeId: number,
+  start: string,
+  end: string,
+  collectionOverride?: MinimalMovementReadCollection,
+): Promise<RawSalesActivityByKey> {
+  const olseraInventoryMovements = collectionOverride ?? (await collections()).olseraInventoryMovements;
+  const rows = await olseraInventoryMovements
+    .find({ storeId: { $in: [storeId, null] }, date: { $gte: start, $lte: end } })
+    .project({ productId: 1, variantId: 1, qtyChange: 1 })
+    .toArray();
+  const map: RawSalesActivityByKey = new Map();
+  for (const row of rows as unknown as { productId: number | null; variantId: number | null; qtyChange: number }[]) {
+    if (row.productId === null) continue;
+    const key = `${storeId}:${row.productId}:${row.variantId ?? 0}`;
+    map.set(key, (map.get(key) ?? 0) + Math.abs(row.qtyChange));
+  }
+  return map;
+}
+
 // ---------------------------------------------------------------------------
 // Konversi entry ledger (murni) -> dokumen Mongo
 // ---------------------------------------------------------------------------
@@ -162,6 +203,8 @@ export async function runBackwardBackfillMonth(input: {
   matchingContext: MatchingContext;
   earliestByProductId: Map<number, string>;
   repo: MonthlySnapshotRepo;
+  /** Opsional (additive) — bila diisi, mengaktifkan deteksi carry-forward kontradiktif (lihat fetchRawSalesActivityByMonth). Default: tidak fetch apa pun, perilaku sebelumnya tidak berubah. */
+  rawSalesActivityFetcher?: RawSalesActivityFetcher;
 }): Promise<BackfillMonthResult<BackwardAnchor>> {
   const startDate = `${input.month.year}-${String(input.month.month).padStart(2, "0")}-01`;
   const endDate = lastDayOfMonth(input.month.year, input.month.month);
@@ -179,7 +222,8 @@ export async function runBackwardBackfillMonth(input: {
   );
 
   const hasEvidence = hasEvidenceFactory(input.matchingContext.catalogById, input.earliestByProductId, endDate);
-  const step = computeMonthlyStepBackward({ anchors: input.anchors, matched, hasEvidenceBeforeOrDuring: hasEvidence });
+  const rawSalesActivityByKey = input.rawSalesActivityFetcher ? await input.rawSalesActivityFetcher(startDate, endDate) : undefined;
+  const step = computeMonthlyStepBackward({ anchors: input.anchors, matched, hasEvidenceBeforeOrDuring: hasEvidence, rawSalesActivityByKey });
 
   const now = new Date();
   const docs = [...step.entries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
@@ -194,6 +238,8 @@ export async function runForwardBackfillMonth(input: {
   anchors: Map<string, ForwardAnchor>;
   matchingContext: MatchingContext;
   repo: MonthlySnapshotRepo;
+  /** Opsional (additive) — lihat runBackwardBackfillMonth. */
+  rawSalesActivityFetcher?: RawSalesActivityFetcher;
 }): Promise<BackfillMonthResult<ForwardAnchor>> {
   const startDate = `${input.month.year}-${String(input.month.month).padStart(2, "0")}-01`;
   const endDate = lastDayOfMonth(input.month.year, input.month.month);
@@ -210,7 +256,8 @@ export async function runForwardBackfillMonth(input: {
     unmatchedOrAmbiguous,
   );
 
-  const step = computeMonthlyStepForward({ anchors: input.anchors, matched, catalogById: input.matchingContext.catalogById });
+  const rawSalesActivityByKey = input.rawSalesActivityFetcher ? await input.rawSalesActivityFetcher(startDate, endDate) : undefined;
+  const step = computeMonthlyStepForward({ anchors: input.anchors, matched, catalogById: input.matchingContext.catalogById, rawSalesActivityByKey });
 
   const now = new Date();
   const docs = [...step.entries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
@@ -265,6 +312,8 @@ export async function backfillBackwardRange(input: {
   repo: MonthlySnapshotRepo;
   /** Injectable utk tes (fake, tanpa Mongo) — default: query olsera_order_items live. */
   earliestByProductId?: Map<number, string>;
+  /** Opsional (additive) — lihat runBackwardBackfillMonth/fetchRawSalesActivityByMonth. Default: tidak fetch apa pun (perilaku lama tidak berubah). */
+  rawSalesActivityFetcher?: RawSalesActivityFetcher;
 }): Promise<BackfillRangeSummary[]> {
   const earliestByProductId = input.earliestByProductId ?? (await fetchEarliestEvidenceByProductId());
   const existing = await input.repo.findMonth(input.storeId, input.fromInclusive.year, input.fromInclusive.month);
@@ -272,7 +321,15 @@ export async function backfillBackwardRange(input: {
   const summaries: BackfillRangeSummary[] = [];
 
   for (const month of monthsDescending(input.fromInclusive, input.toInclusive)) {
-    const result = await runBackwardBackfillMonth({ month, storeId: input.storeId, anchors, matchingContext: input.matchingContext, earliestByProductId, repo: input.repo });
+    const result = await runBackwardBackfillMonth({
+      month,
+      storeId: input.storeId,
+      anchors,
+      matchingContext: input.matchingContext,
+      earliestByProductId,
+      repo: input.repo,
+      rawSalesActivityFetcher: input.rawSalesActivityFetcher,
+    });
     if (!result.ok) {
       summaries.push({ month, ok: false, docsWritten: 0, stopped: [], error: result.error });
       break;
@@ -289,13 +346,22 @@ export async function backfillForwardRange(input: {
   storeId: number;
   matchingContext: MatchingContext;
   repo: MonthlySnapshotRepo;
+  /** Opsional (additive) — lihat runBackwardBackfillMonth/fetchRawSalesActivityByMonth. Default: tidak fetch apa pun (perilaku lama tidak berubah). */
+  rawSalesActivityFetcher?: RawSalesActivityFetcher;
 }): Promise<BackfillRangeSummary[]> {
   const existing = await input.repo.findMonth(input.storeId, input.fromInclusive.year, input.fromInclusive.month);
   let anchors = docsToForwardAnchors(existing);
   const summaries: BackfillRangeSummary[] = [];
 
   for (const month of monthsAscending(nextMonth(input.fromInclusive), input.toInclusive)) {
-    const result = await runForwardBackfillMonth({ month, storeId: input.storeId, anchors, matchingContext: input.matchingContext, repo: input.repo });
+    const result = await runForwardBackfillMonth({
+      month,
+      storeId: input.storeId,
+      anchors,
+      matchingContext: input.matchingContext,
+      repo: input.repo,
+      rawSalesActivityFetcher: input.rawSalesActivityFetcher,
+    });
     if (!result.ok) {
       summaries.push({ month, ok: false, docsWritten: 0, stopped: [], error: result.error });
       break;

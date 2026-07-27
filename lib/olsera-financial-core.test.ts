@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deduplicateFinancialAccounts, mapFinancialError, normalizeBalanceSheetPayload, normalizeCashFlowPayload, normalizeLedgerDetailPayload, normalizeLedgerSummaryPayload, normalizeProfitLossPayload, parseFinancialAmount, reconcileLedgerSummaryWithDetails, validatePeriod } from "./olsera-financial-core.ts";
+import { deduplicateFinancialAccounts, isCurrentJakartaPeriod, jakartaCurrentPeriod, mapFinancialError, normalizeBalanceSheetPayload, normalizeCashFlowPayload, normalizeLedgerDetailPayload, normalizeLedgerSummaryPayload, normalizeProfitLossPayload, parseFinancialAmount, reconcileLedgerSummaryWithDetails, validatePeriod } from "./olsera-financial-core.ts";
 
 test("financial parser handles Indonesian formats and nullish values", () => {
   assert.equal(parseFinancialAmount("IDR 15.000"), 15000);
@@ -20,6 +20,24 @@ test("period validator accepts only digit strings", () => {
   assert.throws(() => validatePeriod("2026", "0"));
   assert.throws(() => validatePeriod("2026", "13"));
   assert.throws(() => validatePeriod("2026.0", "5"));
+});
+
+test("jakartaCurrentPeriod uses Asia/Jakarta, not server UTC", () => {
+  // 17:00 UTC 31 Des = 00:00 WIB 1 Jan — sisi UTC belum ganti bulan, WIB sudah.
+  assert.equal(jakartaCurrentPeriod(new Date("2025-12-31T16:59:00Z")), "2025-12");
+  assert.equal(jakartaCurrentPeriod(new Date("2025-12-31T17:00:00Z")), "2026-01");
+  assert.equal(jakartaCurrentPeriod(new Date("2026-01-01T10:00:00Z")), "2026-01");
+});
+
+test("isCurrentJakartaPeriod: bulan berjalan vs bulan sebelumnya, termasuk pergantian tahun Desember->Januari", () => {
+  const rolloverNow = new Date("2025-12-31T17:05:00Z"); // 00:05 WIB 1 Jan 2026
+  assert.equal(isCurrentJakartaPeriod("2026-01", rolloverNow), true);
+  assert.equal(isCurrentJakartaPeriod("2025-12", rolloverNow), false);
+
+  const midMonthNow = new Date("2026-05-15T04:00:00Z"); // 11:00 WIB
+  assert.equal(isCurrentJakartaPeriod("2026-05", midMonthNow), true);
+  assert.equal(isCurrentJakartaPeriod("2026-04", midMonthNow), false);
+  assert.equal(isCurrentJakartaPeriod("2026-06", midMonthNow), false);
 });
 
 test("account deduplication preserves distinct accounts and empty objects", () => {

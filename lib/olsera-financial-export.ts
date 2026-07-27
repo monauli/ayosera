@@ -10,6 +10,7 @@
 // kegagalan pembuatan berkas yang ditangkap di sini menjadi "generation-failed".
 import "server-only";
 import {
+  getFinancialSyncLogForPeriod,
   getMonthlyReportsForPeriod,
   listAllFinancialLedgerEntriesForPeriod,
   listFinancialAccounts,
@@ -69,10 +70,11 @@ export async function generateFinancialExcelExport(rawPeriod: string, context?: 
   const period = safePeriod(rawPeriod);
   if (!period) return { ok: false, reason: "invalid-period" };
 
-  const [reports, accounts, ledgerEntries] = await Promise.all([
+  const [reports, accounts, ledgerEntries, syncLog] = await Promise.all([
     getMonthlyReportsForPeriod(period, context),
     listFinancialAccounts(context),
     listAllFinancialLedgerEntriesForPeriod(period, context),
+    getFinancialSyncLogForPeriod(period, context),
   ]);
 
   if (!reports || Object.keys(reports).length === 0) return { ok: false, reason: "snapshot-missing" };
@@ -87,6 +89,7 @@ export async function generateFinancialExcelExport(rawPeriod: string, context?: 
       ledgerSummary: (reports["ledger-summary"]?.normalizedPayload as never) ?? null,
       ledgerEntries: ledgerEntries as unknown as LedgerEntryInput[],
       accountNameByCode: accountNameMap(accounts),
+      lastSyncedAt: syncLog?.completedAt ?? null,
     });
     const body = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
     return { ok: true, filename: financialExportFileName("excel", period), contentType: XLSX_CONTENT_TYPE, body };
@@ -107,6 +110,9 @@ export async function generateFinancialPdfExport(
   const kind: FinancialReportKind = rawKind;
   const company = companyName();
 
+  const syncLog = await getFinancialSyncLogForPeriod(period, context);
+  const lastSyncedAt = syncLog?.completedAt ?? null;
+
   if (kind === "buku-besar-detail") {
     const [ledgerEntries, accounts] = await Promise.all([
       listAllFinancialLedgerEntriesForPeriod(period, context),
@@ -114,7 +120,7 @@ export async function generateFinancialPdfExport(
     ]);
     if (!ledgerEntries.length) return { ok: false, reason: "ledger-empty" };
     try {
-      const body = await renderBukuBesarDetailPdf(company, period, ledgerEntries as unknown as LedgerEntryInput[], accountNameMap(accounts));
+      const body = await renderBukuBesarDetailPdf(company, period, ledgerEntries as unknown as LedgerEntryInput[], accountNameMap(accounts), lastSyncedAt);
       return { ok: true, filename: financialExportFileName(kind, period), contentType: PDF_CONTENT_TYPE, body };
     } catch {
       return { ok: false, reason: "generation-failed" };
@@ -138,16 +144,16 @@ export async function generateFinancialPdfExport(
     let body: Uint8Array;
     switch (kind) {
       case "neraca":
-        body = await renderNeracaPdf(company, period, payload as never);
+        body = await renderNeracaPdf(company, period, payload as never, lastSyncedAt);
         break;
       case "laba-rugi":
-        body = await renderLabaRugiPdf(company, period, payload as never);
+        body = await renderLabaRugiPdf(company, period, payload as never, lastSyncedAt);
         break;
       case "arus-kas":
-        body = await renderArusKasPdf(company, period, payload as never);
+        body = await renderArusKasPdf(company, period, payload as never, lastSyncedAt);
         break;
       case "ringkasan-buku-besar":
-        body = await renderRingkasanBukuBesarPdf(company, period, payload as never);
+        body = await renderRingkasanBukuBesarPdf(company, period, payload as never, lastSyncedAt);
         break;
     }
     return { ok: true, filename: financialExportFileName(kind, period), contentType: PDF_CONTENT_TYPE, body };

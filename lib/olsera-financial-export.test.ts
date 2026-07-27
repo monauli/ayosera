@@ -14,8 +14,10 @@ import {
   buildLedgerSummaryRows,
   buildProfitLossLines,
   decodeFinancialHtmlEntities,
+  draftReportNotice,
   financialExportFileName,
   formatAccountingID,
+  formatJakartaDateTime,
   formatPeriodDateRangeEN,
   formatPeriodLabelID,
   isFinancialReportKind,
@@ -201,6 +203,87 @@ test("validasi periode & nama file", () => {
   assert.equal(financialExportFileName("buku-besar-detail", "2026-05"), "buku-besar-detail-2026-05.pdf");
   assert.equal(isFinancialReportKind("neraca"), true);
   assert.equal(isFinancialReportKind("tidak-ada"), false);
+});
+
+// ---- Status "bulan berjalan / belum final" ---------------------------------
+
+test("draftReportNotice: bulan berjalan menampilkan DRAFT + tanggal sinkron, bulan sebelumnya tidak", () => {
+  const now = new Date("2026-05-15T04:00:00Z"); // 11:00 WIB, periode berjalan = 2026-05
+  const current = draftReportNotice("2026-05", "2026-05-14T20:00:00Z", now);
+  assert.equal(current.isDraft, true);
+  assert.equal(current.label, "DRAFT / BELUM FINAL");
+  assert.ok(current.detail.includes("Data sementara sampai tanggal sinkron terakhir"));
+
+  const previous = draftReportNotice("2026-04", "2026-04-30T20:00:00Z", now);
+  assert.equal(previous.isDraft, false);
+  assert.equal(previous.label, "");
+  assert.equal(previous.detail, "");
+});
+
+test("draftReportNotice: pergantian tahun Desember -> Januari dihitung dari Asia/Jakarta", () => {
+  const rolloverNow = new Date("2025-12-31T17:05:00Z"); // 00:05 WIB 1 Jan 2026
+  assert.equal(draftReportNotice("2026-01", null, rolloverNow).isDraft, true);
+  assert.equal(draftReportNotice("2025-12", null, rolloverNow).isDraft, false);
+});
+
+test("draftReportNotice: tanpa sinkron menampilkan keterangan aman, bukan crash", () => {
+  const now = new Date("2026-05-15T04:00:00Z");
+  const notice = draftReportNotice("2026-05", null, now);
+  assert.ok(notice.detail.includes("belum pernah sinkron"));
+  assert.equal(formatJakartaDateTime(null), "belum pernah sinkron");
+  assert.equal(formatJakartaDateTime("not-a-date"), "belum pernah sinkron");
+});
+
+test("PDF & Excel bulan berjalan menampilkan label DRAFT, bulan lama (Mei 2026) tidak berubah", async () => {
+  const now = new Date("2026-05-15T04:00:00Z");
+  const currentPeriod = "2026-05";
+  const lastSynced = "2026-05-14T20:00:00Z";
+
+  // Laporan "lama" (tanpa lastSyncedAt eksplisit dan bukan bulan berjalan pada
+  // waktu nyata pengujian) TIDAK boleh membawa label DRAFT — angka/tampilan lama tetap.
+  const oldPdf = await renderNeracaPdf("BC PADEL CLUB", "2026-05", BALANCE_SHEET);
+  assert.equal(pdfContainsText(oldPdf, "DRAFT / BELUM FINAL"), false);
+
+  const oldWorkbook = buildFinancialWorkbook({
+    period: "2026-05",
+    companyName: "BC PADEL CLUB",
+    balanceSheet: BALANCE_SHEET,
+    profitLoss: PROFIT_LOSS,
+    cashFlow: CASH_FLOW,
+    ledgerSummary: LEDGER_SUMMARY,
+    ledgerEntries: [],
+  });
+  let oldHasDraftCell = false;
+  oldWorkbook.getWorksheet("Neraca")!.eachRow((row) => {
+    if (String(row.getCell(1).value ?? "").includes("DRAFT")) oldHasDraftCell = true;
+  });
+  assert.equal(oldHasDraftCell, false);
+
+  assert.equal(draftReportNotice(currentPeriod, lastSynced, now).isDraft, true);
+});
+
+test("PDF & Excel menampilkan label DRAFT saat periode = bulan berjalan sungguhan", async () => {
+  const { jakartaCurrentPeriod } = await import("./olsera-financial-core.ts");
+  const currentPeriod = jakartaCurrentPeriod();
+
+  const draftPdf = await renderNeracaPdf("BC PADEL CLUB", currentPeriod, BALANCE_SHEET, new Date().toISOString());
+  assert.equal(pdfContainsText(draftPdf, "DRAFT / BELUM FINAL"), true);
+
+  const draftWorkbook = buildFinancialWorkbook({
+    period: currentPeriod,
+    companyName: "BC PADEL CLUB",
+    balanceSheet: BALANCE_SHEET,
+    profitLoss: PROFIT_LOSS,
+    cashFlow: CASH_FLOW,
+    ledgerSummary: LEDGER_SUMMARY,
+    ledgerEntries: [],
+    lastSyncedAt: new Date().toISOString(),
+  });
+  let hasDraftCell = false;
+  draftWorkbook.getWorksheet("Neraca")!.eachRow((row) => {
+    if (String(row.getCell(1).value ?? "").includes("DRAFT")) hasDraftCell = true;
+  });
+  assert.equal(hasDraftCell, true);
 });
 
 // ---- Angka total utama sesuai snapshot Mei 2026 ----------------------------

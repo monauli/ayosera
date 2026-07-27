@@ -1,0 +1,1520 @@
+{
+  "generatedAt": "2026-07-27T09:11:22.672Z",
+  "scope": {
+    "periods": [
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07"
+    ],
+    "storeId": 324175,
+    "reconciliationType": "INTERNAL_OLSERA",
+    "domains": [
+      "CATEGORY",
+      "PRODUCT",
+      "INVENTORY",
+      "SNAPSHOT"
+    ],
+    "mode": "dry-run (read-only audit, no write executed)"
+  },
+  "perMonthOverall": {
+    "2026-02": {
+      "total": 192,
+      "byStatus": {
+        "MATCH": 162,
+        "AMBIGUOUS": 6,
+        "MISSING_IN_SNAPSHOT": 23,
+        "MISMATCH": 1
+      },
+      "byImpact": {
+        "INFO": 162,
+        "WARNING": 8,
+        "ERROR": 22
+      },
+      "byConfidence": {
+        "HIGH": 184,
+        "LOW": 6,
+        "MEDIUM": 2
+      },
+      "requiresManualAdjustment": 6
+    },
+    "2026-03": {
+      "total": 189,
+      "byStatus": {
+        "MATCH": 156,
+        "AMBIGUOUS": 10,
+        "MISSING_IN_SNAPSHOT": 22,
+        "MISMATCH": 1
+      },
+      "byImpact": {
+        "INFO": 156,
+        "WARNING": 11,
+        "ERROR": 22
+      },
+      "byConfidence": {
+        "HIGH": 178,
+        "LOW": 10,
+        "MEDIUM": 1
+      },
+      "requiresManualAdjustment": 10
+    },
+    "2026-04": {
+      "total": 218,
+      "byStatus": {
+        "MATCH": 176,
+        "AMBIGUOUS": 13,
+        "MISSING_IN_SNAPSHOT": 28,
+        "MISMATCH": 1
+      },
+      "byImpact": {
+        "INFO": 176,
+        "WARNING": 14,
+        "ERROR": 28
+      },
+      "byConfidence": {
+        "HIGH": 204,
+        "LOW": 13,
+        "MEDIUM": 1
+      },
+      "requiresManualAdjustment": 13
+    },
+    "2026-05": {
+      "total": 276,
+      "byStatus": {
+        "MATCH": 225,
+        "AMBIGUOUS": 11,
+        "MISSING_IN_SNAPSHOT": 39,
+        "MISMATCH": 1
+      },
+      "byImpact": {
+        "INFO": 225,
+        "WARNING": 12,
+        "ERROR": 39
+      },
+      "byConfidence": {
+        "HIGH": 264,
+        "LOW": 11,
+        "MEDIUM": 1
+      },
+      "requiresManualAdjustment": 11
+    },
+    "2026-06": {
+      "total": 266,
+      "byStatus": {
+        "MATCH": 226,
+        "AMBIGUOUS": 3,
+        "MISSING_IN_SNAPSHOT": 37
+      },
+      "byImpact": {
+        "INFO": 226,
+        "WARNING": 4,
+        "ERROR": 36
+      },
+      "byConfidence": {
+        "HIGH": 262,
+        "LOW": 3,
+        "MEDIUM": 1
+      },
+      "requiresManualAdjustment": 3
+    },
+    "2026-07": {
+      "total": 258,
+      "byStatus": {
+        "MATCH": 144,
+        "AMBIGUOUS": 3,
+        "MISSING_IN_SNAPSHOT": 96,
+        "MISMATCH": 15
+      },
+      "byImpact": {
+        "INFO": 144,
+        "WARNING": 3,
+        "ERROR": 111
+      },
+      "byConfidence": {
+        "HIGH": 255,
+        "LOW": 3
+      },
+      "requiresManualAdjustment": 3
+    }
+  },
+  "perMonthDomain": {
+    "2026-02": {
+      "CATEGORY": {
+        "total": 56,
+        "byStatus": {
+          "MATCH": 56
+        },
+        "byImpact": {
+          "INFO": 56
+        },
+        "byConfidence": {
+          "HIGH": 56
+        },
+        "requiresManualAdjustment": 0
+      },
+      "PRODUCT": {
+        "total": 56,
+        "byStatus": {
+          "MATCH": 48,
+          "AMBIGUOUS": 6,
+          "MISSING_IN_SNAPSHOT": 2
+        },
+        "byImpact": {
+          "INFO": 48,
+          "WARNING": 8
+        },
+        "byConfidence": {
+          "HIGH": 48,
+          "LOW": 6,
+          "MEDIUM": 2
+        },
+        "requiresManualAdjustment": 6
+      },
+      "INVENTORY": {
+        "total": 50,
+        "byStatus": {
+          "MATCH": 28,
+          "MISSING_IN_SNAPSHOT": 21,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 28,
+          "ERROR": 22
+        },
+        "byConfidence": {
+          "HIGH": 50
+        },
+        "requiresManualAdjustment": 0
+      },
+      "SNAPSHOT": {
+        "total": 30,
+        "byStatus": {
+          "MATCH": 30
+        },
+        "byImpact": {
+          "INFO": 30
+        },
+        "byConfidence": {
+          "HIGH": 30
+        },
+        "requiresManualAdjustment": 0
+      }
+    },
+    "2026-03": {
+      "CATEGORY": {
+        "total": 55,
+        "byStatus": {
+          "MATCH": 55
+        },
+        "byImpact": {
+          "INFO": 55
+        },
+        "byConfidence": {
+          "HIGH": 55
+        },
+        "requiresManualAdjustment": 0
+      },
+      "PRODUCT": {
+        "total": 55,
+        "byStatus": {
+          "MATCH": 44,
+          "AMBIGUOUS": 10,
+          "MISSING_IN_SNAPSHOT": 1
+        },
+        "byImpact": {
+          "INFO": 44,
+          "WARNING": 11
+        },
+        "byConfidence": {
+          "HIGH": 44,
+          "LOW": 10,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 10
+      },
+      "INVENTORY": {
+        "total": 46,
+        "byStatus": {
+          "MISSING_IN_SNAPSHOT": 21,
+          "MATCH": 24,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "ERROR": 22,
+          "INFO": 24
+        },
+        "byConfidence": {
+          "HIGH": 46
+        },
+        "requiresManualAdjustment": 0
+      },
+      "SNAPSHOT": {
+        "total": 33,
+        "byStatus": {
+          "MATCH": 33
+        },
+        "byImpact": {
+          "INFO": 33
+        },
+        "byConfidence": {
+          "HIGH": 33
+        },
+        "requiresManualAdjustment": 0
+      }
+    },
+    "2026-04": {
+      "CATEGORY": {
+        "total": 64,
+        "byStatus": {
+          "MATCH": 64
+        },
+        "byImpact": {
+          "INFO": 64
+        },
+        "byConfidence": {
+          "HIGH": 64
+        },
+        "requiresManualAdjustment": 0
+      },
+      "PRODUCT": {
+        "total": 64,
+        "byStatus": {
+          "AMBIGUOUS": 13,
+          "MATCH": 50,
+          "MISSING_IN_SNAPSHOT": 1
+        },
+        "byImpact": {
+          "WARNING": 14,
+          "INFO": 50
+        },
+        "byConfidence": {
+          "LOW": 13,
+          "HIGH": 50,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 13
+      },
+      "INVENTORY": {
+        "total": 53,
+        "byStatus": {
+          "MATCH": 25,
+          "MISSING_IN_SNAPSHOT": 27,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "INFO": 25,
+          "ERROR": 28
+        },
+        "byConfidence": {
+          "HIGH": 53
+        },
+        "requiresManualAdjustment": 0
+      },
+      "SNAPSHOT": {
+        "total": 37,
+        "byStatus": {
+          "MATCH": 37
+        },
+        "byImpact": {
+          "INFO": 37
+        },
+        "byConfidence": {
+          "HIGH": 37
+        },
+        "requiresManualAdjustment": 0
+      }
+    },
+    "2026-05": {
+      "CATEGORY": {
+        "total": 75,
+        "byStatus": {
+          "MATCH": 75
+        },
+        "byImpact": {
+          "INFO": 75
+        },
+        "byConfidence": {
+          "HIGH": 75
+        },
+        "requiresManualAdjustment": 0
+      },
+      "PRODUCT": {
+        "total": 75,
+        "byStatus": {
+          "MATCH": 63,
+          "AMBIGUOUS": 11,
+          "MISSING_IN_SNAPSHOT": 1
+        },
+        "byImpact": {
+          "INFO": 63,
+          "WARNING": 12
+        },
+        "byConfidence": {
+          "HIGH": 63,
+          "LOW": 11,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 11
+      },
+      "INVENTORY": {
+        "total": 66,
+        "byStatus": {
+          "MISSING_IN_SNAPSHOT": 38,
+          "MATCH": 27,
+          "MISMATCH": 1
+        },
+        "byImpact": {
+          "ERROR": 39,
+          "INFO": 27
+        },
+        "byConfidence": {
+          "HIGH": 66
+        },
+        "requiresManualAdjustment": 0
+      },
+      "SNAPSHOT": {
+        "total": 60,
+        "byStatus": {
+          "MATCH": 60
+        },
+        "byImpact": {
+          "INFO": 60
+        },
+        "byConfidence": {
+          "HIGH": 60
+        },
+        "requiresManualAdjustment": 0
+      }
+    },
+    "2026-06": {
+      "CATEGORY": {
+        "total": 69,
+        "byStatus": {
+          "MATCH": 69
+        },
+        "byImpact": {
+          "INFO": 69
+        },
+        "byConfidence": {
+          "HIGH": 69
+        },
+        "requiresManualAdjustment": 0
+      },
+      "PRODUCT": {
+        "total": 69,
+        "byStatus": {
+          "MATCH": 65,
+          "AMBIGUOUS": 3,
+          "MISSING_IN_SNAPSHOT": 1
+        },
+        "byImpact": {
+          "INFO": 65,
+          "WARNING": 4
+        },
+        "byConfidence": {
+          "HIGH": 65,
+          "LOW": 3,
+          "MEDIUM": 1
+        },
+        "requiresManualAdjustment": 3
+      },
+      "INVENTORY": {
+        "total": 68,
+        "byStatus": {
+          "MISSING_IN_SNAPSHOT": 36,
+          "MATCH": 32
+        },
+        "byImpact": {
+          "ERROR": 36,
+          "INFO": 32
+        },
+        "byConfidence": {
+          "HIGH": 68
+        },
+        "requiresManualAdjustment": 0
+      },
+      "SNAPSHOT": {
+        "total": 60,
+        "byStatus": {
+          "MATCH": 60
+        },
+        "byImpact": {
+          "INFO": 60
+        },
+        "byConfidence": {
+          "HIGH": 60
+        },
+        "requiresManualAdjustment": 0
+      }
+    },
+    "2026-07": {
+      "CATEGORY": {
+        "total": 66,
+        "byStatus": {
+          "MATCH": 66
+        },
+        "byImpact": {
+          "INFO": 66
+        },
+        "byConfidence": {
+          "HIGH": 66
+        },
+        "requiresManualAdjustment": 0
+      },
+      "PRODUCT": {
+        "total": 66,
+        "byStatus": {
+          "MATCH": 63,
+          "AMBIGUOUS": 3
+        },
+        "byImpact": {
+          "INFO": 63,
+          "WARNING": 3
+        },
+        "byConfidence": {
+          "HIGH": 63,
+          "LOW": 3
+        },
+        "requiresManualAdjustment": 3
+      },
+      "INVENTORY": {
+        "total": 65,
+        "byStatus": {
+          "MISSING_IN_SNAPSHOT": 35,
+          "MISMATCH": 15,
+          "MATCH": 15
+        },
+        "byImpact": {
+          "ERROR": 50,
+          "INFO": 15
+        },
+        "byConfidence": {
+          "HIGH": 65
+        },
+        "requiresManualAdjustment": 0
+      },
+      "SNAPSHOT": {
+        "total": 61,
+        "byStatus": {
+          "MISSING_IN_SNAPSHOT": 61
+        },
+        "byImpact": {
+          "ERROR": 61
+        },
+        "byConfidence": {
+          "HIGH": 61
+        },
+        "requiresManualAdjustment": 0
+      }
+    }
+  },
+  "runMeta": [
+    {
+      "period": "2026-02",
+      "status": "success",
+      "durationMs": 2529,
+      "docsRead": 15994,
+      "domainErrors": {},
+      "isDraftPeriod": false
+    },
+    {
+      "period": "2026-03",
+      "status": "success",
+      "durationMs": 6173,
+      "docsRead": 17514,
+      "domainErrors": {},
+      "isDraftPeriod": false
+    },
+    {
+      "period": "2026-04",
+      "status": "success",
+      "durationMs": 2962,
+      "docsRead": 19558,
+      "domainErrors": {},
+      "isDraftPeriod": false
+    },
+    {
+      "period": "2026-05",
+      "status": "success",
+      "durationMs": 3167,
+      "docsRead": 20828,
+      "domainErrors": {},
+      "isDraftPeriod": false
+    },
+    {
+      "period": "2026-06",
+      "status": "success",
+      "durationMs": 2564,
+      "docsRead": 20346,
+      "domainErrors": {},
+      "isDraftPeriod": false
+    },
+    {
+      "period": "2026-07",
+      "status": "success",
+      "durationMs": 2797,
+      "docsRead": 18819,
+      "domainErrors": {},
+      "isDraftPeriod": true
+    }
+  ],
+  "mismatch": {
+    "total": 19,
+    "recurringAnomaly": [
+      {
+        "period": "2026-02",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:116138490:0",
+        "expected": {
+          "expectedQty": 30
+        },
+        "actual": {
+          "actualQty": 0
+        },
+        "difference": {
+          "qty": -30
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-03",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:116138490:0",
+        "expected": {
+          "expectedQty": 36
+        },
+        "actual": {
+          "actualQty": 0
+        },
+        "difference": {
+          "qty": -36
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-04",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:116138490:0",
+        "expected": {
+          "expectedQty": 51
+        },
+        "actual": {
+          "actualQty": 0
+        },
+        "difference": {
+          "qty": -51
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-05",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:116138490:0",
+        "expected": {
+          "expectedQty": 55
+        },
+        "actual": {
+          "actualQty": 12
+        },
+        "difference": {
+          "qty": -43
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:116138490:0",
+        "expected": {
+          "expectedQty": 8
+        },
+        "actual": {
+          "actualQty": 10
+        },
+        "difference": {
+          "qty": 2
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      }
+    ],
+    "julyNewOnly": [
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:109534251:0",
+        "expected": {
+          "expectedQty": 77
+        },
+        "actual": {
+          "actualQty": 65
+        },
+        "difference": {
+          "qty": -12
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:109533497:0",
+        "expected": {
+          "expectedQty": 314
+        },
+        "actual": {
+          "actualQty": 269
+        },
+        "difference": {
+          "qty": -45
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:109533902:0",
+        "expected": {
+          "expectedQty": 200
+        },
+        "actual": {
+          "actualQty": 156
+        },
+        "difference": {
+          "qty": -44
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:109534279:0",
+        "expected": {
+          "expectedQty": 116
+        },
+        "actual": {
+          "actualQty": 87
+        },
+        "difference": {
+          "qty": -29
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:109533529:0",
+        "expected": {
+          "expectedQty": 224
+        },
+        "actual": {
+          "actualQty": 186
+        },
+        "difference": {
+          "qty": -38
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:112460170:0",
+        "expected": {
+          "expectedQty": 16
+        },
+        "actual": {
+          "actualQty": 14
+        },
+        "difference": {
+          "qty": -2
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:109534331:0",
+        "expected": {
+          "expectedQty": 45
+        },
+        "actual": {
+          "actualQty": 40
+        },
+        "difference": {
+          "qty": -5
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:114465342:0",
+        "expected": {
+          "expectedQty": 22
+        },
+        "actual": {
+          "actualQty": 19
+        },
+        "difference": {
+          "qty": -3
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:109632223:0",
+        "expected": {
+          "expectedQty": 4
+        },
+        "actual": {
+          "actualQty": 3
+        },
+        "difference": {
+          "qty": -1
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:106743690:0",
+        "expected": {
+          "expectedQty": 4
+        },
+        "actual": {
+          "actualQty": 3
+        },
+        "difference": {
+          "qty": -1
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:115751780:0",
+        "expected": {
+          "expectedQty": 6
+        },
+        "actual": {
+          "actualQty": 5
+        },
+        "difference": {
+          "qty": -1
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:111350931:0",
+        "expected": {
+          "expectedQty": 10
+        },
+        "actual": {
+          "actualQty": 6
+        },
+        "difference": {
+          "qty": -4
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:106744005:0",
+        "expected": {
+          "expectedQty": 2
+        },
+        "actual": {
+          "actualQty": 1
+        },
+        "difference": {
+          "qty": -1
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      },
+      {
+        "period": "2026-07",
+        "domain": "INVENTORY",
+        "entityKey": "movement-qty:106743466:0",
+        "expected": {
+          "expectedQty": 1
+        },
+        "actual": {
+          "actualQty": 0
+        },
+        "difference": {
+          "qty": -1
+        },
+        "diagnostics": {
+          "reason": "Selisih qty pergerakan vs snapshot melampaui toleransi."
+        }
+      }
+    ]
+  },
+  "ambiguous": {
+    "totalOccurrences": 46,
+    "uniqueEntities": [
+      "PRODUCT:BOLA PADEL ODEA",
+      "PRODUCT:SEWA RAKET",
+      "PRODUCT:COURT FEES - 1",
+      "PRODUCT:COURT FEES - 4",
+      "PRODUCT:COURT FEES - 3",
+      "PRODUCT:PICKLEBALL COURT FEE - -",
+      "PRODUCT:COURT FEES - 5",
+      "PRODUCT:COURT FEES - 6",
+      "PRODUCT:COURT FEES - 7",
+      "PRODUCT:COURT FEES - 8",
+      "PRODUCT:COURT FEES - 9,",
+      "PRODUCT:COURT FEES - 2",
+      "PRODUCT:COURT FEES - -,",
+      "PRODUCT:SEWA KERANJANG+BOLA"
+    ]
+  },
+  "missingInSnapshot": {
+    "totalOccurrences": 245,
+    "persistentAllSixMonthsInventory": [
+      {
+        "key": "INVENTORY:movement-qty:108202104:59885478",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109191364:59885964",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:108201934:59885573",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:108201934:59885572",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:108202098:59885482",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:108202565:0",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109191364:59885963",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:108202166:0",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:108202124:0",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109631934:60356901",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:108202104:59885479",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:108202083:0",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109631912:0",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109191364:60134685",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109631934:60356902",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109192015:0",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109578361:60103614",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      },
+      {
+        "key": "INVENTORY:movement-qty:109591295:0",
+        "statuses": [
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT",
+          "MISSING_IN_SNAPSHOT"
+        ]
+      }
+    ],
+    "julySnapshotDomainBoundary": 61
+  },
+  "julySpikeExplanation": {
+    "snapshotDomainMissing": {
+      "june": 0,
+      "july": 61,
+      "cause": "August monthly snapshot document does not exist yet (July = current/draft month)"
+    },
+    "inventoryMismatch": {
+      "june": 0,
+      "july": 15,
+      "cause": "14 new (draft-period timing lag) + 1 recurring pre-existing anomaly (movement-qty:116138490:0)"
+    },
+    "isDraftPeriodConfirmed": true
+  },
+  "qualityChecks": {
+    "categoryFalsePositive": "none observed; but expectedCategoryName cross-check source never wired (loadCategoryFindings never supplies it) -> MISMATCH branch structurally unreachable, 100% MATCH reflects sync-time resolution only, not independent re-validation",
+    "snapshotPeriodPairingCorrect": true,
+    "julyTreatedAsDraftPeriod": true,
+    "labersHiddenItemCounted": "no LABERS transactions in Feb-Jul 2026 dataset (no data to verify, but no filtering mechanism found in code)",
+    "jasaHostHiddenItemCounted": true,
+    "variantIdNeverGuessed": true,
+    "productIdNeverGuessed": true,
+    "capImpactForDraftPeriodWired": false,
+    "recurringFindingsAcrossMonths": {
+      "total": 49,
+      "allSixMonths": [
+        {
+          "key": "PRODUCT:BOLA PADEL ODEA",
+          "statuses": [
+            "AMBIGUOUS",
+            "AMBIGUOUS",
+            "AMBIGUOUS",
+            "AMBIGUOUS",
+            "AMBIGUOUS",
+            "AMBIGUOUS"
+          ]
+        },
+        {
+          "key": "PRODUCT:PICKLEBALL COURT FEE - -",
+          "statuses": [
+            "AMBIGUOUS",
+            "AMBIGUOUS",
+            "AMBIGUOUS",
+            "AMBIGUOUS",
+            "AMBIGUOUS",
+            "AMBIGUOUS"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108202104:59885478",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109191364:59885964",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108201934:59885573",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108201934:59885572",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108202098:59885482",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108202565:0",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109191364:59885963",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108202166:0",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108202124:0",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109631934:60356901",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108202104:59885479",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:108202083:0",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109631912:0",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109191364:60134685",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109631934:60356902",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109192015:0",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109578361:60103614",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        },
+        {
+          "key": "INVENTORY:movement-qty:109591295:0",
+          "statuses": [
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT",
+            "MISSING_IN_SNAPSHOT"
+          ]
+        }
+      ]
+    }
+  },
+  "classification": {
+    "2026-02": {
+      "CATEGORY": {
+        "EXPECTED_NO_ACTION": 56
+      },
+      "PRODUCT": {
+        "EXPECTED_NO_ACTION": 48,
+        "REQUIRES_MANUAL_ADJUSTMENT": 6,
+        "HISTORICAL_PRODUCT": 2
+      },
+      "INVENTORY": {
+        "EXPECTED_NO_ACTION": 28,
+        "UNCLASSIFIED": 21,
+        "BUG_RULE_OR_ADAPTER_CANDIDATE": 1
+      },
+      "SNAPSHOT": {
+        "EXPECTED_NO_ACTION": 30
+      }
+    },
+    "2026-03": {
+      "CATEGORY": {
+        "EXPECTED_NO_ACTION": 55
+      },
+      "PRODUCT": {
+        "EXPECTED_NO_ACTION": 44,
+        "REQUIRES_MANUAL_ADJUSTMENT": 10,
+        "HISTORICAL_PRODUCT": 1
+      },
+      "INVENTORY": {
+        "UNCLASSIFIED": 21,
+        "EXPECTED_NO_ACTION": 24,
+        "BUG_RULE_OR_ADAPTER_CANDIDATE": 1
+      },
+      "SNAPSHOT": {
+        "EXPECTED_NO_ACTION": 33
+      }
+    },
+    "2026-04": {
+      "CATEGORY": {
+        "EXPECTED_NO_ACTION": 64
+      },
+      "PRODUCT": {
+        "REQUIRES_MANUAL_ADJUSTMENT": 13,
+        "EXPECTED_NO_ACTION": 50,
+        "HISTORICAL_PRODUCT": 1
+      },
+      "INVENTORY": {
+        "EXPECTED_NO_ACTION": 25,
+        "UNCLASSIFIED": 27,
+        "BUG_RULE_OR_ADAPTER_CANDIDATE": 1
+      },
+      "SNAPSHOT": {
+        "EXPECTED_NO_ACTION": 37
+      }
+    },
+    "2026-05": {
+      "CATEGORY": {
+        "EXPECTED_NO_ACTION": 75
+      },
+      "PRODUCT": {
+        "EXPECTED_NO_ACTION": 63,
+        "REQUIRES_MANUAL_ADJUSTMENT": 11,
+        "HISTORICAL_PRODUCT": 1
+      },
+      "INVENTORY": {
+        "UNCLASSIFIED": 38,
+        "EXPECTED_NO_ACTION": 27,
+        "BUG_RULE_OR_ADAPTER_CANDIDATE": 1
+      },
+      "SNAPSHOT": {
+        "EXPECTED_NO_ACTION": 60
+      }
+    },
+    "2026-06": {
+      "CATEGORY": {
+        "EXPECTED_NO_ACTION": 69
+      },
+      "PRODUCT": {
+        "EXPECTED_NO_ACTION": 65,
+        "REQUIRES_MANUAL_ADJUSTMENT": 3,
+        "HISTORICAL_PRODUCT": 1
+      },
+      "INVENTORY": {
+        "UNCLASSIFIED": 36,
+        "EXPECTED_NO_ACTION": 32
+      },
+      "SNAPSHOT": {
+        "EXPECTED_NO_ACTION": 60
+      }
+    },
+    "2026-07": {
+      "CATEGORY": {
+        "EXPECTED_NO_ACTION": 66
+      },
+      "PRODUCT": {
+        "EXPECTED_NO_ACTION": 63,
+        "REQUIRES_MANUAL_ADJUSTMENT": 3
+      },
+      "INVENTORY": {
+        "UNCLASSIFIED": 35,
+        "BUG_RULE_OR_ADAPTER_CANDIDATE": 15,
+        "EXPECTED_NO_ACTION": 15
+      },
+      "SNAPSHOT": {
+        "BOUNDARY_OR_CURRENT_MONTH": 61
+      }
+    }
+  },
+  "knownCaseCrossCheck": {
+    "scope": "2026-05..2026-07 (sama dengan rentang audit Phase 2/3 asli 2026-05-01..2026-07-13)",
+    "ambiguousMayJuly": 17,
+    "historicalMayJuly": 2,
+    "movementNullMayJuly": 0,
+    "expected": {
+      "ambiguous": 276,
+      "historical": 4,
+      "movementNull": 37
+    }
+  },
+  "knownCaseComparisonMethodology": "Original Phase 2/3 audit counted PER ORDER-ITEM ROW over 2026-05-01..2026-07-13 (non-calendar-aligned ~2.5 months). Phase 5B counts PER UNIQUE PRODUCT NAME PER CALENDAR MONTH. Raw counts are therefore not directly comparable; comparison must be done on pattern/entity identity (same product names, same knownCaseRef), not raw totals.",
+  "recommendations": {
+    "codeFixesNeeded": [
+      {
+        "area": "lib/reconciliation-runner.ts",
+        "issue": "capImpactForDraftPeriod() defined in lib/reconciliation-types.ts but never invoked anywhere",
+        "impact": "current/draft month findings (SNAPSHOT + partial INVENTORY) get default ERROR impact instead of being capped per design Priority Matrix",
+        "priority": "medium-high",
+        "verificationNeeded": false
+      },
+      {
+        "area": "lib/reconciliation-sources.ts loadInventoryMovementFindings",
+        "issue": "strict productId !== null / === null checks may miss movements where productId field is undefined/absent rather than explicit null",
+        "impact": "could explain 0 movement-null findings vs expected 37 from original audit",
+        "priority": "needs verification first",
+        "verificationNeeded": true,
+        "verificationStep": "run read-only query db.olsera_inventory_movements.countDocuments({productId: null}) vs {productId: {$exists: false}} vs date range of original 37"
+      }
+    ],
+    "manualAdjustmentOnly": [
+      "14 ambiguous product names (COURT FEES 1-9/-, SEWA RAKET, PICKLEBALL COURT FEE, SEWA KERANJANG+BOLA, BOLA PADEL ODEA) need catalog admin decision, not a rule change"
+    ],
+    "noActionNeeded": [
+      "76 July findings caused purely by draft-period timing (self-resolving once August closes / capImpactForDraftPeriod applied)",
+      "historical/alias fallback findings (already correctly downgraded to WARNING/MEDIUM)",
+      "18 persistent INVENTORY missing-snapshot combos (out of scope for reconciliation module itself - snapshot generation pipeline issue)",
+      "CATEGORY 100% MATCH (documented capability gap, not a defect)"
+    ],
+    "goNoGoWriteMode": {
+      "decision": "NO-GO for full write mode now; conditional GO for LIMITED write mode (CATEGORY+PRODUCT domains only) after 2 preconditions",
+      "preconditions": [
+        "wire capImpactForDraftPeriod() into runner before writing draft-period findings",
+        "verify movement productId-null discrepancy via direct read-only DB query before trusting/writing INVENTORY domain results"
+      ],
+      "noHardConstraintViolationsFound": true
+    }
+  }
+}

@@ -109,6 +109,20 @@ type InputRow = Pick<
 
 export type OlseraCategoryExportInput = { start: string; end: string; rows: InputRow[] };
 
+// Cegah spreadsheet formula injection (CWE-1236, SEC-01): bila TEKS (bukan
+// angka/Date/formula internal) diawali karakter yang dipakai Excel/LibreOffice
+// untuk memulai formula ("=", "+", "-", "@"), tambahkan SATU apostrof di depan
+// supaya nilainya dipaksa jadi teks literal saat file dibuka. Nilai yang SUDAH
+// diawali apostrof (mis. hasil escape sebelumnya, atau memang begitu dari
+// sumber data) TIDAK diberi apostrof kedua. HANYA dipakai untuk nilai teks
+// eksternal (nama produk/kategori/SKU/varian/catatan/dll) — JANGAN PERNAH
+// diterapkan ke angka, Date, atau objek `{ formula, result }` (formula
+// internal aplikasi seperti SUM/pengurangan total harus tetap apa adanya).
+export function escapeExcelFormulaPrefix(value: string): string {
+  if (value.startsWith("'")) return value;
+  return /^[=+\-@]/.test(value) ? `'${value}` : value;
+}
+
 // Sanitasi kolom teks (Pelanggan, Nomor Meja, dst): hanya teks bermakna yang
 // lolos. ID numerik murni (mis. "19"), null/undefined, "[object Object]",
 // dan object mentah dari DB tidak boleh menjadi isi cell — kembalikan kosong.
@@ -124,7 +138,7 @@ function safeText(value: unknown) {
   }
   const text = String(value).trim();
   if (!text || /^\d+([.,]\d+)?$/.test(text) || ["[object Object]", "undefined", "null", "-"].includes(text)) return "";
-  return text;
+  return escapeExcelFormulaPrefix(text);
 }
 
 function dateValue(raw: string, fallback: string): Date {
@@ -267,13 +281,13 @@ function writeDateBlock(
     const profit = row.amount - row.costAmount;
 
     const values: ExcelJS.CellValue[] = [
-      row.orderNo,
+      escapeExcelFormulaPrefix(row.orderNo),
       dateTimeText(date, withClock),
       safeText(row.customerName),
       safeText(row.tableNo),
       safeText(row.salesByName),
       "", // No. Seri — tidak tersedia di data Olsera
-      row.itemName,
+      escapeExcelFormulaPrefix(row.itemName),
       row.qty,
       "", // Unit Pengukuran — tidak tersedia
       row.amount,

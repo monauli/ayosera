@@ -17,6 +17,8 @@
 // ditampilkan dalam tanda kurung `( )` secara KONSISTEN di semua laporan
 // (memenuhi syarat "Nilai negatif ditampilkan konsisten").
 
+import { isCurrentJakartaPeriod } from "./olsera-financial-core.ts";
+
 export type FinancialReportKind =
   | "neraca"
   | "laba-rugi"
@@ -91,6 +93,47 @@ export function formatAccountingID(value: number | null | undefined, decimals = 
     maximumFractionDigits: decimals,
   }).format(abs);
   return negative ? `(${formatted})` : formatted;
+}
+
+/** "05 Jul 2026 21:14" (Asia/Jakarta) — dipakai untuk menampilkan tanggal sinkron terakhir di export. */
+export function formatJakartaDateTime(value: string | Date | null | undefined): string {
+  if (!value) return "belum pernah sinkron";
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "belum pernah sinkron";
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+    .format(date)
+    .replace(/\./g, ":");
+}
+
+export interface DraftReportNotice {
+  isDraft: boolean;
+  /** Baris label utama, mis. "DRAFT / BELUM FINAL". Kosong bila bukan bulan berjalan. */
+  label: string;
+  /** Baris keterangan periode + tanggal sinkron terakhir. Kosong bila bukan bulan berjalan. */
+  detail: string;
+}
+
+/**
+ * Status "bulan berjalan / belum final" untuk laporan keuangan — HANYA berlaku
+ * bila periode laporan adalah bulan berjalan menurut Asia/Jakarta (bukan UTC
+ * server). Bulan sebelumnya tidak pernah dianggap draft, apa pun status sync-nya.
+ */
+export function draftReportNotice(period: string, lastSyncedAt: string | Date | null | undefined, now: Date = new Date()): DraftReportNotice {
+  const isDraft = isCurrentJakartaPeriod(period, now);
+  if (!isDraft) return { isDraft: false, label: "", detail: "" };
+  return {
+    isDraft: true,
+    label: "DRAFT / BELUM FINAL",
+    detail: `Data sementara sampai tanggal sinkron terakhir: ${formatJakartaDateTime(lastSyncedAt)}`,
+  };
 }
 
 /** Nama file export untuk kombinasi jenis laporan + periode. */
