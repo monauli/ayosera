@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Search,
   RotateCcw,
+  ShieldCheck,
   Store,
   Users,
   Webhook,
@@ -188,6 +189,7 @@ const navItems = [
     ],
   },
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
+  { label: "Rekonsiliasi", display: "Rekonsiliasi", icon: ShieldCheck, module: "rekonsiliasi" },
 ];
 
 type SessionUserInfo = {
@@ -2118,6 +2120,7 @@ export default function DashboardPage() {
           items={sidebarItems}
           activeNav={activeNav}
           onSelect={(nav) => {
+            if (nav === "Rekonsiliasi") { window.location.assign("/reconciliation"); return; }
             setActiveNav(nav);
             if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
           }}

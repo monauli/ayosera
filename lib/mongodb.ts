@@ -512,27 +512,68 @@ export type ReconciliationFindingDocument = {
  */
 export type ReconciliationManualResolutionDocument = {
   _id: string;
+  /** Sama dengan `_id`; eksplisit untuk kontrak audit/API Phase 5C. */
+  resolutionId?: string;
   findingId: string;
-  decision: "confirmed-match" | "confirmed-mismatch" | "chosen-candidate" | "acknowledged-known-case" | "needs-source-fix";
-  chosenCandidateEntityKey: string | null;
-  reason: string;
-  userId: string;
+  runId?: string;
+  domain?: ReconciliationDomain;
+  storeId?: number;
+  period?: string;
+  entityKey?: string;
+  decision: ReconciliationManualDecision | "confirmed-match" | "confirmed-mismatch" | "chosen-candidate" | "acknowledged-known-case" | "needs-source-fix";
+  reasonCode?: ReconciliationResolutionReasonCode;
+  note?: string | null;
+  evidence?: string[];
+  previousResolutionId?: string | null;
+  isCurrent?: boolean;
+  createdBy?: string;
+  supersededAt?: Date | null;
+  metadata?: Record<string, unknown>;
+  schemaVersion?: number;
+  chosenCandidateEntityKey?: string | null;
+  reason?: string;
+  userId?: string;
   createdAt: Date;
   /** _id resolusi berikutnya bila keputusan ini sudah digantikan — null bila masih berlaku. */
-  supersededBy: string | null;
+  supersededBy?: string | null;
 };
 
 /** Audit trail APPEND-ONLY atas seluruh perubahan status finding (sistem maupun manusia). Skema disiapkan Phase 5A; belum ada penulis otomatis. */
 export type ReconciliationAuditLogDocument = {
   _id: string;
+  /** Sama dengan `_id`; eksplisit untuk kontrak audit/API Phase 5C. */
+  auditId?: string;
   findingId: string;
-  previousStatus: ReconciliationStatus | null;
-  newStatus: ReconciliationStatus;
-  /** "system" atau userId. */
-  changedBy: string;
-  reason: string | null;
+  action?: ReconciliationResolutionAuditAction;
+  actor?: string;
+  storeId?: number;
+  runId?: string;
+  resolutionId?: string | null;
+  previousResolutionId?: string | null;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  requestId?: string | null;
+  metadata?: Record<string, unknown>;
+  schemaVersion?: number;
+  previousStatus?: ReconciliationStatus | null;
+  newStatus?: ReconciliationStatus;
+  changedBy?: string;
+  reason?: string | null;
   createdAt: Date;
 };
+
+export const RECONCILIATION_MANUAL_DECISIONS = ["CONFIRMED_FINDING", "FALSE_POSITIVE", "REQUIRES_MANUAL_ADJUSTMENT", "DEFERRED", "RESOLVED", "REVOKED"] as const;
+export type ReconciliationManualDecision = (typeof RECONCILIATION_MANUAL_DECISIONS)[number];
+
+export const RECONCILIATION_RESOLUTION_REASON_CODES = [
+  "SOURCE_DATA_INCOMPLETE", "PRODUCT_ID_CHANGED", "PRODUCT_IDENTITY_AMBIGUOUS", "LEGACY_STORE_ID_NULL", "STALE_SNAPSHOT",
+  "EXPECTED_NON_STOCK_ITEM", "CURRENT_MONTH_BOUNDARY", "VERIFIED_FALSE_POSITIVE", "VERIFIED_CORRECT",
+  "MANUAL_INVENTORY_ADJUSTMENT_REQUIRED", "OTHER",
+] as const;
+export type ReconciliationResolutionReasonCode = (typeof RECONCILIATION_RESOLUTION_REASON_CODES)[number];
+
+export const RECONCILIATION_RESOLUTION_AUDIT_ACTIONS = ["CREATE_RESOLUTION", "SUPERSEDE_RESOLUTION", "REVOKE_RESOLUTION", "RESOLUTION_CONFLICT", "UNAUTHORIZED_RESOLUTION_ATTEMPT", "INVALID_RESOLUTION_TRANSITION"] as const;
+export type ReconciliationResolutionAuditAction = (typeof RECONCILIATION_RESOLUTION_AUDIT_ACTIONS)[number];
 
 function parseDirectHosts(value: string | undefined) {
   return (
@@ -700,6 +741,7 @@ async function createIndexes() {
       { storeId: 1, year: 1, month: 1, productId: 1, variantId: 1 },
       { unique: true },
     ),
+    olseraInventoryMonthlySnapshots.createIndex({ updatedAt: -1 }),
     olseraInventoryMovements.createIndex({ date: 1 }),
     olseraInventoryMovements.createIndex({ productId: 1, variantId: 1, date: 1 }),
     olseraInventoryMovements.createIndex({ sku: 1 }),
@@ -735,11 +777,18 @@ async function createIndexes() {
     // dokumentasi tipe di atas) — index tambahan di bawah untuk pola query.
     reconciliationRuns.createIndex({ storeId: 1, period: 1, reconciliationType: 1 }),
     reconciliationRuns.createIndex({ startedAt: -1 }),
+    reconciliationRuns.createIndex({ updatedAt: -1 }),
     reconciliationFindings.createIndex({ storeId: 1, period: 1, reconciliationType: 1 }),
+    reconciliationFindings.createIndex({ storeId: 1, period: 1, impact: 1, confidence: 1, updatedAt: -1 }),
+    reconciliationFindings.createIndex({ storeId: 1, entityKey: 1 }),
     reconciliationFindings.createIndex({ runId: 1, domain: 1, status: 1 }),
     reconciliationFindings.createIndex({ runId: 1 }),
     reconciliationFindings.createIndex({ createdAt: -1 }),
     reconciliationManualResolutions.createIndex({ findingId: 1, createdAt: -1 }),
+    reconciliationManualResolutions.createIndex({ findingId: 1 }, { unique: true, partialFilterExpression: { isCurrent: true } }),
+    reconciliationManualResolutions.createIndex({ storeId: 1, period: 1, decision: 1 }),
+    reconciliationManualResolutions.createIndex({ runId: 1 }),
+    reconciliationManualResolutions.createIndex({ createdAt: -1 }),
     reconciliationAuditLog.createIndex({ findingId: 1, createdAt: -1 }),
     reconciliationAuditLog.createIndex({ createdAt: -1 }),
   ]);

@@ -38,6 +38,7 @@ type Args = {
   storeId: number | null;
   jsonOutput: string | null;
   write: boolean;
+  confirmWrite: boolean;
 };
 
 function parseArgs(argv: string[], defaultDomains: readonly string[]): Args {
@@ -46,17 +47,19 @@ function parseArgs(argv: string[], defaultDomains: readonly string[]): Args {
   let write = false;
   let storeId: number | null = null;
   let jsonOutput: string | null = null;
+  let confirmWrite = false;
 
   for (const arg of argv) {
     if (arg.startsWith("--period=")) period = arg.slice("--period=".length);
     else if (arg.startsWith("--domains=")) domains = arg.slice("--domains=".length).split(",").map((d) => d.trim()).filter(Boolean);
     else if (arg === "--write") write = true;
+    else if (arg === "--confirm-write") confirmWrite = true;
     else if (arg === "--dry-run") write = false;
     else if (arg.startsWith("--store-id=")) storeId = Number(arg.slice("--store-id=".length));
     else if (arg.startsWith("--json-output=")) jsonOutput = arg.slice("--json-output=".length);
   }
 
-  return { period, domains, dryRun: !write, storeId, jsonOutput, write };
+  return { period, domains, dryRun: !write, storeId, jsonOutput, write, confirmWrite };
 }
 
 /**
@@ -67,8 +70,10 @@ function parseArgs(argv: string[], defaultDomains: readonly string[]): Args {
  * (ALLOW_RECONCILIATION_WRITE_PRODUCTION=1) — mencegah mode tulis dijalankan
  * di production tanpa keputusan eksplisit terpisah.
  */
-function assertWriteAllowed(write: boolean): void {
+function assertWriteAllowed(write: boolean, confirmWrite: boolean): void {
   if (!write) return;
+  if (!confirmWrite) throw new Error("Mode --write ditolak: tambahkan --confirm-write setelah meninjau preview/dry-run.");
+  if (process.env.RECONCILIATION_WRITE_ENABLED !== "1") throw new Error("Mode --write ditolak: feature flag RECONCILIATION_WRITE_ENABLED=1 belum aktif (default aman: disabled).");
   if (process.env.ALLOW_RECONCILIATION_WRITE !== "1") {
     throw new Error(
       'Mode --write ditolak: set environment variable ALLOW_RECONCILIATION_WRITE=1 secara eksplisit setelah dry-run diverifikasi. Ini BUKAN default — jangan diaktifkan tanpa alasan jelas.',
@@ -93,7 +98,8 @@ Opsi:
   --period=YYYY-MM       WAJIB. Periode bulanan yang direkonsiliasi.
   --domains=A,B,C         Default: CATEGORY,PRODUCT,INVENTORY,SNAPSHOT (domain lain ditolak).
   --dry-run               Default. Hanya baca + evaluasi, TIDAK menulis MongoDB.
-  --write                 Mode tulis. WAJIB juga env ALLOW_RECONCILIATION_WRITE=1
+  --write                 Mode tulis. WAJIB juga --confirm-write dan env RECONCILIATION_WRITE_ENABLED=1,
+                          ALLOW_RECONCILIATION_WRITE=1
                           (dan ALLOW_RECONCILIATION_WRITE_PRODUCTION=1 bila NODE_ENV=production).
   --store-id=<id>         Override storeId (default: env OLSERA_INTERNAL_STORE_ID).
   --json-output=<path>    Simpan hasil lengkap sebagai JSON ke path ini.
@@ -115,7 +121,7 @@ async function main() {
     if (!isPhase5BDomain(d)) throw new Error(`Domain "${d}" ditolak — Phase 5B hanya menerima ${PHASE_5B_DOMAINS.join(", ")}.`);
   }
 
-  assertWriteAllowed(args.write);
+  assertWriteAllowed(args.write, args.confirmWrite);
 
   const storeIdEnv = process.env.OLSERA_INTERNAL_STORE_ID ? Number(process.env.OLSERA_INTERNAL_STORE_ID) : null;
   const storeId = args.storeId ?? storeIdEnv;
