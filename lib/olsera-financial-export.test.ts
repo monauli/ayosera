@@ -563,10 +563,10 @@ test("modul export tidak mengimpor client Olsera live", () => {
   }
 });
 
-test("route export baca snapshot (readGuard auth: modul olsera saja) & petakan timeout ke 504", () => {
+test("route export baca snapshot (guard auth: modul olsera saja) & petakan timeout ke 504", () => {
   for (const file of ["../app/api/olsera/financial/export/excel/route.ts", "../app/api/olsera/financial/export/pdf/route.ts"]) {
     const source = readFileSync(here(file), "utf8");
-    assert.ok(/readGuard\(\)/.test(source), `${file} harus memanggil readGuard() (auth baca-saja: modul olsera saja, tanpa syarat supervisor)`);
+    assert.ok(/guard\(\)/.test(source), `${file} harus memanggil guard() (auth: modul olsera saja, tanpa syarat supervisor)`);
     assert.ok(/isDatabaseTimeoutError/.test(source) && /504/.test(source), `${file} harus memetakan timeout DB ke 504`);
     assert.ok(!/olsera-financial-client/.test(source), `${file} tidak boleh menyentuh Olsera live`);
   }

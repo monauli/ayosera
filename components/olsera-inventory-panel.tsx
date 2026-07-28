@@ -207,8 +207,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const today = jakartaToday();
   const monthStart = `${today.slice(0, 7)}-01`;
 
-  // Tab Konsistensi hanya untuk Supervisor/Admin (permission existing). User
-  // biasa tidak melihat tab ini — endpoint/backend Konsistensi tidak diubah.
+  // Modul "olsera" sudah cukup untuk seluruh tab, termasuk Konsistensi.
   const tabs = visibleInventoryTabs(isSupervisor);
 
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -374,10 +373,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
     };
   }, [tab, movementStart, movementEnd, movementType, movementSearch, movementPage, refreshTick]);
 
-  // Konsistensi — hanya diambil untuk role yang berhak (tab tidak dirender
-  // untuk user biasa; guard ini mencegah fetch bila state tersisa).
+  // Konsistensi — modul "olsera" sudah cukup, tidak lagi dibatasi supervisor.
   useEffect(() => {
-    if (tab !== "consistency" || !isSupervisor) return;
+    if (tab !== "consistency") return;
     let cancelled = false;
     setConsistencyLoading(true);
     fetch(`/api/olsera/inventory/consistency?_t=${Date.now()}`, { cache: "no-store" })
@@ -400,7 +398,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
     return () => {
       cancelled = true;
     };
-  }, [tab, refreshTick, isSupervisor]);
+  }, [tab, refreshTick]);
 
   // Sync bertahap: start lalu step berulang sampai selesai (aman untuk Vercel).
   const handleSync = useCallback(async () => {

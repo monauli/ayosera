@@ -130,8 +130,9 @@ export const INVENTORY_TABS: {
 }[] = [
   { key: "stock", label: "Stok Saat Ini", supervisorOnly: false },
   { key: "movements", label: "Riwayat Mutasi", supervisorOnly: false },
-  // Konsistensi hanya untuk Supervisor/Admin — user biasa tidak melihat tab ini.
-  { key: "consistency", label: "Konsistensi", supervisorOnly: true },
+  // Modul "olsera" adalah satu-satunya syarat — supervisor tidak lagi
+  // dibedakan dari user biasa yang punya modul ini.
+  { key: "consistency", label: "Konsistensi", supervisorOnly: false },
 ];
 
 /** Tab yang boleh dilihat sesuai role existing. */

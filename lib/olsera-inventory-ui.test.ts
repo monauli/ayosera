@@ -174,10 +174,9 @@ test("tabel Riwayat Mutasi mempertahankan kolom penting", () => {
 
 // ---- 6. Tab Konsistensi per-role -----------------------------------------
 
-test("visibleInventoryTabs: user biasa TIDAK melihat tab Konsistensi", () => {
+test("visibleInventoryTabs: user biasa (modul olsera) tetap melihat tab Konsistensi", () => {
   const keys = visibleInventoryTabs(false).map((t) => t.key);
-  assert.deepEqual(keys, ["stock", "movements"]);
-  assert.equal(keys.includes("consistency"), false);
+  assert.deepEqual(keys, ["stock", "movements", "consistency"]);
 });
 
 test("visibleInventoryTabs: supervisor melihat tab Konsistensi", () => {

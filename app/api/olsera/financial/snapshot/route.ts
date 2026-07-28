@@ -5,7 +5,7 @@ import {
   getMonthlyReportsForPeriod,
   listFinancialAccounts,
 } from "@/lib/olsera-financial-store";
-import { readGuard, json, isDatabaseTimeoutError, withDatabaseRetry } from "../_shared";
+import { guard, json, isDatabaseTimeoutError, withDatabaseRetry } from "../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,7 +31,7 @@ async function timed<T>(label: string, task: Promise<T>): Promise<T> {
  */
 export async function GET(req: Request) {
   try {
-    await timed("auth", readGuard());
+    await timed("auth", guard());
     const url = new URL(req.url);
     const periodParam = url.searchParams.get("period") ?? "";
     const [yearText, monthText] = periodParam.split("-");

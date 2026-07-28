@@ -1,6 +1,6 @@
 import { generateFinancialPdfExport } from "@/lib/olsera-financial-export";
 import { exportFailureResponse } from "@/lib/olsera-financial-export-core";
-import { readGuard, json, isDatabaseTimeoutError } from "../../_shared";
+import { guard, json, isDatabaseTimeoutError } from "../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export const maxDuration = 300;
  */
 export async function GET(req: Request) {
   try {
-    await readGuard();
+    await guard();
     const url = new URL(req.url);
     const period = url.searchParams.get("period") ?? "";
     const report = url.searchParams.get("report") ?? "";
