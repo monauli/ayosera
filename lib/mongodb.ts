@@ -376,6 +376,37 @@ export type OlseraInventoryMonthlySnapshotDocument = {
   updatedAt: Date;
 };
 
+/**
+ * Fitur "Rekonsiliasi Inventori dengan Berita Acara" — data pembanding stok
+ * fisik (hasil stock opname manual) per produk per bulan. Koleksi TERPISAH
+ * dari `olsera_inventory_monthly_snapshots` — TIDAK PERNAH menulis/mengubah
+ * snapshot, katalog produk, order item, atau data transaksi Olsera manapun.
+ * `_id` deterministik dengan pola SAMA seperti
+ * OlseraInventoryMonthlySnapshotDocument (storeId+year+month+productId+variantId)
+ * — upsert idempoten by construction, tidak pernah duplikat.
+ * Bila physicalQty dihapus user, dokumen ini DIHAPUS (bukan disimpan null) —
+ * status "Belum Diisi" direpresentasikan lewat KETIADAAN dokumen.
+ */
+export type InventoryStockOpnameDocument = {
+  /** `${storeId}:${year}:${String(month).padStart(2,"0")}:${productId}:${variantId ?? 0}` */
+  _id: string;
+  storeId: number;
+  year: number;
+  month: number;
+  productId: number;
+  variantId: number | null;
+  physicalQty: number;
+  /** Stok akhir sistem (snapshot) SAAT diverifikasi/disimpan — dicatat sebagai bukti; snapshot sumber tidak pernah ditulis ulang. */
+  systemClosingQty: number | null;
+  differenceQty: number | null;
+  /** "Belum Diisi" tidak pernah tersimpan — direpresentasikan lewat ketiadaan dokumen. */
+  status: "COCOK" | "PERLU_DICEK" | "BUTUH_ADJUST_MANUAL";
+  note: string | null;
+  updatedBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type OlseraInventoryStateDocument = {
   _id: "olsera-inventory";
   /** Diperbarui hanya saat run selesai sukses penuh. */
@@ -660,6 +691,7 @@ export async function collections() {
     reconciliationFindings: db.collection<ReconciliationFindingDocument>("reconciliation_findings"),
     reconciliationManualResolutions: db.collection<ReconciliationManualResolutionDocument>("reconciliation_manual_resolutions"),
     reconciliationAuditLog: db.collection<ReconciliationAuditLogDocument>("reconciliation_audit_log"),
+    inventoryStockOpnameReconciliations: db.collection<InventoryStockOpnameDocument>("inventory_stock_opname_reconciliations"),
   };
 }
 
@@ -706,6 +738,7 @@ async function createIndexes() {
     reconciliationFindings,
     reconciliationManualResolutions,
     reconciliationAuditLog,
+    inventoryStockOpnameReconciliations,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -791,6 +824,12 @@ async function createIndexes() {
     reconciliationManualResolutions.createIndex({ createdAt: -1 }),
     reconciliationAuditLog.createIndex({ findingId: 1, createdAt: -1 }),
     reconciliationAuditLog.createIndex({ createdAt: -1 }),
+    // Rekonsiliasi Inventori dengan Berita Acara — collection BARU, TERPISAH
+    // dari snapshot/katalog/order/transaksi. `_id` sudah unik secara native
+    // (deterministik storeId+year+month+productId+variantId) — index di bawah
+    // hanya untuk pola query "seluruh produk satu bulan".
+    inventoryStockOpnameReconciliations.createIndex({ storeId: 1, year: 1, month: 1 }),
+    inventoryStockOpnameReconciliations.createIndex({ updatedAt: -1 }),
   ]);
 }
 

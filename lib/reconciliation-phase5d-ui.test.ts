@@ -7,20 +7,23 @@ const here = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
 const page = here("../app/reconciliation/page.tsx");
 const model = here("../app/api/reconciliation/findings-ui/route.ts");
 
-test("halaman UI rekonsiliasi memiliki filter URL, pagination, state loading/error/empty dan mobile list", () => {
-  assert.match(page, /useSearchParams/); assert.match(page, /router\.replace/); assert.match(page, /recon-pagination/);
-  assert.match(page, /recon-skeleton/); assert.match(page, /Tidak ada finding/); assert.match(page, /recon-mobile-list/);
+test("halaman UI rekonsiliasi disederhanakan menjadi Omset AYO vs Olsera per bulan, dengan state loading/error/empty dan mobile list", () => {
+  assert.match(page, /Rekonsiliasi Omset AYO vs Olsera/); assert.match(page, /\/api\/reconciliation\/court-revenue/);
+  assert.match(page, /recon-skeleton/); assert.match(page, /Belum ada data/); assert.match(page, /recon-mobile-list/);
 });
-test("viewer tidak mendapat aksi tulis, supervisor mendapat form resolution dan revoke", () => {
-  assert.match(page, /const supervisor = user\?\.role === "supervisor"/); assert.match(page, /\{supervisor &&/); assert.match(page, /Ganti keputusan/); assert.match(page, />Revoke</);
+test("tabel bulanan menampilkan omset AYO, omset Olsera, selisih, jumlah booking\\/transaksi, status, dan tombol detail", () => {
+  assert.match(page, />Omset AYO</); assert.match(page, />Omset Olsera</); assert.match(page, />Selisih</);
+  assert.match(page, />Booking AYO</); assert.match(page, />Transaksi Olsera</); assert.match(page, />Detail /);
 });
-test("form memvalidasi OTHER/RESOLVED, mencegah double submit, memakai Idempotency-Key dan menangani 409", () => {
-  assert.match(page, /reasonCode === "OTHER"/); assert.match(page, /decision === "RESOLVED"/); assert.match(page, /submittingRef\.current/);
-  assert.match(page, /"Idempotency-Key"/); assert.match(page, /response\.status === 409/);
+test("status hanya Cocok\\/Perlu Dicek\\/Bulan Berjalan — tanpa Impact, Confidence, Reason Code, Manual Resolution, Audit Log, Feature Flag, Readiness", () => {
+  assert.match(page, /Cocok/); assert.match(page, /Perlu Dicek/); assert.match(page, /Bulan Berjalan/);
+  assert.doesNotMatch(page, /[Ii]mpact/); assert.doesNotMatch(page, /[Cc]onfidence/); assert.doesNotMatch(page, /[Rr]eason ?[Cc]ode/);
+  assert.doesNotMatch(page, /[Mm]anual [Rr]esolution|Buat keputusan|Ganti keputusan|Revoke/); assert.doesNotMatch(page, /[Aa]udit ?[Ll]og|Audit trail/);
+  assert.doesNotMatch(page, /[Ff]eature ?[Ff]lag/); assert.doesNotMatch(page, /[Rr]eadiness/);
 });
-test("UI menampilkan current month, warning product ambiguity, status backend, history, tanpa aksi alias/rebuild", () => {
-  assert.match(page, /Bulan Berjalan \/ Belum Final/); assert.match(page, /106817649/); assert.match(page, /tidak akan membuat alias produk/);
-  assert.match(page, /detail\.effectiveStatus/); assert.match(page, /History resolution/); assert.doesNotMatch(page, /Buat Alias|Rebuild Snapshot|Pindahkan Histori/);
+test("detail bulan menampilkan total & jumlah transaksi kedua sisi, selisih nominal, dan tanggal yang perlu dicek jika tersedia", () => {
+  assert.match(page, /Jumlah booking AYO/); assert.match(page, /Jumlah transaksi Olsera/); assert.match(page, /Selisih nominal/);
+  assert.match(page, /Tanggal yang perlu dicek/); assert.match(page, /mismatchedDays/);
 });
 test("read model menjalankan filter, pagination, priority impact dan aggregate di MongoDB", () => {
   assert.match(model, /requireModule\("rekonsiliasi"\)/); assert.match(model, /\$facet/); assert.match(model, /\$lookup/);

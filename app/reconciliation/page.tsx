@@ -1,62 +1,281 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileSearch, Loader2, RefreshCw, ShieldCheck, X } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { AlertTriangle, ChevronRight, FileSearch, RefreshCw, X } from "lucide-react";
 
-type Finding = Record<string, any>;
-type Detail = { finding: Finding; currentResolution: Finding | null; history: Finding[]; audit: Finding[]; effectiveStatus: string; historyCount: number };
-type Payload = { items: Finding[]; pagination: { page: number; limit: number; total: number }; aggregates: Record<string, number> };
+type Side = { count: number; revenue: number };
+type MonthSummary = {
+  period: string;
+  ayo: Side;
+  olsera: Side;
+  differenceRevenue: number;
+  differenceCount: number;
+  displayStatus: "MATCH" | "NEEDS_REVIEW" | "CURRENT_PERIOD";
+};
+type DayRow = { date: string; ayo: Side; olsera: Side; differenceRevenue: number; statusLabel: string };
+type MonthDetail = MonthSummary & { mismatchedDays: DayRow[] };
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 
-const DOMAINS = ["CATEGORY", "PRODUCT", "INVENTORY", "SNAPSHOT"];
-const DECISIONS = ["CONFIRMED_FINDING", "FALSE_POSITIVE", "REQUIRES_MANUAL_ADJUSTMENT", "DEFERRED", "RESOLVED"];
-const REASONS = ["SOURCE_DATA_INCOMPLETE", "PRODUCT_ID_CHANGED", "PRODUCT_IDENTITY_AMBIGUOUS", "LEGACY_STORE_ID_NULL", "STALE_SNAPSHOT", "EXPECTED_NON_STOCK_ITEM", "CURRENT_MONTH_BOUNDARY", "VERIFIED_FALSE_POSITIVE", "VERIFIED_CORRECT", "MANUAL_INVENTORY_ADJUSTMENT_REQUIRED", "OTHER"];
-const labels: Record<string, string> = { CRITICAL: "Kritis", ERROR: "Error", WARNING: "Peringatan", INFO: "Informasi", HIGH: "Tinggi", MEDIUM: "Sedang", LOW: "Rendah", OPEN: "Terbuka", CONFIRMED: "Dikonfirmasi", DISMISSED: "Ditolak / False Positive", MANUAL_ACTION_REQUIRED: "Perlu Tindakan Manual", DEFERRED: "Ditunda", RESOLVED: "Selesai", CONFIRMED_FINDING: "Konfirmasi temuan", FALSE_POSITIVE: "False positive", REQUIRES_MANUAL_ADJUSTMENT: "Perlu tindakan manual" };
-const badgeTone = (value?: string) => value === "CRITICAL" || value === "ERROR" ? "danger" : value === "WARNING" || value === "MANUAL_ACTION_REQUIRED" || value === "OPEN" ? "warn" : value === "RESOLVED" || value === "CONFIRMED" ? "ok" : "neutral";
-const text = (value?: string | null) => value ? labels[value] ?? value.replaceAll("_", " ") : "—";
-const stamp = (value?: string) => value ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(value)) : "—";
-const monthNow = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit" }).format(new Date());
-function idempotencyKey() { return typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`; }
+const STATUS_LABEL: Record<MonthSummary["displayStatus"], string> = {
+  MATCH: "Cocok",
+  NEEDS_REVIEW: "Perlu Dicek",
+  CURRENT_PERIOD: "Bulan Berjalan",
+};
+const STATUS_TONE: Record<MonthSummary["displayStatus"], "ok" | "warn" | "neutral"> = {
+  MATCH: "ok",
+  NEEDS_REVIEW: "warn",
+  CURRENT_PERIOD: "neutral",
+};
 
-function Badge({ value }: { value?: string }) { return <span className={`recon-badge recon-badge-${badgeTone(value)}`}>{text(value)}</span>; }
-function JsonPanel({ label, value }: { label: string; value: unknown }) { if (value == null || (typeof value === "object" && !Object.keys(value as object).length)) return null; return <details className="recon-json"><summary>{label}</summary><pre>{JSON.stringify(value, null, 2)}</pre></details>; }
+function formatRupiah(value: number) {
+  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(value).replace(/\s/g, "");
+}
+function monthLabel(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  return new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+function dateLabel(date: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "short", timeZone: "Asia/Jakarta" }).format(new Date(Date.UTC(year, month - 1, day)));
+}
 
-function ReconciliationPageContent() {
-  const router = useRouter(); const pathname = usePathname(); const search = useSearchParams();
-  const [user, setUser] = useState<User | null>(null); const [payload, setPayload] = useState<Payload | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [readiness, setReadiness] = useState<Record<string, any> | null>(null);
-  const [selected, setSelected] = useState<Finding | null>(null); const [detail, setDetail] = useState<Detail | null>(null); const [detailLoading, setDetailLoading] = useState(false); const [actionError, setActionError] = useState(""); const [submitting, setSubmitting] = useState(false); const submittingRef = useRef(false);
-  const [decision, setDecision] = useState("REQUIRES_MANUAL_ADJUSTMENT"); const [reasonCode, setReasonCode] = useState("PRODUCT_IDENTITY_AMBIGUOUS"); const [note, setNote] = useState(""); const [evidence, setEvidence] = useState(""); const [confirm, setConfirm] = useState(false); const [revokeNote, setRevokeNote] = useState(""); const [showForm, setShowForm] = useState(false); const [showRevoke, setShowRevoke] = useState(false);
-  const params = useMemo(() => new URLSearchParams(search.toString()), [search]);
-  const setParam = useCallback((name: string, value: string) => { const next = new URLSearchParams(search.toString()); if (!value || value === "all") next.delete(name); else next.set(name, value); if (name !== "page") next.delete("page"); router.replace(`${pathname}?${next.toString()}`, { scroll: false }); }, [pathname, router, search]);
-  const refresh = useCallback(async () => { setLoading(true); setError(""); try { const response = await fetch(`/api/reconciliation/findings-ui?${search.toString()}`, { cache: "no-store" }); const data = await response.json().catch(() => null); if (!response.ok) throw new Error(data?.error || "Gagal memuat findings."); setPayload(data); } catch (e) { setError(e instanceof Error ? e.message : "Gagal memuat findings."); } finally { setLoading(false); } }, [search]);
-  useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => { fetch("/api/auth/me", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((data) => setUser(data?.user ?? null)).catch(() => setUser(null)); }, []);
-  useEffect(() => { if (user?.role !== "supervisor") return; fetch("/api/reconciliation/readiness", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((data) => setReadiness(data)).catch(() => setReadiness(null)); }, [user?.role]);
-  const open = async (finding: Finding) => { setSelected(finding); setDetail(null); setActionError(""); setShowForm(false); setShowRevoke(false); setDetailLoading(true); try { const response = await fetch(`/api/reconciliation/findings/${encodeURIComponent(finding._id)}/resolution`, { cache: "no-store" }); const data = await response.json().catch(() => null); if (!response.ok) throw new Error(data?.error || "Gagal memuat detail finding."); setDetail(data); } catch (e) { setActionError(e instanceof Error ? e.message : "Gagal memuat detail."); } finally { setDetailLoading(false); } };
-  const reloadDetail = async () => { if (selected) await open(selected); await refresh(); };
-  const submitResolution = async () => {
-    if (!detail || submittingRef.current) return; setActionError("");
-    if ((reasonCode === "OTHER" || decision === "RESOLVED") && !note.trim()) { setActionError(decision === "RESOLVED" ? "Catatan penyelesaian wajib diisi." : "Note wajib diisi untuk reason OTHER."); return; }
-    if (!confirm) { setActionError("Konfirmasi keputusan sebelum menyimpan."); return; }
-    submittingRef.current = true; setSubmitting(true); const key = idempotencyKey();
-    try { const response = await fetch(`/api/reconciliation/findings/${encodeURIComponent(detail.finding._id)}/resolution`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ runId: detail.finding.runId, domain: detail.finding.domain, entityKey: detail.finding.entityKey, decision, reasonCode, note: note.trim() || undefined, evidence: evidence.split("\n").map((item) => item.trim()).filter(Boolean) }) }); const data = await response.json().catch(() => null); if (!response.ok) throw new Error(response.status === 409 ? "Konflik: finding baru saja diperbarui pengguna lain. Detail akan dimuat ulang." : data?.error || "Gagal menyimpan resolution."); setShowForm(false); setConfirm(false); setNote(""); setEvidence(""); await reloadDetail(); } catch (e) { setActionError(e instanceof Error ? e.message : "Gagal menyimpan resolution."); if ((e as Error).message.includes("Konflik")) await reloadDetail(); } finally { submittingRef.current = false; setSubmitting(false); }
-  };
-  const revoke = async () => { if (!detail || submittingRef.current) return; if (!revokeNote.trim()) { setActionError("Alasan revoke wajib diisi."); return; } submittingRef.current = true; setSubmitting(true); setActionError(""); try { const response = await fetch(`/api/reconciliation/findings/${encodeURIComponent(detail.finding._id)}/resolution/revoke`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey() }, body: JSON.stringify({ note: revokeNote.trim() }) }); const data = await response.json().catch(() => null); if (!response.ok) throw new Error(response.status === 409 ? "Konflik: data telah berubah. Detail dimuat ulang." : data?.error || "Gagal revoke resolution."); setShowRevoke(false); setRevokeNote(""); await reloadDetail(); } catch (e) { setActionError(e instanceof Error ? e.message : "Gagal revoke resolution."); } finally { submittingRef.current = false; setSubmitting(false); } };
-  const currentMonth = params.get("period") === monthNow(); const total = payload?.pagination.total ?? 0; const page = payload?.pagination.page ?? 1; const limit = payload?.pagination.limit ?? 25; const supervisor = user?.role === "supervisor"; const controlledWriteEnabled = readiness?.featureFlag?.enabled === true;
-  if (user && !user.allowedModules.includes("rekonsiliasi") && !supervisor) return <main className="recon-page"><p className="recon-empty">Akses ditolak. Hubungi supervisor untuk meminta modul Rekonsiliasi.</p></main>;
-  return <main className="recon-page">
-    <header className="recon-header"><div><a href="/" className="recon-back">← Kembali ke Dashboard</a><h1>Rekonsiliasi</h1><p>Temuan lintas data dan keputusan administratif yang dapat diaudit.</p></div><button className="recon-button secondary" onClick={() => void refresh()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} /> Muat ulang</button></header>
-    <section className="recon-filters" aria-label="Filter rekonsiliasi"><label>Periode<input type="month" value={params.get("period") ?? ""} onChange={(e) => setParam("period", e.target.value)} /></label><label>Domain<select value={params.get("domain") ?? "all"} onChange={(e) => setParam("domain", e.target.value)}><option value="all">Semua domain</option>{DOMAINS.map((v) => <option key={v}>{v}</option>)}</select></label><label>Impact<select value={params.get("impact") ?? "all"} onChange={(e) => setParam("impact", e.target.value)}><option value="all">Semua impact</option>{["CRITICAL", "ERROR", "WARNING", "INFO"].map((v) => <option key={v}>{text(v)}</option>)}</select></label><label>Confidence<select value={params.get("confidence") ?? "all"} onChange={(e) => setParam("confidence", e.target.value)}><option value="all">Semua confidence</option>{["HIGH", "MEDIUM", "LOW"].map((v) => <option key={v}>{text(v)}</option>)}</select></label><label>Status efektif<select value={params.get("effectiveStatus") ?? "all"} onChange={(e) => setParam("effectiveStatus", e.target.value)}><option value="all">Semua status</option>{["OPEN", "CONFIRMED", "DISMISSED", "MANUAL_ACTION_REQUIRED", "DEFERRED", "RESOLVED"].map((v) => <option key={v} value={v}>{text(v)}</option>)}</select></label><label>Keputusan<select value={params.get("decision") ?? "all"} onChange={(e) => setParam("decision", e.target.value)}><option value="all">Semua keputusan</option>{DECISIONS.map((v) => <option key={v}>{text(v)}</option>)}</select></label><label>Reason code<select value={params.get("reasonCode") ?? "all"} onChange={(e) => setParam("reasonCode", e.target.value)}><option value="all">Semua reason</option>{REASONS.map((v) => <option key={v}>{v}</option>)}</select></label><label className="recon-keyword">Cari entity<input value={params.get("keyword") ?? ""} onChange={(e) => setParam("keyword", e.target.value)} placeholder="Awalan entity key" /></label><label className="recon-check"><input type="checkbox" checked={params.get("needsAction") === "true"} onChange={(e) => setParam("needsAction", e.target.checked ? "true" : "")} /> Hanya perlu tindakan</label></section>
-    {currentMonth && <p className="recon-draft"><AlertTriangle /> <strong>Bulan Berjalan / Belum Final.</strong> Data sementara sampai tanggal sinkron terakhir; `CURRENT_MONTH_BOUNDARY` dapat merupakan timing normal.</p>}
-    {user?.role === "supervisor" && readiness && <section className="recon-readiness" aria-label="Operational readiness"><div><span>MongoDB</span><b>{readiness.mongodb === "healthy" ? "Sehat" : "Perlu perhatian"}</b></div><div><span>Indexes</span><b>{readiness.indexes?.status === "checked" ? `${readiness.indexes.count} diperiksa` : "Tidak tersedia"}</b></div><div><span>Feature flag</span><b>{readiness.featureFlag?.enabled ? "Aktif" : "Nonaktif (aman)"}</b></div><div><span>Mode write</span><b>{readiness.dryRunDefault ? "Dry-run default" : "Periksa konfigurasi"}</b></div><div><span>Snapshot</span><b>{readiness.snapshotStatus}</b></div><div><span>Audit log</span><b>{readiness.auditLogStatus}</b></div></section>}
-    <section className="recon-cards">{[["Total Temuan", "total"], ["Perlu Tindakan", "needsAction"], ["Kritis", "critical"], ["Error", "error"], ["Peringatan", "warning"], ["Terbuka", "open"], ["Perlu Manual", "manual"], ["Selesai", "resolved"], ["Ditolak", "dismissed"]].map(([label, key]) => <div className="recon-card" key={key}><span>{label}</span><strong>{payload?.aggregates?.[key] ?? "—"}</strong></div>)}</section>
-    {error ? <section className="recon-empty"><p>{error}</p><button className="recon-button" onClick={() => void refresh()}>Coba lagi</button></section> : loading ? <section className="recon-skeleton">Memuat daftar temuan…</section> : !total ? <section className="recon-empty"><FileSearch /><p>Tidak ada finding untuk filter ini.</p><button className="recon-button secondary" onClick={() => router.replace(pathname)}>Reset filter</button></section> : <section className="recon-table-wrap"><table className="recon-table"><thead><tr><th>Periode</th><th>Domain</th><th>Entity / Ringkasan</th><th>Impact</th><th>Confidence</th><th>Status asli</th><th>Status efektif</th><th>Resolution</th><th>Diperbarui</th><th>Aksi</th></tr></thead><tbody>{payload?.items.map((row) => <tr key={row._id}><td>{row.period}</td><td>{row.domain}</td><td><strong>{row.entityKey}</strong><small>{row.ruleId}</small></td><td><Badge value={row.impact} /></td><td><Badge value={row.confidence} /></td><td>{text(row.status)}</td><td><Badge value={row.effectiveStatus} /></td><td>{text(row.currentResolution?.decision)}</td><td>{stamp(row.updatedAt)}</td><td><button className="recon-link" onClick={() => void open(row)}>Buka<span className="sr-only"> {row.entityKey}</span></button></td></tr>)}</tbody></table><div className="recon-mobile-list">{payload?.items.map((row) => <button key={row._id} className="recon-mobile-card" onClick={() => void open(row)}><div><strong>{row.entityKey}</strong><span>{row.period} · {row.domain}</span></div><div><Badge value={row.impact} /><Badge value={row.effectiveStatus} /></div></button>)}</div></section>}
-    <nav className="recon-pagination" aria-label="Pagination finding"><span>{total} finding · halaman {page}</span><button disabled={page <= 1} onClick={() => setParam("page", String(page - 1))}><ChevronLeft /> Sebelumnya</button><button disabled={page * limit >= total} onClick={() => setParam("page", String(page + 1))}>Berikutnya <ChevronRight /></button></nav>
-    {selected && <aside className="recon-drawer" role="dialog" aria-modal="true" aria-label="Detail finding"><div className="recon-drawer-head"><div><p className="recon-eyebrow">Detail Finding</p><h2>{selected.entityKey}</h2></div><button aria-label="Tutup detail finding" onClick={() => setSelected(null)}><X /></button></div>{detailLoading ? <div className="recon-skeleton">Memuat detail…</div> : actionError && !detail ? <div className="recon-empty"><p>{actionError}</p><button className="recon-button" onClick={() => void open(selected)}>Coba lagi</button></div> : detail && <div className="recon-drawer-body">{(detail.finding.entityKey.includes("106817649") && detail.finding.entityKey.includes("116138490")) && <p className="recon-special"><AlertTriangle /> Identitas produk belum dapat dipastikan. Keputusan manual tidak akan membuat alias produk, memindahkan histori, atau membangun ulang snapshot.</p>}<section className="recon-detail-grid"><div><span>Finding ID</span><code>{detail.finding._id}</code></div><div><span>Run ID</span><code>{detail.finding.runId}</code></div><div><span>Domain / Store</span><b>{detail.finding.domain} · {detail.finding.storeId}</b></div><div><span>Periode</span><b>{detail.finding.period}</b></div><div><span>Impact / Confidence</span><Badge value={detail.finding.impact} /> <Badge value={detail.finding.confidence} /></div><div><span>Status</span><Badge value={detail.effectiveStatus} /></div></section><h3>Penilaian asli</h3><p>{text(detail.finding.status)} · {detail.finding.ruleId}</p><div className="recon-json-grid"><JsonPanel label="Expected" value={detail.finding.expected} /><JsonPanel label="Actual" value={detail.finding.actual} /><JsonPanel label="Difference" value={detail.finding.difference} /><JsonPanel label="Diagnostics & source" value={{ diagnostics: detail.finding.diagnostics, sourceRefs: detail.finding.sourceRefs, candidates: detail.finding.candidates }} /></div><section className="recon-resolution"><div><h3>Resolution saat ini</h3>{detail.currentResolution ? <p><Badge value={detail.currentResolution.decision} /> <b>{detail.currentResolution.reasonCode}</b><br />{detail.currentResolution.note || "Tanpa catatan"}<br /><small>{detail.currentResolution.createdBy} · {stamp(detail.currentResolution.createdAt)}</small></p> : <p>Belum ada resolution. Status efektif: <Badge value={detail.effectiveStatus} /></p>}</div>{supervisor && <div className="recon-actions"><button className="recon-button" onClick={() => { setShowForm(!showForm); setShowRevoke(false); }}> {detail.currentResolution ? "Ganti keputusan" : "Buat keputusan"}</button>{detail.currentResolution && <button className="recon-button danger" onClick={() => { setShowRevoke(!showRevoke); setShowForm(false); }}>Revoke</button>}</div>}</section>{!supervisor && <p className="recon-readonly"><ShieldCheck /> Anda memiliki akses baca. Hanya supervisor dapat mengubah resolution.</p>}{showForm && <section className="recon-form"><h3>{detail.currentResolution ? "Ganti resolution aktif" : "Buat manual resolution"}</h3>{detail.currentResolution && <p className="recon-before">Sebelumnya: {text(detail.currentResolution.decision)} → keputusan baru tercatat sebagai history, tidak menghapus data lama.</p>}<label>Decision<select value={decision} onChange={(e) => setDecision(e.target.value)}>{DECISIONS.map((v) => <option key={v}>{text(v)}</option>)}</select></label><label>Reason code<select value={reasonCode} onChange={(e) => setReasonCode(e.target.value)}>{REASONS.map((v) => <option key={v}>{v}</option>)}</select></label>{(reasonCode === "PRODUCT_ID_CHANGED" || reasonCode === "PRODUCT_IDENTITY_AMBIGUOUS") && <p className="recon-special">Keputusan ini administratif: tidak membuat alias produk atau memindahkan histori.</p>}{decision === "REQUIRES_MANUAL_ADJUSTMENT" && <p className="recon-special">Data sumber tidak berubah otomatis.</p>}<label>Catatan {(reasonCode === "OTHER" || decision === "RESOLVED") && "(wajib)"}<textarea value={note} onChange={(e) => setNote(e.target.value)} /></label><label>Evidence (satu baris per referensi)<textarea value={evidence} onChange={(e) => setEvidence(e.target.value)} /></label><label className="recon-check"><input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} /> Saya mengonfirmasi keputusan ini.</label>{actionError && <p className="recon-error">{actionError}</p>}<button className="recon-button" disabled={submitting} onClick={() => void submitResolution()}>{submitting && <Loader2 className="spin" />} Simpan keputusan</button></section>}{showRevoke && <section className="recon-form"><h3>Revoke resolution</h3><p>Revoke tidak menghapus history. Backend akan menentukan status efektif setelah revoke.</p><label>Alasan revoke<textarea value={revokeNote} onChange={(e) => setRevokeNote(e.target.value)} /></label>{actionError && <p className="recon-error">{actionError}</p>}<button className="recon-button danger" disabled={submitting} onClick={() => void revoke()}>Konfirmasi revoke</button></section>}<h3>History resolution ({detail.historyCount})</h3><ol className="recon-history">{detail.history.map((item) => <li key={item._id}><Badge value={item.decision} /><b>{item.reasonCode}</b><span>{item.createdBy} · {stamp(item.createdAt)}</span><small>previous: {item.previousResolutionId || "—"}</small></li>)}</ol><h3>Audit trail</h3><ol className="recon-history">{detail.audit?.map((item) => <li key={item._id}><b>{item.action}</b><span>{item.actor || item.changedBy || "system"} · {stamp(item.createdAt)}</span><small>{item.before ? `${JSON.stringify(item.before)} → ${JSON.stringify(item.after)}` : ""}</small></li>)}</ol></div>}</aside>}
-  </main>;
+function StatusBadge({ status }: { status: MonthSummary["displayStatus"] }) {
+  return <span className={`recon-badge recon-badge-${STATUS_TONE[status]}`}>{STATUS_LABEL[status]}</span>;
 }
 
 export default function ReconciliationPage() {
-  return <Suspense fallback={<main className="recon-page"><section className="recon-skeleton">Memuat Rekonsiliasi…</section></main>}><ReconciliationPageContent /></Suspense>;
+  const [user, setUser] = useState<User | null>(null);
+  const [items, setItems] = useState<MonthSummary[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
+  const [detail, setDetail] = useState<MonthDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+
+  const refresh = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/reconciliation/court-revenue", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Gagal memuat rekonsiliasi omset.");
+      setItems(data.items);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Gagal memuat rekonsiliasi omset.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+  useEffect(() => {
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setUser(data?.user ?? null))
+      .catch(() => setUser(null));
+  }, []);
+
+  const openDetail = async (period: string) => {
+    setSelectedPeriod(period);
+    setDetail(null);
+    setDetailError("");
+    setDetailLoading(true);
+    try {
+      const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Gagal memuat detail bulan ini.");
+      setDetail(data.data);
+    } catch (e) {
+      setDetailError(e instanceof Error ? e.message : "Gagal memuat detail bulan ini.");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const supervisor = user?.role === "supervisor";
+  if (user && !user.allowedModules.includes("rekonsiliasi") && !supervisor) {
+    return (
+      <main className="recon-page">
+        <p className="recon-empty">Akses ditolak. Hubungi supervisor untuk meminta modul Rekonsiliasi.</p>
+      </main>
+    );
+  }
+
+  return (
+    <main className="recon-page">
+      <header className="recon-header">
+        <div>
+          <a href="/" className="recon-back">
+            ← Kembali ke Dashboard
+          </a>
+          <h1>Rekonsiliasi Omset AYO vs Olsera</h1>
+          <p>Perbandingan omset booking lapangan AYO dengan omset transaksi kategori lapangan Olsera, per bulan.</p>
+        </div>
+        <div style={{ display: "flex", gap: ".5rem" }}>
+          <a href="/reconciliation/inventory" className="recon-button secondary">
+            Rekonsiliasi Inventori
+          </a>
+          <button className="recon-button secondary" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className={loading ? "spin" : ""} /> Muat ulang
+          </button>
+        </div>
+      </header>
+
+      {error ? (
+        <section className="recon-empty">
+          <p>{error}</p>
+          <button className="recon-button" onClick={() => void refresh()}>
+            Coba lagi
+          </button>
+        </section>
+      ) : loading ? (
+        <section className="recon-skeleton">Memuat rekonsiliasi omset…</section>
+      ) : !items?.length ? (
+        <section className="recon-empty">
+          <FileSearch />
+          <p>Belum ada data untuk ditampilkan.</p>
+        </section>
+      ) : (
+        <section className="recon-table-wrap">
+          <table className="recon-table">
+            <thead>
+              <tr>
+                <th>Bulan</th>
+                <th>Omset AYO</th>
+                <th>Omset Olsera</th>
+                <th>Selisih</th>
+                <th>Booking AYO</th>
+                <th>Transaksi Olsera</th>
+                <th>Status</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row) => (
+                <tr key={row.period}>
+                  <td>{monthLabel(row.period)}</td>
+                  <td>{formatRupiah(row.ayo.revenue)}</td>
+                  <td>{formatRupiah(row.olsera.revenue)}</td>
+                  <td>{formatRupiah(row.differenceRevenue)}</td>
+                  <td>{row.ayo.count}</td>
+                  <td>{row.olsera.count}</td>
+                  <td>
+                    <StatusBadge status={row.displayStatus} />
+                  </td>
+                  <td>
+                    <button className="recon-link" onClick={() => void openDetail(row.period)}>
+                      Detail <ChevronRight />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="recon-mobile-list">
+            {items.map((row) => (
+              <button key={row.period} className="recon-mobile-card" onClick={() => void openDetail(row.period)}>
+                <div>
+                  <strong>{monthLabel(row.period)}</strong>
+                  <span>
+                    AYO {formatRupiah(row.ayo.revenue)} · Olsera {formatRupiah(row.olsera.revenue)}
+                  </span>
+                </div>
+                <div>
+                  <StatusBadge status={row.displayStatus} />
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {selectedPeriod && (
+        <aside className="recon-drawer" role="dialog" aria-modal="true" aria-label="Detail rekonsiliasi bulan">
+          <div className="recon-drawer-head">
+            <div>
+              <p className="recon-eyebrow">Detail Rekonsiliasi</p>
+              <h2>{monthLabel(selectedPeriod)}</h2>
+            </div>
+            <button aria-label="Tutup detail" onClick={() => setSelectedPeriod(null)}>
+              <X />
+            </button>
+          </div>
+          {detailLoading ? (
+            <div className="recon-skeleton">Memuat detail…</div>
+          ) : detailError ? (
+            <div className="recon-empty">
+              <p>{detailError}</p>
+              <button className="recon-button" onClick={() => void openDetail(selectedPeriod)}>
+                Coba lagi
+              </button>
+            </div>
+          ) : detail ? (
+            <div className="recon-drawer-body">
+              {detail.displayStatus === "CURRENT_PERIOD" && (
+                <p className="recon-draft">
+                  <AlertTriangle /> <strong>Bulan berjalan.</strong> Data masih dapat berubah sampai bulan ini ditutup.
+                </p>
+              )}
+              <section className="recon-detail-grid">
+                <div>
+                  <span>Omset AYO</span>
+                  <b>{formatRupiah(detail.ayo.revenue)}</b>
+                </div>
+                <div>
+                  <span>Jumlah booking AYO</span>
+                  <b>{detail.ayo.count}</b>
+                </div>
+                <div>
+                  <span>Omset Olsera (kategori lapangan)</span>
+                  <b>{formatRupiah(detail.olsera.revenue)}</b>
+                </div>
+                <div>
+                  <span>Jumlah transaksi Olsera</span>
+                  <b>{detail.olsera.count}</b>
+                </div>
+                <div>
+                  <span>Selisih nominal</span>
+                  <b>{formatRupiah(detail.differenceRevenue)}</b>
+                </div>
+                <div>
+                  <span>Status</span>
+                  <StatusBadge status={detail.displayStatus} />
+                </div>
+              </section>
+              <h3>Tanggal yang perlu dicek</h3>
+              {detail.mismatchedDays.length === 0 ? (
+                <p className="recon-readonly">Tidak ada tanggal dengan selisih pada bulan ini.</p>
+              ) : (
+                <table className="recon-table">
+                  <thead>
+                    <tr>
+                      <th>Tanggal</th>
+                      <th>Omset AYO</th>
+                      <th>Omset Olsera</th>
+                      <th>Selisih</th>
+                      <th>Keterangan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.mismatchedDays.map((day) => (
+                      <tr key={day.date}>
+                        <td>{dateLabel(day.date)}</td>
+                        <td>{formatRupiah(day.ayo.revenue)}</td>
+                        <td>{formatRupiah(day.olsera.revenue)}</td>
+                        <td>{formatRupiah(day.differenceRevenue)}</td>
+                        <td>{day.statusLabel}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ) : null}
+        </aside>
+      )}
+    </main>
+  );
 }
