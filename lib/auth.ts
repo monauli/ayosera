@@ -82,10 +82,27 @@ function normalizeRole(email: string, role: unknown): AppRole {
     : "user";
 }
 
+/**
+ * "olsera" adalah parent permission untuk seluruh fitur terkait Olsera.
+ * Kategori Penjualan/Inventori/Laporan Keuangan sudah gated lewat modul
+ * "olsera" itu sendiri di setiap route (lihat requireModule("olsera") di
+ * seluruh app/api/olsera/**) dan di navItems sidebar (app/page.tsx) — ketiganya
+ * anak dari satu grup "Olsera", tidak punya modul terpisah.
+ *
+ * Rekonsiliasi (Omset AYO vs Olsera & Inventori) historisnya memakai modul
+ * terpisah "rekonsiliasi" (Phase 5A, lihat APP_MODULES di atas), tapi secara
+ * bisnis juga bagian dari Olsera. Supaya TIDAK perlu checkbox baru di
+ * Manajemen Pengguna, user yang diberi "olsera" otomatis mendapat
+ * "rekonsiliasi" juga — dinormalisasi SATU KALI di sini sehingga berlaku untuk
+ * getCurrentUser/requireModule/requireAnyModule/sidebar/semua route sekaligus
+ * (satu-satunya sumber kebenaran, bukan dicek ulang per tempat).
+ */
 function normalizeModules(role: AppRole, modules: unknown): AppModule[] {
   if (role === "supervisor") return [...APP_MODULES];
   if (!Array.isArray(modules)) return [];
-  return APP_MODULES.filter((module) => modules.includes(module));
+  const granted = new Set(APP_MODULES.filter((module) => modules.includes(module)));
+  if (granted.has("olsera")) granted.add("rekonsiliasi");
+  return APP_MODULES.filter((module) => granted.has(module));
 }
 
 function toSessionUser(user: {
