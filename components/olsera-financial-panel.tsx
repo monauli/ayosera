@@ -258,7 +258,7 @@ function Pagination({
   );
 }
 
-export function OlseraFinancialPanel() {
+export function OlseraFinancialPanel({ isSupervisor = false }: { isSupervisor?: boolean }) {
   const [period, setPeriod] = useState(() => clampPeriod(jakartaCurrentPeriod()));
   const userChangedPeriodRef = useRef(false);
 
@@ -381,7 +381,7 @@ export function OlseraFinancialPanel() {
   // Sync bertahap: start (atau lanjutkan run "running" yang sudah ada) → step
   // berulang sampai selesai → baca status kanonis → refresh snapshot periode aktif.
   const handleSync = useCallback(async () => {
-    if (syncRunningRef.current || !acquireOlseraSyncLock()) return;
+    if (!isSupervisor || syncRunningRef.current || !acquireOlseraSyncLock()) return;
     syncRunningRef.current = true;
     setSyncing(true);
     setConnectionExpired(false);
@@ -477,7 +477,7 @@ export function OlseraFinancialPanel() {
       setSyncing(false);
       setRefreshTick((value) => value + 1);
     }
-  }, [period, snapshot?.syncLog]);
+  }, [isSupervisor, period, snapshot?.syncLog]);
 
   // Download export (Excel gabungan / PDF per laporan) — mengikuti periode aktif.
   // Selalu memakai snapshot MongoDB (endpoint export baca-only), tidak menyentuh
@@ -616,12 +616,20 @@ export function OlseraFinancialPanel() {
                 }}
               />
             </div>
-            <Button type="button" className={PRIMARY_BTN} onClick={() => void handleSync()} disabled={syncing || externallyLocked}>
+            <Button
+              type="button"
+              className={PRIMARY_BTN}
+              onClick={() => void handleSync()}
+              disabled={!isSupervisor || syncing || externallyLocked}
+              title={!isSupervisor ? "Hanya supervisor" : undefined}
+            >
               {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {syncing ? "Menyinkronkan..." : isSyncRunningRemotely ? "Lanjutkan Sync" : "Sync Sekarang"}
             </Button>
           </div>
-          {externallyLocked && !syncing ? (
+          {!isSupervisor ? (
+            <p className="mt-3 text-sm text-slate-400">Hanya supervisor yang dapat menjalankan sinkronisasi. Data yang sudah tersinkron tetap dapat dilihat di bawah.</p>
+          ) : externallyLocked && !syncing ? (
             <p className="mt-3 text-sm text-amber-400">Sinkronisasi Olsera lain sedang berjalan (mis. Sync Semua Olsera) — tunggu hingga selesai.</p>
           ) : null}
           {(syncMessage || syncProgress) && (

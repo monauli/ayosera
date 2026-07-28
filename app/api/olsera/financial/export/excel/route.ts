@@ -1,6 +1,6 @@
 import { generateFinancialExcelExport } from "@/lib/olsera-financial-export";
 import { exportFailureResponse } from "@/lib/olsera-financial-export-core";
-import { guard, json, isDatabaseTimeoutError } from "../../_shared";
+import { readGuard, json, isDatabaseTimeoutError } from "../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,13 +9,14 @@ export const maxDuration = 120;
 /**
  * Export Excel gabungan (5 sheet) Laporan Keuangan — HANYA dari snapshot MongoDB
  * (lib/olsera-financial-export.ts), tidak pernah membaca Olsera live. Auth sama
- * dengan route snapshot (requireModule "olsera" + supervisor). Timeout database
+ * dengan route snapshot (readGuard: requireModule "olsera" saja, tanpa syarat
+ * supervisor — baca-saja). Timeout database
  * dipetakan ke HTTP 504 terstruktur; kegagalan lain ke pesan aman tanpa
  * BSON/stack/payload mentah.
  */
 export async function GET(req: Request) {
   try {
-    await guard();
+    await readGuard();
     const period = new URL(req.url).searchParams.get("period") ?? "";
     const result = await generateFinancialExcelExport(period);
     if (!result.ok) {

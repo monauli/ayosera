@@ -2919,7 +2919,7 @@ export default function DashboardPage() {
 
           {activeNavAllowed && activeNav === "OlseraKeuangan" && (
             <div className="min-h-[calc(100vh-8rem)]">
-              <OlseraFinancialPanel />
+              <OlseraFinancialPanel isSupervisor={isSupervisor} />
             </div>
           )}
 
