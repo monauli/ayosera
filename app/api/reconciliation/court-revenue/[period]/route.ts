@@ -1,26 +1,27 @@
 import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
-import { loadCourtRevenueMonthDetail } from "@/lib/reconciliation-court-revenue";
-import { ReconciliationSourceError } from "@/lib/reconciliation-sources";
+import { loadOmzetLedgerMonthDetail } from "@/lib/reconciliation-omzet-ledger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** GET /api/reconciliation/court-revenue/:period — detail satu bulan omset lapangan AYO vs Olsera (READ-ONLY). */
+const PERIOD_PATTERN = /^\d{4}-\d{2}$/;
+
+/** GET /api/reconciliation/court-revenue/:period — detail satu bulan Rekonsiliasi Omzet AYOSERA (ledger 40001+40004, READ-ONLY). */
 export async function GET(request: Request, context: { params: Promise<{ period: string }> }) {
   try {
     await requireModule("rekonsiliasi");
     const { period } = await context.params;
+    if (!PERIOD_PATTERN.test(period)) {
+      return NextResponse.json({ error: "Format periode tidak valid (harus YYYY-MM)." }, { status: 400, headers: NO_CACHE_HEADERS });
+    }
 
-    const detail = await loadCourtRevenueMonthDetail(period);
+    const detail = await loadOmzetLedgerMonthDetail(period);
     return NextResponse.json({ data: detail }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
-    if (error instanceof ReconciliationSourceError) {
-      return NextResponse.json({ error: error.message }, { status: 400, headers: NO_CACHE_HEADERS });
-    }
     console.error("[reconciliation:court-revenue:detail]", error);
-    return NextResponse.json({ error: "Gagal memuat detail omset lapangan." }, { status: 500, headers: NO_CACHE_HEADERS });
+    return NextResponse.json({ error: "Gagal memuat detail omset." }, { status: 500, headers: NO_CACHE_HEADERS });
   }
 }

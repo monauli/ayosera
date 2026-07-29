@@ -3,28 +3,56 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, ChevronRight, FileSearch, RefreshCw, X } from "lucide-react";
 
-type Side = { count: number; revenue: number };
-type MonthSummary = {
-  period: string;
-  ayo: Side;
-  olsera: Side;
-  differenceRevenue: number;
-  differenceCount: number;
-  displayStatus: "MATCH" | "NEEDS_REVIEW" | "CURRENT_PERIOD";
+type LedgerEntry = { transactionNo: string | null; transactionDate: string | null; description: string | null; debit: number; credit: number };
+type AccountBreakdown = {
+  accountCode: string;
+  rawEntryCount: number;
+  duplicatesRemoved: number;
+  creditTotal: number;
+  closingEntry: LedgerEntry | null;
+  ambiguousCandidates: LedgerEntry[];
+  otherDebitEntries: LedgerEntry[];
+  otherDebitTotal: number;
+  net: number;
 };
-type DayRow = { date: string; ayo: Side; olsera: Side; differenceRevenue: number; statusLabel: string };
-type MonthDetail = MonthSummary & { mismatchedDays: DayRow[] };
+type PickleballVerification = { applicable: boolean; verified: boolean | null; matchedEntry: LedgerEntry | null; reason: string };
+type OmzetStatus = "COCOK" | "SELISIH_TERJELASKAN" | "PERLU_DICEK" | "BULAN_BERJALAN";
+type EvidenceType = "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
+type Explanation = { evidenceType: EvidenceType; description: string; explainedAmount: number; createdBy: string; createdAt: string; updatedAt: string };
+type OmzetResult = {
+  period: string;
+  ayo: { count: number; revenue: number };
+  courtFees: AccountBreakdown;
+  pickleball: AccountBreakdown;
+  pickleballVerification: PickleballVerification;
+  olseraTotal: number;
+  differenceRevenue: number;
+  dataAvailable: boolean;
+  status: OmzetStatus;
+  statusReason: string;
+  explanation: Explanation | null;
+};
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 
-const STATUS_LABEL: Record<MonthSummary["displayStatus"], string> = {
-  MATCH: "Cocok",
-  NEEDS_REVIEW: "Perlu Dicek",
-  CURRENT_PERIOD: "Bulan Berjalan",
+const STATUS_LABEL: Record<OmzetStatus, string> = {
+  COCOK: "Cocok",
+  SELISIH_TERJELASKAN: "Selisih Terjelaskan",
+  PERLU_DICEK: "Perlu Dicek",
+  BULAN_BERJALAN: "Bulan Berjalan",
 };
-const STATUS_TONE: Record<MonthSummary["displayStatus"], "ok" | "warn" | "neutral"> = {
-  MATCH: "ok",
-  NEEDS_REVIEW: "warn",
-  CURRENT_PERIOD: "neutral",
+const STATUS_TONE: Record<OmzetStatus, "ok" | "warn" | "danger" | "neutral"> = {
+  COCOK: "ok",
+  SELISIH_TERJELASKAN: "warn",
+  PERLU_DICEK: "danger",
+  BULAN_BERJALAN: "neutral",
+};
+const EVIDENCE_LABEL: Record<EvidenceType, string> = {
+  "shifted-period": "Transaksi bergeser bulan",
+  "wrong-amount": "Salah nominal",
+  duplicate: "Duplikat",
+  reversal: "Reversal",
+  correction: "Koreksi",
+  "wrong-account": "Salah akun",
 };
 
 function formatRupiah(value: number) {
@@ -34,24 +62,54 @@ function monthLabel(period: string) {
   const [year, month] = period.split("-").map(Number);
   return new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(Date.UTC(year, month - 1, 1)));
 }
-function dateLabel(date: string) {
-  const [year, month, day] = date.split("-").map(Number);
-  return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "short", timeZone: "Asia/Jakarta" }).format(new Date(Date.UTC(year, month - 1, day)));
+function dateLabel(date: string | null) {
+  if (!date) return "-";
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return date;
+  return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Jakarta" }).format(d);
 }
 
-function StatusBadge({ status }: { status: MonthSummary["displayStatus"] }) {
+function StatusBadge({ status }: { status: OmzetStatus }) {
   return <span className={`recon-badge recon-badge-${STATUS_TONE[status]}`}>{STATUS_LABEL[status]}</span>;
+}
+
+function AccountCard({ title, breakdown }: { title: string; breakdown: AccountBreakdown }) {
+  return (
+    <>
+      <div>
+        <span>{title} — total kredit periode ini</span>
+        <b>{formatRupiah(breakdown.creditTotal)}</b>
+      </div>
+      <div>
+        <span>{title} — koreksi/reversal (dinetkan)</span>
+        <b>{breakdown.otherDebitEntries.length > 0 ? `-${formatRupiah(breakdown.otherDebitTotal)} (${breakdown.otherDebitEntries.length} entri)` : "Tidak ada"}</b>
+      </div>
+      <div>
+        <span>{title} — bersih (sebelum reklasifikasi)</span>
+        <b>{formatRupiah(breakdown.net)}</b>
+      </div>
+      <div>
+        <span>{title} — duplikat dihapus</span>
+        <b>{breakdown.duplicatesRemoved > 0 ? `${breakdown.duplicatesRemoved} baris` : "Tidak ada"}</b>
+      </div>
+    </>
+  );
 }
 
 export default function ReconciliationPage() {
   const [user, setUser] = useState<User | null>(null);
-  const [items, setItems] = useState<MonthSummary[] | null>(null);
+  const [items, setItems] = useState<OmzetResult[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
-  const [detail, setDetail] = useState<MonthDetail | null>(null);
+  const [detail, setDetail] = useState<OmzetResult | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [showExplainForm, setShowExplainForm] = useState(false);
+  const [explainSubmitting, setExplainSubmitting] = useState(false);
+  const [explainError, setExplainError] = useState("");
+  const [evidenceType, setEvidenceType] = useState<EvidenceType>("shifted-period");
+  const [explainDescription, setExplainDescription] = useState("");
 
   const refresh = async () => {
     setLoading(true);
@@ -83,15 +141,41 @@ export default function ReconciliationPage() {
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
+    setShowExplainForm(false);
+    setExplainError("");
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || "Gagal memuat detail bulan ini.");
       setDetail(data.data);
+      setExplainDescription("");
+      setEvidenceType("shifted-period");
     } catch (e) {
       setDetailError(e instanceof Error ? e.message : "Gagal memuat detail bulan ini.");
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const submitExplanation = async () => {
+    if (!selectedPeriod || !detail) return;
+    setExplainSubmitting(true);
+    setExplainError("");
+    try {
+      const response = await fetch(`/api/reconciliation/court-revenue/${selectedPeriod}/explanation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evidenceType, description: explainDescription, explainedAmount: detail.differenceRevenue }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Gagal menyimpan penjelasan selisih.");
+      setShowExplainForm(false);
+      await openDetail(selectedPeriod);
+      await refresh();
+    } catch (e) {
+      setExplainError(e instanceof Error ? e.message : "Gagal menyimpan penjelasan selisih.");
+    } finally {
+      setExplainSubmitting(false);
     }
   };
 
@@ -111,8 +195,10 @@ export default function ReconciliationPage() {
           <a href="/" className="recon-back">
             ← Kembali ke Dashboard
           </a>
-          <h1>Rekonsiliasi Omset AYO vs Olsera</h1>
-          <p>Perbandingan omset booking lapangan AYO dengan omset transaksi kategori lapangan Olsera, per bulan.</p>
+          <h1>Rekonsiliasi Omzet AYOSERA</h1>
+          <p>
+            Omzet AYO (booking eligible) vs Omzet Olsera — akun ledger 40001 (Court Fees) + 40004 (Pickleball) sebelum reklasifikasi, diverifikasi ke akun 21003. Per bulan.
+          </p>
         </div>
         <div style={{ display: "flex", gap: ".5rem" }}>
           <a href="/reconciliation/inventory" className="recon-button secondary">
@@ -144,11 +230,9 @@ export default function ReconciliationPage() {
             <thead>
               <tr>
                 <th>Bulan</th>
-                <th>Omset AYO</th>
-                <th>Omset Olsera</th>
+                <th>Omzet AYO</th>
+                <th>Omzet Olsera (40001+40004)</th>
                 <th>Selisih</th>
-                <th>Booking AYO</th>
-                <th>Transaksi Olsera</th>
                 <th>Status</th>
                 <th>Aksi</th>
               </tr>
@@ -158,12 +242,10 @@ export default function ReconciliationPage() {
                 <tr key={row.period}>
                   <td>{monthLabel(row.period)}</td>
                   <td>{formatRupiah(row.ayo.revenue)}</td>
-                  <td>{formatRupiah(row.olsera.revenue)}</td>
-                  <td>{formatRupiah(row.differenceRevenue)}</td>
-                  <td>{row.ayo.count}</td>
-                  <td>{row.olsera.count}</td>
+                  <td>{row.dataAvailable ? formatRupiah(row.olseraTotal) : "Data belum tersedia"}</td>
+                  <td>{row.dataAvailable ? formatRupiah(row.differenceRevenue) : "-"}</td>
                   <td>
-                    <StatusBadge status={row.displayStatus} />
+                    <StatusBadge status={row.status} />
                   </td>
                   <td>
                     <button className="recon-link" onClick={() => void openDetail(row.period)}>
@@ -180,11 +262,11 @@ export default function ReconciliationPage() {
                 <div>
                   <strong>{monthLabel(row.period)}</strong>
                   <span>
-                    AYO {formatRupiah(row.ayo.revenue)} · Olsera {formatRupiah(row.olsera.revenue)}
+                    AYO {formatRupiah(row.ayo.revenue)} · Olsera {row.dataAvailable ? formatRupiah(row.olseraTotal) : "belum tersedia"}
                   </span>
                 </div>
                 <div>
-                  <StatusBadge status={row.displayStatus} />
+                  <StatusBadge status={row.status} />
                 </div>
               </button>
             ))}
@@ -196,7 +278,7 @@ export default function ReconciliationPage() {
         <aside className="recon-drawer" role="dialog" aria-modal="true" aria-label="Detail rekonsiliasi bulan">
           <div className="recon-drawer-head">
             <div>
-              <p className="recon-eyebrow">Detail Rekonsiliasi</p>
+              <p className="recon-eyebrow">Detail Rekonsiliasi Omzet</p>
               <h2>{monthLabel(selectedPeriod)}</h2>
             </div>
             <button aria-label="Tutup detail" onClick={() => setSelectedPeriod(null)}>
@@ -214,63 +296,129 @@ export default function ReconciliationPage() {
             </div>
           ) : detail ? (
             <div className="recon-drawer-body">
-              {detail.displayStatus === "CURRENT_PERIOD" && (
+              {detail.status === "BULAN_BERJALAN" && (
                 <p className="recon-draft">
-                  <AlertTriangle /> <strong>Bulan berjalan.</strong> Data masih dapat berubah sampai bulan ini ditutup.
+                  <AlertTriangle /> <strong>Bulan berjalan.</strong> Data masih dapat berubah sampai bulan ini ditutup dan jurnal penutup/reklasifikasi diproses.
                 </p>
               )}
+              {!detail.dataAvailable && detail.status !== "BULAN_BERJALAN" && (
+                <p className="recon-special">
+                  <AlertTriangle /> <strong>Data belum dapat diverifikasi.</strong> Ledger akun 40001/40004 belum tersedia (belum disinkronkan) untuk periode ini.
+                </p>
+              )}
+              <p className="recon-readonly">
+                <strong>Penyebab status:</strong> {detail.statusReason}
+              </p>
+
               <section className="recon-detail-grid">
                 <div>
-                  <span>Omset AYO</span>
+                  <span>Omzet AYO</span>
                   <b>{formatRupiah(detail.ayo.revenue)}</b>
                 </div>
                 <div>
-                  <span>Jumlah booking AYO</span>
+                  <span>Jumlah booking AYO eligible</span>
                   <b>{detail.ayo.count}</b>
                 </div>
+                <AccountCard title="Akun 40001 (Court Fees)" breakdown={detail.courtFees} />
+                <AccountCard title="Akun 40004 (Pickleball)" breakdown={detail.pickleball} />
                 <div>
-                  <span>Omset Olsera (kategori lapangan)</span>
-                  <b>{formatRupiah(detail.olsera.revenue)}</b>
+                  <span>Verifikasi reklasifikasi 40004 → 21003</span>
+                  <b>{detail.pickleballVerification.applicable ? (detail.pickleballVerification.verified ? "Terverifikasi" : detail.pickleballVerification.verified === false ? "Belum terverifikasi" : "Belum dapat dipastikan") : "Tidak berlaku (tidak ada aktivitas 40004)"}</b>
                 </div>
                 <div>
-                  <span>Jumlah transaksi Olsera</span>
-                  <b>{detail.olsera.count}</b>
+                  <span>Alasan verifikasi</span>
+                  <b>{detail.pickleballVerification.reason}</b>
                 </div>
                 <div>
-                  <span>Selisih nominal</span>
+                  <span>Total Omzet Olsera final (40001+40004)</span>
+                  <b>{formatRupiah(detail.olseraTotal)}</b>
+                </div>
+                <div>
+                  <span>Selisih (Olsera − AYO)</span>
                   <b>{formatRupiah(detail.differenceRevenue)}</b>
                 </div>
                 <div>
                   <span>Status</span>
-                  <StatusBadge status={detail.displayStatus} />
+                  <StatusBadge status={detail.status} />
                 </div>
               </section>
-              <h3>Tanggal yang perlu dicek</h3>
-              {detail.mismatchedDays.length === 0 ? (
-                <p className="recon-readonly">Tidak ada tanggal dengan selisih pada bulan ini.</p>
-              ) : (
-                <table className="recon-table">
-                  <thead>
-                    <tr>
-                      <th>Tanggal</th>
-                      <th>Omset AYO</th>
-                      <th>Omset Olsera</th>
-                      <th>Selisih</th>
-                      <th>Keterangan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detail.mismatchedDays.map((day) => (
-                      <tr key={day.date}>
-                        <td>{dateLabel(day.date)}</td>
-                        <td>{formatRupiah(day.ayo.revenue)}</td>
-                        <td>{formatRupiah(day.olsera.revenue)}</td>
-                        <td>{formatRupiah(day.differenceRevenue)}</td>
-                        <td>{day.statusLabel}</td>
+
+              {(detail.courtFees.otherDebitEntries.length > 0 || detail.pickleball.otherDebitEntries.length > 0) && (
+                <>
+                  <h3>Koreksi/reversal dalam periode ini (sudah dinetkan)</h3>
+                  <table className="recon-table">
+                    <thead>
+                      <tr>
+                        <th>Akun</th>
+                        <th>Tanggal</th>
+                        <th>No. Transaksi</th>
+                        <th>Nominal</th>
+                        <th>Keterangan</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {[...detail.courtFees.otherDebitEntries.map((e) => ({ ...e, account: "40001" })), ...detail.pickleball.otherDebitEntries.map((e) => ({ ...e, account: "40004" }))].map((e, i) => (
+                        <tr key={`${e.account}-${e.transactionNo}-${i}`}>
+                          <td>{e.account}</td>
+                          <td>{dateLabel(e.transactionDate)}</td>
+                          <td>{e.transactionNo ?? "-"}</td>
+                          <td>{formatRupiah(e.debit)}</td>
+                          <td>{e.description ?? "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+
+              {detail.explanation ? (
+                <>
+                  <h3>Penjelasan selisih (bukti jurnal nyata)</h3>
+                  <ul className="recon-history">
+                    <li>
+                      <span>{EVIDENCE_LABEL[detail.explanation.evidenceType]} — {formatRupiah(detail.explanation.explainedAmount)}</span>
+                      <span>{detail.explanation.description}</span>
+                      <small>oleh {detail.explanation.createdBy} · {dateLabel(detail.explanation.updatedAt)}</small>
+                    </li>
+                  </ul>
+                </>
+              ) : null}
+
+              {supervisor && detail.differenceRevenue !== 0 && detail.status !== "BULAN_BERJALAN" && (
+                <section className="recon-resolution">
+                  {!showExplainForm ? (
+                    <button className="recon-button secondary" onClick={() => setShowExplainForm(true)}>
+                      {detail.explanation ? "Perbarui penjelasan selisih" : "Tambahkan penjelasan selisih"}
+                    </button>
+                  ) : (
+                    <div className="recon-form" style={{ width: "100%" }}>
+                      <h3>Bukti jurnal nyata untuk selisih {formatRupiah(detail.differenceRevenue)}</h3>
+                      <label>
+                        Jenis bukti
+                        <select value={evidenceType} onChange={(e) => setEvidenceType(e.target.value as EvidenceType)}>
+                          {(Object.keys(EVIDENCE_LABEL) as EvidenceType[]).map((key) => (
+                            <option key={key} value={key}>
+                              {EVIDENCE_LABEL[key]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Penjelasan (wajib — sebutkan transaksi/jurnal spesifik)
+                        <textarea value={explainDescription} onChange={(e) => setExplainDescription(e.target.value)} placeholder="Contoh: transaksi BK/2428/260430 dibayar 1 Mei, dibukukan Olsera di bulan April (JU26050500001060)." />
+                      </label>
+                      {explainError && <p className="recon-error">{explainError}</p>}
+                      <div className="recon-actions">
+                        <button className="recon-button" disabled={explainSubmitting || !explainDescription.trim()} onClick={() => void submitExplanation()}>
+                          Simpan penjelasan
+                        </button>
+                        <button className="recon-button secondary" disabled={explainSubmitting} onClick={() => setShowExplainForm(false)}>
+                          Batal
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </section>
               )}
             </div>
           ) : null}

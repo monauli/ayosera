@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
-import { loadCourtRevenueMonthSummary, recentCourtRevenuePeriods } from "@/lib/reconciliation-court-revenue";
+import { loadOmzetLedgerRecentSummaries } from "@/lib/reconciliation-omzet-ledger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +9,13 @@ export const dynamic = "force-dynamic";
 const DEFAULT_MONTHS = 12;
 const MAX_MONTHS = 24;
 
-/** GET /api/reconciliation/court-revenue — ringkasan bulanan omset lapangan AYO vs Olsera (READ-ONLY). */
+/**
+ * GET /api/reconciliation/court-revenue — ringkasan bulanan Rekonsiliasi Omzet
+ * AYOSERA (ledger 40001+40004, READ-ONLY). Bulan tanpa omzet AYO, tanpa data
+ * ledger Olsera, dan bukan bulan berjalan TIDAK ditampilkan (lihat
+ * lib/reconciliation-omzet-ledger.ts hasOmzetActivity) — mencegah periode di
+ * luar cakupan data muncul dengan status "Perlu Dicek" yang menyesatkan.
+ */
 export async function GET(request: Request) {
   try {
     await requireModule("rekonsiliasi");
@@ -17,13 +23,12 @@ export async function GET(request: Request) {
     const requested = Number(params.get("months") ?? DEFAULT_MONTHS);
     const months = Number.isInteger(requested) && requested > 0 ? Math.min(requested, MAX_MONTHS) : DEFAULT_MONTHS;
 
-    const periods = recentCourtRevenuePeriods(months);
-    const items = await Promise.all(periods.map((period) => loadCourtRevenueMonthSummary(period)));
+    const items = await loadOmzetLedgerRecentSummaries(months);
 
     return NextResponse.json({ items }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     console.error("[reconciliation:court-revenue]", error);
-    return NextResponse.json({ error: "Gagal memuat ringkasan omset lapangan." }, { status: 500, headers: NO_CACHE_HEADERS });
+    return NextResponse.json({ error: "Gagal memuat ringkasan omset." }, { status: 500, headers: NO_CACHE_HEADERS });
   }
 }

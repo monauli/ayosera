@@ -122,6 +122,28 @@ export type OlseraFinancialAccountDocument = { _id: string; storeId: number; acc
 export type OlseraFinancialLedgerEntryDocument = { _id: string; storeId: number; period: string; accountCode: string; accountName: string | null; transactionDate: string | null; formattedTransactionDate: string | null; transactionNo: string | null; description: string | null; debit: number; credit: number; balance: number | null; isOpeningBalance: boolean; rawPayload: Record<string, unknown>; syncedAt: Date; createdAt: Date; updatedAt: Date };
 export type OlseraFinancialSyncLogDocument = { _id: string; storeId: number; period: string; status: "running" | "success" | "partial" | "failed"; phase: "accounts" | "monthly-reports" | "ledger-details" | "completed"; accountCursor: number; accountCodes: string[]; reportsCompleted: string[]; recordsProcessed: number; accountsProcessed: number; errorMessage: string | null; startedAt: Date; updatedAt: Date; completedAt: Date | null };
 
+/**
+ * Bukti jurnal nyata yang menjelaskan selisih Rekonsiliasi Omzet AYOSERA pada
+ * SATU periode — SATU-SATUNYA jalur status "Selisih Terjelaskan" (lihat
+ * lib/reconciliation-omzet-ledger.ts classifyStatus). TIDAK PERNAH dibuat
+ * otomatis; `explainedAmount` harus sama persis dengan differenceRevenue yang
+ * dihitung engine saat catatan ini dipakai, kalau tidak status kembali ke
+ * "Perlu Dicek". Satu dokumen per periode (menimpa catatan lama bila diperbarui
+ * — bukan riwayat berlapis, lihat lib/reconciliation-omzet-explanation-store.ts).
+ */
+export type OlseraOmzetReconciliationNoteDocument = {
+  _id: string; // `${storeId}:${period}`
+  storeId: number;
+  period: string;
+  evidenceType: "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
+  description: string;
+  explainedAmount: number;
+  createdBy: string;
+  createdAt: Date;
+  updatedBy: string;
+  updatedAt: Date;
+};
+
 export type OlseraSyncedDayDocument = {
   /** Tanggal (YYYY-MM-DD, WIB) yang sudah tuntas disync penuh. */
   _id: string;
@@ -692,6 +714,7 @@ export async function collections() {
     reconciliationManualResolutions: db.collection<ReconciliationManualResolutionDocument>("reconciliation_manual_resolutions"),
     reconciliationAuditLog: db.collection<ReconciliationAuditLogDocument>("reconciliation_audit_log"),
     inventoryStockOpnameReconciliations: db.collection<InventoryStockOpnameDocument>("inventory_stock_opname_reconciliations"),
+    olseraOmzetReconciliationNotes: db.collection<OlseraOmzetReconciliationNoteDocument>("olsera_omzet_reconciliation_notes"),
   };
 }
 
@@ -739,6 +762,7 @@ async function createIndexes() {
     reconciliationManualResolutions,
     reconciliationAuditLog,
     inventoryStockOpnameReconciliations,
+    olseraOmzetReconciliationNotes,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -830,6 +854,10 @@ async function createIndexes() {
     // hanya untuk pola query "seluruh produk satu bulan".
     inventoryStockOpnameReconciliations.createIndex({ storeId: 1, year: 1, month: 1 }),
     inventoryStockOpnameReconciliations.createIndex({ updatedAt: -1 }),
+    // Rekonsiliasi Omzet AYOSERA (engine ledger 40001/40004) — `_id` sudah
+    // unik secara native (`${storeId}:${period}`), index tambahan untuk
+    // query "seluruh catatan satu toko".
+    olseraOmzetReconciliationNotes.createIndex({ storeId: 1, updatedAt: -1 }),
   ]);
 }
 
