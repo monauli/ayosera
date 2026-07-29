@@ -7,6 +7,7 @@
 // kebenaran period untuk seluruh tab laporan.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { jakartaCurrentPeriod } from "./olsera-financial-core.ts";
 import {
   clampFinancialPeriod,
   FINANCIAL_PERIOD_QUERY_KEY,
@@ -140,4 +141,36 @@ test("satu sumber kebenaran: URL query key period sama dipakai untuk baca maupun
   const written = writePeriodToSearch("", "2026-05");
   const readBack = readPeriodFromSearch(`?${written}`);
   assert.equal(readBack, "2026-05", "apa yang ditulis harus bisa dibaca kembali persis — satu key, satu sumber kebenaran");
+});
+
+// ---------------------------------------------------------------------------
+// Bug produksi cross-browser: value input type="month" pernah menjadi
+// "07/2026" (format lokal MM/YYYY) alih-alih "2026-07" ("yyyy-MM" wajib),
+// karena `jakartaCurrentPeriod()` (dipakai sbg `currentPeriod`/`maxPeriod")
+// dulu memformat langsung ke string Intl yang urutannya tidak dijamin lintas
+// browser/ICU. Tes ini memakai jakartaCurrentPeriod ASLI (bukan mock) supaya
+// perbaikan di lib/olsera-financial-core.ts ikut terverifikasi lewat jalur
+// yang benar-benar dipakai components/olsera-financial-panel.tsx.
+// ---------------------------------------------------------------------------
+test("resolveInitialPeriod: value utk Juli 2026 = '2026-07' persis, tidak pernah '07/2026' (locale-independent, pakai jakartaCurrentPeriod asli)", () => {
+  const currentPeriod = jakartaCurrentPeriod(new Date("2026-07-15T03:00:00Z"));
+  assert.equal(currentPeriod, "2026-07", "prasyarat: jakartaCurrentPeriod asli harus 'yyyy-MM'");
+  const resolved = resolveInitialPeriod({ periodFromUrl: null, currentPeriod, minPeriod: MIN_PERIOD });
+  assert.equal(resolved, "2026-07");
+  assert.notEqual(resolved, "07/2026");
+});
+
+test("isValidPeriodFormat: menolak persis format bug produksi '07/2026' (MM/YYYY lokal)", () => {
+  assert.equal(isValidPeriodFormat("07/2026"), false);
+});
+
+test("browser lama/ketat (tidak bergantung locale): perpindahan Feb->Jul memakai jakartaCurrentPeriod ASLI sbg batas atas — value yang dihasilkan SELALU 'yyyy-MM' untuk value/min/max input type=month", () => {
+  const sequence = ["2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07"];
+  const currentPeriod = jakartaCurrentPeriod(new Date("2026-07-20T03:00:00Z"));
+  for (const target of sequence) {
+    const value = clampFinancialPeriod(target, MIN_PERIOD, currentPeriod);
+    assert.equal(value, target, `pindah ke ${target} harus berlaku persis sbg value input`);
+    assert.match(value, /^\d{4}-\d{2}$/, "value input type=month wajib 'yyyy-MM', browser ketat menolak format lain");
+    assert.doesNotMatch(value, /\//, "value tidak boleh mengandung '/' (format lokal MM/YYYY)");
+  }
 });

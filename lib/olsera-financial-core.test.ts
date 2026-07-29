@@ -29,6 +29,54 @@ test("jakartaCurrentPeriod uses Asia/Jakarta, not server UTC", () => {
   assert.equal(jakartaCurrentPeriod(new Date("2026-01-01T10:00:00Z")), "2026-01");
 });
 
+// -----------------------------------------------------------------------
+// Bug produksi cross-browser: input type="month" menampilkan value "07/2026"
+// (ditolak browser, wajib "yyyy-MM") karena jakartaCurrentPeriod() dulu
+// memformat langsung ke string lewat Intl.DateTimeFormat("en-CA", ...) dan
+// mengandalkan URUTAN karakter hasilnya. Urutan "yyyy-MM" utk skeleton
+// year+month (tanpa day) BUKAN jaminan CLDR pada locale "en-CA" — itu cuma
+// kebetulan berlaku di satu versi ICU. Di ICU/browser lain skeleton yang
+// sama merender "MM/yyyy". Tes di bawah membuktikan fungsi produksi SELALU
+// "yyyy-MM" walau string mentah Intl utk skeleton yang sama terbukti salah
+// urutan di lingkungan ICU ini — karena fungsi memilih part lewat `type`,
+// bukan lewat posisi/urutan string.
+// -----------------------------------------------------------------------
+test("jakartaCurrentPeriod: Juli 2026 -> 'yyyy-MM' persis '2026-07', TIDAK PERNAH 'MM/YYYY' seperti '07/2026'", () => {
+  const now = new Date("2026-07-15T03:00:00Z"); // pagi WIB pertengahan Juli, jauh dari batas hari
+  const result = jakartaCurrentPeriod(now);
+  assert.equal(result, "2026-07");
+  assert.notEqual(result, "07/2026");
+  assert.match(result, /^\d{4}-\d{2}$/);
+});
+
+test("jakartaCurrentPeriod: tidak bergantung pada urutan/locale Intl — string mentah format() utk skeleton year+month TERBUKTI 'MM/YYYY' pada ICU ini, tapi fungsi produksi tetap benar", () => {
+  const now = new Date("2026-07-15T03:00:00Z");
+  // Sanity check: ini justru MEMBUKTIKAN kenapa memformat langsung ke string
+  // (mis. .format(now) atau toLocaleDateString) berbahaya sebagai value input
+  // month — skeleton year+month (tanpa day) pada locale umum (en-US/id-ID,
+  // dan pada ICU/browser lain juga en-CA) merender "MM/yyyy", bukan ISO.
+  const rawEnUs = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit" }).format(now);
+  assert.equal(rawEnUs, "07/2026", "string mentah Intl (tanpa formatToParts) memang salah urutan di lingkungan ICU ini — inilah akar bug cross-browser");
+  assert.equal(jakartaCurrentPeriod(now), "2026-07", "fungsi produksi memilih part lewat `type`, bukan posisi string, jadi tetap benar");
+});
+
+test("jakartaCurrentPeriod: seluruh transisi Feb->Mar->Apr->Mei->Jun->Jul 2026 selalu 'yyyy-MM', tidak pernah mengandung '/'", () => {
+  const sequence: Array<[string, number, number]> = [
+    ["2026-02", 2026, 2],
+    ["2026-03", 2026, 3],
+    ["2026-04", 2026, 4],
+    ["2026-05", 2026, 5],
+    ["2026-06", 2026, 6],
+    ["2026-07", 2026, 7],
+  ];
+  for (const [expected, year, month] of sequence) {
+    const now = new Date(Date.UTC(year, month - 1, 15, 3, 0, 0)); // tengah bulan, pagi WIB
+    const result = jakartaCurrentPeriod(now);
+    assert.equal(result, expected);
+    assert.doesNotMatch(result, /\//, `periode ${result} tidak boleh berformat MM/YYYY (mengandung '/')`);
+  }
+});
+
 test("isCurrentJakartaPeriod: bulan berjalan vs bulan sebelumnya, termasuk pergantian tahun Desember->Januari", () => {
   const rolloverNow = new Date("2025-12-31T17:05:00Z"); // 00:05 WIB 1 Jan 2026
   assert.equal(isCurrentJakartaPeriod("2026-01", rolloverNow), true);

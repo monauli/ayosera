@@ -161,9 +161,27 @@ function nonEmpty(value: unknown): string | null { return value == null || Strin
 function stableObject(value: unknown): unknown { if (Array.isArray(value)) return value.map(stableObject); if (!value || typeof value !== "object") return value; return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !["created_at", "updated_at"].includes(key)).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stableObject(item)])); }
 function accountKey(row: Record<string, unknown>): string { const id = nonEmpty(row.account_id ?? row.id); if (id) return `id:${id}`; const number = nonEmpty(row.account_no ?? row.account_code); if (number) return `number:${number}`; const combination = [nonEmpty(row.classification), nonEmpty(row.account_name ?? row.name), nonEmpty(row.parent_id)].join("|"); if (combination.replace(/\|/g, "")) return `combo:${combination}`; return `object:${JSON.stringify(stableObject(row))}`; }
 export function deduplicateFinancialAccounts(page1: unknown[], page2: unknown[]): unknown[] { const result: unknown[] = []; const seen = new Set<string>(); for (const item of [...page1, ...page2]) { const row = asObject(item); const key = accountKey(row); if (!seen.has(key)) { seen.add(key); result.push(item); } } return result; }
-/** Periode "YYYY-MM" bulan berjalan menurut zona waktu Asia/Jakarta — SATU sumber kebenaran, jangan hitung ulang di tempat lain. */
+/**
+ * Periode "YYYY-MM" bulan berjalan menurut zona waktu Asia/Jakarta — SATU
+ * sumber kebenaran, jangan hitung ulang di tempat lain.
+ *
+ * PENTING: mengambil year/month lewat `formatToParts` dan memilih part
+ * berdasarkan `type` ("year"/"month"), BUKAN dengan memformat ke string lalu
+ * mengandalkan urutan karakter hasilnya. Locale "en-CA" kebetulan merender
+ * skeleton year+month sebagai "yyyy-MM" di ICU tertentu (mis. Node/Chromium
+ * versi ini), tapi urutan itu bukan jaminan CLDR — di ICU/browser lain
+ * (Firefox, Safari, versi Chromium lain) skeleton yang sama bisa merender
+ * "MM/yyyy" (mis. "07/2026"). String hasil format-order-dependent semacam
+ * itu pernah bocor jadi `value`/`max` pada `<input type="month">`, yang
+ * ditolak browser karena tidak sesuai format wajib "yyyy-MM". Mengambil per
+ * `type` membuat hasilnya independen dari locale/urutan render.
+ */
 export function jakartaCurrentPeriod(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit" }).format(now);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit" }).formatToParts(now);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  if (!year || !month) throw new Error("Gagal menghitung periode Asia/Jakarta.");
+  return `${year}-${month}`;
 }
 
 /** Apakah `period` ("YYYY-MM") adalah bulan berjalan menurut Asia/Jakarta (bukan UTC server). */
