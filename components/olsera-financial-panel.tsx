@@ -332,6 +332,7 @@ export function OlseraFinancialPanel() {
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState("");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   // Snapshot MongoDB untuk periode aktif — satu-satunya sumber data laporan.
   // `requestedPeriod` dikunci dari closure saat request dikirim; setiap kali
@@ -542,8 +543,24 @@ export function OlseraFinancialPanel() {
     [period],
   );
 
+  // "Download Akun Ini" — Buku Besar Detail SATU akun (buku besar per akun),
+  // memakai endpoint export yang sama dengan `accountCode` tambahan sehingga
+  // server-side hanya mengambil transaksi akun terpilih (bukan hasil filter
+  // client dari data yang sudah dipaginasi).
+  const ACCOUNT_DOWNLOAD_OPTIONS = useMemo(
+    () =>
+      selectedAccountCode
+        ? ([
+            { key: "account-pdf", label: "PDF", url: `/api/olsera/financial/export/pdf?period=${period}&report=buku-besar-detail&accountCode=${selectedAccountCode}` },
+            { key: "account-excel", label: "Excel", url: `/api/olsera/financial/export/excel?period=${period}&accountCode=${selectedAccountCode}` },
+          ] as const)
+        : [],
+    [period, selectedAccountCode],
+  );
+
   const handleDownload = useCallback(async (option: { key: string; url: string }) => {
     setDownloadMenuOpen(false);
+    setAccountMenuOpen(false);
     setDownloadError("");
     setDownloading(option.key);
     try {
@@ -950,9 +967,53 @@ export function OlseraFinancialPanel() {
                     ) : (
                       <>
                         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
-                          <p className="text-[13.5px] font-medium text-slate-200">
-                            {selectedAccountCode} — {ledgerData.accountName ?? "-"}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-[13.5px] font-medium text-slate-200">
+                              {selectedAccountCode} — {ledgerData.accountName ?? "-"}
+                            </p>
+                            <div className="relative">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                aria-haspopup="menu"
+                                aria-expanded={accountMenuOpen}
+                                disabled={downloading !== null}
+                                onClick={() => setAccountMenuOpen((open) => !open)}
+                                className="h-7 gap-1.5 border-white/10 bg-white/5 px-2.5 text-[12px] text-slate-200 hover:bg-white/10"
+                              >
+                                {downloading === "account-pdf" || downloading === "account-excel" ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <ArrowDownToLine className="h-3.5 w-3.5" />
+                                )}
+                                Download Akun Ini
+                                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${accountMenuOpen ? "rotate-180" : ""}`} />
+                              </Button>
+                              {accountMenuOpen && (
+                                <>
+                                  <div className="fixed inset-0 z-[9998]" aria-hidden="true" onClick={() => setAccountMenuOpen(false)} />
+                                  <div
+                                    role="menu"
+                                    aria-label="Unduh buku besar akun ini"
+                                    className="rd-panel absolute left-0 z-[9999] mt-2 w-36 rounded-lg p-1.5"
+                                  >
+                                    {ACCOUNT_DOWNLOAD_OPTIONS.map((option) => (
+                                      <button
+                                        key={option.key}
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => void handleDownload(option)}
+                                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-slate-200 transition-colors hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+                                      >
+                                        {option.key === "account-excel" ? <FileSpreadsheet className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
+                                        {option.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
                           <p className="text-[13px] text-slate-400">
                             Pergerakan Periode:{" "}
                             <span className={`font-semibold tabular-nums ${ledgerData.totals.movement >= 0 ? "text-emerald-300" : "text-rose-300"}`}>

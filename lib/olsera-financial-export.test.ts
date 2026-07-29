@@ -10,17 +10,22 @@ import { inflateSync } from "node:zlib";
 import {
   buildBalanceSheetLines,
   buildCashFlowLines,
+  buildLedgerAccountDetail,
   buildLedgerDetailGroups,
   buildLedgerSummaryRows,
   buildProfitLossLines,
   decodeFinancialHtmlEntities,
   draftReportNotice,
+  filterZeroLedgerSummaryRows,
+  filterZeroStatementLines,
   financialExportFileName,
+  financialLedgerAccountExportFileName,
   formatAccountingID,
   formatJakartaDateTime,
   formatPeriodDateRangeEN,
   formatPeriodLabelID,
   isFinancialReportKind,
+  sanitizeForFileName,
   splitPeriod,
   type BalanceSheetPayload,
   type CashFlowPayload,
@@ -29,11 +34,12 @@ import {
   type ProfitLossPayload,
   type StatementLine,
 } from "./olsera-financial-export-core.ts";
-import { buildFinancialWorkbook } from "./olsera-financial-excel.ts";
+import { buildFinancialWorkbook, buildLedgerAccountWorkbook } from "./olsera-financial-excel.ts";
 import {
   renderArusKasPdf,
   renderBukuBesarDetailPdf,
   renderLabaRugiPdf,
+  renderLedgerAccountDetailPdf,
   renderNeracaPdf,
   renderRingkasanBukuBesarPdf,
   PDF_REPORT_LAYOUT,
@@ -400,7 +406,8 @@ test("Excel: sheet Neraca memuat nilai Total Aset persis snapshot", () => {
 test("Excel ledger mempertahankan dua desimal, pengaturan cetak, dan Total Pergerakan kosong", () => {
   const workbook = buildFinancialWorkbook({ period: "2026-05", companyName: "BC PADEL CLUB", balanceSheet: BALANCE_SHEET, profitLoss: PROFIT_LOSS, cashFlow: CASH_FLOW, ledgerSummary: LEDGER_SUMMARY, ledgerEntries: makeLedgerEntries() });
   const summary = workbook.getWorksheet("Ringkasan Buku Besar")!;
-  const account11105 = summary.getRow(7);
+  // Baris 6, bukan 7: akun 11101 (Kas, debit=kredit=saldo=0) disembunyikan Fitur 2.
+  const account11105 = summary.getRow(6);
   assert.equal(account11105.getCell(4).value, 370361513.75);
   assert.equal(account11105.getCell(5).value, 120030000);
   assert.equal(account11105.getCell(4).numFmt, "#,##0.00;(#,##0.00)");
@@ -425,7 +432,7 @@ test("PDF dan Excel mempertahankan Debit 11105 dengan dua desimal", async () => 
   const pdf = await renderRingkasanBukuBesarPdf("BC PADEL CLUB", "2026-05", LEDGER_SUMMARY);
   assert.equal(pdfContainsText(pdf, "370.361.513,75"), true);
   const workbook = buildFinancialWorkbook({ period: "2026-05", companyName: "BC PADEL CLUB", balanceSheet: BALANCE_SHEET, profitLoss: PROFIT_LOSS, cashFlow: CASH_FLOW, ledgerSummary: LEDGER_SUMMARY, ledgerEntries: [] });
-  const row = workbook.getWorksheet("Ringkasan Buku Besar")!.getRow(7);
+  const row = workbook.getWorksheet("Ringkasan Buku Besar")!.getRow(6);
   assert.equal(row.getCell(4).value, 370361513.75);
   assert.equal(formatAccountingID(Number(row.getCell(4).value)), "370.361.513,75");
 });
@@ -547,6 +554,153 @@ test("PDF deskripsi panjang di-wrap, bukan dipotong", async () => {
 
 test("PDF Buku Besar Detail kosong tetap valid (ledger-empty ditangani route)", async () => {
   assert.ok((await pageCount(await renderBukuBesarDetailPdf("BC PADEL CLUB", "2026-05", []))) >= 1);
+});
+
+// ---- Fitur 2: sembunyikan baris nominal nol --------------------------------
+
+test("filterZeroStatementLines: baris nol dibuang, section/subtotal/total tetap, heading grup kosong ikut dibuang", () => {
+  const lines: StatementLine[] = [
+    { kind: "section", code: null, label: "Aset", amount: null },
+    { kind: "group", code: null, label: "Aset Lancar", amount: null },
+    { kind: "account", code: "11101", label: "Kas", amount: 0 },
+    { kind: "account", code: "11105", label: "Bank", amount: 500000 },
+    { kind: "subtotal", code: null, label: "Total Aset Lancar", amount: 500000 },
+    { kind: "group", code: null, label: "Aset Tidak Lancar (kosong)", amount: null },
+    { kind: "account", code: "12000", label: "Aset Tetap Nol", amount: 0 },
+    { kind: "subtotal", code: null, label: "Total Aset Tidak Lancar", amount: 0 },
+    { kind: "total", code: null, label: "Total Aset", amount: 500000 },
+  ];
+  const filtered = filterZeroStatementLines(lines);
+  assert.equal(filtered.some((l) => l.label === "Kas"), false); // nol -> dibuang
+  assert.equal(filtered.some((l) => l.label === "Bank"), true); // non-nol -> tetap
+  assert.equal(filtered.some((l) => l.label === "Aset Tidak Lancar (kosong)"), false); // heading kosong dibuang
+  assert.equal(filtered.some((l) => l.label === "Total Aset Tidak Lancar"), true); // subtotal tetap walau grup kosong
+  assert.equal(filtered.some((l) => l.label === "Total Aset"), true); // total selalu tampil
+  assert.equal(filtered.some((l) => l.label === "Aset"), true); // section (header wajib) selalu tampil
+  assert.equal(filtered.some((l) => l.label === "Aset Lancar"), true); // grup dengan detail tetap tampil
+});
+
+test("filterZeroStatementLines: nilai negatif (bukan nol) tetap tampil, pemeriksaan numerik bukan string", () => {
+  const filtered = filterZeroStatementLines(buildBalanceSheetLines(BALANCE_SHEET));
+  assert.ok(filtered.some((l) => l.label === "Akumulasi penyusutan aset tetap" && l.amount === -1056854));
+  assert.equal(filtered.some((l) => l.label === "Kas" && l.code === "11101"), false); // amount 0 -> dibuang
+});
+
+test("filterZeroLedgerSummaryRows: baris Ringkasan Buku Besar dengan debit=kredit=saldo=0 disembunyikan", () => {
+  const rows = filterZeroLedgerSummaryRows(buildLedgerSummaryRows(LEDGER_SUMMARY));
+  assert.equal(rows.length, 2);
+  assert.equal(rows.some((r) => r.code === "11101"), false);
+  assert.ok(rows.some((r) => r.code === "11105"));
+});
+
+function makeZeroFilterLedgerEntries(): LedgerEntryInput[] {
+  return [
+    { accountCode: "99001", accountName: "Akun Uji", isOpeningBalance: true, description: "Saldo awal", debit: 0, credit: 0, balance: 1000000 },
+    { accountCode: "99001", accountName: "Akun Uji", transactionDate: "2026-05-02", transactionNo: "JU-1", description: "Debit saja", debit: 500000, credit: 0 },
+    { accountCode: "99001", accountName: "Akun Uji", transactionDate: "2026-05-03", transactionNo: "JU-2", description: "Kredit saja", debit: 0, credit: 200000 },
+    { accountCode: "99001", accountName: "Akun Uji", transactionDate: "2026-05-04", transactionNo: "JU-3", description: "Nol dibuang", debit: 0, credit: 0 },
+  ];
+}
+
+test("buildLedgerDetailGroups (Buku Besar lengkap): baris debit=0 DAN kredit=0 dibuang, saldo awal & baris satu sisi tetap tampil", () => {
+  const [group] = buildLedgerDetailGroups(makeZeroFilterLedgerEntries());
+  assert.equal(group.entries.length, 3); // saldo awal + debit saja + kredit saja (baris nol dibuang)
+  assert.equal(group.entries[0].isOpeningBalance, true);
+  assert.ok(group.entries.some((e) => e.description === "Debit saja" && e.debit === 500000 && e.credit === 0));
+  assert.ok(group.entries.some((e) => e.description === "Kredit saja" && e.credit === 200000 && e.debit === 0));
+  assert.equal(group.entries.some((e) => e.description === "Nol dibuang"), false);
+  assert.equal(group.totalDebit, 500000); // total tetap dihitung dari seluruh baris (baris nol tidak mengubah jumlah)
+  assert.equal(group.totalCredit, 200000);
+});
+
+// ---- Fitur 1: Buku Besar per akun ("Download Akun Ini") -------------------
+
+test("buildLedgerAccountDetail: hanya akun terpilih, seluruh transaksinya ikut, akun lain tidak ikut", () => {
+  const detail = buildLedgerAccountDetail(makeLedgerEntries(), "11105");
+  assert.equal(detail.code, "11105");
+  assert.equal(detail.name, "BANK BCA 7195-332266");
+  assert.equal(detail.openingBalance, 1000000);
+  assert.equal(detail.entries.length, 150); // seluruh 150 transaksi non-opening akun 11105 ikut (tidak ada yang debit=kredit=0 di fixture ini)
+  assert.equal(detail.totalDebit, 37500000); // = 75 * 500000, BUKAN gabungan 3 akun (yang akan 3x lipat)
+  assert.equal(detail.totalCredit, 22500000);
+  assert.equal(detail.movement, 15000000);
+  assert.equal(detail.endingBalance, 1149000); // balance baris transaksi terakhir (i=149): 1000000 + 149*1000
+});
+
+test("buildLedgerAccountDetail: baris debit=0 kredit=0 dibuang, baris satu sisi & saldo awal tetap tampil", () => {
+  const detail = buildLedgerAccountDetail(makeZeroFilterLedgerEntries(), "99001");
+  assert.equal(detail.openingBalance, 1000000);
+  assert.equal(detail.entries.length, 2);
+  assert.ok(detail.entries.some((e) => e.description === "Debit saja" && e.debit === 500000));
+  assert.ok(detail.entries.some((e) => e.description === "Kredit saja" && e.credit === 200000));
+  assert.equal(detail.entries.some((e) => e.description === "Nol dibuang"), false);
+  assert.equal(detail.totalDebit, 500000);
+  assert.equal(detail.totalCredit, 200000);
+});
+
+test("financialLedgerAccountExportFileName & sanitizeForFileName: nama file aman/tersanitasi, isi laporan (nama akun) tidak berubah", () => {
+  assert.equal(
+    financialLedgerAccountExportFileName("pdf", "11105", "BANK BCA 7195-332266", "2026-07"),
+    "Buku-Besar-11105-BANK-BCA-7195-332266-2026-07.pdf",
+  );
+  assert.equal(
+    financialLedgerAccountExportFileName("excel", "11105", "BANK BCA 7195-332266", "2026-07"),
+    "Buku-Besar-11105-BANK-BCA-7195-332266-2026-07.xlsx",
+  );
+  // Karakter berbahaya untuk nama file disaring; sanitizer HANYA dipakai untuk nama file, bukan isi laporan.
+  assert.equal(sanitizeForFileName('Kas/Bank "Utama" <BCA> & Co.'), "Kas-Bank-Utama-BCA-Co");
+  assert.equal(financialLedgerAccountExportFileName("pdf", "11105", "", "2026-07"), "Buku-Besar-11105-2026-07.pdf");
+  assert.throws(() => financialLedgerAccountExportFileName("pdf", "11105", "Bank", "bukan-periode"));
+});
+
+test("Download Akun Ini PDF & Excel: hanya memuat akun terpilih, akun lain TIDAK ikut", async () => {
+  const detail = buildLedgerAccountDetail(makeLedgerEntries(), "11105");
+  const pdf = await renderLedgerAccountDetailPdf("BC PADEL CLUB", "2026-05", detail);
+  assert.equal(pdfContainsText(pdf, "JU2605111050000"), true); // transaksi pertama akun 11105
+  assert.equal(pdfContainsText(pdf, "JU2605400010000"), false); // transaksi akun 40001 TIDAK ikut
+  assert.equal(pdfContainsText(pdf, "JU2605510000000"), false); // transaksi akun 51000 TIDAK ikut
+
+  const workbook = buildLedgerAccountWorkbook({ period: "2026-05", companyName: "BC PADEL CLUB", detail });
+  assert.equal(workbook.worksheets.length, 1);
+  assert.equal(workbook.worksheets[0].name, "Buku Besar Detail");
+  let found40001 = false;
+  workbook.getWorksheet("Buku Besar Detail")!.eachRow((row) => {
+    if (String(row.getCell(2).value ?? "").includes("40001")) found40001 = true;
+  });
+  assert.equal(found40001, false);
+});
+
+test("Download Akun Ini: saldo awal, total debit/kredit, pergerakan periode, dan saldo akhir selalu tampil (PDF & Excel)", async () => {
+  const detail = buildLedgerAccountDetail(makeLedgerEntries(), "11105");
+  const pdf = await renderLedgerAccountDetailPdf("BC PADEL CLUB", "2026-05", detail);
+  assert.equal(pdfContainsText(pdf, "Saldo Awal"), true);
+  assert.equal(pdfContainsText(pdf, "Pergerakan Periode"), true);
+  assert.equal(pdfContainsText(pdf, "Saldo Akhir"), true);
+  assert.equal(pdfContainsText(pdf, "Kode Akun"), true);
+  assert.equal(pdfContainsText(pdf, "Nama Akun"), true);
+
+  const workbook = buildLedgerAccountWorkbook({ period: "2026-05", companyName: "BC PADEL CLUB", detail });
+  const sheet = workbook.getWorksheet("Buku Besar Detail")!;
+  let hasTotal = false;
+  let hasMovement = false;
+  let hasEnding = false;
+  sheet.eachRow((row) => {
+    if (row.getCell(3).value === "Total") hasTotal = true;
+    if (row.getCell(3).value === "Pergerakan Periode") hasMovement = true;
+    if (row.getCell(3).value === "Saldo Akhir") hasEnding = true;
+  });
+  assert.ok(hasTotal && hasMovement && hasEnding);
+});
+
+test("Download Akun Ini: akun tanpa transaksi (hanya saldo awal) tetap menghasilkan PDF/Excel valid", async () => {
+  const detail = buildLedgerAccountDetail(
+    [{ accountCode: "99002", accountName: "Akun Kosong", isOpeningBalance: true, debit: 0, credit: 0, balance: 5000 }],
+    "99002",
+  );
+  assert.equal(detail.entries.length, 0);
+  assert.equal(detail.endingBalance, 5000); // fallback saldo awal + pergerakan (0) bila tidak ada transaksi
+  assert.ok((await pageCount(await renderLedgerAccountDetailPdf("BC PADEL CLUB", "2026-05", detail))) >= 1);
+  await buildLedgerAccountWorkbook({ period: "2026-05", companyName: "BC PADEL CLUB", detail }).xlsx.writeBuffer();
 });
 
 // ---- Export TIDAK memanggil Olsera live (jaminan statis) --------------------

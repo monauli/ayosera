@@ -144,6 +144,27 @@ export function financialExportFileName(kind: FinancialReportKind | "excel", per
   return `${kind}-${period}.pdf`;
 }
 
+/**
+ * Sanitasi teks bebas (mis. nama akun) untuk dipakai SEBAGAI BAGIAN NAMA FILE
+ * saja — tidak pernah dipakai untuk isi laporan (isi laporan tetap memakai
+ * nama akun asli). Setiap karakter di luar alfanumerik (spasi, slash, tanda
+ * baca, sisa Unicode) diringkas jadi satu strip, supaya nama file aman lintas
+ * OS dan aman ditaruh mentah di header Content-Disposition.
+ */
+export function sanitizeForFileName(value: string): string {
+  const ascii = String(value ?? "").normalize("NFKD").replace(new RegExp("[\\u0300-\\u036f]", "g"), "");
+  return ascii.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+}
+
+/** Nama file export Buku Besar SATU akun: "Buku-Besar-<kode>-<nama>-<YYYY-MM>.pdf|xlsx". */
+export function financialLedgerAccountExportFileName(kind: "pdf" | "excel", accountCode: string, accountName: string, period: string): string {
+  splitPeriod(period);
+  const code = sanitizeForFileName(accountCode) || "akun";
+  const name = sanitizeForFileName(accountName);
+  const ext = kind === "excel" ? "xlsx" : "pdf";
+  return `Buku-Besar-${code}${name ? `-${name}` : ""}-${period}.${ext}`;
+}
+
 // ---------------------------------------------------------------------------
 // Bentuk normalizedPayload (subset yang dibutuhkan) — sengaja longgar/opsional
 // supaya tahan terhadap payload sebagian.
@@ -392,6 +413,79 @@ export function buildCashFlowLines(payload: CashFlowPayload): StatementLine[] {
 }
 
 // ---------------------------------------------------------------------------
+// Fitur 2 — sembunyikan baris nominal nol (Neraca/Laba Rugi/Arus Kas). Dipakai
+// bersama oleh Excel & PDF supaya aturan filtering konsisten & tidak
+// diduplikasi. Pemeriksaan NUMERIK (line.amount === 0), bukan string.
+//
+// Tidak pernah membuang: section (header bagian wajib), subtotal, total —
+// hanya baris "account"/"line" (baris detail) yang nilainya benar-benar nol.
+// Bila sebuah "group" (sub-judul) kehilangan SELURUH baris detail di
+// bawahnya (termasuk nested group) setelah difilter, heading grup itu ikut
+// dibuang — subtotal penutupnya tetap tampil (dibutuhkan untuk rekonsiliasi).
+// ---------------------------------------------------------------------------
+
+export function filterZeroStatementLines(lines: StatementLine[]): StatementLine[] {
+  const out: StatementLine[] = [];
+  const cursor = { pos: 0 };
+  while (cursor.pos < lines.length) {
+    const line = lines[cursor.pos];
+    if (line.kind === "group") {
+      cursor.pos++;
+      const groupOut: StatementLine[] = [];
+      const hasDetail = collectStatementGroupBody(lines, cursor, groupOut);
+      if (hasDetail) out.push(line, ...groupOut);
+      if (cursor.pos < lines.length && lines[cursor.pos].kind === "subtotal") {
+        out.push(lines[cursor.pos]); // subtotal penutup grup — tidak pernah dibuang
+        cursor.pos++;
+      }
+      continue;
+    }
+    if (line.kind === "account" || line.kind === "line") {
+      if (line.amount !== 0) out.push(line);
+      cursor.pos++;
+      continue;
+    }
+    out.push(line); // section / subtotal / total — tidak pernah dibuang
+    cursor.pos++;
+  }
+  return out;
+}
+
+/** Ratakan isi satu grup sampai (TIDAK termasuk) subtotal penutupnya; return true bila ada baris detail tersisa di dalamnya (termasuk nested group). */
+function collectStatementGroupBody(lines: StatementLine[], cursor: { pos: number }, out: StatementLine[]): boolean {
+  let hasDetail = false;
+  while (cursor.pos < lines.length) {
+    const line = lines[cursor.pos];
+    if (line.kind === "subtotal") return hasDetail; // batas: subtotal penutup grup ini, jangan dikonsumsi di sini
+    if (line.kind === "group") {
+      cursor.pos++;
+      const nestedOut: StatementLine[] = [];
+      const nestedHasDetail = collectStatementGroupBody(lines, cursor, nestedOut);
+      if (nestedHasDetail) {
+        out.push(line, ...nestedOut);
+        hasDetail = true;
+      }
+      if (cursor.pos < lines.length && lines[cursor.pos].kind === "subtotal") {
+        out.push(lines[cursor.pos]);
+        cursor.pos++;
+      }
+      continue;
+    }
+    if (line.kind === "account" || line.kind === "line") {
+      if (line.amount !== 0) {
+        out.push(line);
+        hasDetail = true;
+      }
+      cursor.pos++;
+      continue;
+    }
+    out.push(line); // section/total tidak semestinya bersarang di sini — dipertahankan defensif
+    cursor.pos++;
+  }
+  return hasDetail;
+}
+
+// ---------------------------------------------------------------------------
 // Ringkasan Buku Besar
 // ---------------------------------------------------------------------------
 
@@ -421,6 +515,11 @@ export function buildLedgerSummaryRows(rows: LedgerSummaryRow[] | null | undefin
       hasMovement: debit !== 0 || credit !== 0 || balance !== 0,
     };
   });
+}
+
+/** Fitur 2 — baris Ringkasan Buku Besar dengan debit=kredit=saldo=0 disembunyikan. */
+export function filterZeroLedgerSummaryRows(rows: LedgerSummaryExportRow[]): LedgerSummaryExportRow[] {
+  return rows.filter((row) => row.hasMovement);
 }
 
 // ---------------------------------------------------------------------------
@@ -488,20 +587,20 @@ export function buildLedgerDetailGroups(
     const debit = typeof entry.debit === "number" && Number.isFinite(entry.debit) ? entry.debit : 0;
     const credit = typeof entry.credit === "number" && Number.isFinite(entry.credit) ? entry.credit : 0;
     const isOpening = entry.isOpeningBalance === true;
-    const dateValue = entry.formattedTransactionDate ?? entry.transactionDate;
-    const dateText = dateValue == null ? "" : String(dateValue).trim();
-    // Metadata seperti total/count tidak boleh masuk sebagai tanggal laporan.
-    const date = dateText && !/^\d+$/.test(dateText) ? dateText : "-";
-    const transactionNoText = (entry.transactionNo ?? "").toString().trim();
-    const transactionNo = date === "-" && /^\d+$/.test(transactionNoText) ? "-" : transactionNoText || "-";
-    group.entries.push({
-      date: isOpening ? "Saldo Awal" : decodeFinancialHtmlEntities(date),
-      transactionNo: decodeFinancialHtmlEntities(transactionNo),
-      description: decodeFinancialHtmlEntities((entry.description ?? "").toString().trim()) || "-",
-      debit,
-      credit,
-      isOpeningBalance: isOpening,
-    });
+    // Fitur 2: baris transaksi dengan debit=0 DAN kredit=0 disembunyikan dari
+    // tampilan, KECUALI baris saldo awal (selalu tampil). Total tetap dihitung
+    // dari seluruh baris (baris nol tidak mengubah jumlah).
+    if (!isHiddenZeroLedgerRow(debit, credit, isOpening)) {
+      const display = deriveLedgerRowDisplay(entry);
+      group.entries.push({
+        date: isOpening ? "Saldo Awal" : display.date,
+        transactionNo: display.transactionNo,
+        description: display.description,
+        debit,
+        credit,
+        isOpeningBalance: isOpening,
+      });
+    }
     if (!isOpening) {
       group.totalDebit += debit;
       group.totalCredit += credit;
@@ -511,6 +610,104 @@ export function buildLedgerDetailGroups(
   return order.map((code) => groups.get(code)!);
 }
 
+/** Fitur 2 — true bila baris transaksi (bukan saldo awal) boleh disembunyikan (debit=0 DAN kredit=0). */
+function isHiddenZeroLedgerRow(debit: number, credit: number, isOpeningBalance: boolean): boolean {
+  return !isOpeningBalance && debit === 0 && credit === 0;
+}
+
+/** Tanggal/no. jurnal/deskripsi tampilan dari satu baris ledger mentah — dipakai buildLedgerDetailGroups & buildLedgerAccountDetail. */
+function deriveLedgerRowDisplay(entry: LedgerEntryInput): { date: string; transactionNo: string; description: string } {
+  const dateValue = entry.formattedTransactionDate ?? entry.transactionDate;
+  const dateText = dateValue == null ? "" : String(dateValue).trim();
+  // Metadata seperti total/count tidak boleh masuk sebagai tanggal laporan.
+  const date = dateText && !/^\d+$/.test(dateText) ? dateText : "-";
+  const transactionNoText = (entry.transactionNo ?? "").toString().trim();
+  const transactionNo = date === "-" && /^\d+$/.test(transactionNoText) ? "-" : transactionNoText || "-";
+  return {
+    date: decodeFinancialHtmlEntities(date),
+    transactionNo: decodeFinancialHtmlEntities(transactionNo),
+    description: decodeFinancialHtmlEntities((entry.description ?? "").toString().trim()) || "-",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Buku Besar Detail — SATU akun (Fitur 1: "Download Akun Ini")
+// ---------------------------------------------------------------------------
+
+export interface LedgerAccountDetailReport {
+  code: string;
+  name: string;
+  /** Saldo berjalan pada baris saldo awal (0 bila tidak ada baris saldo awal). */
+  openingBalance: number;
+  /** Transaksi periode (baris saldo awal TIDAK ikut di sini — ditampilkan terpisah). */
+  entries: LedgerDetailEntry[];
+  totalDebit: number;
+  totalCredit: number;
+  /** = totalDebit - totalCredit, sama seperti "Pergerakan Periode" di UI. */
+  movement: number;
+  /** Saldo berjalan baris transaksi terakhir; fallback openingBalance + movement bila tidak tersedia. */
+  endingBalance: number;
+}
+
+/**
+ * Buku Besar Detail SATU akun — dipakai export "Download Akun Ini". Sumber
+ * `entries` idealnya SUDAH difilter per akun oleh pemanggil (store query),
+ * tapi fungsi ini tetap defensif memfilter ulang accountCode supaya aman
+ * dites langsung dengan fixture campuran akun.
+ */
+export function buildLedgerAccountDetail(
+  entries: LedgerEntryInput[],
+  accountCode: string,
+  accountNameByCode: Map<string, string> = new Map(),
+): LedgerAccountDetailReport {
+  const code = (accountCode ?? "").toString().trim();
+  const rows = (Array.isArray(entries) ? entries : []).filter(
+    (entry): entry is LedgerEntryInput => isRecord(entry) && (entry.accountCode ?? "").toString().trim() === code,
+  );
+
+  let name = "";
+  let openingBalance = 0;
+  let totalDebit = 0;
+  let totalCredit = 0;
+  let lastBalance: number | null = null;
+  const detailEntries: LedgerDetailEntry[] = [];
+
+  for (const entry of rows) {
+    if (!name && entry.accountName) name = decodeFinancialHtmlEntities(String(entry.accountName).trim());
+    const debit = typeof entry.debit === "number" && Number.isFinite(entry.debit) ? entry.debit : 0;
+    const credit = typeof entry.credit === "number" && Number.isFinite(entry.credit) ? entry.credit : 0;
+    const isOpening = entry.isOpeningBalance === true;
+    const balanceValue = typeof entry.balance === "number" && Number.isFinite(entry.balance) ? entry.balance : null;
+
+    if (isOpening) {
+      if (balanceValue !== null) openingBalance = balanceValue;
+      continue; // saldo awal ditampilkan sebagai field terpisah, bukan baris transaksi
+    }
+
+    totalDebit += debit;
+    totalCredit += credit;
+    if (balanceValue !== null) lastBalance = balanceValue;
+
+    if (isHiddenZeroLedgerRow(debit, credit, false)) continue; // Fitur 2
+
+    const display = deriveLedgerRowDisplay(entry);
+    detailEntries.push({
+      date: display.date,
+      transactionNo: display.transactionNo,
+      description: display.description,
+      debit,
+      credit,
+      isOpeningBalance: false,
+    });
+  }
+
+  if (!name) name = decodeFinancialHtmlEntities(accountNameByCode.get(code) ?? "");
+  const movement = totalDebit - totalCredit;
+  const endingBalance = lastBalance !== null ? lastBalance : openingBalance + movement;
+
+  return { code: code || "-", name: name || "-", openingBalance, entries: detailEntries, totalDebit, totalCredit, movement, endingBalance };
+}
+
 // ---------------------------------------------------------------------------
 // Pemetaan error export → respons aman (dipakai kedua route). Tidak pernah
 // memuat BSON/stack/payload mentah.
@@ -518,6 +715,7 @@ export function buildLedgerDetailGroups(
 
 export type ExportFailureReason =
   | "invalid-period"
+  | "invalid-account"
   | "snapshot-missing"
   | "invalid-payload"
   | "ledger-empty"
@@ -527,6 +725,8 @@ export function exportFailureResponse(reason: ExportFailureReason): { httpStatus
   switch (reason) {
     case "invalid-period":
       return { httpStatus: 400, body: { status: "invalid-period", message: "Periode tidak valid." } };
+    case "invalid-account":
+      return { httpStatus: 400, body: { status: "invalid-account", message: "Kode akun tidak valid." } };
     case "snapshot-missing":
       return {
         httpStatus: 404,

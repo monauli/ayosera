@@ -1,4 +1,4 @@
-import { generateFinancialPdfExport } from "@/lib/olsera-financial-export";
+import { generateFinancialLedgerAccountPdfExport, generateFinancialPdfExport } from "@/lib/olsera-financial-export";
 import { exportFailureResponse } from "@/lib/olsera-financial-export-core";
 import { guard, json, isDatabaseTimeoutError } from "../../_shared";
 
@@ -12,6 +12,10 @@ export const maxDuration = 300;
  * pernah membaca Olsera live. Buku Besar Detail boleh banyak halaman (seluruh
  * ledger periode dari MongoDB, bukan halaman pertama API). Timeout database →
  * HTTP 504 terstruktur; kegagalan lain → pesan aman tanpa BSON/stack/payload.
+ *
+ * accountCode (opsional) → "Download Akun Ini": laporan Buku Besar Detail
+ * dipersempit ke SATU akun (mengabaikan `report`, karena tombol ini hanya
+ * pernah meminta buku-besar-detail). Tanpa accountCode, perilaku penuh tidak berubah.
  */
 export async function GET(req: Request) {
   try {
@@ -19,7 +23,10 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const period = url.searchParams.get("period") ?? "";
     const report = url.searchParams.get("report") ?? "";
-    const result = await generateFinancialPdfExport(period, report);
+    const accountCode = url.searchParams.get("accountCode");
+    const result = accountCode
+      ? await generateFinancialLedgerAccountPdfExport(period, accountCode)
+      : await generateFinancialPdfExport(period, report);
     if (!result.ok) {
       const { httpStatus, body } = exportFailureResponse(result.reason);
       return json(body, { status: httpStatus });

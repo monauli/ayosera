@@ -392,6 +392,26 @@ export async function listAllFinancialLedgerEntriesForPeriod(
 }
 
 /**
+ * SELURUH baris buku besar SATU akun SATU periode (tanpa pagination) — dipakai
+ * HANYA oleh export "Download Akun Ini" (buildLedgerAccountDetail) supaya
+ * laporan per akun tidak terpotong seperti listFinancialLedgerEntriesPage
+ * (MAX_LIMIT=200). Urutan sama dengan listFinancialLedgerEntriesPage: saldo
+ * awal dulu lalu tanggal. rawPayload diproyeksikan keluar.
+ */
+export async function listAllFinancialLedgerEntriesForAccount(
+  period: string,
+  accountCode: string,
+  context?: FinancialCollections,
+): Promise<FinancialLedgerEntryDocument[]> {
+  return runWithReadCollections(context, async (fc) => {
+    let cursor = fc.ledgerEntries.find({ storeId: storeId(), period, accountCode }, { projection: { rawPayload: 0 } });
+    if (typeof cursor.sort === "function") cursor = cursor.sort({ isOpeningBalance: -1, transactionDate: 1, _id: 1 });
+    if (typeof cursor.maxTimeMS === "function") cursor = cursor.maxTimeMS(15000);
+    return cursor.toArray();
+  });
+}
+
+/**
  * Total debit/kredit buku besar SATU periode (bukan hanya halaman aktif),
  * mengecualikan baris saldo awal — dipakai untuk "Pergerakan Periode"
  * (debit dikurangi kredit), BUKAN saldo berjalan (famount).

@@ -12,24 +12,29 @@ import "server-only";
 import {
   getFinancialSyncLogForPeriod,
   getMonthlyReportsForPeriod,
+  listAllFinancialLedgerEntriesForAccount,
   listAllFinancialLedgerEntriesForPeriod,
   listFinancialAccounts,
   type FinancialCollections,
 } from "./olsera-financial-store.ts";
 import { validatePeriod } from "./olsera-financial-core.ts";
 import {
+  buildLedgerAccountDetail,
   DEFAULT_COMPANY_NAME,
   financialExportFileName,
+  financialLedgerAccountExportFileName,
   isFinancialReportKind,
   type ExportFailureReason,
   type FinancialReportKind,
+  type LedgerAccountDetailReport,
   type LedgerEntryInput,
 } from "./olsera-financial-export-core.ts";
-import { buildFinancialWorkbook } from "./olsera-financial-excel.ts";
+import { buildFinancialWorkbook, buildLedgerAccountWorkbook } from "./olsera-financial-excel.ts";
 import {
   renderArusKasPdf,
   renderBukuBesarDetailPdf,
   renderLabaRugiPdf,
+  renderLedgerAccountDetailPdf,
   renderNeracaPdf,
   renderRingkasanBukuBesarPdf,
 } from "./olsera-financial-pdf.ts";
@@ -54,6 +59,12 @@ function safePeriod(period: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** Kode akun tervalidasi (angka, sama seperti aturan di route ledger snapshot), atau null bila tidak valid. */
+function safeAccountCode(value: string): string | null {
+  const trimmed = (value ?? "").trim();
+  return /^\d{1,20}$/.test(trimmed) ? trimmed : null;
 }
 
 function accountNameMap(accounts: Array<{ accountCode?: string | null; accountName?: string | null }>): Map<string, string> {
@@ -157,6 +168,85 @@ export async function generateFinancialPdfExport(
         break;
     }
     return { ok: true, filename: financialExportFileName(kind, period), contentType: PDF_CONTENT_TYPE, body };
+  } catch {
+    return { ok: false, reason: "generation-failed" };
+  }
+}
+
+type LedgerAccountLoadResult =
+  | { ok: true; period: string; accountCode: string; detail: LedgerAccountDetailReport; lastSyncedAt: Date | string | null }
+  | { ok: false; reason: ExportFailureReason };
+
+/**
+ * Validasi period+accountCode, ambil SELURUH ledger akun tsb dari Mongo (tanpa
+ * pagination), dan bangun LedgerAccountDetailReport — dipakai bareng oleh
+ * export PDF & Excel per akun ("Download Akun Ini") supaya query/validasi
+ * tidak diduplikasi.
+ */
+async function loadLedgerAccountDetail(
+  rawPeriod: string,
+  rawAccountCode: string,
+  context?: FinancialCollections,
+): Promise<LedgerAccountLoadResult> {
+  const period = safePeriod(rawPeriod);
+  if (!period) return { ok: false, reason: "invalid-period" };
+  const accountCode = safeAccountCode(rawAccountCode);
+  if (!accountCode) return { ok: false, reason: "invalid-account" };
+
+  const [rawEntries, accounts, syncLog] = await Promise.all([
+    listAllFinancialLedgerEntriesForAccount(period, accountCode, context),
+    listFinancialAccounts(context),
+    getFinancialSyncLogForPeriod(period, context),
+  ]);
+  if (!rawEntries.length) return { ok: false, reason: "ledger-empty" };
+
+  const detail = buildLedgerAccountDetail(rawEntries as unknown as LedgerEntryInput[], accountCode, accountNameMap(accounts));
+  return { ok: true, period, accountCode, detail, lastSyncedAt: syncLog?.completedAt ?? null };
+}
+
+/**
+ * Buku Besar Detail SATU akun ("Download Akun Ini") — PDF. Query Mongo
+ * khusus akun (listAllFinancialLedgerEntriesForAccount), TANPA pagination,
+ * supaya seluruh transaksi akun ikut. Tidak menyentuh/mengubah export Buku
+ * Besar lengkap (generateFinancialPdfExport tetap seperti semula).
+ */
+export async function generateFinancialLedgerAccountPdfExport(
+  rawPeriod: string,
+  rawAccountCode: string,
+  context?: FinancialCollections,
+): Promise<FinancialExportResult> {
+  const loaded = await loadLedgerAccountDetail(rawPeriod, rawAccountCode, context);
+  if (!loaded.ok) return loaded;
+  try {
+    const body = await renderLedgerAccountDetailPdf(companyName(), loaded.period, loaded.detail, loaded.lastSyncedAt);
+    return {
+      ok: true,
+      filename: financialLedgerAccountExportFileName("pdf", loaded.accountCode, loaded.detail.name, loaded.period),
+      contentType: PDF_CONTENT_TYPE,
+      body,
+    };
+  } catch {
+    return { ok: false, reason: "generation-failed" };
+  }
+}
+
+/** Buku Besar Detail SATU akun ("Download Akun Ini") — Excel (satu sheet). */
+export async function generateFinancialLedgerAccountExcelExport(
+  rawPeriod: string,
+  rawAccountCode: string,
+  context?: FinancialCollections,
+): Promise<FinancialExportResult> {
+  const loaded = await loadLedgerAccountDetail(rawPeriod, rawAccountCode, context);
+  if (!loaded.ok) return loaded;
+  try {
+    const workbook = buildLedgerAccountWorkbook({ period: loaded.period, companyName: companyName(), detail: loaded.detail, lastSyncedAt: loaded.lastSyncedAt });
+    const body = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
+    return {
+      ok: true,
+      filename: financialLedgerAccountExportFileName("excel", loaded.accountCode, loaded.detail.name, loaded.period),
+      contentType: XLSX_CONTENT_TYPE,
+      body,
+    };
   } catch {
     return { ok: false, reason: "generation-failed" };
   }

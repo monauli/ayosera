@@ -1,4 +1,4 @@
-import { generateFinancialExcelExport } from "@/lib/olsera-financial-export";
+import { generateFinancialExcelExport, generateFinancialLedgerAccountExcelExport } from "@/lib/olsera-financial-export";
 import { exportFailureResponse } from "@/lib/olsera-financial-export-core";
 import { guard, json, isDatabaseTimeoutError } from "../../_shared";
 
@@ -13,12 +13,20 @@ export const maxDuration = 120;
  * supervisor). Timeout database
  * dipetakan ke HTTP 504 terstruktur; kegagalan lain ke pesan aman tanpa
  * BSON/stack/payload mentah.
+ *
+ * accountCode (opsional) → "Download Akun Ini": workbook satu sheet berisi
+ * HANYA Buku Besar Detail akun tersebut, bukan 5-sheet gabungan. Tanpa
+ * accountCode, perilaku penuh (5 sheet) tidak berubah.
  */
 export async function GET(req: Request) {
   try {
     await guard();
-    const period = new URL(req.url).searchParams.get("period") ?? "";
-    const result = await generateFinancialExcelExport(period);
+    const url = new URL(req.url);
+    const period = url.searchParams.get("period") ?? "";
+    const accountCode = url.searchParams.get("accountCode");
+    const result = accountCode
+      ? await generateFinancialLedgerAccountExcelExport(period, accountCode)
+      : await generateFinancialExcelExport(period);
     if (!result.ok) {
       const { httpStatus, body } = exportFailureResponse(result.reason);
       return json(body, { status: httpStatus });

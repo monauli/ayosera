@@ -16,11 +16,14 @@ import {
   buildLedgerSummaryRows,
   buildProfitLossLines,
   draftReportNotice,
+  filterZeroLedgerSummaryRows,
+  filterZeroStatementLines,
   formatAccountingID,
   formatPeriodDateRangeEN,
   formatPeriodLabelID,
   type BalanceSheetPayload,
   type CashFlowPayload,
+  type LedgerAccountDetailReport,
   type LedgerEntryInput,
   type LedgerSummaryRow,
   type ProfitLossPayload,
@@ -159,6 +162,12 @@ interface ReportOptions {
   /** Header kolom tabel yang digambar ulang di tiap halaman (opsional). */
   columns?: Column[];
   /**
+   * Baris info tambahan di blok judul (opsional) — mis. Kode Akun/Nama
+   * Akun/Saldo Awal untuk laporan Buku Besar satu akun. Ditulis dengan gaya
+   * normal (bukan warna DRAFT), di bawah periode & sebelum draftLines.
+   */
+  infoLines?: string[];
+  /**
    * Baris peringatan "bulan berjalan / belum final" (opsional) — HANYA diisi
    * bila periode laporan adalah bulan berjalan (lihat draftReportNotice di
    * olsera-financial-export-core.ts). Menambah tinggi blok header hanya untuk
@@ -185,8 +194,12 @@ class ReportPdf {
     this.opts = opts;
     this.pageW = pageW;
     this.pageH = pageH;
+    const infoLineCount = opts.infoLines?.length ?? 0;
     const draftLineCount = opts.draftLines?.length ?? 0;
-    this.headerBlockHeight = HEADER_BLOCK_HEIGHT + (draftLineCount > 0 ? draftLineCount * DRAFT_LINE_HEIGHT + 6 : 0);
+    this.headerBlockHeight =
+      HEADER_BLOCK_HEIGHT +
+      (infoLineCount > 0 ? infoLineCount * DRAFT_LINE_HEIGHT + 4 : 0) +
+      (draftLineCount > 0 ? draftLineCount * DRAFT_LINE_HEIGHT + 6 : 0);
   }
 
   static async create(opts: ReportOptions): Promise<ReportPdf> {
@@ -233,6 +246,7 @@ class ReportPdf {
       { text: this.opts.companyName, font: this.bold, size: 13 },
       { text: this.opts.title, font: this.regular, size: 11 },
       { text: this.opts.periodText, font: this.regular, size: 11 },
+      ...(this.opts.infoLines ?? []).map((text) => ({ text, font: this.regular, size: 9.5 })),
       ...(this.opts.draftLines ?? []).map((text) => ({ text, font: this.bold, size: 9.5, color: DRAFT_INK })),
     ];
     let ly = top - 20;
@@ -429,13 +443,13 @@ function draftLinesFor(period: string, lastSyncedAt: string | Date | null | unde
 }
 
 export function renderNeracaPdf(companyName: string, period: string, balanceSheet: BalanceSheetPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Neraca", formatPeriodLabelID(period), buildBalanceSheetLines(balanceSheet), "code-name-amount", draftLinesFor(period, lastSyncedAt));
+  return renderStatementPdf(companyName, "Laporan Neraca", formatPeriodLabelID(period), filterZeroStatementLines(buildBalanceSheetLines(balanceSheet)), "code-name-amount", draftLinesFor(period, lastSyncedAt));
 }
 export function renderLabaRugiPdf(companyName: string, period: string, profitLoss: ProfitLossPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Laba Rugi", formatPeriodLabelID(period), buildProfitLossLines(profitLoss), "code-name-amount", draftLinesFor(period, lastSyncedAt));
+  return renderStatementPdf(companyName, "Laporan Laba Rugi", formatPeriodLabelID(period), filterZeroStatementLines(buildProfitLossLines(profitLoss)), "code-name-amount", draftLinesFor(period, lastSyncedAt));
 }
 export function renderArusKasPdf(companyName: string, period: string, cashFlow: CashFlowPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Arus Kas", formatPeriodDateRangeEN(period), buildCashFlowLines(cashFlow), "name-amount", draftLinesFor(period, lastSyncedAt));
+  return renderStatementPdf(companyName, "Laporan Arus Kas", formatPeriodDateRangeEN(period), filterZeroStatementLines(buildCashFlowLines(cashFlow)), "name-amount", draftLinesFor(period, lastSyncedAt));
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +484,7 @@ export async function renderRingkasanBukuBesarPdf(
     draftLines: draftLinesFor(period, lastSyncedAt),
   });
 
-  for (const row of buildLedgerSummaryRows(ledgerSummary)) {
+  for (const row of filterZeroLedgerSummaryRows(buildLedgerSummaryRows(ledgerSummary))) {
     report.moveToRowThenEnsure(LINE_HEIGHT - 3);
     report.text(columns[0].x, row.code, { size: 8.5 });
     report.text(columns[1].x, report.fit(row.name, columns[1].width - 6, 8.5), { size: 8.5 });
@@ -486,8 +500,27 @@ export async function renderRingkasanBukuBesarPdf(
 }
 
 // ---------------------------------------------------------------------------
-// Buku Besar Detail (landscape, banyak halaman)
+// Buku Besar Detail (landscape, banyak halaman) — kolom dipakai bareng oleh
+// laporan lengkap (semua akun) dan per akun ("Download Akun Ini").
 // ---------------------------------------------------------------------------
+
+/** Kolom Tanggal/No. Jurnal/Deskripsi/Debit/Kredit (landscape, sesuai lebar halaman A4). */
+function ledgerDetailColumns(): Column[] {
+  const pageW = A4.h;
+  const usable = pageW - MARGIN * 2;
+  const amountW = 95;
+  const dateW = 90;
+  const noW = 130;
+  const descX = MARGIN + dateW + noW;
+  const descW = usable - dateW - noW - amountW * 2;
+  return [
+    { header: "Tanggal", x: MARGIN, width: dateW, align: "left" },
+    { header: "No. Jurnal", x: MARGIN + dateW, width: noW, align: "left" },
+    { header: "Deskripsi", x: descX, width: descW, align: "left" },
+    { header: "Debit", x: descX + descW, width: amountW, align: "right" },
+    { header: "Kredit", x: descX + descW + amountW, width: amountW, align: "right" },
+  ];
+}
 
 export async function renderBukuBesarDetailPdf(
   companyName: string,
@@ -496,20 +529,8 @@ export async function renderBukuBesarDetailPdf(
   accountNameByCode: Map<string, string> = new Map(),
   lastSyncedAt?: string | Date | null,
 ): Promise<Uint8Array> {
-  const pageW = A4.h;
-  const usable = pageW - MARGIN * 2;
-  const amountW = 95;
-  const dateW = 90;
-  const noW = 130;
-  const descX = MARGIN + dateW + noW;
-  const descW = usable - dateW - noW - amountW * 2;
-  const columns: Column[] = [
-    { header: "Tanggal", x: MARGIN, width: dateW, align: "left" },
-    { header: "No. Jurnal", x: MARGIN + dateW, width: noW, align: "left" },
-    { header: "Deskripsi", x: descX, width: descW, align: "left" },
-    { header: "Debit", x: descX + descW, width: amountW, align: "right" },
-    { header: "Kredit", x: descX + descW + amountW, width: amountW, align: "right" },
-  ];
+  const columns = ledgerDetailColumns();
+  const descW = columns[2].width;
   const report = await ReportPdf.create({
     orientation: "landscape",
     companyName,
@@ -544,8 +565,8 @@ export async function renderBukuBesarDetailPdf(
       const descriptionLines = report.wrap(entry.description, descW - 6, 8);
       const rowHeight = Math.max(LINE_HEIGHT - 4, descriptionLines.length * 10 + 3);
       report.moveToRowThenEnsure(rowHeight);
-      report.text(columns[0].x, report.fit(entry.date, dateW - 4, 8), { size: 8 });
-      report.text(columns[1].x, report.fit(entry.transactionNo, noW - 4, 8), { size: 8 });
+      report.text(columns[0].x, report.fit(entry.date, columns[0].width - 4, 8), { size: 8 });
+      report.text(columns[1].x, report.fit(entry.transactionNo, columns[1].width - 4, 8), { size: 8 });
       report.textLines(columns[2].x, descriptionLines, { size: 8, leading: 10 });
       if (!entry.isOpeningBalance && entry.debit) report.textRight(rightOf(columns[3]), formatAccountingID(entry.debit), { size: 8 });
       if (!entry.isOpeningBalance && entry.credit) report.textRight(rightOf(columns[4]), formatAccountingID(entry.credit), { size: 8 });
@@ -561,6 +582,64 @@ export async function renderBukuBesarDetailPdf(
     report.advance();
     report.advance(6);
   }
+
+  return report.finalize();
+}
+
+// ---------------------------------------------------------------------------
+// Buku Besar Detail — SATU akun ("Download Akun Ini", landscape)
+// ---------------------------------------------------------------------------
+
+export async function renderLedgerAccountDetailPdf(
+  companyName: string,
+  period: string,
+  detail: LedgerAccountDetailReport,
+  lastSyncedAt?: string | Date | null,
+): Promise<Uint8Array> {
+  const columns = ledgerDetailColumns();
+  const descW = columns[2].width;
+  const report = await ReportPdf.create({
+    orientation: "landscape",
+    companyName,
+    title: "Buku Besar Detail",
+    periodText: formatPeriodLabelID(period),
+    columns,
+    infoLines: [`Kode Akun: ${detail.code}`, `Nama Akun: ${detail.name}`, `Saldo Awal: ${formatAccountingID(detail.openingBalance)}`],
+    draftLines: draftLinesFor(period, lastSyncedAt),
+  });
+  const rightOf = (col: Column) => col.x + col.width - PDF_REPORT_LAYOUT.rightNumberInset;
+
+  if (!detail.entries.length) {
+    report.moveToRowThenEnsure(LINE_HEIGHT);
+    report.text(report.contentLeft, "Tidak ada transaksi pada periode ini.", { size: 10, color: MUTED });
+    report.advance();
+  }
+
+  for (const entry of detail.entries) {
+    const descriptionLines = report.wrap(entry.description, descW - 6, 8);
+    const rowHeight = Math.max(LINE_HEIGHT - 4, descriptionLines.length * 10 + 3);
+    report.moveToRowThenEnsure(rowHeight);
+    report.text(columns[0].x, report.fit(entry.date, columns[0].width - 4, 8), { size: 8 });
+    report.text(columns[1].x, report.fit(entry.transactionNo, columns[1].width - 4, 8), { size: 8 });
+    report.textLines(columns[2].x, descriptionLines, { size: 8, leading: 10 });
+    if (entry.debit) report.textRight(rightOf(columns[3]), formatAccountingID(entry.debit), { size: 8 });
+    if (entry.credit) report.textRight(rightOf(columns[4]), formatAccountingID(entry.credit), { size: 8 });
+    report.advance(rowHeight);
+  }
+
+  // Total debit/kredit, pergerakan periode, saldo akhir — selalu tampil (baris saldo/total, tidak difilter Fitur 2).
+  report.moveToRowThenEnsure(LINE_HEIGHT * 4);
+  report.ruleAbove();
+  report.text(columns[2].x, "Total", { bold: true, size: 8.5 });
+  report.textRight(rightOf(columns[3]), formatAccountingID(detail.totalDebit), { bold: true, size: 8.5 });
+  report.textRight(rightOf(columns[4]), formatAccountingID(detail.totalCredit), { bold: true, size: 8.5 });
+  report.advance();
+  report.text(columns[2].x, "Pergerakan Periode", { bold: true, size: 8.5 });
+  report.textRight(rightOf(columns[4]), formatAccountingID(detail.movement), { bold: true, size: 8.5 });
+  report.advance();
+  report.text(columns[2].x, "Saldo Akhir", { bold: true, size: 8.5 });
+  report.textRight(rightOf(columns[4]), formatAccountingID(detail.endingBalance), { bold: true, size: 8.5 });
+  report.advance();
 
   return report.finalize();
 }

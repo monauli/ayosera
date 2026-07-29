@@ -14,10 +14,14 @@ import {
   buildLedgerSummaryRows,
   buildProfitLossLines,
   draftReportNotice,
+  filterZeroLedgerSummaryRows,
+  filterZeroStatementLines,
+  formatAccountingID,
   formatPeriodDateRangeEN,
   formatPeriodLabelID,
   type BalanceSheetPayload,
   type CashFlowPayload,
+  type LedgerAccountDetailReport,
   type LedgerEntryInput,
   type LedgerSummaryRow,
   type ProfitLossPayload,
@@ -38,6 +42,20 @@ function fill(argb: string): ExcelJS.FillPattern {
 }
 function topBorder(): Partial<ExcelJS.Borders> {
   return { top: { style: "thin", color: { argb: BLACK } } };
+}
+
+/** Label baris ringkasan (mis. "Total"/"Saldo Akhir") pada sheet Buku Besar per akun. */
+function styleSummaryLabelCell(cell: ExcelJS.Cell) {
+  cell.font = { name: FONT, bold: true, size: 9 };
+  cell.alignment = { horizontal: "right" };
+}
+/** Nilai uang baris ringkasan pada sheet Buku Besar per akun (opsional garis atas untuk baris Total). */
+function styleSummaryMoneyCell(cell: ExcelJS.Cell, value: number, withTopBorder = false) {
+  cell.value = value;
+  cell.numFmt = MONEY_FMT;
+  cell.alignment = { horizontal: "right" };
+  cell.font = { name: FONT, bold: true, size: 9 };
+  if (withTopBorder) cell.border = topBorder();
 }
 function topBottomBorder(): Partial<ExcelJS.Borders> {
   return { top: { style: "thin", color: { argb: BLACK } }, bottom: { style: "double", color: { argb: BLACK } } };
@@ -70,6 +88,7 @@ function titleBlock(
   periodText: string,
   lastCol: number,
   draftLines?: string[],
+  infoLines?: string[],
 ): number {
   const company = sheet.addRow([companyName]);
   company.font = { name: FONT, bold: true, size: 14 };
@@ -94,6 +113,15 @@ function titleBlock(
     draftRow.font = { name: FONT, bold: true, size: 11, color: { argb: DRAFT_RED } };
     draftRow.alignment = { horizontal: "center" };
     sheet.mergeCells(draftRow.number, 1, draftRow.number, lastCol);
+  }
+
+  // Baris info tambahan (mis. Kode Akun/Nama Akun/Saldo Awal untuk Buku Besar
+  // satu akun) — gaya normal, di bawah periode/draftLines.
+  for (const line of infoLines ?? []) {
+    const infoRow = sheet.addRow([line]);
+    infoRow.font = { name: FONT, size: 10.5 };
+    infoRow.alignment = { horizontal: "center" };
+    sheet.mergeCells(infoRow.number, 1, infoRow.number, lastCol);
   }
 
   sheet.addRow([]);
@@ -214,7 +242,7 @@ function renderLedgerSummarySheet(workbook: ExcelJS.Workbook, input: FinancialEx
     cell.alignment = { horizontal: colNumber >= 4 ? "right" : "left" };
   });
 
-  for (const row of buildLedgerSummaryRows(input.ledgerSummary)) {
+  for (const row of filterZeroLedgerSummaryRows(buildLedgerSummaryRows(input.ledgerSummary))) {
     const r = sheet.addRow([row.code, row.name, row.classification]);
     r.font = { name: FONT, size: 10 };
     r.getCell(2).alignment = { wrapText: true, vertical: "top" };
@@ -320,7 +348,7 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     "Laporan Arus Kas",
     formatPeriodDateRangeEN(input.period),
     input.companyName,
-    input.cashFlow ? buildCashFlowLines(input.cashFlow) : [],
+    input.cashFlow ? filterZeroStatementLines(buildCashFlowLines(input.cashFlow)) : [],
     "name-amount",
     draftLines,
   );
@@ -331,7 +359,7 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     "Laporan Laba Rugi",
     periodLabel,
     input.companyName,
-    input.profitLoss ? buildProfitLossLines(input.profitLoss) : [],
+    input.profitLoss ? filterZeroStatementLines(buildProfitLossLines(input.profitLoss)) : [],
     "code-name-amount",
     draftLines,
   );
@@ -342,12 +370,90 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     "Laporan Neraca",
     periodLabel,
     input.companyName,
-    input.balanceSheet ? buildBalanceSheetLines(input.balanceSheet) : [],
+    input.balanceSheet ? filterZeroStatementLines(buildBalanceSheetLines(input.balanceSheet)) : [],
     "code-name-amount",
     draftLines,
   );
 
   renderLedgerDetailSheet(workbook, input, periodLabel, draftLines);
 
+  return workbook;
+}
+
+// ---------------------------------------------------------------------------
+// Buku Besar Detail — SATU akun ("Download Akun Ini", satu sheet)
+// ---------------------------------------------------------------------------
+
+export interface LedgerAccountExcelInput {
+  period: string;
+  companyName: string;
+  detail: LedgerAccountDetailReport;
+  lastSyncedAt?: string | Date | null;
+}
+
+/** Workbook satu sheet "Buku Besar Detail" berisi HANYA satu akun. */
+export function buildLedgerAccountWorkbook(input: LedgerAccountExcelInput): ExcelJS.Workbook {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "AYOSERA";
+  const periodLabel = formatPeriodLabelID(input.period);
+  const notice = draftReportNotice(input.period, input.lastSyncedAt);
+  const draftLines = notice.isDraft ? [notice.label, notice.detail] : undefined;
+  const { detail } = input;
+
+  const sheet = workbook.addWorksheet("Buku Besar Detail");
+  const headerRow = titleBlock(sheet, input.companyName, "Buku Besar Detail", periodLabel, 5, draftLines, [
+    `Kode Akun: ${detail.code}`,
+    `Nama Akun: ${detail.name}`,
+    `Saldo Awal: ${formatAccountingID(detail.openingBalance)}`,
+  ]);
+
+  const header = sheet.addRow(["Tanggal", "No. Jurnal", "Deskripsi", "Debit", "Kredit"]);
+  header.eachCell((cell, colNumber) => {
+    cell.font = { name: FONT, bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+    cell.fill = fill(HEADER_FILL);
+    cell.alignment = { horizontal: colNumber >= 4 ? "right" : "left" };
+  });
+
+  for (const entry of detail.entries) {
+    const r = sheet.addRow([entry.date, entry.transactionNo, entry.description]);
+    r.font = { name: FONT, size: 9 };
+    r.getCell(3).alignment = { wrapText: true, vertical: "top" };
+    const debit = r.getCell(4);
+    const credit = r.getCell(5);
+    if (entry.debit) debit.value = entry.debit;
+    if (entry.credit) credit.value = entry.credit;
+    for (const cell of [debit, credit]) {
+      cell.numFmt = MONEY_FMT;
+      cell.alignment = { horizontal: "right" };
+      cell.font = { name: FONT, size: 9 };
+    }
+  }
+
+  if (!detail.entries.length) {
+    const empty = sheet.addRow(["Tidak ada transaksi pada periode ini."]);
+    empty.getCell(1).font = { name: FONT, italic: true, size: 10 };
+    sheet.mergeCells(empty.number, 1, empty.number, 5);
+  }
+
+  // Total debit/kredit, pergerakan periode, saldo akhir — baris saldo/total, selalu tampil (tidak difilter Fitur 2).
+  const totalRow = sheet.addRow(["", "", "Total"]);
+  styleSummaryLabelCell(totalRow.getCell(3));
+  styleSummaryMoneyCell(totalRow.getCell(4), detail.totalDebit, true);
+  styleSummaryMoneyCell(totalRow.getCell(5), detail.totalCredit, true);
+
+  const movementRow = sheet.addRow(["", "", "Pergerakan Periode"]);
+  styleSummaryLabelCell(movementRow.getCell(3));
+  styleSummaryMoneyCell(movementRow.getCell(5), detail.movement);
+
+  const endingRow = sheet.addRow(["", "", "Saldo Akhir"]);
+  styleSummaryLabelCell(endingRow.getCell(3));
+  styleSummaryMoneyCell(endingRow.getCell(5), detail.endingBalance);
+
+  sheet.getColumn(1).width = 20;
+  sheet.getColumn(2).width = 22;
+  sheet.getColumn(3).width = 56;
+  sheet.getColumn(4).width = 18;
+  sheet.getColumn(5).width = 18;
+  configurePrint(sheet, "E", headerRow);
   return workbook;
 }
