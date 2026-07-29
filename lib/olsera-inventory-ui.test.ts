@@ -94,7 +94,7 @@ test("panel: Hidden Item hanya memengaruhi render, reset pagination, dan tetap r
 test("Hidden Item tidak mengubah endpoint atau jalur export Inventori", () => {
   const panel = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
   const exportModule = readFileSync(new URL("./olsera-inventory-export.ts", import.meta.url), "utf8");
-  assert.ok(panel.includes("/api/olsera/inventory/products?${params.toString()}"));
+  assert.ok(panel.includes("/api/olsera/inventory/monthly?${params.toString()}"));
   assert.ok(panel.includes("/api/olsera/inventory/export?${query}"));
   assert.equal(exportModule.includes("HIDDEN_INVENTORY_CATEGORIES"), false);
   assert.equal(exportModule.includes("visibleInventoryRows"), false);
@@ -174,14 +174,22 @@ test("tabel Riwayat Mutasi mempertahankan kolom penting", () => {
 
 // ---- 6. Tab Konsistensi per-role -----------------------------------------
 
-test("visibleInventoryTabs: user biasa (modul olsera) tetap melihat tab Konsistensi", () => {
+test("visibleInventoryTabs: UI utama hanya menampilkan Stok Bulanan dan Riwayat Mutasi", () => {
   const keys = visibleInventoryTabs(false).map((t) => t.key);
-  assert.deepEqual(keys, ["stock", "movements", "consistency"]);
+  assert.deepEqual(keys, ["stock", "movements"]);
 });
 
-test("visibleInventoryTabs: supervisor melihat tab Konsistensi", () => {
+test("visibleInventoryTabs: supervisor juga tidak melihat tab teknis Konsistensi", () => {
   const keys = visibleInventoryTabs(true).map((t) => t.key);
-  assert.deepEqual(keys, ["stock", "movements", "consistency"]);
+  assert.deepEqual(keys, ["stock", "movements"]);
+});
+
+test("panel: satu periode YYYY-MM menjadi sumber snapshot bulanan dan URL", () => {
+  const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes("inventoryPeriod"));
+  assert.ok(source.includes("/api/olsera/inventory/monthly?${params.toString()}"));
+  assert.ok(source.includes("periodStatus"));
+  assert.ok(source.includes("Snapshot ${period} belum tersedia"));
 });
 
 // ---- 7 & 8. Kontras badge light & dark mode -------------------------------

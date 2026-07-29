@@ -92,14 +92,16 @@ async function redirectToLogin() {
 }
 
 type Summary = {
+  hasData?: boolean;
   totalProducts: number;
-  activeProducts: number;
+  productsWithStock: number;
   outOfStock: number;
   lowStock: number;
   totalStock: number;
   totalValue: number;
   usesDefaultThreshold: boolean;
   defaultThreshold: number;
+  missingCostRows?: number;
 };
 
 type SyncRun = {
@@ -148,14 +150,22 @@ type ProductRow = {
   /** Belum disediakan API Olsera — kolom Gudang otomatis tersembunyi selama kosong. */
   warehouseName?: string | null;
   stockQty: number;
+  closingQty: number | null;
+  openingQty: number | null;
+  incomingQty: number | null;
+  returnQty: number | null;
+  salesQty: number | null;
+  outgoingQty: number | null;
   lowStockAlert: number | null;
   usesDefaultThreshold: boolean;
   status: string;
   buyPrice: number;
-  value: number;
+  value: number | null;
   active: boolean;
   trackInventory: boolean;
   modifiedTime: string | null;
+  snapshotStatus?: "complete" | "boundary-only" | "incomplete";
+  diagnostics?: string[];
 };
 
 type MovementRow = {
@@ -196,6 +206,11 @@ function stockStatusBadge(status: string, trackInventory: boolean) {
   return <Badge className={`rounded-full px-2.5 ${STOCK_STATUS_BADGE_CLASS[label]}`}>{label}</Badge>;
 }
 
+function monthlyStatusBadge(status: string) {
+  if (status === "Butuh Adjust Manual") return <Badge variant="warning" className="rounded-full px-2.5">Butuh Adjust Manual</Badge>;
+  return stockStatusBadge(status, true);
+}
+
 function consistencyBadge(status: string) {
   // Tidak pernah "Cocok" — status hanya menyatakan cakupan data, bukan kebenaran stok fisik.
   if (status === "Perlu Stock Opname") return <Badge variant="warning" className="rounded-full px-2.5">Perlu Stock Opname</Badge>;
@@ -211,6 +226,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const tabs = visibleInventoryTabs(isSupervisor);
 
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [periodStatus, setPeriodStatus] = useState("Snapshot Tidak Tersedia");
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -222,7 +238,12 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [externallyLocked, setExternallyLocked] = useState(false);
   useEffect(() => subscribeOlseraSyncLock(setExternallyLocked), []);
 
-  const [tab, setTab] = useState<"stock" | "movements" | "consistency">("stock");
+  const [tab, setTab] = useState<"stock" | "movements">("stock");
+  const [period, setPeriod] = useState(() => {
+    if (typeof window === "undefined") return today.slice(0, 7);
+    const value = new URLSearchParams(window.location.search).get("inventoryPeriod");
+    return value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : today.slice(0, 7);
+  });
 
   // Stok Saat Ini
   const [stockRows, setStockRows] = useState<ProductRow[]>([]);
@@ -247,11 +268,6 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [movementMeta, setMovementMeta] = useState({ total: 0, totalPages: 1 });
   const [movementLoading, setMovementLoading] = useState(false);
 
-  // Konsistensi
-  const [consistencyRows, setConsistencyRows] = useState<ConsistencyRow[]>([]);
-  const [consistencyNote, setConsistencyNote] = useState("");
-  const [consistencyLoading, setConsistencyLoading] = useState(false);
-
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
   // Dropdown Export kini dirender lewat portal (InventoryExportMenu) —
@@ -261,30 +277,33 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   // Laporan Stock Opname Bulanan — export utama OTOMATIS (bulan+tahun saja,
   // tanpa upload file): Open API Olsera (stockmovement) menggantikan file
   // summary manual. Terpisah dari state export tabel di atas.
-  const [monthlyReportMonth, setMonthlyReportMonth] = useState(today.slice(0, 7));
   const [monthlyReportExporting, setMonthlyReportExporting] = useState(false);
   const [monthlyReportMessage, setMonthlyReportMessage] = useState("");
 
-  // Ringkasan + status
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("inventoryPeriod", period);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    const [year, month] = period.split("-").map(Number);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const end = period === today.slice(0, 7) ? today : `${period}-${String(lastDay).padStart(2, "0")}`;
+    setMovementStart(`${period}-01`);
+    setMovementEnd(end);
+    setMovementPage(1);
+  }, [period, today]);
+
+  // Status sync tetap memakai endpoint status; kartu/tabel bulanan memakai
+  // endpoint snapshot yang sama agar tidak pernah mencampur stok current.
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/olsera/inventory/summary?_t=${Date.now()}`, { cache: "no-store" })
       .then(async (response) => {
-        if (response.status === 401) {
-          await redirectToLogin();
-          return null;
-        }
-        return (await response.json().catch(() => null)) as { summary?: Summary; status?: SyncStatus } | null;
+        if (response.status === 401) { await redirectToLogin(); return null; }
+        return (await response.json().catch(() => null)) as { status?: SyncStatus } | null;
       })
-      .then((payload) => {
-        if (cancelled || !payload) return;
-        if (payload.summary) setSummary(payload.summary);
-        if (payload.status) setSyncStatus(payload.status);
-      })
+      .then((payload) => { if (!cancelled && payload?.status) setSyncStatus(payload.status); })
       .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [refreshTick]);
 
   // Tabel stok
@@ -292,7 +311,11 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
     if (tab !== "stock") return;
     let cancelled = false;
     setStockLoading(true);
+    setStockRows([]);
+    setSummary(null);
+    setPeriodStatus("Memuat snapshot...");
     const params = new URLSearchParams({
+      period,
       page: String(stockPage),
       limit: "50",
       sort: stockSort.key,
@@ -303,14 +326,14 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
     if (stockCategory) params.set("category", stockCategory);
     if (stockStatusFilter) params.set("status", stockStatusFilter);
     const timeout = window.setTimeout(() => {
-      fetch(`/api/olsera/inventory/products?${params.toString()}`, { cache: "no-store" })
+      fetch(`/api/olsera/inventory/monthly?${params.toString()}`, { cache: "no-store" })
         .then(async (response) => {
           if (response.status === 401) {
             await redirectToLogin();
             return null;
           }
           return (await response.json().catch(() => null)) as
-            | { data?: ProductRow[]; total?: number; totalPages?: number; categories?: string[] }
+            | { hasData?: boolean; data?: ProductRow[]; total?: number; totalPages?: number; categories?: string[]; summary?: Summary; syncStatus?: SyncStatus; status?: string }
             | null;
         })
         .then((payload) => {
@@ -318,6 +341,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
           setStockRows(payload.data);
           setStockMeta({ total: payload.total ?? 0, totalPages: payload.totalPages ?? 1 });
           if (payload.categories) setStockCategories(payload.categories);
+          if (payload.summary) setSummary({ ...payload.summary, hasData: payload.hasData });
+          if (payload.syncStatus) setSyncStatus(payload.syncStatus);
+          if (payload.status) setPeriodStatus(payload.status);
         })
         .catch(() => undefined)
         .finally(() => {
@@ -328,7 +354,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [tab, stockSearch, stockCategory, stockStatusFilter, stockSort, stockPage, refreshTick]);
+  }, [tab, period, stockSearch, stockCategory, stockStatusFilter, stockSort, stockPage, refreshTick]);
 
   // Riwayat mutasi
   useEffect(() => {
@@ -371,34 +397,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [tab, movementStart, movementEnd, movementType, movementSearch, movementPage, refreshTick]);
-
-  // Konsistensi — modul "olsera" sudah cukup, tidak lagi dibatasi supervisor.
-  useEffect(() => {
-    if (tab !== "consistency") return;
-    let cancelled = false;
-    setConsistencyLoading(true);
-    fetch(`/api/olsera/inventory/consistency?_t=${Date.now()}`, { cache: "no-store" })
-      .then(async (response) => {
-        if (response.status === 401) {
-          await redirectToLogin();
-          return null;
-        }
-        return (await response.json().catch(() => null)) as { rows?: ConsistencyRow[]; note?: string } | null;
-      })
-      .then((payload) => {
-        if (cancelled || !payload?.rows) return;
-        setConsistencyRows(payload.rows);
-        setConsistencyNote(payload.note ?? "");
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setConsistencyLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, refreshTick]);
+  }, [tab, period, movementStart, movementEnd, movementType, movementSearch, movementPage, refreshTick]);
 
   // Sync bertahap: start lalu step berulang sampai selesai (aman untuk Vercel).
   const handleSync = useCallback(async () => {
@@ -529,7 +528,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   // endpoint terpisah dari /api/olsera/inventory/export (yang dipakai tabel
   // Stok/Mutasi/Konsistensi di atas).
   async function handleExportMonthlyStockOpname() {
-    const [yearStr, monthStr] = monthlyReportMonth.split("-");
+    const [yearStr, monthStr] = period.split("-");
     const year = Number(yearStr);
     const month = Number(monthStr);
     if (!year || !month) {
@@ -556,7 +555,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       const link = document.createElement("a");
       link.href = objectUrl;
       const match = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/);
-      link.download = match?.[1] || `Laporan Stock Opname Bulanan-${monthlyReportMonth}.xlsx`;
+      link.download = match?.[1] || `Laporan Stock Opname Bulanan-${period}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -582,12 +581,11 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const showStockUom = hasAnyMeaningfulValue(stockRows.map((row) => row.uom));
   const showStockWarehouse = hasAnyMeaningfulValue(stockRows.map((row) => row.warehouseName));
   const showMovementSku = hasAnyMeaningfulValue(movementRows.map((row) => row.sku));
-  const showConsistencySku = hasAnyMeaningfulValue(consistencyRows.map((row) => row.sku));
 
   // Kolom tetap tabel Stok (setelah "Terakhir Diperbarui" dihapus): Produk,
   // Varian, Kategori, Outlet, Stok, Stok Minimum, Status, Harga Modal, Nilai.
   const stockColSpan =
-    9 + (showStockSku ? 1 : 0) + (showStockUom ? 1 : 0) + (showStockWarehouse ? 1 : 0);
+    14 + (showStockSku ? 1 : 0) + (showStockUom ? 1 : 0) + (showStockWarehouse ? 1 : 0);
   // Kolom tetap tabel Mutasi (setelah "Catatan" dihapus): Tanggal, Produk,
   // Jenis, Perubahan, Harga Modal, Nilai, Referensi.
   const movementColSpan = 7 + (showMovementSku ? 1 : 0);
@@ -595,12 +593,11 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const summaryCards: { label: string; value: string; accent?: string }[] = summary
     ? [
         { label: "Total Produk", value: String(summary.totalProducts) },
-        { label: "Produk Aktif", value: String(summary.activeProducts) },
+        { label: "Produk dengan Sisa Stok", value: String(summary.productsWithStock) },
         { label: "Stok Habis", value: String(summary.outOfStock), accent: "text-rose-400" },
         { label: "Stok Hampir Habis", value: String(summary.lowStock), accent: "text-amber-300" },
         { label: "Total Stok", value: String(summary.totalStock) },
-        { label: "Total Nilai Persediaan", value: formatRupiah(summary.totalValue) },
-        { label: "Terakhir Sync", value: state?.lastSuccessfulSyncAt ? formatDateTime(state.lastSuccessfulSyncAt) : "-" },
+        { label: "Total Nilai Persediaan", value: summary.totalValue === null ? "Tidak tersedia" : formatRupiah(summary.totalValue) },
       ]
     : [];
 
@@ -724,18 +721,23 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
               <Input
                 type="month"
-                aria-label="Bulan Laporan Stock Opname"
-                value={monthlyReportMonth}
+                aria-label="Periode Inventori"
+                value={period}
                 className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
                 onClick={(event) => event.currentTarget.showPicker?.()}
-                onChange={(event) => setMonthlyReportMonth(event.target.value)}
+                onChange={(event) => setPeriod(event.target.value)}
               />
             </div>
+            <p className="text-xs text-slate-500">Periode aktif: {period} · kartu, tabel, mutasi, dan export bulanan mengikuti periode ini.</p>
+            <p className="mt-2 text-sm font-medium text-slate-300">Status periode: {periodStatus}</p>
+            {periodStatus === "Bulan Berjalan / Belum Final" && (
+              <p className="mt-1 text-xs text-amber-300">Data sementara sampai tanggal sinkron terakhir: {formatDate(state?.lastSyncedDate)}</p>
+            )}
             <Button
               type="button"
               className={PRIMARY_BTN}
               onClick={() => void handleExportMonthlyStockOpname()}
-              disabled={monthlyReportExporting || !monthlyReportMonth}
+              disabled={monthlyReportExporting || !period}
             >
               {monthlyReportExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
               {monthlyReportExporting ? "Membuat Laporan..." : "Export Laporan Stock Opname Bulanan"}
@@ -750,7 +752,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       </section>
 
       {/* Ringkasan */}
-      {summary && (
+      {summary && summary.hasData !== false && (
         <section className="mb-4 grid grid-cols-2 gap-4 md:grid-cols-4">
           {summaryCards.map((card, index) => (
             <div
@@ -769,6 +771,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               Sebagian produk tidak punya minimum stock dari Olsera — threshold default {summary.defaultThreshold} digunakan.
             </p>
           )}
+          <p className="col-span-2 -mt-1 text-xs text-slate-500 md:col-span-4">
+            Sumber: snapshot bulanan · harga modal dari master inventori saat ini karena snapshot historis belum menyimpan unit cost.
+          </p>
         </section>
       )}
 
@@ -793,7 +798,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               exporting={exporting}
               label="Export Teknis"
               items={[
-                { label: "Export Stok Saat Ini", detail: "Mengikuti pencarian & kategori aktif", onClick: handleExportStock },
+                { label: "Export Stok Saat Ini", detail: "Export teknis master/current inventory", onClick: handleExportStock },
                 {
                   label: "Export Riwayat Mutasi",
                   detail: `Periode ${formatDate(movementStart)} - ${formatDate(movementEnd)}`,
@@ -871,7 +876,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                     <option value="aman">Aman</option>
                     <option value="hampir">Hampir Habis</option>
                     <option value="habis">Habis</option>
-                    <option value="nolengkap">Data Tidak Lengkap</option>
+                    <option value="manual">Butuh Adjust Manual</option>
                   </select>
                   <Button
                     type="button"
@@ -901,6 +906,11 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                         {showStockUom && <th className={TH}>Satuan</th>}
                         <th className={TH}>Outlet</th>
                         {showStockWarehouse && <th className={TH}>Gudang</th>}
+                        <th className={`${TH} text-right`}>Stok Awal</th>
+                        <th className={`${TH} text-right`}>Barang Masuk</th>
+                        <th className={`${TH} text-right`}>Retur</th>
+                        <th className={`${TH} text-right`}>Penjualan</th>
+                        <th className={`${TH} text-right`}>Barang Keluar</th>
                         <th className={`${TH} text-right`}>
                           <button
                             type="button"
@@ -912,7 +922,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                             }
                             title="Urutkan stok"
                           >
-                            Stok Saat Ini {stockSort.key === "stock" ? (stockSort.dir === "asc" ? "↑" : "↓") : ""}
+                            Sisa Stok {stockSort.key === "stock" ? (stockSort.dir === "asc" ? "↑" : "↓") : ""}
                           </button>
                         </th>
                         <th className={`${TH} text-right`}>Stok Minimum</th>
@@ -959,24 +969,25 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                             {showStockWarehouse && (
                               <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.warehouseName)}</td>
                             )}
+                            {[row.openingQty, row.incomingQty, row.returnQty, row.salesQty, row.outgoingQty].map((value, index) => (
+                              <td key={index} className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
+                                {value ?? "Tidak tersedia"}
+                              </td>
+                            ))}
                             <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-100">
-                              {row.trackInventory ? row.stockQty : ""}
+                              {row.closingQty ?? "Tidak tersedia"}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
-                              {row.trackInventory ? (
-                                <span title={row.usesDefaultThreshold ? "Threshold default (bukan dari Olsera)" : "Minimum stock Olsera"}>
+                              <span title={row.usesDefaultThreshold ? "Threshold default (bukan dari Olsera)" : "Minimum stock Olsera"}>
                                   {row.lowStockAlert ?? `${summary?.defaultThreshold ?? 5}*`}
                                 </span>
-                              ) : (
-                                ""
-                              )}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5">{stockStatusBadge(row.status, row.trackInventory)}</td>
+                            <td className="whitespace-nowrap px-3 py-2.5">{monthlyStatusBadge(row.status)}</td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
-                              {formatRupiah(row.buyPrice)}
+                              {row.buyPrice === null ? "Tidak tersedia" : formatRupiah(row.buyPrice)}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-100">
-                              {row.trackInventory ? formatRupiah(row.value) : ""}
+                              {row.value === null ? "Tidak tersedia" : formatRupiah(row.value)}
                             </td>
                           </tr>
                         ))
@@ -990,7 +1001,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                               <p className="text-sm text-slate-500">
                                 {stockRows.length && hiddenStockRowCount
                                   ? "Semua hasil pada halaman ini sedang tersembunyi. Aktifkan Hidden Item untuk menampilkannya kembali."
-                                  : "Belum ada data produk. Jalankan Sync Inventori terlebih dahulu."}
+                                  : `Snapshot ${period} belum tersedia. Stok saat ini tidak digunakan sebagai fallback.`}
                               </p>
                             </div>
                           </td>
@@ -1006,31 +1017,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
             {tab === "movements" && (
               <>
                 <div className="mb-4 flex flex-wrap items-center gap-2.5">
-                  <div className={FIELD}>
+                  <div className={`${FIELD} text-sm text-slate-300`}>
                     <CalendarRange className="h-4 w-4 shrink-0 text-slate-400" />
-                    <Input
-                      type="date"
-                      aria-label="Tanggal awal mutasi"
-                      value={movementStart}
-                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
-                      onClick={(event) => event.currentTarget.showPicker?.()}
-                      onChange={(event) => {
-                        setMovementStart(event.target.value);
-                        setMovementPage(1);
-                      }}
-                    />
-                    <span className="text-xs text-slate-400">s/d</span>
-                    <Input
-                      type="date"
-                      aria-label="Tanggal akhir mutasi"
-                      value={movementEnd}
-                      className="h-8 w-[140px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
-                      onClick={(event) => event.currentTarget.showPicker?.()}
-                      onChange={(event) => {
-                        setMovementEnd(event.target.value);
-                        setMovementPage(1);
-                      }}
-                    />
+                    Periode {period} ({formatDate(movementStart)} s/d {formatDate(movementEnd)})
                   </div>
                   <select
                     aria-label="Filter jenis mutasi"
@@ -1061,9 +1050,6 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                       }}
                     />
                   </div>
-                  {movementStart > movementEnd && (
-                    <span className="text-sm text-rose-400">Tanggal akhir tidak boleh sebelum tanggal awal.</span>
-                  )}
                 </div>
                 <div className="overflow-x-auto rounded-xl border border-white/10">
                   <table className="rd-table w-full min-w-[880px] text-sm">
@@ -1134,81 +1120,6 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               </>
             )}
 
-            {tab === "consistency" && (
-              <>
-                {consistencyNote && (
-                  <div className="mb-4 flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-3">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
-                    <p className="text-xs leading-relaxed text-slate-400">{consistencyNote}</p>
-                  </div>
-                )}
-                <div className="overflow-x-auto rounded-xl border border-white/10">
-                  <table className="rd-table w-full min-w-[900px] text-sm">
-                    <thead>
-                      <tr>
-                        {showConsistencySku && <th className={TH}>SKU</th>}
-                        <th className={TH}>Produk</th>
-                        <th className={TH}>Kategori</th>
-                        <th className={`${TH} text-right`}>Snapshot Stok Awal</th>
-                        <th className={`${TH} text-right`}>Penjualan Tercatat</th>
-                        <th className={`${TH} text-right`}>Snapshot Stok Terakhir</th>
-                        <th className={`${TH} text-right`}>Perubahan Snapshot</th>
-                        <th className={TH}>Status Cakupan Data</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {consistencyLoading ? (
-                        <tr>
-                          <td colSpan={showConsistencySku ? 8 : 7} className="px-4 py-10 text-center text-slate-500">
-                            <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
-                            Menghitung konsistensi...
-                          </td>
-                        </tr>
-                      ) : consistencyRows.length ? (
-                        consistencyRows.map((row) => (
-                          <tr
-                            key={row.key}>
-                            {showConsistencySku && (
-                              <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.sku)}</td>
-                            )}
-                            <td className="max-w-[240px] truncate px-3 py-2.5 font-medium text-slate-200" title={row.name}>
-                              {row.name}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.category)}</td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
-                              {row.startSnapshotQty ?? "Tidak tersedia"}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-rose-400">
-                              {row.recordedSales ?? "Tidak tersedia"}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-200">
-                              {row.endSnapshotQty ?? "Tidak tersedia"}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-200">
-                              {row.snapshotChange ?? "Tidak tersedia"}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2.5">{consistencyBadge(row.status)}</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={showConsistencySku ? 8 : 7} className="px-4 py-12 text-center">
-                            <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
-                              <span className="rounded-xl bg-white/5 p-2.5 text-slate-500">
-                                <PackageSearch className="h-5 w-5" />
-                              </span>
-                              <p className="text-sm text-slate-500">
-                                Belum ada data konsistensi. Jalankan Sync Inventori terlebih dahulu.
-                              </p>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
           </div>
         </div>
       </section>

@@ -121,18 +121,15 @@ export const STOCK_STATUS_BADGE_CLASS: Record<StockStatusWithBadge, string> = {
 // Tab
 // ---------------------------------------------------------------------------
 
-export type InventoryTabKey = "stock" | "movements" | "consistency";
+export type InventoryTabKey = "stock" | "movements";
 
 export const INVENTORY_TABS: {
   key: InventoryTabKey;
   label: string;
   supervisorOnly: boolean;
 }[] = [
-  { key: "stock", label: "Stok Saat Ini", supervisorOnly: false },
+  { key: "stock", label: "Stok Bulanan", supervisorOnly: false },
   { key: "movements", label: "Riwayat Mutasi", supervisorOnly: false },
-  // Modul "olsera" adalah satu-satunya syarat — supervisor tidak lagi
-  // dibedakan dari user biasa yang punya modul ini.
-  { key: "consistency", label: "Konsistensi", supervisorOnly: false },
 ];
 
 /** Tab yang boleh dilihat sesuai role existing. */
