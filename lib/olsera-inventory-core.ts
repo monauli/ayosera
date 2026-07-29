@@ -86,6 +86,38 @@ export function planStaleClosure(run: StaleClosureRun): StaleClosurePlan {
   return { status, phase: "done", failedDates, errorMessage: INVENTORY_SYNC_STALE_MESSAGE };
 }
 
+// ---------------------------------------------------------------------------
+// Loop step cron dalam SATU invocation — lihat lib/cron-olsera-inventory.ts.
+// Root cause (audit 2026-07-29, tmp/ai-handoff.md): scheduler eksternal
+// (cron-job.org) memanggil endpoint cron setiap 60 menit, padahal desain lama
+// hanya menjalankan SATU step per invocation (fase produk ATAU satu tanggal
+// mutasi) — fase mutasi tidak pernah sempat berjalan sebelum run dianggap
+// basi (>INVENTORY_SYNC_STALE_MS) oleh invocation berikutnya. Perbaikan: satu
+// invocation memanggil stepInventorySync() berulang sampai selesai/mendekati
+// batas waktu. Logika BERHENTI (bukan proses step itu sendiri, yang tetap di
+// lib/olsera-inventory.ts) murni di sini supaya testable tanpa mock waktu di
+// dalam loop async.
+// ---------------------------------------------------------------------------
+
+export type CronLoopStopReason = "deadline" | "max-iterations";
+
+/**
+ * null bila loop boleh lanjut ke iterasi berikutnya; sebaliknya alasan
+ * berhenti. `maxIterations` adalah perlindungan TAMBAHAN di luar deadline
+ * waktu (mis. bila jam sistem bermasalah) — memastikan loop tidak pernah
+ * berjalan tak terbatas walau deadline gagal terdeteksi.
+ */
+export function shouldStopCronLoop(input: {
+  iterations: number;
+  maxIterations: number;
+  nowMs: number;
+  deadlineMs: number;
+}): CronLoopStopReason | null {
+  if (input.iterations >= input.maxIterations) return "max-iterations";
+  if (input.nowMs >= input.deadlineMs) return "deadline";
+  return null;
+}
+
 export type InventoryProductInput = {
   _id: string;
   productId: number;

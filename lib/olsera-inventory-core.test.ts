@@ -15,6 +15,7 @@ import {
   planMovementReconciliation,
   planStaleClosure,
   selectMovementProduct,
+  shouldStopCronLoop,
   stockStatusFor,
   summarizeInventory,
   toInventoryNumber,
@@ -359,6 +360,41 @@ test("planStaleClosure: fase products tapi sudah ada createdRecords -> tetap dia
     updatedRecords: 0,
   });
   assert.equal(plan.status, "partial");
+});
+
+// --- Loop step cron: shouldStopCronLoop (lib/cron-olsera-inventory.ts) ---
+
+test("shouldStopCronLoop: masih jauh dari deadline & iterasi -> null (lanjut)", () => {
+  const result = shouldStopCronLoop({ iterations: 3, maxIterations: 400, nowMs: 1_000, deadlineMs: 10_000 });
+  assert.equal(result, null);
+});
+
+test("shouldStopCronLoop: nowMs sudah lewat deadlineMs -> 'deadline'", () => {
+  const result = shouldStopCronLoop({ iterations: 3, maxIterations: 400, nowMs: 10_001, deadlineMs: 10_000 });
+  assert.equal(result, "deadline");
+});
+
+test("shouldStopCronLoop: persis di deadlineMs (belum lewat) -> berhenti juga ('deadline'), bukan lanjut", () => {
+  // >= dipakai (bukan >) supaya loop TIDAK PERNAH memulai step baru yang bisa
+  // melewati batas waktu eksekusi — lebih aman condong berhenti lebih awal.
+  const result = shouldStopCronLoop({ iterations: 3, maxIterations: 400, nowMs: 10_000, deadlineMs: 10_000 });
+  assert.equal(result, "deadline");
+});
+
+test("shouldStopCronLoop: iterations sudah mencapai maxIterations -> 'max-iterations', walau deadline masih jauh", () => {
+  const result = shouldStopCronLoop({ iterations: 400, maxIterations: 400, nowMs: 1_000, deadlineMs: 999_999_999 });
+  assert.equal(result, "max-iterations");
+});
+
+test("shouldStopCronLoop: iterations DAN deadline sama-sama terlewati -> 'max-iterations' (dicek lebih dulu)", () => {
+  const result = shouldStopCronLoop({ iterations: 500, maxIterations: 400, nowMs: 999_999, deadlineMs: 1 });
+  assert.equal(result, "max-iterations");
+});
+
+test("shouldStopCronLoop: iterations 0 di bawah maxIterations & nowMs jauh di bawah deadline -> tidak pernah berhenti prematur", () => {
+  for (let i = 0; i < 400; i++) {
+    assert.equal(shouldStopCronLoop({ iterations: i, maxIterations: 400, nowMs: 0, deadlineMs: 1 }), null);
+  }
 });
 
 // --- Movement product mapping: selectMovementProduct & index builders ---

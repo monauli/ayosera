@@ -7,10 +7,13 @@ export const maxDuration = 300;
 
 /**
  * Endpoint cron server-side untuk auto-sync Inventori Olsera, dijadwalkan
- * lewat cron-job.org. Satu panggilan = satu step (checkpoint tersimpan di
- * MongoDB — lib/olsera-inventory.ts), sehingga proses yang belum selesai
- * dilanjutkan oleh panggilan cron berikutnya. Dilindungi distributed lock
- * yang sama dengan cron Penjualan/Keuangan dan tombol sync manual.
+ * lewat cron-job.org (setiap 60 menit). Satu invocation memanggil step
+ * berulang (lib/cron-olsera-inventory.ts) sampai run selesai atau mendekati
+ * maxDuration di bawah — checkpoint tersimpan di MongoDB (lib/olsera-inventory.ts)
+ * sehingga proses yang BENAR-BENAR belum selesai (mis. backlog sangat besar)
+ * tetap aman dilanjutkan oleh invocation cron berikutnya. Dilindungi
+ * distributed lock yang sama dengan cron Penjualan/Keuangan dan tombol sync
+ * manual.
  */
 export async function POST(request: Request) {
   const { status, body } = await runOlseraInventoryCron(request.headers.get("authorization"));
