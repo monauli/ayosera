@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { OlseraSalesByCategoryDocument } from "./mongodb.ts";
+import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 
 /**
  * Generator workbook "Total Keseluruhan Omset" Olsera — matriks kategori x tanggal.
@@ -158,7 +159,7 @@ function buildMatrixSheet(
     const row = ws.getRow(rowIdx);
 
     row.getCell(1).value = idx + 1;
-    row.getCell(2).value = category;
+    row.getCell(2).value = sanitizeExcelCellValue(category);
 
     dates.forEach((date, i) => {
       const cell = row.getCell(firstDateCol + i);

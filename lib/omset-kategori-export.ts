@@ -15,6 +15,7 @@
 // - "Sewa Raket" dipecah subkategori dari nama item
 //   ("SEWA RAKET - RAKET STANDAR" / "SEWA RAKET - RAKET PREMIUM").
 import ExcelJS from "exceljs";
+import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 import { collections, withMongo } from "./mongodb.ts";
 import { getRevenueAmount, isDisplayEligibleTransaction } from "./revenue.ts";
 import { loadResolverContext, resolveStoredItemCategory } from "./olsera-resolver-context.ts";
@@ -326,7 +327,7 @@ export async function buildOmsetKategoriWorkbook(input: OmsetKategoriInput): Pro
   const writeLeaf = (rowNumber: number, label: string, amounts: number[], indent: boolean, no?: number) => {
     if (no !== undefined) ws.getCell(rowNumber, 1).value = no;
     const labelCell = ws.getCell(rowNumber, 2);
-    labelCell.value = label;
+    labelCell.value = sanitizeExcelCellValue(label);
     if (indent) labelCell.alignment = { horizontal: "left", indent: 1 };
     amounts.forEach((amount, i) => {
       const cell = ws.getCell(rowNumber, 3 + i);
@@ -349,7 +350,7 @@ export async function buildOmsetKategoriWorkbook(input: OmsetKategoriInput): Pro
       r++;
     } else {
       ws.getCell(r, 1).value = row.no;
-      ws.getCell(r, 2).value = row.label;
+      ws.getCell(r, 2).value = sanitizeExcelCellValue(row.label);
       r++;
       for (const child of row.children) {
         writeLeaf(r, child.label, child.amounts, true);

@@ -5,6 +5,7 @@
 import ExcelJS from "exceljs";
 import type { OlseraOrderItemDocument } from "./mongodb.ts";
 import { getAccessToken } from "./olsera.ts";
+import { sanitizeExcelCellValue, sanitizeExcelText } from "./excel-sanitization.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
 const HEADER_GRAY = "FFA6A6A6";
@@ -118,10 +119,7 @@ export type OlseraCategoryExportInput = { start: string; end: string; rows: Inpu
 // eksternal (nama produk/kategori/SKU/varian/catatan/dll) — JANGAN PERNAH
 // diterapkan ke angka, Date, atau objek `{ formula, result }` (formula
 // internal aplikasi seperti SUM/pengurangan total harus tetap apa adanya).
-export function escapeExcelFormulaPrefix(value: string): string {
-  if (value.startsWith("'")) return value;
-  return /^[=+\-@]/.test(value) ? `'${value}` : value;
-}
+export const escapeExcelFormulaPrefix = sanitizeExcelText;
 
 // Sanitasi kolom teks (Pelanggan, Nomor Meja, dst): hanya teks bermakna yang
 // lolos. ID numerik murni (mis. "19"), null/undefined, "[object Object]",
@@ -138,7 +136,7 @@ function safeText(value: unknown) {
   }
   const text = String(value).trim();
   if (!text || /^\d+([.,]\d+)?$/.test(text) || ["[object Object]", "undefined", "null", "-"].includes(text)) return "";
-  return escapeExcelFormulaPrefix(text);
+  return sanitizeExcelText(text);
 }
 
 function dateValue(raw: string, fallback: string): Date {
@@ -305,7 +303,7 @@ function writeDateBlock(
     values.forEach((value, columnIndex) => {
       const column = columnIndex + 1;
       const cell = ws.getCell(rowNumber, column);
-      cell.value = value;
+      cell.value = sanitizeExcelCellValue(value);
       cell.font = { name: FONT, size: 10, color: { argb: BLACK } };
       cell.border = thinBorder();
       if (column === 8) {

@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import type { OlseraOrderItemDocument } from "./mongodb.ts";
 import { escapeExcelFormulaPrefix, safeSheetName } from "./olsera-category-export.ts";
+import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
 const DATE_TIME_FMT = "dd-mmm-yyyy\nhh:mm:ss";
@@ -271,7 +272,7 @@ function buildDailySalesSheet(
 
     for (const [column, value] of Object.entries(values)) {
       const cell = ws.getCell(`${column}${rowNumber}`);
-      cell.value = value;
+      cell.value = sanitizeExcelCellValue(value);
       cell.font = { name: "Calibri", size: 10, color: { argb: BLACK } };
       cell.alignment = {
         horizontal: ["H", "I", "K", "L", "M", "O", "P", "Q", "S", "T"].includes(column) ? "right" : "left",

@@ -9,6 +9,7 @@ import {
   DEFAULT_LOW_STOCK_THRESHOLD,
 } from "./olsera-inventory-core.ts";
 import { getInventoryConsistency } from "./olsera-inventory.ts";
+import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
 const HEADER_GRAY = "FFA6A6A6";
@@ -36,9 +37,9 @@ function styleHeaderRow(row: ExcelJS.Row) {
 
 function newSheet(workbook: ExcelJS.Workbook, name: string, title: string, subtitle: string) {
   const sheet = workbook.addWorksheet(name);
-  const titleRow = sheet.addRow([title]);
+  const titleRow = sheet.addRow([sanitizeExcelCellValue(title)]);
   titleRow.font = { name: FONT, bold: true, size: 12 };
-  const subtitleRow = sheet.addRow([subtitle]);
+  const subtitleRow = sheet.addRow([sanitizeExcelCellValue(subtitle)]);
   subtitleRow.font = { name: FONT, size: 10 };
   sheet.addRow([]);
   return sheet;
@@ -86,12 +87,12 @@ export async function buildInventoryStockWorkbook(filter: {
       totalValue += value;
     }
     const row = sheet.addRow([
-      product.sku ?? "-",
-      product.name,
-      product.variantName ?? "-",
-      product.category,
-      product.uom ?? "-",
-      product.storeName ?? "-",
+      sanitizeExcelCellValue(product.sku ?? "-"),
+      sanitizeExcelCellValue(product.name),
+      sanitizeExcelCellValue(product.variantName ?? "-"),
+      sanitizeExcelCellValue(product.category),
+      sanitizeExcelCellValue(product.uom ?? "-"),
+      sanitizeExcelCellValue(product.storeName ?? "-"),
       // API Olsera tidak menyediakan data gudang terpisah dari outlet (endpoint
       // warehouse 404 — lihat scripts/inspect-olsera-inventory.ts): tampilkan
       // apa adanya, jangan diisi nilai reka-reka.
@@ -101,7 +102,7 @@ export async function buildInventoryStockWorkbook(filter: {
       stockStatusFor(product),
       product.buyPrice,
       product.trackInventory ? value : 0,
-      product.modifiedTime ?? "-",
+      sanitizeExcelCellValue(product.modifiedTime ?? "-"),
     ]);
     row.eachCell((cell) => {
       cell.font = { name: FONT, size: 10 };
@@ -154,7 +155,7 @@ export async function buildInventoryMovementWorkbook(filter: {
   const noteRow = sheet.addRow([
     "Data mutasi berasal dari transaksi penjualan Olsera. Histori stok masuk, adjustment, transfer, retur, " +
       "serta saldo sebelum dan sesudah tidak tersedia dari API.",
-  ]);
+  ].map(sanitizeExcelCellValue));
   noteRow.font = { name: FONT, size: 9, italic: true, color: { argb: "FF595959" } };
   sheet.addRow([]);
 
@@ -169,15 +170,15 @@ export async function buildInventoryMovementWorkbook(filter: {
     totalQty += movement.qtyChange;
     totalValue += movement.value ?? 0;
     const row = sheet.addRow([
-      movement.movementAt,
-      movement.sku ?? "-",
-      movement.productName,
-      movement.type,
+      sanitizeExcelCellValue(movement.movementAt),
+      sanitizeExcelCellValue(movement.sku ?? "-"),
+      sanitizeExcelCellValue(movement.productName),
+      sanitizeExcelCellValue(movement.type),
       movement.qtyChange,
       movement.costPrice ?? 0,
       movement.value ?? 0,
-      movement.reference ?? "-",
-      movement.note ?? "",
+      sanitizeExcelCellValue(movement.reference ?? "-"),
+      sanitizeExcelCellValue(movement.note ?? ""),
     ]);
     row.eachCell((cell) => {
       cell.font = { name: FONT, size: 10 };
@@ -222,9 +223,9 @@ export async function buildInventoryConsistencyWorkbook(): Promise<ExcelJS.Workb
   const NA = "Tidak tersedia";
   for (const item of rows) {
     const row = sheet.addRow([
-      item.sku ?? "-",
-      item.name,
-      item.category,
+      sanitizeExcelCellValue(item.sku ?? "-"),
+      sanitizeExcelCellValue(item.name),
+      sanitizeExcelCellValue(item.category),
       item.startSnapshotQty ?? NA,
       item.recordedSales ?? NA,
       item.endSnapshotQty ?? NA,

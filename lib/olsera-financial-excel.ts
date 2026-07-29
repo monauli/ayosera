@@ -7,6 +7,7 @@
 // Angka disimpan sebagai number dengan numFmt akuntansi Indonesia (negatif dalam
 // kurung) supaya bisa dijumlah di Excel dan tetap tampil konsisten.
 import ExcelJS from "exceljs";
+import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 import {
   buildBalanceSheetLines,
   buildCashFlowLines,
@@ -90,17 +91,17 @@ function titleBlock(
   draftLines?: string[],
   infoLines?: string[],
 ): number {
-  const company = sheet.addRow([companyName]);
+  const company = sheet.addRow([sanitizeExcelCellValue(companyName)]);
   company.font = { name: FONT, bold: true, size: 14 };
   company.alignment = { horizontal: "center" };
   sheet.mergeCells(company.number, 1, company.number, lastCol);
 
-  const title = sheet.addRow([reportTitle]);
+  const title = sheet.addRow([sanitizeExcelCellValue(reportTitle)]);
   title.font = { name: FONT, bold: true, size: 12 };
   title.alignment = { horizontal: "center" };
   sheet.mergeCells(title.number, 1, title.number, lastCol);
 
-  const period = sheet.addRow([periodText]);
+  const period = sheet.addRow([sanitizeExcelCellValue(periodText)]);
   period.font = { name: FONT, size: 11 };
   period.alignment = { horizontal: "center" };
   sheet.mergeCells(period.number, 1, period.number, lastCol);
@@ -109,7 +110,7 @@ function titleBlock(
   // berjalan (lihat draftReportNotice di olsera-financial-export-core.ts).
   // Baris laporan bulan lain/lama tidak bertambah dan tidak berubah.
   for (const line of draftLines ?? []) {
-    const draftRow = sheet.addRow([line]);
+    const draftRow = sheet.addRow([sanitizeExcelCellValue(line)]);
     draftRow.font = { name: FONT, bold: true, size: 11, color: { argb: DRAFT_RED } };
     draftRow.alignment = { horizontal: "center" };
     sheet.mergeCells(draftRow.number, 1, draftRow.number, lastCol);
@@ -118,7 +119,7 @@ function titleBlock(
   // Baris info tambahan (mis. Kode Akun/Nama Akun/Saldo Awal untuk Buku Besar
   // satu akun) — gaya normal, di bawah periode/draftLines.
   for (const line of infoLines ?? []) {
-    const infoRow = sheet.addRow([line]);
+    const infoRow = sheet.addRow([sanitizeExcelCellValue(line)]);
     infoRow.font = { name: FONT, size: 10.5 };
     infoRow.alignment = { horizontal: "center" };
     sheet.mergeCells(infoRow.number, 1, infoRow.number, lastCol);
@@ -163,7 +164,7 @@ function renderStatementSheet(
     switch (line.kind) {
       case "section": {
         const cell = row.getCell(1);
-        cell.value = line.label;
+        cell.value = sanitizeExcelCellValue(line.label);
         cell.font = { name: FONT, bold: true, size: 11, color: { argb: "FFFFFFFF" } };
         sheet.mergeCells(row.number, 1, row.number, amountCol);
         row.eachCell((c) => (c.fill = fill(SECTION_FILL)));
@@ -171,20 +172,20 @@ function renderStatementSheet(
       }
       case "group": {
         const cell = row.getCell(1);
-        cell.value = line.label;
+        cell.value = sanitizeExcelCellValue(line.label);
         cell.font = { name: FONT, bold: true, size: 10 };
         sheet.mergeCells(row.number, 1, row.number, amountCol);
         row.eachCell((c) => (c.fill = fill(GROUP_FILL)));
         break;
       }
       case "account": {
-        row.getCell(1).value = line.code ?? "";
+        row.getCell(1).value = sanitizeExcelCellValue(line.code ?? "");
         row.getCell(1).font = { name: FONT, size: 10 };
         if (layout === "code-name-amount") {
-          row.getCell(2).value = line.label;
+          row.getCell(2).value = sanitizeExcelCellValue(line.label);
           row.getCell(2).font = { name: FONT, size: 10 };
         } else {
-          row.getCell(1).value = line.label;
+          row.getCell(1).value = sanitizeExcelCellValue(line.label);
         }
         row.getCell(layout === "code-name-amount" ? 2 : 1).alignment = { wrapText: true, vertical: "top" };
         amountCell.font = { name: FONT, size: 10 };
@@ -193,14 +194,14 @@ function renderStatementSheet(
       case "line": {
         // Baris nilai tanpa kode akun — nama pada kolom pertama non-amount.
         const labelCol = layout === "code-name-amount" ? 2 : 1;
-        row.getCell(labelCol).value = line.label;
+        row.getCell(labelCol).value = sanitizeExcelCellValue(line.label);
         row.getCell(labelCol).font = { name: FONT, size: 10 };
         row.getCell(labelCol).alignment = { wrapText: true, vertical: "top" };
         amountCell.font = { name: FONT, size: 10 };
         break;
       }
       case "subtotal": {
-        row.getCell(1).value = line.label;
+        row.getCell(1).value = sanitizeExcelCellValue(line.label);
         row.getCell(1).font = { name: FONT, bold: true, size: 10 };
         sheet.mergeCells(row.number, 1, row.number, amountCol - 1);
         amountCell.font = { name: FONT, bold: true, size: 10 };
@@ -208,7 +209,7 @@ function renderStatementSheet(
         break;
       }
       case "total": {
-        row.getCell(1).value = line.label;
+        row.getCell(1).value = sanitizeExcelCellValue(line.label);
         row.getCell(1).font = { name: FONT, bold: true, size: 11 };
         sheet.mergeCells(row.number, 1, row.number, amountCol - 1);
         amountCell.font = { name: FONT, bold: true, size: 11 };
@@ -243,7 +244,7 @@ function renderLedgerSummarySheet(workbook: ExcelJS.Workbook, input: FinancialEx
   });
 
   for (const row of filterZeroLedgerSummaryRows(buildLedgerSummaryRows(input.ledgerSummary))) {
-    const r = sheet.addRow([row.code, row.name, row.classification]);
+    const r = sheet.addRow([row.code, row.name, row.classification].map(sanitizeExcelCellValue));
     r.font = { name: FONT, size: 10 };
     r.getCell(2).alignment = { wrapText: true, vertical: "top" };
     r.getCell(3).alignment = { wrapText: true, vertical: "top" };
@@ -284,13 +285,13 @@ function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExc
 
   const groups = buildLedgerDetailGroups(input.ledgerEntries, input.accountNameByCode);
   for (const group of groups) {
-    const accountRow = sheet.addRow([`${group.code} — ${group.name}`]);
+    const accountRow = sheet.addRow([sanitizeExcelCellValue(`${group.code} — ${group.name}`)]);
     accountRow.getCell(1).font = { name: FONT, bold: true, size: 10 };
     sheet.mergeCells(accountRow.number, 1, accountRow.number, 5);
     accountRow.eachCell((c) => (c.fill = fill(GROUP_FILL)));
 
     for (const entry of group.entries) {
-      const r = sheet.addRow([entry.date, entry.transactionNo, entry.description]);
+      const r = sheet.addRow([entry.date, entry.transactionNo, entry.description].map(sanitizeExcelCellValue));
       r.font = { name: FONT, size: 9 };
       r.getCell(3).alignment = { wrapText: true, vertical: "top" };
       const debit = r.getCell(4);
@@ -415,7 +416,7 @@ export function buildLedgerAccountWorkbook(input: LedgerAccountExcelInput): Exce
   });
 
   for (const entry of detail.entries) {
-    const r = sheet.addRow([entry.date, entry.transactionNo, entry.description]);
+    const r = sheet.addRow([entry.date, entry.transactionNo, entry.description].map(sanitizeExcelCellValue));
     r.font = { name: FONT, size: 9 };
     r.getCell(3).alignment = { wrapText: true, vertical: "top" };
     const debit = r.getCell(4);

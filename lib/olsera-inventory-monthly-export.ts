@@ -8,6 +8,7 @@
 // TIDAK menulis apa pun ke MongoDB — murni baca + generate workbook langsung
 // ke response (sesuai instruksi: jangan simpan hasil import ke DB).
 import ExcelJS from "exceljs";
+import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
 import {
   aggregateDailySales,
@@ -489,8 +490,8 @@ export function buildMonthlyInventoryWorkbook(input: {
   let currentRowNumber = 4;
   for (const row of input.rows) {
     const excelRow = sheet.getRow(currentRowNumber);
-    excelRow.getCell(1).value = row.group;
-    excelRow.getCell(2).value = row.name;
+    excelRow.getCell(1).value = sanitizeExcelCellValue(row.group);
+    excelRow.getCell(2).value = sanitizeExcelCellValue(row.name);
     excelRow.getCell(3).value = row.buyPrice || null;
     excelRow.getCell(4).value = row.sellPrice || null;
     // stokAwal/stockAkhirSistem null → sel dibiarkan kosong (bukan 0) — lihat
@@ -512,7 +513,7 @@ export function buildMonthlyInventoryWorkbook(input: {
       // Stock Akhir tidak tersedia (bukan 0) — Selisih tidak bisa dihitung
       // sama sekali untuk baris ini. Teks biasa (bukan formula) supaya SUM()
       // pada baris Total mengabaikannya secara alami (SUM Excel melewati teks).
-      excelRow.getCell(selisihCol).value = "Data Tidak Lengkap";
+      excelRow.getCell(selisihCol).value = sanitizeExcelCellValue("Data Tidak Lengkap");
     } else {
       excelRow.getCell(selisihCol).value = { formula: `IF(${aktualAddr}="","",${aktualAddr}-${stockAkhirAddr})` };
     }
@@ -603,7 +604,7 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
   if (diagnostics.headerErrors.length) {
     const header = sheet.addRow(["Error Struktur Header"]);
     header.font = { name: FONT, bold: true, size: 10 };
-    for (const err of diagnostics.headerErrors) sheet.addRow([err]);
+    for (const err of diagnostics.headerErrors) sheet.addRow([sanitizeExcelCellValue(err)]);
     sheet.addRow([]);
   }
 
@@ -626,7 +627,7 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
     header.font = { name: FONT, bold: true, size: 10 };
     header.fill = fill(HEADER_GRAY);
     for (const item of diagnostics.unmatchedOrAmbiguous) {
-      sheet.addRow([item.group, item.product, item.sku ?? "-", item.method, item.note]);
+      sheet.addRow([item.group, item.product, item.sku ?? "-", item.method, item.note].map(sanitizeExcelCellValue));
     }
     sheet.addRow([]);
   }
@@ -640,7 +641,7 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
     const subHeader = sheet.addRow(["Group", "Produk", "SKU", "Catatan"]);
     subHeader.font = { name: FONT, bold: true, size: 9 };
     for (const item of diagnostics.incompleteStockData) {
-      sheet.addRow([item.group, item.product, item.sku ?? "-", item.note]);
+      sheet.addRow([item.group, item.product, item.sku ?? "-", item.note].map(sanitizeExcelCellValue));
     }
     sheet.addRow([]);
   }
@@ -654,7 +655,7 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
     const subHeader = sheet.addRow(["Group", "Produk", "Sumber", "Nilai", "Catatan"]);
     subHeader.font = { name: FONT, bold: true, size: 9 };
     for (const item of diagnostics.reconstructedStockData) {
-      sheet.addRow([item.group, item.product, item.source, item.value, item.note]);
+      sheet.addRow([item.group, item.product, item.source, item.value, item.note].map(sanitizeExcelCellValue));
     }
     sheet.addRow([]);
   }
@@ -674,7 +675,7 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
         item.storeName ?? "-",
         item.resolution === "merged-into-canonical" ? "Digabung (SKU terbukti sama)" : "Perlu Tinjauan Manual",
         item.note,
-      ]);
+      ].map(sanitizeExcelCellValue));
     }
     sheet.addRow([]);
   }
@@ -688,7 +689,7 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
     const subHeader = sheet.addRow(["Group", "Produk", "Total Penjualan AYOSERA", "Catatan"]);
     subHeader.font = { name: FONT, bold: true, size: 9 };
     for (const item of diagnostics.unexplainedAyoseraSales) {
-      sheet.addRow([item.group, item.product, item.totalPenjualanAyosera, item.note]);
+      sheet.addRow([item.group, item.product, item.totalPenjualanAyosera, item.note].map(sanitizeExcelCellValue));
     }
     sheet.addRow([]);
   }
@@ -698,7 +699,7 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
     header.font = { name: FONT, bold: true, size: 10 };
     header.fill = fill(HEADER_GRAY);
     for (const item of diagnostics.salesMismatch) {
-      sheet.addRow([item.product, item.totalPenjualanAyosera, item.totalPenjualanOlsera, item.diff]);
+      sheet.addRow([item.product, item.totalPenjualanAyosera, item.totalPenjualanOlsera, item.diff].map(sanitizeExcelCellValue));
     }
     sheet.addRow([]);
   }
@@ -708,7 +709,7 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
     header.font = { name: FONT, bold: true, size: 10 };
     header.fill = fill(HEADER_GRAY);
     for (const item of diagnostics.balanceMismatch) {
-      sheet.addRow([item.product, item.stockAkhirSistem, item.balanceOlsera, item.diff]);
+      sheet.addRow([item.product, item.stockAkhirSistem, item.balanceOlsera, item.diff].map(sanitizeExcelCellValue));
     }
     sheet.addRow([]);
   }
@@ -723,8 +724,8 @@ function buildDiagnosticsSheet(workbook: ExcelJS.Workbook, diagnostics: MonthlyI
     if (diagnostics.unsyncedDates?.length) {
       sheet.addRow([
         `${diagnostics.unsyncedDates.length} tanggal pada periode ini BELUM terkonfirmasi tuntas disync — Total Penjualan AYOSERA untuk tanggal berikut berpotensi belum final (bukan salah formula):`,
-      ]);
-      sheet.addRow([diagnostics.unsyncedDates.join(", ")]);
+      ].map(sanitizeExcelCellValue));
+      sheet.addRow([sanitizeExcelCellValue(diagnostics.unsyncedDates.join(", "))]);
     } else {
       sheet.addRow(["Seluruh tanggal pada periode ini sudah terkonfirmasi tuntas disync."]);
     }

@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import type { BookingDocument } from "./mongodb.ts";
 import { getRevenueAmount, isCancelledTransaction, isDisplayEligibleTransaction } from "./revenue.ts";
+import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 
 /**
  * Generator workbook "Omzet Harian" mengikuti template contoh
@@ -224,7 +225,7 @@ function writeDataRow(
   const row = ws.getRow(rowIndex);
   values.forEach((value, i) => {
     const cell = row.getCell(i + 1);
-    cell.value = value;
+    cell.value = sanitizeExcelCellValue(value);
     cell.border = thinBorder();
     if (columns[i].money) cell.numFmt = MONEY_FMT;
     if (columns[i].header.startsWith("Revenue")) cell.fill = solidFill(ORANGE_LIGHT);
@@ -813,7 +814,7 @@ function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     }
     ws.mergeCells(`B${rowIndex}:${colLetter(priceIdx)}${rowIndex}`);
     const labelCell = ws.getCell(`B${rowIndex}`);
-    labelCell.value = label;
+    labelCell.value = sanitizeExcelCellValue(label);
     labelCell.font = { bold: true, size: 10 };
     labelCell.alignment = { horizontal: "right" };
   }
