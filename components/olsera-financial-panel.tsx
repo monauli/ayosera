@@ -34,6 +34,13 @@ import {
   parseSnapshotResponse,
   type FinancialResponseInput,
 } from "@/lib/olsera-financial-response";
+import {
+  clampFinancialPeriod,
+  readPeriodFromSearch,
+  resolveInitialPeriod,
+  shouldApplyPeriodResponse,
+  writePeriodToSearch,
+} from "@/lib/olsera-financial-period-state";
 
 const TITLE = "text-[16px] font-semibold tracking-tight text-slate-50";
 const DESC = "mt-1 text-[13.5px] leading-relaxed text-slate-400";
@@ -82,10 +89,7 @@ function jakartaCurrentPeriod() {
 }
 
 function clampPeriod(period: string) {
-  const max = jakartaCurrentPeriod();
-  if (period < MIN_PERIOD) return MIN_PERIOD;
-  if (period > max) return max;
-  return period;
+  return clampFinancialPeriod(period, MIN_PERIOD, jakartaCurrentPeriod());
 }
 
 async function redirectToLogin() {
@@ -259,8 +263,46 @@ function Pagination({
 }
 
 export function OlseraFinancialPanel() {
-  const [period, setPeriod] = useState(() => clampPeriod(jakartaCurrentPeriod()));
-  const userChangedPeriodRef = useRef(false);
+  // Satu sumber kebenaran period aktif = query string URL (?financialPeriod=YYYY-MM)
+  // — bertahan lintas reload halaman MAUPUN remount komponen (app/page.tsx
+  // melepas panel ini dari tree setiap pindah tab navigasi lalu me-mount
+  // ulang saat kembali, yang sebelumnya mereset period ke default). Lihat
+  // lib/olsera-financial-period-state.ts untuk detail akar bug.
+  const [period, setPeriod] = useState(() =>
+    resolveInitialPeriod({
+      periodFromUrl: typeof window === "undefined" ? null : readPeriodFromSearch(window.location.search),
+      currentPeriod: jakartaCurrentPeriod(),
+      minPeriod: MIN_PERIOD,
+    }),
+  );
+  // Cermin `period` yang selalu terbaru (dibaca di dalam callback fetch,
+  // BUKAN lewat closure `period` yang bisa "beku" ke nilai lama) — dipakai
+  // shouldApplyPeriodResponse untuk menolak response basi (lihat requirement
+  // "response lama tidak boleh menimpa response bulan terbaru").
+  const periodRef = useRef(period);
+  useEffect(() => {
+    periodRef.current = period;
+  }, [period]);
+
+  // Sinkronkan period aktif ke URL setiap berubah (reload mempertahankan
+  // pilihan pengguna) — replaceState supaya tidak membanjiri histori browser.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const newSearch = writePeriodToSearch(window.location.search, period);
+    if (newSearch === window.location.search.replace(/^\?/, "")) return;
+    const url = `${window.location.pathname}?${newSearch}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", url);
+  }, [period]);
+
+  // Dukung tombol back/forward browser mengubah period (URL tetap sumber kebenaran).
+  useEffect(() => {
+    const onPopState = () => {
+      const fromUrl = readPeriodFromSearch(window.location.search);
+      if (fromUrl) setPeriod(clampPeriod(fromUrl));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const [snapshot, setSnapshot] = useState<SnapshotResponse | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
@@ -292,14 +334,23 @@ export function OlseraFinancialPanel() {
   const [downloadError, setDownloadError] = useState("");
 
   // Snapshot MongoDB untuk periode aktif — satu-satunya sumber data laporan.
+  // `requestedPeriod` dikunci dari closure saat request dikirim; setiap kali
+  // response tiba, DIBANDINGKAN ke periodRef.current (period TERKINI, bukan
+  // closure) lewat shouldApplyPeriodResponse — response utk period yang
+  // sudah ditinggalkan pengguna TIDAK PERNAH diterapkan ke state, walau
+  // datang belakangan (mencegah "response lama menimpa bulan terbaru").
+  // TIDAK ADA LAGI sisi-efek yang diam-diam mengganti `period` — bila bulan
+  // yang diminta belum ada datanya, itu ditampilkan lewat snapshot.hasData
+  // (lihat render di bawah), bukan dengan mengganti period aktif.
   useEffect(() => {
+    const requestedPeriod = period;
     let cancelled = false;
     setSnapshotLoading(true);
     setSnapshotError("");
-    fetch(`/api/olsera/financial/snapshot?period=${period}&_t=${Date.now()}`, { cache: "no-store" })
+    fetch(`/api/olsera/financial/snapshot?period=${requestedPeriod}&_t=${Date.now()}`, { cache: "no-store" })
       .then(readResponse)
       .then(async (input) => {
-        if (cancelled) return;
+        if (cancelled || !shouldApplyPeriodResponse(requestedPeriod, periodRef.current)) return;
         const result = parseSnapshotResponse<SnapshotResponse>(input);
         if (result.kind === "unauthorized") {
           if (result.httpStatus === 401) {
@@ -317,19 +368,13 @@ export function OlseraFinancialPanel() {
           setSnapshot(null);
           return;
         }
-        const payload = result.payload;
-        setSnapshot(payload);
-        // Default ke periode terakhir yang berhasil disinkronkan — hanya sebelum
-        // pengguna memilih periode sendiri (lihat requirement #4).
-        if (!userChangedPeriodRef.current && payload.latestSyncedPeriod && payload.latestSyncedPeriod !== period) {
-          setPeriod(payload.latestSyncedPeriod);
-        }
+        setSnapshot(result.payload);
       })
       .catch(() => {
-        if (!cancelled) setSnapshotError("Tidak dapat terhubung ke server.");
+        if (!cancelled && shouldApplyPeriodResponse(requestedPeriod, periodRef.current)) setSnapshotError("Tidak dapat terhubung ke server.");
       })
       .finally(() => {
-        if (!cancelled) setSnapshotLoading(false);
+        if (!cancelled && shouldApplyPeriodResponse(requestedPeriod, periodRef.current)) setSnapshotLoading(false);
       });
     return () => {
       cancelled = true;
@@ -343,16 +388,18 @@ export function OlseraFinancialPanel() {
     return accounts.filter((row) => (row.accountCode ?? "").toLowerCase().includes(q) || (row.accountName ?? "").toLowerCase().includes(q));
   }, [accounts, ledgerSearch]);
 
-  // Buku Besar: baris per akun terpilih, untuk periode aktif.
+  // Buku Besar: baris per akun terpilih, untuk periode aktif. Sama seperti
+  // efek snapshot — response utk period yang sudah ditinggalkan tidak pernah diterapkan.
   useEffect(() => {
     if (tab !== "ledger" || !selectedAccountCode) return;
+    const requestedPeriod = period;
     let cancelled = false;
     setLedgerLoading(true);
-    const params = new URLSearchParams({ period, accountCode: selectedAccountCode, page: String(ledgerPage), limit: "50", _t: String(Date.now()) });
+    const params = new URLSearchParams({ period: requestedPeriod, accountCode: selectedAccountCode, page: String(ledgerPage), limit: "50", _t: String(Date.now()) });
     fetch(`/api/olsera/financial/snapshot/ledger?${params.toString()}`, { cache: "no-store" })
       .then(readResponse)
       .then(async (input) => {
-        if (cancelled) return;
+        if (cancelled || !shouldApplyPeriodResponse(requestedPeriod, periodRef.current)) return;
         const result = parseLedgerResponse<LedgerResponse>(input);
         if (result.kind === "unauthorized" && result.httpStatus === 401) {
           await redirectToLogin();
@@ -367,7 +414,7 @@ export function OlseraFinancialPanel() {
       })
       .catch(() => undefined)
       .finally(() => {
-        if (!cancelled) setLedgerLoading(false);
+        if (!cancelled && shouldApplyPeriodResponse(requestedPeriod, periodRef.current)) setLedgerLoading(false);
       });
     return () => {
       cancelled = true;
@@ -611,7 +658,6 @@ export function OlseraFinancialPanel() {
                 className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
                 onClick={(event) => event.currentTarget.showPicker?.()}
                 onChange={(event) => {
-                  userChangedPeriodRef.current = true;
                   setPeriod(clampPeriod(event.target.value));
                 }}
               />
