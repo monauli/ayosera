@@ -47,6 +47,7 @@ import { TransactionExportMenu } from "@/components/redesign/transaction-export-
 import { OlseraExportMenu } from "@/components/redesign/olsera-export-menu";
 import type { BookingStatusItem } from "@/components/redesign/booking-status-donut";
 import type { MonthlyRevenuePoint, MonthlyRevenueStatus } from "@/components/redesign/annual-revenue-chart";
+import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 type HourlyPoint = { time: string; transactions: number; revenue: number };
 // `revenueValue` sudah dikembalikan API (server men-spread objek asli sebelum
@@ -201,7 +202,6 @@ type SessionUserInfo = {
 };
 
 const THEME_STORAGE_KEY = "ayo-theme";
-const MODE_STORAGE_KEY = "ayo-mode";
 const themeOptions = [
   { value: "white", label: "Putih + Rosé", swatch: "#ffffff", ring: "#FFD8DF" },
   { value: "rose", label: "Rosé", swatch: "#FFD8DF", ring: "#f472b6" },
@@ -522,11 +522,13 @@ export default function DashboardPage() {
   const [syncMode, setSyncMode] = useState<"range" | "month" | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState("white");
-  // Light/Dark Mode — default "light" (sesuai atribut yang sudah di-set skrip
-  // bootstrap blocking di app/layout.tsx sebelum hydration, jadi nilai awal
-  // di sini tidak pernah menyebabkan mismatch: dibaca ulang di useEffect
-  // setelah mount, sama seperti pola `theme` di atas).
-  const [mode, setMode] = useState<"dark" | "light">("light");
+  // Light/Dark Mode — default "light" SENGAJA hardcode (sama persis di server
+  // maupun render klien pertama) supaya tidak ada hydration mismatch; nilai
+  // sesungguhnya dibaca SEKALI dari localStorage di effect mount di bawah,
+  // lalu ditulis balik dari effect YANG SAMA (bukan effect terpisah yang
+  // bergantung pada state `mode` yang belum ter-update) — lihat lib/theme-mode.ts
+  // untuk kronologi akar masalah bug lama (preferensi "dark" tertimpa "light").
+  const [mode, setMode] = useState<ThemeMode>("light");
   const [olseraNavOpen, setOlseraNavOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Dasbor");
   // Kartu "Pendapatan Bulanan" (Jan–Des) — tahun independen dari filter
@@ -638,11 +640,19 @@ export default function DashboardPage() {
   useEffect(() => {
     const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (saved) setTheme(saved);
-    // Sinkronkan state React dengan atribut yang sudah di-set skrip bootstrap
-    // (localStorage → default terang) tanpa menulis
-    // ulang localStorage di sini — mencegah flash & hydration warning.
-    const bootstrapped = document.documentElement.getAttribute("data-mode");
-    if (bootstrapped === "light" || bootstrapped === "dark") setMode(bootstrapped);
+    // Baca DAN terapkan mode dalam effect yang SAMA (bukan dipisah jadi effect
+    // "baca" + effect "tulis" terpisah) — itulah yang dulu menyebabkan bug:
+    // effect penulis sempat jalan dengan `mode` awal ("light") SEBELUM effect
+    // pembaca sempat mengoreksinya, dan di bawah React StrictMode (yang
+    // menjalankan effect mount dua kali di development) koreksi itu tidak
+    // pernah benar-benar "menang". Dengan digabung, setiap kali blok ini
+    // berjalan (termasuk saat StrictMode menjalankannya dua kali) ia selalu
+    // membaca ULANG nilai yang benar dan menuliskannya kembali — tidak pernah
+    // ada state basi yang ikut tertulis.
+    const initialMode = readInitialThemeMode();
+    setMode(initialMode);
+    document.documentElement.setAttribute("data-mode", initialMode);
+    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, initialMode);
     // Sidebar terbuka secara default di desktop, tertutup di mobile.
     setDrawerOpen(window.matchMedia("(min-width: 1024px)").matches);
   }, []);
@@ -651,11 +661,6 @@ export default function DashboardPage() {
     document.documentElement.setAttribute("data-theme", theme);
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-mode", mode);
-    window.localStorage.setItem(MODE_STORAGE_KEY, mode);
-  }, [mode]);
 
   function buildFilterParams(range = { startDate, endDate }) {
     const params = new URLSearchParams();
@@ -2142,7 +2147,14 @@ export default function DashboardPage() {
           actions={ayoSyncControl}
           onLogout={() => void redirectToLogin()}
           mode={mode}
-          onToggleMode={() => setMode((current) => (current === "dark" ? "light" : "dark"))}
+          onToggleMode={() =>
+            setMode((current) => {
+              const next: ThemeMode = current === "dark" ? "light" : "dark";
+              document.documentElement.setAttribute("data-mode", next);
+              window.localStorage.setItem(THEME_MODE_STORAGE_KEY, next);
+              return next;
+            })
+          }
         />
       }
     >

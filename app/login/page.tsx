@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, CheckCircle2, DatabaseZap, Eye, EyeOff, LockKeyhole, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-const MODE_STORAGE_KEY = "ayo-mode";
+import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -15,18 +14,20 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<"dark" | "light">("light");
+  // Default "light" SENGAJA hardcode (sama persis di server maupun render
+  // klien pertama, mencegah hydration mismatch) — nilai sesungguhnya dibaca
+  // dari localStorage di effect mount di bawah (lihat lib/theme-mode.ts).
+  const [mode, setMode] = useState<ThemeMode>("light");
 
   useEffect(() => {
-    const current = document.documentElement.getAttribute("data-mode");
-    if (current === "dark" || current === "light") setMode(current);
+    setMode(readInitialThemeMode());
   }, []);
 
   function toggleMode() {
-    const next = mode === "dark" ? "light" : "dark";
+    const next: ThemeMode = mode === "dark" ? "light" : "dark";
     setMode(next);
     document.documentElement.setAttribute("data-mode", next);
-    window.localStorage.setItem(MODE_STORAGE_KEY, next);
+    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, next);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
