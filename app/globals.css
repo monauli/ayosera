@@ -686,6 +686,11 @@ th[scope],
   color: rgb(136 19 55); /* rose-900 */
   border-color: rgb(253 164 175); /* rose-300 */
 }
+[data-mode="light"] .rd-shell .inv-panel .inv-badge-neutral {
+  background-color: rgb(226 232 240); /* slate-200 */
+  color: rgb(30 41 59); /* slate-800 */
+  border-color: rgb(203 213 225); /* slate-300 */
+}
 /* Dark mode: background transparan lembut + teks terang (pola rd-chip existing). */
 [data-mode="dark"] .rd-shell .inv-panel .inv-badge-ok,
 :root .rd-shell .inv-panel .inv-badge-ok {
@@ -705,6 +710,12 @@ th[scope],
   color: rgb(253 164 175); /* rose-300 */
   border-color: rgb(244 63 94 / 0.4);
 }
+[data-mode="dark"] .rd-shell .inv-panel .inv-badge-neutral,
+:root .rd-shell .inv-panel .inv-badge-neutral {
+  background-color: rgb(148 163 184 / 0.16); /* slate-400/16 */
+  color: rgb(203 213 225); /* slate-300 */
+  border-color: rgb(148 163 184 / 0.4);
+}
 /* Light mode menang atas default :root di atas. */
 [data-mode="light"] .rd-shell .inv-panel .inv-badge-ok {
   background-color: rgb(209 250 229);
@@ -717,6 +728,10 @@ th[scope],
 [data-mode="light"] .rd-shell .inv-panel .inv-badge-danger {
   background-color: rgb(255 228 230);
   color: rgb(136 19 55);
+}
+[data-mode="light"] .rd-shell .inv-panel .inv-badge-neutral {
+  background-color: rgb(226 232 240);
+  color: rgb(30 41 59);
 }
 
 /* --- Angka statistik Stok Habis / Stok Hampir Habis ---

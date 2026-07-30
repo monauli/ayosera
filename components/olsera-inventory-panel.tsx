@@ -22,11 +22,14 @@ import { InventoryExportMenu } from "@/components/redesign/inventory-export-menu
 import { OLSERA_INVENTORY_BASELINE_DATE } from "@/lib/olsera-baseline";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock, subscribeOlseraSyncLock } from "@/lib/olsera-sync-lock";
 import {
-  STOCK_STATUS_BADGE_CLASS,
   displayValue,
+  formatQty,
   hasAnyMeaningfulValue,
   hiddenInventoryRowCount,
-  stockStatusBadgeLabel,
+  periodStatusLabel,
+  productStatusBadges,
+  stockEmptyStateMessage,
+  syncStatusLabel,
   visibleInventoryRows,
   visibleInventoryTabs,
 } from "@/lib/olsera-inventory-ui";
@@ -182,40 +185,28 @@ type MovementRow = {
   note: string | null;
 };
 
-type ConsistencyRow = {
-  key: string;
-  sku: string | null;
-  name: string;
-  category: string;
-  startSnapshotQty: number | null;
-  recordedSales: number | null;
-  endSnapshotQty: number | null;
-  snapshotChange: number | null;
-  status: string;
-};
-
 /**
- * Badge status stok. Mengembalikan null (sel dibiarkan KOSONG) bila stockQty
- * tidak tersedia atau status di luar Aman/Hampir Habis/Habis — badge
- * "Data Tidak Lengkap" sudah dihapus. Perhitungan status di backend tidak
- * diubah; kelas inv-badge-* mengatur kontras light & dark mode.
+ * Badge status produk, urutan prioritas (lihat productStatusBadges):
+ * Produk Nonaktif -> Perlu Penyesuaian Manual (jika data tidak lengkap) ->
+ * status stok biasa (hanya untuk produk aktif). Perhitungan status di
+ * backend tidak diubah; kelas inv-badge-* mengatur kontras light & dark mode.
  */
-function stockStatusBadge(status: string, trackInventory: boolean) {
-  const label = stockStatusBadgeLabel(status, trackInventory);
-  if (!label) return null;
-  return <Badge className={`rounded-full px-2.5 ${STOCK_STATUS_BADGE_CLASS[label]}`}>{label}</Badge>;
-}
-
-function monthlyStatusBadge(status: string) {
-  if (status === "Butuh Adjust Manual") return <Badge variant="warning" className="rounded-full px-2.5">Butuh Adjust Manual</Badge>;
-  return stockStatusBadge(status, true);
-}
-
-function consistencyBadge(status: string) {
-  // Tidak pernah "Cocok" — status hanya menyatakan cakupan data, bukan kebenaran stok fisik.
-  if (status === "Perlu Stock Opname") return <Badge variant="warning" className="rounded-full px-2.5">Perlu Stock Opname</Badge>;
-  if (status === "Snapshot Tersedia") return <Badge variant="info" className="rounded-full px-2.5">Snapshot Tersedia</Badge>;
-  return <Badge variant="secondary" className="rounded-full px-2.5">{status}</Badge>;
+function renderProductStatusBadges(row: {
+  active: boolean;
+  status: string;
+  snapshotStatus?: "complete" | "boundary-only" | "incomplete";
+}) {
+  const badges = productStatusBadges({ ...row, trackInventory: true });
+  if (!badges.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {badges.map((badge) => (
+        <Badge key={badge.label} className={`rounded-full px-2.5 ${badge.className}`}>
+          {badge.label}
+        </Badge>
+      ))}
+    </div>
+  );
 }
 
 export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: boolean }) {
@@ -256,6 +247,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [showHiddenItems, setShowHiddenItems] = useState(false);
   const [stockMeta, setStockMeta] = useState({ total: 0, totalPages: 1 });
   const [stockLoading, setStockLoading] = useState(false);
+  const [stockError, setStockError] = useState(false);
+  const [stockHasData, setStockHasData] = useState<boolean | null>(null);
+  const [stockReloadTick, setStockReloadTick] = useState(0);
 
   // Riwayat Mutasi
   const [movementRows, setMovementRows] = useState<MovementRow[]>([]);
@@ -267,6 +261,8 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [movementPage, setMovementPage] = useState(1);
   const [movementMeta, setMovementMeta] = useState({ total: 0, totalPages: 1 });
   const [movementLoading, setMovementLoading] = useState(false);
+  const [movementError, setMovementError] = useState(false);
+  const [movementReloadTick, setMovementReloadTick] = useState(0);
 
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
@@ -306,14 +302,18 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
     return () => { cancelled = true; };
   }, [refreshTick]);
 
-  // Tabel stok
+  // Tabel stok. Sengaja TIDAK digerbang oleh tab — kartu Laporan Stock Opname
+  // Bulanan dan Ringkasan (di luar blok tab) memakai state yang sama, jadi
+  // status periode & tombol export harus tetap segar walau user sedang di
+  // tab Riwayat Mutasi saat mengganti periode.
   useEffect(() => {
-    if (tab !== "stock") return;
     let cancelled = false;
     setStockLoading(true);
+    setStockError(false);
     setStockRows([]);
+    setStockHasData(null);
     setSummary(null);
-    setPeriodStatus("Memuat snapshot...");
+    setPeriodStatus("Memuat status periode...");
     const params = new URLSearchParams({
       period,
       page: String(stockPage),
@@ -337,15 +337,22 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
             | null;
         })
         .then((payload) => {
-          if (cancelled || !payload?.data) return;
+          if (cancelled) return;
+          if (!payload?.data) {
+            setStockError(true);
+            return;
+          }
           setStockRows(payload.data);
+          setStockHasData(payload.hasData ?? null);
           setStockMeta({ total: payload.total ?? 0, totalPages: payload.totalPages ?? 1 });
           if (payload.categories) setStockCategories(payload.categories);
           if (payload.summary) setSummary({ ...payload.summary, hasData: payload.hasData });
           if (payload.syncStatus) setSyncStatus(payload.syncStatus);
           if (payload.status) setPeriodStatus(payload.status);
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (!cancelled) setStockError(true);
+        })
         .finally(() => {
           if (!cancelled) setStockLoading(false);
         });
@@ -354,7 +361,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [tab, period, stockSearch, stockCategory, stockStatusFilter, stockSort, stockPage, refreshTick]);
+  }, [tab, period, stockSearch, stockCategory, stockStatusFilter, stockSort, stockPage, refreshTick, stockReloadTick]);
 
   // Riwayat mutasi
   useEffect(() => {
@@ -362,6 +369,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
     if (movementStart > movementEnd) return;
     let cancelled = false;
     setMovementLoading(true);
+    setMovementError(false);
     const params = new URLSearchParams({
       start_date: movementStart,
       end_date: movementEnd,
@@ -383,12 +391,18 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
             | null;
         })
         .then((payload) => {
-          if (cancelled || !payload?.data) return;
+          if (cancelled) return;
+          if (!payload?.data) {
+            setMovementError(true);
+            return;
+          }
           setMovementRows(payload.data);
           setMovementMeta({ total: payload.total ?? 0, totalPages: payload.totalPages ?? 1 });
           if (payload.types) setMovementTypes(payload.types);
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (!cancelled) setMovementError(true);
+        })
         .finally(() => {
           if (!cancelled) setMovementLoading(false);
         });
@@ -397,7 +411,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [tab, period, movementStart, movementEnd, movementType, movementSearch, movementPage, refreshTick]);
+  }, [tab, period, movementStart, movementEnd, movementType, movementSearch, movementPage, refreshTick, movementReloadTick]);
 
   // Sync bertahap: start lalu step berulang sampai selesai (aman untuk Vercel).
   const handleSync = useCallback(async () => {
@@ -424,7 +438,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       let lastRun: SyncRun = startPayload.run;
       for (;;) {
         if (lastRun.phase === "products") {
-          setSyncMessage("Menarik katalog produk dan snapshot stok...");
+          setSyncMessage("Menarik katalog produk dan data stok...");
         } else {
           setSyncMessage(
             `Memproses ${Math.min(lastRun.processedDays + 1, lastRun.totalDays)} dari ${lastRun.totalDays} hari` +
@@ -582,10 +596,11 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const showStockWarehouse = hasAnyMeaningfulValue(stockRows.map((row) => row.warehouseName));
   const showMovementSku = hasAnyMeaningfulValue(movementRows.map((row) => row.sku));
 
-  // Kolom tetap tabel Stok (setelah "Terakhir Diperbarui" dihapus): Produk,
-  // Varian, Kategori, Outlet, Stok, Stok Minimum, Status, Harga Modal, Nilai.
+  // Kolom tetap tabel Stok (setelah "Terakhir Diperbarui" dan "Outlet"
+  // dihapus): Produk, Varian, Kategori, Stok, Stok Minimum, Status, Harga
+  // Modal, Nilai.
   const stockColSpan =
-    14 + (showStockSku ? 1 : 0) + (showStockUom ? 1 : 0) + (showStockWarehouse ? 1 : 0);
+    13 + (showStockSku ? 1 : 0) + (showStockUom ? 1 : 0) + (showStockWarehouse ? 1 : 0);
   // Kolom tetap tabel Mutasi (setelah "Catatan" dihapus): Tanggal, Produk,
   // Jenis, Perubahan, Harga Modal, Nilai, Referensi.
   const movementColSpan = 7 + (showMovementSku ? 1 : 0);
@@ -601,12 +616,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       ]
     : [];
 
-  // Cakupan data — baseline, riwayat penjualan, dan snapshot stok TIDAK sama;
-  // ditampilkan terpisah supaya tidak membingungkan (lihat CLAUDE.md finalisasi Inventori).
   const coverageRows: { label: string; value: string }[] = [
-    { label: "Baseline yang diminta", value: formatDate(BASELINE_DATE) },
-    { label: "Riwayat penjualan tersedia sejak", value: formatDate(state?.earliestSalesDate) },
-    { label: "Snapshot stok tersedia sejak", value: formatDate(state?.earliestSnapshotDate) },
     { label: "Terakhir sync", value: state?.lastSuccessfulSyncAt ? formatDateTime(state.lastSuccessfulSyncAt) : "-" },
     { label: "Histori mutasi stok lengkap", value: "Tidak tersedia dari API Olsera" },
   ];
@@ -641,22 +651,22 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               run?.isStale && !syncing ? (
                 <span className="rd-chip rd-chip-danger">
                   <AlertTriangle className="h-3 w-3" />
-                  Stale
+                  {syncStatusLabel("stale")}
                 </span>
               ) : (
                 <span className="rd-chip">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  Running
+                  {syncStatusLabel("running")}
                 </span>
               )
             ) : run?.status === "success" ? (
-              <span className="rd-chip rd-chip-ok">Success</span>
+              <span className="rd-chip rd-chip-ok">{syncStatusLabel("success")}</span>
             ) : run?.status === "partial" ? (
-              <span className="rd-chip border-amber-400/40 bg-amber-400/10 text-amber-300">Partial</span>
+              <span className="rd-chip border-amber-400/40 bg-amber-400/10 text-amber-300">{syncStatusLabel("partial")}</span>
             ) : run?.status === "failed" ? (
-              <span className="rd-chip rd-chip-danger">Failed</span>
+              <span className="rd-chip rd-chip-danger">{syncStatusLabel("failed")}</span>
             ) : (
-              <span className="rd-chip">Idle</span>
+              <span className="rd-chip">{syncStatusLabel("idle")}</span>
             )}
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -665,7 +675,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               {syncing ? "Menyinkronkan Inventori..." : "Sync Inventori"}
             </Button>
             <span className="text-xs text-slate-500">
-              Baseline {formatDate(BASELINE_DATE)} — sync berikutnya melanjutkan otomatis dari checkpoint.
+              Sync berikutnya melanjutkan otomatis dari data terakhir.
             </span>
           </div>
           {externallyLocked && !syncing ? (
@@ -729,7 +739,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               />
             </div>
             <p className="text-xs text-slate-500">Periode aktif: {period} · kartu, tabel, mutasi, dan export bulanan mengikuti periode ini.</p>
-            <p className="mt-2 text-sm font-medium text-slate-300">Status periode: {periodStatus}</p>
+            <p className="mt-2 text-sm font-medium text-slate-300">Status periode: {periodStatusLabel(periodStatus)}</p>
             {periodStatus === "Bulan Berjalan / Belum Final" && (
               <p className="mt-1 text-xs text-amber-300">Data sementara sampai tanggal sinkron terakhir: {formatDate(state?.lastSyncedDate)}</p>
             )}
@@ -737,11 +747,14 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               type="button"
               className={PRIMARY_BTN}
               onClick={() => void handleExportMonthlyStockOpname()}
-              disabled={monthlyReportExporting || !period}
+              disabled={monthlyReportExporting || !period || stockHasData === false}
             >
               {monthlyReportExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
               {monthlyReportExporting ? "Membuat Laporan..." : "Export Laporan Stock Opname Bulanan"}
             </Button>
+            {stockHasData === false && (
+              <p className="text-xs text-slate-500">Data periode ini belum tersedia.</p>
+            )}
           </div>
           {monthlyReportMessage && (
             <p className="mt-3 text-sm text-slate-300" aria-live="polite">
@@ -771,9 +784,6 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               Sebagian produk tidak punya minimum stock dari Olsera — threshold default {summary.defaultThreshold} digunakan.
             </p>
           )}
-          <p className="col-span-2 -mt-1 text-xs text-slate-500 md:col-span-4">
-            Sumber: snapshot bulanan · harga modal dari master inventori saat ini karena snapshot historis belum menyimpan unit cost.
-          </p>
         </section>
       )}
 
@@ -882,7 +892,6 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                     type="button"
                     variant={showHiddenItems ? "secondary" : "outline"}
                     aria-pressed={showHiddenItems}
-                    title="Item tersembunyi tetap tersimpan dan tetap digunakan oleh laporan serta export."
                     className={showHiddenItems ? "border border-rose-400/40 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25" : PAGE_BTN}
                     onClick={() => {
                       setShowHiddenItems((current) => !current);
@@ -893,7 +902,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                   </Button>
                 </div>
                 <p className="-mt-1 mb-4 text-xs leading-relaxed text-slate-500">
-                  Item tersembunyi tetap tersimpan dan tetap digunakan oleh laporan serta export.
+                  Item tersembunyi tetap ikut dihitung di laporan dan export.
                 </p>
                 <div className="overflow-x-auto rounded-xl border border-white/10">
                   <table className="rd-table w-full min-w-[980px] text-sm">
@@ -904,7 +913,6 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                         <th className={TH}>Varian</th>
                         <th className={TH}>Kategori</th>
                         {showStockUom && <th className={TH}>Satuan</th>}
-                        <th className={TH}>Outlet</th>
                         {showStockWarehouse && <th className={TH}>Gudang</th>}
                         <th className={`${TH} text-right`}>Stok Awal</th>
                         <th className={`${TH} text-right`}>Barang Masuk</th>
@@ -952,6 +960,22 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                             Memuat stok...
                           </td>
                         </tr>
+                      ) : stockError ? (
+                        <tr>
+                          <td colSpan={stockColSpan} className="px-4 py-12 text-center">
+                            <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
+                              <p className="text-sm text-slate-300">Gagal memuat data. Silakan coba lagi.</p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className={PAGE_BTN}
+                                onClick={() => setStockReloadTick((value) => value + 1)}
+                              >
+                                Coba Lagi
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
                       ) : visibleStockRows.length ? (
                         visibleStockRows.map((row) => (
                           <tr
@@ -965,24 +989,25 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                             <td className="max-w-[120px] truncate px-3 py-2.5 text-slate-500">{displayValue(row.variantName)}</td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.category)}</td>
                             {showStockUom && <td className="px-3 py-2.5 text-slate-500">{displayValue(row.uom)}</td>}
-                            <td className="max-w-[130px] truncate px-3 py-2.5 text-slate-500">{displayValue(row.storeName)}</td>
                             {showStockWarehouse && (
                               <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.warehouseName)}</td>
                             )}
                             {[row.openingQty, row.incomingQty, row.returnQty, row.salesQty, row.outgoingQty].map((value, index) => (
                               <td key={index} className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
-                                {value ?? "Tidak tersedia"}
+                                {formatQty(value)}
                               </td>
                             ))}
                             <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-100">
-                              {row.closingQty ?? "Tidak tersedia"}
+                              {formatQty(row.closingQty)}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
                               <span title={row.usesDefaultThreshold ? "Threshold default (bukan dari Olsera)" : "Minimum stock Olsera"}>
                                   {row.lowStockAlert ?? `${summary?.defaultThreshold ?? 5}*`}
                                 </span>
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5">{monthlyStatusBadge(row.status)}</td>
+                            <td className="whitespace-nowrap px-3 py-2.5">
+                              {renderProductStatusBadges({ active: row.active, status: row.status, snapshotStatus: row.snapshotStatus })}
+                            </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-500">
                               {row.buyPrice === null ? "Tidak tersedia" : formatRupiah(row.buyPrice)}
                             </td>
@@ -999,9 +1024,11 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                                 <PackageSearch className="h-5 w-5" />
                               </span>
                               <p className="text-sm text-slate-500">
-                                {stockRows.length && hiddenStockRowCount
-                                  ? "Semua hasil pada halaman ini sedang tersembunyi. Aktifkan Hidden Item untuk menampilkannya kembali."
-                                  : `Snapshot ${period} belum tersedia. Stok saat ini tidak digunakan sebagai fallback.`}
+                                {stockEmptyStateMessage({
+                                  totalRows: stockRows.length,
+                                  visibleRows: visibleStockRows.length,
+                                  hasData: stockHasData,
+                                })}
                               </p>
                             </div>
                           </td>
@@ -1071,6 +1098,22 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                           <td colSpan={movementColSpan} className="px-4 py-10 text-center text-slate-500">
                             <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
                             Memuat mutasi...
+                          </td>
+                        </tr>
+                      ) : movementError ? (
+                        <tr>
+                          <td colSpan={movementColSpan} className="px-4 py-12 text-center">
+                            <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
+                              <p className="text-sm text-slate-300">Gagal memuat data. Silakan coba lagi.</p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className={PAGE_BTN}
+                                onClick={() => setMovementReloadTick((value) => value + 1)}
+                              >
+                                Coba Lagi
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ) : movementRows.length ? (

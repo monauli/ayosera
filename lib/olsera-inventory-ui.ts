@@ -118,6 +118,96 @@ export const STOCK_STATUS_BADGE_CLASS: Record<StockStatusWithBadge, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Status produk (Nonaktif / Perlu Penyesuaian Manual / status stok biasa)
+// ---------------------------------------------------------------------------
+
+export type ProductStatusBadge = { label: string; className: string };
+
+/**
+ * Badge status produk, urutan prioritas:
+ * 1. Produk Nonaktif (product.active === false) — selalu badge utama,
+ *    TIDAK PERNAH ditampilkan bersama status stok (Aman/Hampir Habis/Habis)
+ *    supaya produk nonaktif tidak terlihat seolah perlu restock.
+ * 2. Perlu Penyesuaian Manual — tambahan HANYA bila produk nonaktif dan
+ *    datanya tidak lengkap (snapshotStatus backend "boundary-only"/
+ *    "incomplete"; istilah tsb tidak pernah dirender ke user).
+ * 3. Status stok biasa (Aman/Hampir Habis/Habis/Butuh Adjust Manual) — HANYA
+ *    untuk produk aktif. Perhitungan status di backend tidak diubah.
+ */
+export function productStatusBadges(row: {
+  active: boolean;
+  status: string;
+  trackInventory: boolean;
+  snapshotStatus?: "complete" | "boundary-only" | "incomplete";
+}): ProductStatusBadge[] {
+  if (!row.active) {
+    const badges: ProductStatusBadge[] = [{ label: "Produk Nonaktif", className: "inv-badge inv-badge-neutral" }];
+    if (row.snapshotStatus === "boundary-only" || row.snapshotStatus === "incomplete") {
+      badges.push({ label: "Perlu Penyesuaian Manual", className: "inv-badge inv-badge-warning" });
+    }
+    return badges;
+  }
+  if (row.status === "Butuh Adjust Manual") {
+    return [{ label: "Butuh Adjust Manual", className: "inv-badge inv-badge-warning" }];
+  }
+  const label = stockStatusBadgeLabel(row.status, row.trackInventory);
+  return label ? [{ label, className: STOCK_STATUS_BADGE_CLASS[label] }] : [];
+}
+
+// ---------------------------------------------------------------------------
+// Nilai angka null vs 0 (tanda "—" untuk null, 0 asli tetap "0")
+// ---------------------------------------------------------------------------
+
+/** Angka null/undefined -> "—" (bukan 0, bukan "Tidak tersedia"). Nilai 0 asli tetap "0". */
+export function formatQty(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : String(value);
+}
+
+// ---------------------------------------------------------------------------
+// Status sync — label Indonesia (nilai backend TIDAK diubah)
+// ---------------------------------------------------------------------------
+
+export const SYNC_STATUS_LABEL = {
+  stale: "Perlu Sync",
+  running: "Berjalan",
+  success: "Berhasil",
+  partial: "Sebagian",
+  failed: "Gagal",
+  idle: "Menunggu",
+} as const;
+
+export type SyncStatusKey = keyof typeof SYNC_STATUS_LABEL;
+
+export function syncStatusLabel(key: SyncStatusKey): string {
+  return SYNC_STATUS_LABEL[key];
+}
+
+// ---------------------------------------------------------------------------
+// Status periode — label sederhana untuk user (nilai internal TIDAK diubah,
+// masih dipakai untuk perbandingan logika seperti sebelumnya)
+// ---------------------------------------------------------------------------
+
+export function periodStatusLabel(status: string): string {
+  if (status === "Snapshot Tidak Tersedia") return "Data Bulan Ini Belum Tersedia";
+  return status;
+}
+
+// ---------------------------------------------------------------------------
+// Empty state tabel Stok Bulanan — bedakan periode belum tersedia / filter
+// kosong / semua item disembunyikan
+// ---------------------------------------------------------------------------
+
+export function stockEmptyStateMessage(input: {
+  totalRows: number;
+  visibleRows: number;
+  hasData: boolean | null;
+}): string {
+  if (input.totalRows > 0 && input.visibleRows === 0) return "Tidak ada produk yang ditampilkan.";
+  if (input.hasData === false) return "Data inventori untuk periode ini belum tersedia.";
+  return "Tidak ada produk yang sesuai dengan filter.";
+}
+
+// ---------------------------------------------------------------------------
 // Tab
 // ---------------------------------------------------------------------------
 
@@ -141,7 +231,7 @@ export function visibleInventoryTabs(isSupervisor: boolean) {
 // Kolom tabel — daftar kolom yang SUDAH DIHAPUS dari UI (data tetap tersimpan)
 // ---------------------------------------------------------------------------
 
-/** Kolom yang dihapus dari tabel Stok Saat Ini (timestamp tetap ada di DB). */
-export const REMOVED_STOCK_COLUMNS = ["Terakhir Diperbarui"] as const;
+/** Kolom yang dihapus dari tabel Stok Saat Ini (field tetap ada di DB/export). */
+export const REMOVED_STOCK_COLUMNS = ["Terakhir Diperbarui", "Outlet"] as const;
 /** Kolom yang dihapus dari tabel Riwayat Mutasi (catatan tetap ada di DB). */
 export const REMOVED_MOVEMENT_COLUMNS = ["Catatan"] as const;
