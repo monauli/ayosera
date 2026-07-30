@@ -468,20 +468,31 @@ function getRevenueCardTitle(preset: DatePreset, startDate: string, endDate: str
 // Tanpa sign-out, cookie kedaluwarsa tetap tersisa dan bikin pengalaman membingungkan.
 let redirectToLoginPromise: Promise<void> | null = null;
 
+// Cookie sesi bertanda httpOnly — hanya server yang bisa benar-benar menghapusnya,
+// jadi kegagalan sign-out tidak bisa "diperbaiki" murni di klien. Coba dua kali
+// (jaringan/API kadang gagal sesaat) dan jangan pura-pura berhasil bila keduanya
+// gagal — dicatat (tanpa membocorkan detail auth) supaya kegagalan tidak senyap.
+async function attemptSignOut(): Promise<boolean> {
+  try {
+    const response = await fetch("/api/auth/sign-out", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 function redirectToLogin() {
   if (redirectToLoginPromise) return redirectToLoginPromise;
   redirectToLoginPromise = (async () => {
-    try {
-      await fetch("/api/auth/sign-out", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-    } catch {
-      // abaikan — tetap arahkan ke login apa pun hasilnya
-    } finally {
-      window.location.href = "/login";
+    const success = (await attemptSignOut()) || (await attemptSignOut());
+    if (!success) {
+      console.error("Sign-out gagal setelah 2 percobaan; sesi server mungkin masih aktif.");
     }
+    window.location.href = "/login";
   })();
   return redirectToLoginPromise;
 }

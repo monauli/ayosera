@@ -4,6 +4,7 @@ import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { nextCookies } from "better-auth/next-js";
 import { getDb, getMongoDb, mongoClient } from "@/lib/mongodb";
+import { describeAuthBaseURLIssue } from "@/lib/auth-base-url";
 
 // Hanya akun ini yang boleh memiliki hak supervisor.
 export const SUPERVISOR_EMAIL = "timunemas@ayo.local";
@@ -40,13 +41,28 @@ export type SessionUser = {
   allowedModules: AppModule[];
 };
 
+// Better Auth menurunkan trustedOrigins (proteksi CSRF/origin) DAN flag cookie
+// `Secure` langsung dari string baseURL ini — kalau nilainya tanpa skema (mis.
+// "ayosera.vercel.app" tanpa "https://") atau typo, origin request yang sah dari
+// domain production sendiri akan ditolak (403 "Invalid origin") secara diam-diam,
+// persis penyebab bug logout 403 yang pernah terjadi. Deteksi ini SEKALI di sini
+// (bukan crash startup — env yang salah tidak boleh menjatuhkan seluruh app)
+// supaya kesalahan konfigurasi env langsung terlihat di log, bukan baru ketahuan
+// lewat gejala 403 yang membingungkan di endpoint lain.
+const rawAuthBaseURL = process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL;
+
+const authBaseURLIssue = describeAuthBaseURLIssue(rawAuthBaseURL);
+if (authBaseURLIssue) {
+  console.error(`[auth] ${authBaseURLIssue}`);
+}
+
 export const auth = betterAuth({
   database: mongodbAdapter(getMongoDb(), {
     client: mongoClient,
     transaction: false,
   }),
   secret: process.env.BETTER_AUTH_SECRET || process.env.JWT_SECRET || "local-dev-secret-change-before-production-please-32chars",
-  baseURL: process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL,
+  baseURL: rawAuthBaseURL,
   emailAndPassword: {
     enabled: true,
     autoSignIn: false,
