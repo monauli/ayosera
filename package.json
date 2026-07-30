@@ -27,7 +27,7 @@
     "test:olsera-addon": "node --no-warnings --experimental-strip-types --test lib/olsera-addon.test.ts",
     "test:olsera-export-addon": "node --no-warnings --experimental-strip-types --test lib/olsera-export-addon.test.ts",
     "test:olsera-sync-orchestrator": "node --no-warnings --experimental-strip-types --test lib/olsera-sync-orchestrator.test.ts",
-    "test:olsera-export-formula-safety": "node --no-warnings --experimental-strip-types --test lib/olsera-category-export.test.ts lib/olsera-item-export.test.ts",
+    "test:olsera-export-formula-safety": "node --no-warnings --experimental-strip-types --test lib/olsera-category-export.test.ts lib/olsera-item-export.test.ts lib/omzet-export.test.ts",
     "test:excel-sanitization": "node --no-warnings --experimental-strip-types --test lib/excel-sanitization.test.ts",
     "test:reconciliation-core": "node --no-warnings --experimental-strip-types --test lib/reconciliation-types.test.ts lib/reconciliation-rules.test.ts lib/reconciliation-aggregate.test.ts lib/reconciliation-api.test.ts lib/reconciliation-cli.test.ts",
     "test:reconciliation-store": "tsx --conditions=react-server --test lib/reconciliation-store.test.ts",
@@ -89,7 +89,6 @@
     "recharts": "^3.9.0",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.6.0",
-    "xlsx": "^0.18.5",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -100,6 +99,7 @@
     "postcss": "^8.5.15",
     "tailwindcss": "^4.1.12",
     "tsx": "^4.23.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "xlsx": "^0.18.5"
   }
 }

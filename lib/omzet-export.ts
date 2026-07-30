@@ -433,7 +433,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   for (const c of courtCols) {
     ws.mergeCells(4, c.ayoCol, 4, c.walkCol);
     const head = ws.getCell(4, c.ayoCol);
-    head.value = courtLabel(c.court);
+    head.value = sanitizeExcelCellValue(courtLabel(c.court));
     styleHeaderCell(head);
     const ayo = ws.getCell(5, c.ayoCol);
     ayo.value = "AYO";
@@ -672,7 +672,7 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   for (const c of courtCols) {
     ws.mergeCells(4, c.ayoCol, 4, c.walkCol);
     const head = ws.getCell(4, c.ayoCol);
-    head.value = courtLabel(c.court);
+    head.value = sanitizeExcelCellValue(courtLabel(c.court));
     styleHeaderCell(head);
     const ayo = ws.getCell(5, c.ayoCol);
     ayo.value = "AYO";
