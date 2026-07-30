@@ -3,10 +3,11 @@ import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { resolveVenueName } from "@/lib/booking-mapper";
 import { buildOmzetPeriodWorkbook, dateRange, periodLabelRange } from "@/lib/omzet-export";
+import { validateDateRangeQuery } from "@/lib/date-range-validation";
 
 export const runtime = "nodejs";
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_RANGE_DAYS = 366;
 
 export async function GET(request: Request) {
   try {
@@ -14,11 +15,9 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const start = searchParams.get("start") || "";
     const end = searchParams.get("end") || start;
-    if (!DATE_PATTERN.test(start) || !DATE_PATTERN.test(end)) {
-      return NextResponse.json({ error: "start & end must use YYYY-MM-DD format" }, { status: 400 });
-    }
-    if (start > end) {
-      return NextResponse.json({ error: "start must be on or before end" }, { status: 400 });
+    const validation = validateDateRangeQuery(start, end, MAX_RANGE_DAYS);
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
     const { periodBookings, sportByFieldId, venueName } = await withMongo(async () => {

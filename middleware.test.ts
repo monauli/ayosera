@@ -49,3 +49,38 @@ test("/login tetap bisa diakses walau cookie sesi (basi) masih ada — tidak dip
   const response = middleware(requestTo("/login", "better-auth.session_token=stale-value"));
   assert.equal(response.headers.get("location"), null);
 });
+
+// ---- Task 4 (security hardening): security headers ------------------------
+
+test("Content-Security-Policy selalu ada di response (baik redirect ke /login maupun diteruskan)", () => {
+  const redirected = middleware(requestTo("/"));
+  const passed = middleware(requestTo("/login"));
+  assert.ok(redirected.headers.get("Content-Security-Policy"));
+  assert.ok(passed.headers.get("Content-Security-Policy"));
+});
+
+test("CSP tidak memakai wildcard '*' pada script-src/default-src (bukan proteksi kosong)", () => {
+  const response = middleware(requestTo("/login"));
+  const csp = response.headers.get("Content-Security-Policy")!;
+  assert.equal(csp.includes("script-src *"), false);
+  assert.equal(csp.includes("default-src *"), false);
+});
+
+test("nonce diteruskan konsisten: x-nonce pada request header sama dengan nonce di CSP response header", () => {
+  const request = requestTo("/login");
+  const response = middleware(request);
+  const forwardedNonce = response.headers.get("x-middleware-request-x-nonce") ?? request.headers.get("x-nonce");
+  const csp = response.headers.get("Content-Security-Policy")!;
+  // Setidaknya satu nonce (apapun nilainya) harus benar-benar tercantum di CSP.
+  const match = csp.match(/'nonce-([^']+)'/);
+  assert.ok(match, "CSP harus memuat nonce");
+  if (forwardedNonce) assert.equal(match![1], forwardedNonce);
+});
+
+test("nonce berbeda di setiap request (tidak statis/dipakai ulang)", () => {
+  const csp1 = middleware(requestTo("/login")).headers.get("Content-Security-Policy")!;
+  const csp2 = middleware(requestTo("/login")).headers.get("Content-Security-Policy")!;
+  const nonce1 = csp1.match(/'nonce-([^']+)'/)![1];
+  const nonce2 = csp2.match(/'nonce-([^']+)'/)![1];
+  assert.notEqual(nonce1, nonce2);
+});

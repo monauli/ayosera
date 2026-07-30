@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logSyncFailure } from "@/lib/booking-sync";
 import { syncProductionListBookings } from "@/lib/production-sync";
+import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 
 export const runtime = "nodejs";
 // Vercel Hobby membatasi durasi function hingga 60 detik, jadi cron menarik
@@ -31,23 +32,9 @@ function formatJakartaDate(date: Date) {
 export async function GET(request: Request) {
   const startedAt = new Date();
 
-  const expectedSecret = process.env.CRON_SECRET;
-  const authHeader = request.headers.get("authorization");
-
-  if (expectedSecret) {
-    // Secret salah atau kosong -> tolak.
-    if (authHeader !== `Bearer ${expectedSecret}`) {
-      return NextResponse.json(
-        { success: false, mode: "cron", message: "Unauthorized" },
-        { status: 401 },
-      );
-    }
-  } else if (process.env.NODE_ENV === "production") {
-    // Jangan biarkan endpoint terbuka di production tanpa secret.
-    return NextResponse.json(
-      { success: false, mode: "cron", message: "CRON_SECRET is not configured" },
-      { status: 500 },
-    );
+  const auth = verifyCronSecret(request.headers.get("authorization"));
+  if (!auth.ok) {
+    return NextResponse.json({ success: false, mode: "cron", message: auth.message }, { status: auth.status });
   }
 
   const now = new Date();
@@ -78,11 +65,7 @@ export async function GET(request: Request) {
     await logSyncFailure({ type: "scheduled", startedAt, error });
     console.error("[cron:sync] failed", error);
     return NextResponse.json(
-      {
-        success: false,
-        mode: "cron",
-        message: error instanceof Error ? error.message : "Scheduled sync failed",
-      },
+      { success: false, mode: "cron", message: "Scheduled sync failed" },
       { status: 500 },
     );
   }

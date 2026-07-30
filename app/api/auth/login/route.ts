@@ -2,13 +2,27 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth, ensureDefaultAdmin, ensureSupervisorAccount } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
+import { checkRateLimitSafe, clientIp } from "@/lib/rate-limit";
 
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
 });
 
+// Cukup longgar untuk salah ketik password wajar, cukup ketat untuk
+// memperlambat brute force otomatis dari satu IP.
+const LOGIN_RATE_LIMIT = 10;
+const LOGIN_RATE_WINDOW_SECONDS = 300;
+
 export async function POST(request: Request) {
+  const rate = await checkRateLimitSafe(`login:${clientIp(request)}`, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: "Terlalu banyak percobaan login. Coba lagi sebentar lagi." },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+    );
+  }
+
   try {
     const body = loginSchema.parse(await request.json());
     await ensureDefaultAdmin();

@@ -15,6 +15,7 @@
 // pada baseline (lib/olsera-baseline.ts) tidak dapat direkonstruksi; snapshot
 // pertama = data paling awal yang benar-benar tersedia dari API.
 
+import { currentStoreId } from "./olsera-store-id.ts";
 import {
   collections,
   withMongo,
@@ -179,8 +180,10 @@ export async function getInventorySyncStatus(): Promise<InventorySyncStatus> {
       olseraInventoryMovements.countDocuments(),
       // Baca langsung dari koleksi (bukan hanya field tersimpan) — status yang
       // ditampilkan selalu mencerminkan data aktual, tidak pernah hardcode.
-      olseraInventoryMovements.find().sort({ date: 1 }).limit(1).next(),
-      olseraInventorySnapshots.find().sort({ date: 1 }).limit(1).next(),
+      // storeId scoped (Task 4): dokumen legacy storeId:null tetap ikut (satu-satunya
+      // toko yang pernah ada di koleksi ini), toko lain di masa depan tidak akan bocor ke sini.
+      olseraInventoryMovements.find({ storeId: { $in: [currentStoreId(), null] } }).sort({ date: 1 }).limit(1).next(),
+      olseraInventorySnapshots.find({ storeId: { $in: [currentStoreId(), null] } }).sort({ date: 1 }).limit(1).next(),
     ]);
     return {
       state: {
@@ -360,7 +363,7 @@ export async function runMovementDate(date: string) {
     // BUKAN untuk menentukan apakah movement perlu dibuat sama sekali.
     const [items, productDocs, syncedDay] = await Promise.all([
       olseraOrderItems.find({ date }).toArray(),
-      olseraInventoryProducts.find().toArray(),
+      olseraInventoryProducts.find({ storeId: { $in: [currentStoreId(), null] } }).toArray(),
       olseraSyncedDays.findOne({ _id: date }),
     ]);
     const dateFullySynced = Boolean(syncedDay);
@@ -549,8 +552,8 @@ export async function refreshInventoryEarliestAvailableDate(options: { advanceCh
     const { olseraInventoryState, olseraInventoryMovements, olseraInventorySnapshots } = await collections();
     const now = new Date();
     const [earliestMovement, earliestSnapshot, state] = await Promise.all([
-      olseraInventoryMovements.find().sort({ date: 1 }).limit(1).next(),
-      olseraInventorySnapshots.find().sort({ date: 1 }).limit(1).next(),
+      olseraInventoryMovements.find({ storeId: { $in: [currentStoreId(), null] } }).sort({ date: 1 }).limit(1).next(),
+      olseraInventorySnapshots.find({ storeId: { $in: [currentStoreId(), null] } }).sort({ date: 1 }).limit(1).next(),
       olseraInventoryState.findOne({ _id: "olsera-inventory" }),
     ]);
     const earliestAvailableDate =
@@ -577,7 +580,9 @@ export async function refreshInventoryEarliestAvailableDate(options: { advanceCh
 export async function getInventorySummary() {
   return withMongo(async () => {
     const { olseraInventoryProducts } = await collections();
-    const products = (await olseraInventoryProducts.find().toArray()) as InventoryProductInput[];
+    const products = (await olseraInventoryProducts
+      .find({ storeId: { $in: [currentStoreId(), null] } })
+      .toArray()) as InventoryProductInput[];
     return summarizeInventory(products);
   });
 }
@@ -588,10 +593,11 @@ export async function getInventoryConsistency(): Promise<{
 }> {
   return withMongo(async () => {
     const { olseraInventoryProducts, olseraInventorySnapshots, olseraInventoryMovements } = await collections();
+    const storeScope = { storeId: { $in: [currentStoreId(), null] } };
     const [products, snapshots, movements] = await Promise.all([
-      olseraInventoryProducts.find({ trackInventory: true }).toArray(),
-      olseraInventorySnapshots.find().toArray(),
-      olseraInventoryMovements.find({ productId: { $ne: null } }).toArray(),
+      olseraInventoryProducts.find({ trackInventory: true, ...storeScope }).toArray(),
+      olseraInventorySnapshots.find(storeScope).toArray(),
+      olseraInventoryMovements.find({ productId: { $ne: null }, ...storeScope }).toArray(),
     ]);
     const snapshotsByKey = new Map<string, { date: string; stockQty: number }[]>();
     for (const snapshot of snapshots) {

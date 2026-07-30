@@ -33,6 +33,7 @@ import {
   type RawSalesActivityByKey,
 } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchStockMovementRange } from "./olsera-inventory-stockmovement.ts";
+import { currentStoreId } from "./olsera-store-id.ts";
 
 // ---------------------------------------------------------------------------
 // Repo (bisa diinject — tes memakai fake in-memory, produksi memakai Mongo)
@@ -67,7 +68,10 @@ export async function getMongoMonthlySnapshotRepo(): Promise<MonthlySnapshotRepo
 
 export async function fetchMatchingContext(): Promise<MatchingContext & { duplicateResolution: ReturnType<typeof resolveDuplicateNamedProducts> }> {
   const { olseraInventoryProducts, olseraProductAliases } = await collections();
-  const [products, aliasDocs] = await Promise.all([olseraInventoryProducts.find().toArray(), olseraProductAliases.find().toArray()]);
+  const [products, aliasDocs] = await Promise.all([
+    olseraInventoryProducts.find({ storeId: { $in: [currentStoreId(), null] } }).toArray(),
+    olseraProductAliases.find().toArray(),
+  ]);
   const rawCatalogProducts = products as InventoryProductInput[];
 
   // Produk bernama "duplicate" yang TERBUKTI sama (SKU cocok tunggal ke

@@ -97,6 +97,12 @@ export function signAyoPayload<T extends Record<string, unknown>>(payload: T) {
   };
 }
 
+// Timeout eksplisit (Task 4: security hardening) — sebelumnya request AYO
+// tidak punya batas sendiri, hanya bergantung pada maxDuration function
+// Vercel (yang menghabiskan seluruh budget durasi hanya untuk satu request
+// yang macet, dan berujung error generik, bukan pesan yang jelas).
+const AYO_REQUEST_TIMEOUT_MS = 20_000;
+
 async function requestJsonWithBody<T>(url: string, method: "GET" | "POST", body: Record<string, unknown>) {
   const payload = JSON.stringify(body);
 
@@ -109,6 +115,7 @@ async function requestJsonWithBody<T>(url: string, method: "GET" | "POST", body:
       },
       body: payload,
       cache: "no-store",
+      signal: AbortSignal.timeout(AYO_REQUEST_TIMEOUT_MS),
     });
 
     return {
@@ -151,6 +158,9 @@ async function requestJsonWithBody<T>(url: string, method: "GET" | "POST", body:
     );
 
     request.on("error", reject);
+    request.setTimeout(AYO_REQUEST_TIMEOUT_MS, () => {
+      request.destroy(new Error("AYO API request timed out"));
+    });
     request.write(payload);
     request.end();
   });

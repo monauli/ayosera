@@ -5,6 +5,7 @@ import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { nextCookies } from "better-auth/next-js";
 import { getDb, getMongoDb, mongoClient } from "@/lib/mongodb";
 import { describeAuthBaseURLIssue } from "@/lib/auth-base-url";
+import { resolveAuthSecret } from "@/lib/auth-secret";
 
 // Hanya akun ini yang boleh memiliki hak supervisor.
 export const SUPERVISOR_EMAIL = "timunemas@ayo.local";
@@ -61,7 +62,7 @@ export const auth = betterAuth({
     client: mongoClient,
     transaction: false,
   }),
-  secret: process.env.BETTER_AUTH_SECRET || process.env.JWT_SECRET || "local-dev-secret-change-before-production-please-32chars",
+  secret: resolveAuthSecret(process.env),
   baseURL: rawAuthBaseURL,
   emailAndPassword: {
     enabled: true,

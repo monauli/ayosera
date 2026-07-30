@@ -3,6 +3,10 @@
 
 const BASE_URL = "https://api-open.olsera.co.id";
 
+// Timeout eksplisit (Task 4: security hardening) — sebelumnya request Olsera
+// tidak punya batas sendiri, hanya bergantung pada maxDuration function Vercel.
+const OLSERA_REQUEST_TIMEOUT_MS = 20_000;
+
 type OlseraTokenCache = {
   accessToken: string;
   // Epoch ms kapan token dianggap kedaluwarsa (dengan margin aman).
@@ -43,6 +47,7 @@ export async function getAccessToken(): Promise<{ token: string } | { error: str
       headers: { Accept: "application/json" },
       body: form,
       cache: "no-store",
+      signal: AbortSignal.timeout(OLSERA_REQUEST_TIMEOUT_MS),
     });
   } catch {
     return { error: "Tidak dapat terhubung ke server Olsera (autentikasi gagal karena jaringan)." };
@@ -100,6 +105,7 @@ export async function getSalesItemsPerGroup(from: string, to: string): Promise<O
         Authorization: `Bearer ${auth.token}`,
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(OLSERA_REQUEST_TIMEOUT_MS),
     });
   } catch {
     return { ok: false, error: "Tidak dapat terhubung ke server Olsera. Coba lagi beberapa saat." };

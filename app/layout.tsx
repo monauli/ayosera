@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Geist } from "next/font/google";
 import "./globals.css";
 
@@ -35,15 +36,22 @@ const THEME_MODE_BOOTSTRAP = `
 })();
 `;
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Nonce dari middleware.ts (lihat lib/csp.ts) — tanpa ini, CSP script-src
+  // (nonce-based, tanpa 'unsafe-inline') akan memblokir skrip bootstrap ini.
+  // suppressHydrationWarning: React SENGAJA mengosongkan atribut nonce di DOM
+  // setelah hydration (agar script lain di halaman tidak bisa membaca &
+  // memakai ulang nonce-nya) — beda nilai server/klien di sini aman dan
+  // sudah diketahui (didokumentasikan React sendiri), bukan bug.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="en" data-theme="white" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_MODE_BOOTSTRAP }} />
+        <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: THEME_MODE_BOOTSTRAP }} />
       </head>
       <body className={`${geistSans.variable} font-sans`} suppressHydrationWarning>
         {children}

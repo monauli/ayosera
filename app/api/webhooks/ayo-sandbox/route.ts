@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { collections, withMongo, type WebhookLogDocument } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+import { checkRateLimitSafe, clientIp } from "@/lib/rate-limit";
 
 // Endpoint webhook selalu realtime: nonaktifkan cache Next.js/Vercel.
 export const dynamic = "force-dynamic";
@@ -8,6 +9,9 @@ export const revalidate = 0;
 
 // Batasi ukuran potongan payload yang disimpan agar dokumen tetap ringan.
 const BODY_PREVIEW_LIMIT = 6000;
+const WEBHOOK_RATE_LIMIT = 60;
+const WEBHOOK_RATE_WINDOW_SECONDS = 60;
+const MAX_BODY_BYTES = 256_000;
 
 const ROUTE_PATH = "/api/webhooks/ayo-sandbox";
 
@@ -44,7 +48,30 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   const startedAt = new Date();
+
+  const rate = await checkRateLimitSafe(`webhook-ayo-sandbox:${clientIp(request)}`, WEBHOOK_RATE_LIMIT, WEBHOOK_RATE_WINDOW_SECONDS);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { ok: false, received: false, mode: "sandbox", error: "Too many requests" },
+      { status: 429, headers: { ...NO_CACHE_HEADERS, "Retry-After": String(rate.retryAfterSeconds) } },
+    );
+  }
+
+  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  if (contentLength > MAX_BODY_BYTES) {
+    return NextResponse.json(
+      { ok: false, received: false, mode: "sandbox", error: "Payload too large" },
+      { status: 413, headers: NO_CACHE_HEADERS },
+    );
+  }
+
   const rawBody = await request.text().catch(() => "");
+  if (rawBody.length > MAX_BODY_BYTES) {
+    return NextResponse.json(
+      { ok: false, received: false, mode: "sandbox", error: "Payload too large" },
+      { status: 413, headers: NO_CACHE_HEADERS },
+    );
+  }
   const payload = parseJsonBody(rawBody);
 
   // Log utama supaya mudah dicari di console/Vercel logs.

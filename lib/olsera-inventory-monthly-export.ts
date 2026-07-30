@@ -32,6 +32,7 @@ import {
 } from "./olsera-inventory-monthly-core.ts";
 import { dominantStoreId, recoverNullProductIdSales, stripDuplicateSuffix } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { ensureMonthlySnapshotChain } from "./olsera-inventory-monthly-snapshot-store.ts";
+import { currentStoreId } from "./olsera-store-id.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
 const INT_FMT = "#,##0";
@@ -771,10 +772,11 @@ export async function generateMonthlyInventoryExport(input: {
 
   const { catalogProducts, salesMovements } = await withMongo(async () => {
     const { olseraInventoryProducts, olseraInventoryMovements } = await collections();
+    const storeScope = { storeId: { $in: [currentStoreId(), null] } };
     const [products, movements] = await Promise.all([
-      olseraInventoryProducts.find().toArray(),
+      olseraInventoryProducts.find(storeScope).toArray(),
       olseraInventoryMovements
-        .find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: { $ne: null } })
+        .find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: { $ne: null }, ...storeScope })
         .toArray(),
     ]);
     return { catalogProducts: products as InventoryProductInput[], salesMovements: movements };
@@ -834,9 +836,10 @@ export async function generateMonthlyInventoryExportAuto(input: {
 
   const { catalogProducts, salesMovements, unresolvedNullProductSales, syncedDayIds, syncState } = await withMongo(async () => {
     const { olseraInventoryProducts, olseraInventoryMovements, olseraOrderItems, olseraSyncedDays, olseraSyncState } = await collections();
+    const storeScope = { storeId: { $in: [currentStoreId(), null] } };
     const [products, movements, nullMovements, syncedDays, state] = await Promise.all([
-      olseraInventoryProducts.find().toArray(),
-      olseraInventoryMovements.find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: { $ne: null } }).toArray(),
+      olseraInventoryProducts.find(storeScope).toArray(),
+      olseraInventoryMovements.find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: { $ne: null }, ...storeScope }).toArray(),
       // Movement penjualan yang productId-nya null saat sync — terverifikasi
       // live 2026-07-21 (kasus YONEX SHORTS): olsera_order_items.resolvedProductId
       // untuk item yang SAMA berhasil diresolusi via olsera_product_aliases,
@@ -844,7 +847,7 @@ export async function generateMonthlyInventoryExportAuto(input: {
       // ter-resolve (resolver movement tidak konsisten dengan resolver order
       // item). Dipulihkan HANYA saat baca di sini — TIDAK menulis apa pun ke
       // olsera_inventory_movements (pipeline sync tidak disentuh).
-      olseraInventoryMovements.find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: null }).toArray(),
+      olseraInventoryMovements.find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: null, ...storeScope }).toArray(),
       olseraSyncedDays.find({ _id: { $gte: startDate, $lte: endDate } }, { projection: { _id: 1 } }).toArray(),
       olseraSyncState.findOne({ _id: "olsera" }),
     ]);

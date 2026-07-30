@@ -3,10 +3,11 @@ import { requireModule } from "@/lib/auth";
 import { collections, withMongo } from "@/lib/mongodb";
 import { buildOlseraCategoryWorkbook } from "@/lib/olsera-category-export";
 import { loadResolverContext, resolveStoredItemCategory } from "@/lib/olsera-resolver-context";
+import { validateDateRangeQuery } from "@/lib/date-range-validation";
 
 export const runtime = "nodejs";
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_RANGE_DAYS = 366;
 
 export async function GET(request: Request) {
   try {
@@ -16,14 +17,9 @@ export async function GET(request: Request) {
     const start = searchParams.get("start_date") || "";
     const end = searchParams.get("end_date") || "";
 
-    if (!DATE_PATTERN.test(start) || !DATE_PATTERN.test(end)) {
-      return NextResponse.json(
-        { error: "start_date & end_date wajib diisi dengan format YYYY-MM-DD." },
-        { status: 400 },
-      );
-    }
-    if (start > end) {
-      return NextResponse.json({ error: "start_date tidak boleh lebih besar dari end_date." }, { status: 400 });
+    const validation = validateDateRangeQuery(start, end, MAX_RANGE_DAYS);
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
     const items = await withMongo(async () => {

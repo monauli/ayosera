@@ -80,6 +80,18 @@ export type WebhookLogDocument = {
   source?: "production" | "sandbox";
 };
 
+// Rate limiting (Task 4: security hardening) — satu dokumen per (key, window
+// waktu tetap). TTL index expiresAt membersihkan bucket lama otomatis. Dipilih
+// MongoDB (bukan in-memory) karena serverless: instance function bisa banyak
+// dan tidak berbagi memori, sedangkan MongoDB sudah jadi satu-satunya sumber
+// kebenaran bersama yang dipakai app ini (sama seperti distributed lock
+// olsera_sync_locks) — bukan layanan berbayar baru.
+export type RateLimitDocument = {
+  _id: string; // `${key}:${windowBucket}`
+  count: number;
+  expiresAt: Date;
+};
+
 export type FieldDocument = {
   id: number;
   name: string;
@@ -715,6 +727,7 @@ export async function collections() {
     reconciliationAuditLog: db.collection<ReconciliationAuditLogDocument>("reconciliation_audit_log"),
     inventoryStockOpnameReconciliations: db.collection<InventoryStockOpnameDocument>("inventory_stock_opname_reconciliations"),
     olseraOmzetReconciliationNotes: db.collection<OlseraOmzetReconciliationNoteDocument>("olsera_omzet_reconciliation_notes"),
+    rateLimits: db.collection<RateLimitDocument>("rate_limits"),
   };
 }
 
@@ -763,6 +776,7 @@ async function createIndexes() {
     reconciliationAuditLog,
     inventoryStockOpnameReconciliations,
     olseraOmzetReconciliationNotes,
+    rateLimits,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -858,6 +872,9 @@ async function createIndexes() {
     // unik secara native (`${storeId}:${period}`), index tambahan untuk
     // query "seluruh catatan satu toko".
     olseraOmzetReconciliationNotes.createIndex({ storeId: 1, updatedAt: -1 }),
+    // Rate limiting (Task 4) — TTL: bucket kedaluwarsa dihapus otomatis, tidak
+    // menumpuk dokumen selamanya.
+    rateLimits.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
   ]);
 }
 

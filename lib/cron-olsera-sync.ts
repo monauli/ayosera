@@ -1,6 +1,7 @@
 // Logika murni endpoint cron Sync Olsera (app/api/cron/olsera-sync/route.ts),
 // dipisah agar bisa diuji tanpa bergantung pada runtime Next.js.
 import { syncOlseraSalesByCategory, todayJakarta } from "@/lib/olsera-sync";
+import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 
 export type CronOlseraSyncResponse = {
   status: number;
@@ -14,17 +15,10 @@ export type CronOlseraSyncResponse = {
 };
 
 export async function runOlseraCronSync(authHeader: string | null): Promise<CronOlseraSyncResponse> {
-  const expectedSecret = process.env.CRON_SECRET;
-  if (!expectedSecret) {
-    console.error("[cron:olsera-sync] CRON_SECRET is not configured");
-    return {
-      status: 500,
-      body: { success: false, mode: "cron", message: "CRON_SECRET is not configured" },
-    };
-  }
-
-  if (authHeader !== `Bearer ${expectedSecret}`) {
-    return { status: 401, body: { success: false, mode: "cron", message: "Unauthorized" } };
+  const auth = verifyCronSecret(authHeader);
+  if (!auth.ok) {
+    if (auth.status === 500) console.error("[cron:olsera-sync] CRON_SECRET is not configured");
+    return { status: auth.status, body: { success: false, mode: "cron", message: auth.message } };
   }
 
   try {

@@ -10,6 +10,7 @@ import {
 } from "./olsera-inventory-core.ts";
 import { getInventoryConsistency } from "./olsera-inventory.ts";
 import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
+import { currentStoreId } from "./olsera-store-id.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
 const HEADER_GRAY = "FFA6A6A6";
@@ -52,7 +53,11 @@ export async function buildInventoryStockWorkbook(filter: {
 }): Promise<ExcelJS.Workbook> {
   const products = await withMongo(async () => {
     const { olseraInventoryProducts } = await collections();
-    const query: Record<string, unknown> = {};
+    // storeId: { $in: [currentStoreId(), null] } — dokumen legacy tanpa
+    // storeId (null) tetap ikut terbaca (perilaku existing tidak berubah,
+    // hanya satu toko yang pernah ada di koleksi ini), tapi toko LAIN
+    // (bila suatu saat ditambahkan) tidak akan ikut bocor ke sini.
+    const query: Record<string, unknown> = { storeId: { $in: [currentStoreId(), null] } };
     if (filter.q) {
       const rx = new RegExp(filter.q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       query.$or = [{ name: rx }, { sku: rx }, { variantName: rx }];
@@ -136,7 +141,10 @@ export async function buildInventoryMovementWorkbook(filter: {
 }): Promise<ExcelJS.Workbook> {
   const movements = await withMongo(async () => {
     const { olseraInventoryMovements } = await collections();
-    const query: Record<string, unknown> = { date: { $gte: filter.startDate, $lte: filter.endDate } };
+    const query: Record<string, unknown> = {
+      date: { $gte: filter.startDate, $lte: filter.endDate },
+      storeId: { $in: [currentStoreId(), null] },
+    };
     if (filter.type) query.type = filter.type;
     if (filter.q) {
       const rx = new RegExp(filter.q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
