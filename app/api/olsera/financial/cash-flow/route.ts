@@ -3,4 +3,4 @@ import { normalizeCashFlowPayload, validatePeriod } from "@/lib/olsera-financial
 import { guard, json, errorJson } from "../_shared";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export async function GET(req: Request) { await guard(); try { const url = new URL(req.url); const period = validatePeriod(url.searchParams.get("year"), url.searchParams.get("month")); const rawPayload = await getCashFlow(period); return json({ status: "success", period, reportType: "cash-flow", normalizedPayload: normalizeCashFlowPayload(rawPayload), rawPayload }); } catch (error) { return errorJson(error); } }
+export async function GET(req: Request) { try { await guard(); const url = new URL(req.url); const period = validatePeriod(url.searchParams.get("year"), url.searchParams.get("month")); const rawPayload = await getCashFlow(period); return json({ status: "success", period, reportType: "cash-flow", normalizedPayload: normalizeCashFlowPayload(rawPayload), rawPayload }); } catch (error) { return errorJson(error); } }

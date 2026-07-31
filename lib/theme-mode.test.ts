@@ -110,7 +110,10 @@ test("app/page.tsx: TIDAK ADA lagi effect terpisah yang menulis mode berdasarkan
 test("app/login/page.tsx: mode dikoreksi lewat effect mount yang memanggil readInitialThemeMode() (bukan lazy initializer yang bisa memicu hydration mismatch)", () => {
   const source = loginSource();
   assert.ok(source.includes('const [mode, setMode] = useState<ThemeMode>("light");'));
-  assert.ok(/useEffect\(\(\) => \{\s*setMode\(readInitialThemeMode\(\)\);\s*\}, \[\]\);/.test(source));
+  // Effect mount boleh berisi pernyataan lain (mis. penanda hydration untuk
+  // tombol submit), yang dijaga di sini adalah setMode(readInitialThemeMode())
+  // berada di dalam effect dependency [] — bukan di initializer useState.
+  assert.ok(/useEffect\(\(\) => \{[^}]*setMode\(readInitialThemeMode\(\)\);[^}]*\}, \[\]\);/.test(source));
   assert.equal(source.includes('useState<ThemeMode>(() => readInitialThemeMode())'), false, "lazy initializer menyebabkan mismatch server/klien (server tidak punya window)");
 });
 
