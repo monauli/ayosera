@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
-import { middleware } from "./middleware.ts";
+import { config, middleware } from "./middleware.ts";
 
 function requestTo(pathname: string, cookieHeader?: string) {
   return new NextRequest(`https://ayosera.vercel.app${pathname}`, {
@@ -83,4 +83,14 @@ test("nonce berbeda di setiap request (tidak statis/dipakai ulang)", () => {
   const nonce1 = csp1.match(/'nonce-([^']+)'/)![1];
   const nonce2 = csp2.match(/'nonce-([^']+)'/)![1];
   assert.notEqual(nonce1, nonce2);
+});
+
+test("ikon tab dikecualikan dari matcher: /icon.svg tidak pernah dijawab redirect ke /login", () => {
+  // Regresi Task 5: tanpa pengecualian ini, permintaan ikon dari halaman /login
+  // dijawab 307 ke /login sehingga browser menerima HTML untuk sebuah gambar.
+  const pattern = new RegExp(config.matcher[0].replace(/^\/\(/, "^/(").concat("$"));
+  for (const excluded of ["/icon.svg", "/favicon.ico"]) {
+    assert.equal(pattern.test(excluded), false, `${excluded} seharusnya tidak diproses middleware`);
+  }
+  assert.equal(pattern.test("/"), true, "route aplikasi harus tetap diproses middleware");
 });

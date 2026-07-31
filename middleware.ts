@@ -31,5 +31,8 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  // icon.svg ikut dikecualikan bersama favicon.ico: ikon tab tidak boleh
+  // memerlukan sesi — tanpa ini permintaan ikon dari halaman /login dijawab
+  // 307 ke /login (browser menerima HTML untuk sebuah gambar).
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|icon.svg).*)"],
 };
