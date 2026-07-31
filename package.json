@@ -24,6 +24,7 @@
     "test:logout-flow": "node --no-warnings --experimental-strip-types --test lib/logout-flow.test.ts",
     "test:login-form-guard": "node --no-warnings --experimental-strip-types --test lib/login-form-guard.test.ts",
     "test:booking-session": "node --no-warnings --experimental-strip-types --test lib/booking-session.test.ts",
+    "test:financial-reconciliation-integrity": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/financial-reconciliation-integrity.test.ts",
     "test:financial-route-auth-guard": "node --no-warnings --experimental-strip-types --test lib/financial-route-auth-guard.test.ts",
     "test:middleware": "tsx --conditions=react-server --test middleware.test.ts",
     "test:auth-secret": "node --no-warnings --experimental-strip-types --test lib/auth-secret.test.ts",
