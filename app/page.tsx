@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ElementType } from "react";
+import { useEffect, useMemo, useRef, useState, type ElementType } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -45,6 +45,8 @@ import { DashboardOverview } from "@/components/redesign/dashboard-overview";
 import { DashboardStatCard } from "@/components/redesign/dashboard-stat-card";
 import { TransactionExportMenu } from "@/components/redesign/transaction-export-menu";
 import { OlseraExportMenu } from "@/components/redesign/olsera-export-menu";
+import { BookingSessionRow, statusLabel, statusVariant } from "@/components/booking-session-row";
+import { groupBookingsIntoSessions } from "@/lib/booking-session";
 import type { BookingStatusItem } from "@/components/redesign/booking-status-donut";
 import type { MonthlyRevenuePoint, MonthlyRevenueStatus } from "@/components/redesign/annual-revenue-chart";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
@@ -242,19 +244,6 @@ function formatJakartaTime(value: string) {
   }).formatToParts(date);
   const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   return `${get("hour")}:${get("minute")}:${get("second")}`;
-}
-
-function statusVariant(status: string): "success" | "warning" | "danger" {
-  if (status === "Completed") return "success";
-  if (status === "Pending") return "warning";
-  return "danger";
-}
-
-function statusLabel(status: string) {
-  if (status === "Completed") return "Selesai";
-  if (status === "Pending") return "Belum Bayar";
-  if (status === "Cancelled") return "Dibatalkan";
-  return status;
 }
 
 function changeIndicator(row: TransactionRow) {
@@ -605,6 +594,9 @@ export default function DashboardPage() {
   const [exportEnd, setExportEnd] = useState(today);
   const [exportMonth, setExportMonth] = useState(currentMonth);
   const [sort, setSort] = useState<SortState>({ key: "date", dir: "asc" });
+  // Session yang sedang dibuka (id deterministik dari helper). Default seluruhnya
+  // tertutup, dan direset setiap kali halaman/filter/sort menghasilkan data baru.
+  const [expandedSessions, setExpandedSessions] = useState<ReadonlySet<string>>(new Set());
   const emptyColumnFilters = { date: today, id: "", customer: "", service: "", status: "", change: "" };
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>(emptyColumnFilters);
 
@@ -742,6 +734,9 @@ export default function DashboardPage() {
       if (requestId !== loadRequestIdRef.current) return;
       setTransactionRows(payload.data);
       setTxnMeta({ total: payload.total, totalPages: payload.totalPages });
+      // Data halaman berganti (filter/tanggal/sort/pindah halaman) -> tutup
+      // kembali seluruh Booking Session supaya state tidak menempel ke baris lain.
+      setExpandedSessions(new Set());
       // Server mengoreksi halaman bila melebihi total; sinkronkan agar UI konsisten.
       if (payload.page !== page) setPage(payload.page);
     }
@@ -1813,6 +1808,9 @@ export default function DashboardPage() {
   const dateRangeInvalid = isInvalidDateRange(startDate, endDate);
   // Pagination & filtering kini dilakukan di server; transactionRows hanya berisi halaman aktif.
   const pagedRows = transactionRows;
+  // Booking Session: pengelompokan TAMPILAN atas baris halaman aktif saja.
+  // Tidak menyentuh request/total/totalPages API maupun perhitungan revenue.
+  const sessionEntries = useMemo(() => groupBookingsIntoSessions(pagedRows), [pagedRows]);
   const pageCount = Math.max(1, txnMeta.totalPages);
   const currentPage = Math.min(page, pageCount);
   const serviceOptions = Array.from(
@@ -2412,8 +2410,29 @@ export default function DashboardPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {pagedRows.length ? (
-                        pagedRows.map((transaction) => (
+                      {sessionEntries.length ? (
+                        sessionEntries.map((entry) => {
+                          if (entry.type === "session") {
+                            return (
+                              <BookingSessionRow
+                                key={entry.id}
+                                session={entry}
+                                columnCount={9}
+                                formatAmount={formatRupiah}
+                                expanded={expandedSessions.has(entry.id)}
+                                onToggle={() =>
+                                  setExpandedSessions((current) => {
+                                    const next = new Set(current);
+                                    if (next.has(entry.id)) next.delete(entry.id);
+                                    else next.add(entry.id);
+                                    return next;
+                                  })
+                                }
+                              />
+                            );
+                          }
+                          const transaction = entry.booking;
+                          return (
                           <tr key={transaction.id} className="h-[58px]">
                             <td className="whitespace-nowrap px-2 py-2">{transaction.date}</td>
                             <td className="whitespace-nowrap px-2 py-2">
@@ -2449,7 +2468,8 @@ export default function DashboardPage() {
                               })()}
                             </td>
                           </tr>
-                        ))
+                          );
+                        })
                       ) : (
                         <tr>
                           <td colSpan={9} className="h-[360px] text-center text-sm text-slate-400">

@@ -169,14 +169,14 @@ async function openSidebar(page: Page) {
   const isOpen = () => aside.evaluate((el) => el.getBoundingClientRect().left >= 0).catch(() => false);
   // Sidebar dianimasikan (transform 300ms) dan state-nya milik React, jadi tunggu
   // posisinya benar-benar masuk viewport, bukan sekadar "visible".
-  for (let attempt = 0; attempt < 3 && !(await isOpen()); attempt += 1) {
+  for (let attempt = 0; attempt < 5 && !(await isOpen()); attempt += 1) {
     await page.getByRole("button", { name: "Buka/tutup navigasi" }).click();
     await page.waitForFunction(() => {
       const el = document.querySelector("aside.rd-sidebar");
       return Boolean(el && el.getBoundingClientRect().left >= 0);
-    }, undefined, { timeout: 5_000 }).catch(() => {});
+    }, undefined, { timeout: 8_000 }).catch(() => {});
   }
-  assert(await isOpen(), "sidebar tidak terbuka setelah 3 percobaan");
+  assert(await isOpen(), "sidebar tidak terbuka setelah 5 percobaan");
 }
 
 async function gotoNav(page: Page, nav: { menu: string; sub?: string; title: string; viaDashboard?: boolean }) {
@@ -311,6 +311,8 @@ const jakartaToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta"
 const currentMonth = jakartaToday.slice(0, 7);
 const SAMPLE_DATE = process.env.E2E_SAMPLE_DATE || "2026-05-01";
 const SAMPLE_MONTH = process.env.E2E_SAMPLE_MONTH || SAMPLE_DATE.slice(0, 7);
+// Tanggal yang diketahui memuat Booking Session multi-slot (kasus referensi).
+const SESSION_DATE = process.env.E2E_SESSION_DATE || "2026-07-30";
 
 async function main() {
   const browser: Browser = await chromium.launch({ channel: "chrome", headless: true });
@@ -471,6 +473,155 @@ async function main() {
     });
     record("tidak ada console error / 5xx saat filter+pagination", issuesFor("transaksi-interaksi").length === 0, issuesFor("transaksi-interaksi").map((i) => `${i.kind}: ${i.text}`).join(" ; "));
 
+    // ------------------------------------------------- 3b. Booking Session
+    currentArea = "booking-session";
+    const rupiahToNumber = (text: string) => Number(text.replace(/[^0-9]/g, "")) || 0;
+    const sessionButtons = () => page.getByRole("button", { name: /detail \d+ slot untuk/ });
+    const sessionButton = sessionButtons().first();
+
+    await check(`filter ke ${SESSION_DATE} menampilkan Booking Session (default tertutup)`, async () => {
+      await gotoNav(page, navByKey("transaksi"));
+      await page.getByLabel("Tanggal mulai filter custom").fill(SESSION_DATE);
+      await page.getByLabel("Tanggal selesai filter custom").fill(SESSION_DATE);
+      // Tunggu tabel BENAR-BENAR menampilkan tanggal yang diminta — sekaligus
+      // membuktikan filter tanggal bekerja, bukan sekadar menunggu jaringan.
+      await page.waitForFunction(
+        (date) => document.querySelector("tbody tr:not([id]) td")?.textContent?.trim() === date,
+        SESSION_DATE,
+        { timeout: 30_000 },
+      );
+      await page.waitForLoadState("networkidle", { timeout: 60_000 }).catch(() => {});
+      await sessionButton.waitFor({ state: "visible", timeout: 30_000 });
+      assert((await sessionButton.getAttribute("aria-expanded")) === "false", "session tidak tertutup secara default");
+      const label = ((await sessionButton.textContent()) ?? "").trim();
+      assert(/^\d+ slot$/.test(label), `label tidak sesuai: "${label}"`);
+      const detailId = await sessionButton.getAttribute("aria-controls");
+      assert(detailId, "aria-controls tidak diset");
+      assert(!(await page.locator(`#${detailId}`).count()), "detail seharusnya belum dirender saat tertutup");
+      // Istilah teknis "Booking Session" tidak boleh jadi identitas baris.
+      const body = (await page.locator("tbody").first().textContent()) ?? "";
+      assert(!/Booking Session/.test(body), "teks \"Booking Session\" masih tampil di tabel");
+      return `${await sessionButtons().count()} session pada ${SESSION_DATE}`;
+    });
+
+    await check("baris ringkas menampilkan pelanggan, jam, court, dan total sesi", async () => {
+      const cells = sessionButton.locator("xpath=ancestor::tr[1]").locator("td");
+      const [date, time, customer, field, amount] = await Promise.all(
+        [0, 1, 3, 5, 6].map(async (index) => ((await cells.nth(index).textContent()) ?? "").trim()),
+      );
+      assert(date.length > 0, "kolom Tanggal kosong");
+      assert(/\d{2}:\d{2}\s*-\s*\d{2}:\d{2}/.test(time), `rentang jam tidak terbaca: "${time}"`);
+      assert(customer.length > 0, "kolom Pelanggan kosong");
+      assert(field.length > 0, "kolom Lapangan kosong");
+      assert(/^Rp\s*[\d.]+$/.test(amount), `Total sesi tidak terbaca di kolom Nominal: "${amount}"`);
+      return `${customer} · ${time} · ${field} · ${amount}`;
+    });
+
+    await check("klik expand menampilkan seluruh slot + aria-expanded false → true", async () => {
+      await sessionButton.click();
+      assert((await sessionButton.getAttribute("aria-expanded")) === "true", "aria-expanded tidak berubah");
+      const detailId = (await sessionButton.getAttribute("aria-controls"))!;
+      const detail = page.locator(`#${detailId}`);
+      await detail.waitFor({ state: "visible", timeout: 15_000 });
+      const slots = detail.locator("li");
+      const slotCount = await slots.count();
+      assert(slotCount >= 2, `session hanya punya ${slotCount} slot`);
+      // Detail langsung ke daftar slot: tidak ada blok ringkasan sebelum <ul>.
+      assert(!(await detail.locator("dl").count()), "detail masih memuat blok ringkasan");
+      const text = (await detail.textContent()) ?? "";
+      for (const repeated of ["Nama:", "Tanggal:", "Court:", "Total sesi:"]) {
+        assert(!text.includes(repeated), `detail mengulang "${repeated}" yang sudah ada di baris ringkas`);
+      }
+      for (let index = 0; index < slotCount; index += 1) {
+        const slot = ((await slots.nth(index).textContent()) ?? "").trim();
+        assert(slot.startsWith(`Slot ${index + 1}`), `slot #${index + 1} tidak bernomor: "${slot}"`);
+        assert(/\d{2}:\d{2}\s*-\s*\d{2}:\d{2}/.test(slot), `slot #${index + 1} tanpa jam: "${slot}"`);
+        assert(/Booking:\s*\S+/.test(slot), `slot #${index + 1} tanpa ID booking`);
+        assert(/Nominal slot:\s*Rp\s*[\d.]+/.test(slot), `slot #${index + 1} tanpa nominal`);
+        assert(/Selesai|Belum Bayar|Dibatalkan/.test(slot), `slot #${index + 1} tanpa status`);
+      }
+      // Istilah pembayaran tidak boleh dipakai — API AYO tidak punya datanya.
+      assert(!/DP|pelunasan|uang muka/i.test(text), "detail memakai istilah pembayaran yang dilarang");
+      return `${slotCount} slot tampil`;
+    });
+
+    await check("Total sesi = jumlah Nominal slot yang dihitung (seluruh session di halaman)", async () => {
+      const buttons = sessionButtons();
+      const count = await buttons.count();
+      let checked = 0;
+      let nonZero = 0;
+      for (let index = 0; index < count; index += 1) {
+        const button = buttons.nth(index);
+        if ((await button.getAttribute("aria-expanded")) === "false") await button.click();
+        const detail = page.locator(`#${(await button.getAttribute("aria-controls"))!}`);
+        await detail.waitFor({ state: "visible", timeout: 15_000 });
+        // Total sesi kini hanya hidup di kolom Nominal baris ringkas.
+        const summaryCell = button.locator("xpath=ancestor::tr[1]").locator("td").nth(6);
+        const total = rupiahToNumber((await summaryCell.textContent()) ?? "");
+        let sum = 0;
+        const slots = detail.locator("li");
+        for (let slot = 0; slot < (await slots.count()); slot += 1) {
+          const slotText = (await slots.nth(slot).textContent()) ?? "";
+          // Slot yang tidak dihitung (mis. dibatalkan) sengaja dikecualikan —
+          // mengikuti engine revenue existing, bukan aturan baru.
+          if (/Tidak dihitung ke total sesi/.test(slotText)) continue;
+          sum += rupiahToNumber(/Nominal slot:\s*(Rp\s*[\d.]+)/.exec(slotText)?.[1] ?? "");
+        }
+        assert(total === sum, `session #${index + 1}: Total sesi ${total} != jumlah nominal slot ${sum}`);
+        checked += 1;
+        if (total > 0) nonZero += 1;
+        await button.click();
+      }
+      assert(nonZero > 0, "tidak ada session bernilai > 0 untuk diuji");
+      return `${checked} session diperiksa, ${nonZero} bernilai > 0`;
+    });
+
+    await check("expand/collapse lewat keyboard (Enter) bekerja", async () => {
+      await sessionButton.focus();
+      const before = await sessionButton.getAttribute("aria-expanded");
+      await page.keyboard.press("Enter");
+      const toggled = await sessionButton.getAttribute("aria-expanded");
+      assert(toggled !== before, `aria-expanded tetap "${before}" setelah Enter`);
+      await page.keyboard.press("Enter");
+      assert((await sessionButton.getAttribute("aria-expanded")) === before, "Enter kedua tidak mengembalikan keadaan semula");
+      return `${before} → ${toggled} → ${before}`;
+    });
+
+    await check("setiap booking muncul tepat sekali & total pagination tetap per booking", async () => {
+      const response = await apiGet(context.request, `/api/transactions?start_date=${SESSION_DATE}&end_date=${SESSION_DATE}&page=1&limit=50&sort=date&dir=asc`);
+      assert(response.status() === 200, `HTTP ${response.status()}`);
+      const payload = (await response.json()) as { data: unknown[]; total: number };
+      const buttons = sessionButtons();
+      let slotTotal = 0;
+      for (let index = 0; index < (await buttons.count()); index += 1) {
+        const label = (await buttons.nth(index).textContent()) ?? "";
+        slotTotal += Number(/(\d+) slot/.exec(label)?.[1] ?? 0);
+      }
+      // Baris tunggal = baris tabel yang bukan baris ringkas session (baris detail punya id).
+      const singleRows = (await page.locator("tbody tr:not([id])").count()) - (await buttons.count());
+      assert(slotTotal + singleRows === payload.data.length, `slot ${slotTotal} + tunggal ${singleRows} != ${payload.data.length} booking dari API`);
+      const summary = (await page.getByText(/dari \d+ transaksi/).first().textContent()) ?? "";
+      const shown = Number(/dari (\d+) transaksi/.exec(summary)?.[1] ?? 0);
+      assert(shown === payload.total, `teks pagination ${shown} != total API ${payload.total} (total harus tetap per booking)`);
+      return `${slotTotal} slot dalam session + ${singleRows} booking tunggal = ${payload.data.length}; total pagination ${shown}`;
+    });
+
+    await check("booking tunggal tetap tanpa tombol expand", async () => {
+      const rows = page.locator("tbody tr:not([id])");
+      const total = await rows.count();
+      const withButton = await sessionButtons().count();
+      assert(total > withButton, "tidak ada baris tunggal untuk dibandingkan");
+      return `${total - withButton} baris tunggal tidak berubah`;
+    });
+
+    await check("session tidak menambah overflow horizontal (desktop)", async () => {
+      const overflow = await horizontalOverflow(page);
+      assert(overflow <= 16, `overflow ${overflow}px saat session terbuka`);
+      return `overflow ${overflow}px`;
+    });
+
+    record("tidak ada console error / 5xx pada Booking Session", issuesFor("booking-session").length === 0, issuesFor("booking-session").map((i) => `${i.kind}: ${i.text}`).join(" ; "));
+
     currentArea = "inventori-interaksi";
     await gotoNav(page, navByKey("olsera-inventori"));
     await check("tombol Hidden Item bekerja (hanya memengaruhi tampilan)", async () => {
@@ -555,6 +706,36 @@ async function main() {
       await waitForAppReady(page);
       const after = await page.locator("html").getAttribute("data-mode");
       assert(after === "light", `data-mode "${after}"`);
+    });
+    await check("detail Booking Session terbaca di light mode (teks gelap di atas permukaan terang)", async () => {
+      await gotoNav(page, navByKey("transaksi"));
+      // Biarkan permintaan awal (hari ini) selesai dulu — mengganti filter saat
+      // permintaan masih terbang membatalkannya dan memunculkan noise ECONNRESET.
+      await page.waitForLoadState("networkidle", { timeout: 60_000 }).catch(() => {});
+      await page.getByLabel("Tanggal mulai filter custom").fill(SESSION_DATE);
+      await page.getByLabel("Tanggal selesai filter custom").fill(SESSION_DATE);
+      await page.waitForFunction(
+        (date) => document.querySelector("tbody tr:not([id]) td")?.textContent?.trim() === date,
+        SESSION_DATE,
+        { timeout: 30_000 },
+      );
+      const button = sessionButtons().first();
+      await button.waitFor({ state: "visible", timeout: 30_000 });
+      await button.click();
+      const detail = page.locator(`#${(await button.getAttribute("aria-controls"))!}`);
+      await detail.waitFor({ state: "visible", timeout: 15_000 });
+      // Risiko nyata di light mode: kelas slate terang tidak ikut dipetakan ulang
+      // sehingga teks jadi putih di atas latar putih. Cek luminansi kasar tiap span.
+      const luminance = (color: string) => {
+        const [r, g, b] = (color.match(/[\d.]+/g) ?? ["0", "0", "0"]).map(Number);
+        return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      };
+      const colors = await detail.locator("li span").evaluateAll((els) => els.map((el) => getComputedStyle(el).color));
+      const brightest = colors.reduce((max, color) => Math.max(max, luminance(color)), 0);
+      assert(colors.length > 0, "tidak ada teks slot untuk diperiksa");
+      assert(brightest < 0.6, `ada teks slot terlalu terang di light mode (luminansi ${brightest.toFixed(2)})`);
+      await button.click();
+      return `${colors.length} teks slot, luminansi tertinggi ${brightest.toFixed(2)}`;
     });
     record("tidak ada console error / 5xx saat ganti tema", issuesFor("tema").length === 0, issuesFor("tema").map((i) => `${i.kind}: ${i.text}`).join(" ; "));
 
@@ -646,6 +827,27 @@ async function main() {
         return `overflow ${overflow}px`;
       });
     }
+    await check("mobile 390x844: Booking Session dapat dibuka tanpa overflow baru", async () => {
+      await gotoNav(mobilePage, navByKey("transaksi"));
+      await mobilePage.getByLabel("Tanggal mulai filter custom").fill(SESSION_DATE);
+      await mobilePage.getByLabel("Tanggal selesai filter custom").fill(SESSION_DATE);
+      await mobilePage.waitForFunction(
+        (date) => document.querySelector("tbody tr:not([id]) td")?.textContent?.trim() === date,
+        SESSION_DATE,
+        { timeout: 30_000 },
+      );
+      const before = await horizontalOverflow(mobilePage);
+      const button = mobilePage.getByRole("button", { name: /detail \d+ slot untuk/ }).first();
+      await button.waitFor({ state: "visible", timeout: 30_000 });
+      const box = await button.boundingBox();
+      assert((box?.height ?? 0) >= 32, `target sentuh terlalu kecil: ${box?.height ?? 0}px`);
+      await button.click();
+      assert((await button.getAttribute("aria-expanded")) === "true", "session tidak terbuka di mobile");
+      const after = await horizontalOverflow(mobilePage);
+      if (after > before + 16) await shot(mobilePage, "fail-mobile-booking-session");
+      assert(after <= before + 16, `overflow naik ${before}px → ${after}px setelah session dibuka`);
+      return `overflow ${before}px → ${after}px, target sentuh ${Math.round(box?.height ?? 0)}px`;
+    });
     record("mobile: tidak ada console error / 5xx", issuesFor("mobile").length === 0, issuesFor("mobile").map((i) => `${i.kind}: ${i.text}`).join(" ; "));
     await mobileContext.close();
 

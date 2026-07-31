@@ -1,0 +1,132 @@
+"use client";
+
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  hasValidPriceChange,
+  hasValidReschedule,
+  type BookingSession,
+  type SessionBooking,
+} from "@/lib/booking-session";
+import { getRevenueAmount } from "@/lib/revenue";
+
+/** Baris transaksi yang sudah punya nominal terformat (dipakai apa adanya untuk tampilan). */
+export type SessionRowBooking = SessionBooking & { amount: string };
+
+export function statusVariant(status: string): "success" | "warning" | "danger" {
+  if (status === "Completed") return "success";
+  if (status === "Pending") return "warning";
+  return "danger";
+}
+
+export function statusLabel(status: string) {
+  if (status === "Completed") return "Selesai";
+  if (status === "Pending") return "Belum Bayar";
+  if (status === "Cancelled") return "Dibatalkan";
+  return status;
+}
+
+/**
+ * Satu Booking Session pada tabel Transaksi: baris ringkas (default tertutup)
+ * plus baris detail berisi tiap slot saat dibuka.
+ *
+ * Murni presentasi — memakai kolom tabel yang sudah ada, tidak menambah kolom,
+ * tidak mengubah pagination/total, dan angkanya diambil dari helper revenue
+ * existing. Istilah pembayaran (DP/pelunasan) sengaja TIDAK dipakai: payload
+ * AYO tidak punya data pembayaran, hanya harga per slot.
+ */
+export function BookingSessionRow({
+  session,
+  expanded,
+  onToggle,
+  columnCount,
+  formatAmount,
+}: {
+  session: BookingSession<SessionRowBooking>;
+  expanded: boolean;
+  onToggle: () => void;
+  columnCount: number;
+  formatAmount: (value: number) => string;
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+
+  return (
+    <>
+      <tr className="h-[58px]">
+        <td className="whitespace-nowrap px-2 py-2">{session.date}</td>
+        <td className="whitespace-nowrap px-2 py-2">
+          {session.startTime} - {session.endTime}
+        </td>
+        <td className="px-2 py-2">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={expanded}
+            aria-controls={session.id}
+            aria-label={`${expanded ? "Tutup" : "Buka"} detail ${session.slotCount} slot untuk ${session.customer}`}
+            className="-ml-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 py-1 text-left text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+          >
+            <Chevron className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
+            <span className="whitespace-nowrap text-xs">{session.slotCount} slot</span>
+          </button>
+        </td>
+        <td className="max-w-[150px] truncate px-2 py-2">{session.customer}</td>
+        <td className="max-w-[130px] truncate px-2 py-2">{session.displayPhone}</td>
+        <td className="max-w-[180px] truncate px-2 py-2">{session.fieldName || "-"}</td>
+        <td className="px-2 py-2 text-right font-medium">{formatAmount(session.totalRevenue)}</td>
+        <td className="px-2 py-2">
+          <Badge variant={statusVariant(session.statusSummary)}>{statusLabel(session.statusSummary)}</Badge>
+        </td>
+        <td className="px-2 py-2">
+          {session.badges.length ? (
+            <span className="flex flex-wrap gap-1">
+              {session.badges.map((badge) => (
+                <Badge key={badge} variant="warning">
+                  {badge}
+                </Badge>
+              ))}
+            </span>
+          ) : (
+            <span className="text-slate-600">—</span>
+          )}
+        </td>
+      </tr>
+
+      {expanded && (
+        <tr id={session.id}>
+          <td colSpan={columnCount} className="border-t border-white/10 bg-white/[0.04] px-2 py-1">
+            {/* Nama, tanggal, court, dan total sesi sengaja TIDAK diulang di sini —
+                keempatnya sudah terbaca pada baris ringkas tepat di atasnya. */}
+            <ul className="pl-6">
+              {session.bookings.map((booking, index) => {
+                const counted = getRevenueAmount(booking as Record<string, unknown>) > 0;
+                const excluded = !counted && Number(booking.amountValue ?? 0) > 0;
+                return (
+                  <li
+                    key={booking.id}
+                    className={`flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 text-xs ${index ? "border-t border-white/5" : ""}`}
+                  >
+                    <span className="w-12 shrink-0 text-slate-500">Slot {index + 1}</span>
+                    <span className="whitespace-nowrap font-medium">
+                      {booking.time} - {booking.endTime || "-"}
+                    </span>
+                    <span className="break-all text-slate-500">
+                      Booking: <span className="text-slate-300">{booking.id}</span>
+                    </span>
+                    <span className="whitespace-nowrap text-slate-500">
+                      Nominal slot: <span className="font-medium text-slate-200">{booking.amount}</span>
+                    </span>
+                    <Badge variant={statusVariant(booking.status)}>{statusLabel(booking.status)}</Badge>
+                    {hasValidReschedule(booking) && <Badge variant="warning">Reschedule</Badge>}
+                    {hasValidPriceChange(booking) && <Badge variant="warning">Harga Diubah</Badge>}
+                    {excluded && <span className="text-slate-500">Tidak dihitung ke total sesi</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
