@@ -1,6 +1,28 @@
 export type FinancialAmount = number | string | null | undefined;
-export interface FinancialNode { name: string | null; accountCode: string | null; amount: number; formattedAmount: string | null; children: FinancialNode[]; }
-export interface FinancialSection { amount: number; formattedAmount: string | null; children: FinancialNode[]; }
+export interface FinancialNode {
+  name: string | null;
+  accountCode: string | null;
+  amount: number;
+  formattedAmount: string | null;
+  children: FinancialNode[];
+  subtotalSourceAmount: number | null;
+  childrenAmount: number;
+  subtotalDifference: number;
+  subtotalMatches: boolean;
+  subtotalDiagnostic: string | null;
+}
+export interface FinancialSection {
+  amount: number;
+  formattedAmount: string | null;
+  children: FinancialNode[];
+  subtotalSourceAmount: number | null;
+  childrenAmount: number;
+  subtotalDifference: number;
+  subtotalMatches: boolean;
+  subtotalDiagnostic: string | null;
+}
+
+const emptySection = (): FinancialSection => ({ amount: 0, formattedAmount: null, children: [], subtotalSourceAmount: null, childrenAmount: 0, subtotalDifference: 0, subtotalMatches: true, subtotalDiagnostic: null });
 
 export function parseFinancialAmount(value: FinancialAmount): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -21,12 +43,41 @@ export function financialAmount(row: Record<string, unknown>): number {
 function asObject(value: unknown): Record<string, unknown> { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 function first(row: Record<string, unknown>, keys: string[]): unknown { return keys.map((key) => row[key]).find((value) => value != null && String(value).trim() !== ""); }
 function childrenOf(row: Record<string, unknown>): unknown[] { const value = first(row, ["children", "child", "accounts", "rows", "data"]); return Array.isArray(value) ? value : []; }
+function subtotalFields(label: string, rawAmount: unknown, childrenAmount: number, hasChildren: boolean) {
+  const sourceAmount = rawAmount == null ? null : parseFinancialAmount(rawAmount as FinancialAmount);
+  const difference = sourceAmount == null || !hasChildren ? 0 : sourceAmount - childrenAmount;
+  const matches = sourceAmount == null || !hasChildren || Math.abs(difference) <= 0.01;
+  return {
+    subtotalSourceAmount: sourceAmount,
+    childrenAmount,
+    subtotalDifference: matches ? 0 : difference,
+    subtotalMatches: matches,
+    subtotalDiagnostic: matches ? null : `${label || "Subtotal"} sumber berbeda dari jumlah detail sebesar ${difference}.`,
+  };
+}
 function nodeFrom(raw: unknown): FinancialNode {
   const row = asObject(raw); const children = childrenOf(row).map(nodeFrom);
-  const rawAmount = first(row, ["famount", "fdebit", "fcredit"]);
-  return { name: (first(row, ["name", "account_name", "label"]) as string | undefined) ?? null, accountCode: (first(row, ["accountCode", "account_code", "account_no", "code"]) as string | undefined) ?? null, amount: rawAmount == null ? parseFinancialAmount(first(row, ["amount", "value", "total"]) as FinancialAmount) : parseFinancialAmount(rawAmount as FinancialAmount), formattedAmount: rawAmount == null ? null : String(rawAmount), children };
+  const rawAmount = first(row, ["famount", "fdebit", "fcredit", "amount", "value", "total"]);
+  const childrenAmount = children.reduce((sum, child) => sum + child.amount, 0);
+  const label = String(first(row, ["name", "account_name", "label"]) ?? "");
+  const subtotal = subtotalFields(label, rawAmount, childrenAmount, children.length > 0);
+  return { name: (first(row, ["name", "account_name", "label"]) as string | undefined) ?? null, accountCode: (first(row, ["accountCode", "account_code", "account_no", "code"]) as string | undefined) ?? null, amount: subtotal.subtotalSourceAmount == null ? childrenAmount : subtotal.subtotalSourceAmount, formattedAmount: rawAmount == null ? null : String(rawAmount), children, ...subtotal };
 }
-function sectionFrom(raw: unknown): FinancialSection { const row = asObject(raw); const children = childrenOf(row).map(nodeFrom); const rawAmount = first(row, ["famount", "fdebit", "fcredit", "amount", "total", "value"]); return { amount: parseFinancialAmount(rawAmount as FinancialAmount) || children.reduce((sum, child) => sum + child.amount, 0), formattedAmount: rawAmount == null ? null : String(rawAmount), children }; }
+function sectionFrom(raw: unknown): FinancialSection {
+  const row = asObject(raw); const children = childrenOf(row).map(nodeFrom);
+  const rawAmount = first(row, ["famount", "fdebit", "fcredit", "amount", "total", "value"]);
+  const childrenAmount = children.reduce((sum, child) => sum + child.amount, 0);
+  const label = String(first(row, ["name", "account_name", "label", "title"]) ?? "");
+  const subtotal = subtotalFields(label, rawAmount, childrenAmount, children.length > 0);
+  return { amount: subtotal.subtotalSourceAmount == null ? childrenAmount : subtotal.subtotalSourceAmount, formattedAmount: rawAmount == null ? null : String(rawAmount), children, ...subtotal };
+}
+export function collectSubtotalDiagnostics(value: unknown, path = ""): string[] {
+  if (Array.isArray(value)) return value.flatMap((item, index) => collectSubtotalDiagnostics(item, `${path}[${index}]`));
+  if (!value || typeof value !== "object") return [];
+  const row = value as Record<string, unknown>;
+  const own = row.subtotalMatches === false && typeof row.subtotalDiagnostic === "string" ? [`${path || "report"}: ${row.subtotalDiagnostic}`] : [];
+  return [...own, ...Object.entries(row).flatMap(([key, item]) => collectSubtotalDiagnostics(item, path ? `${path}.${key}` : key))];
+}
 function rootFrom(raw: unknown): Record<string, unknown> { const object = asObject(raw); return asObject(object.data ?? object.result ?? object.payload ?? raw); }
 function findSection(root: Record<string, unknown>, keys: string[]): unknown { return first(root, keys); }
 function normalizeKey(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]/g, ""); }
@@ -50,7 +101,7 @@ function findDeepByLabel(value: unknown, labels: string[]): unknown {
 }
 function semanticSection(root: Record<string, unknown>, keys: string[], labels: string[]): FinancialSection {
   const raw = findDeepByKey(root, keys) ?? findDeepByLabel(root, labels);
-  return raw == null ? { amount: 0, formattedAmount: null, children: [] } : sectionFrom(raw);
+  return raw == null ? emptySection() : sectionFrom(raw);
 }
 function childByLabel(raw: unknown, labels: string[]): unknown {
   const children = childrenOf(asObject(raw));
@@ -62,7 +113,7 @@ export function normalizeBalanceSheetPayload(rawPayload: unknown) {
   const assets = sectionFrom(assetsRaw), liabilityCapital = sectionFrom(liabilityRaw); const difference = assets.amount - liabilityCapital.amount;
   return { assets, liabilityCapital, totals: { totalAssets: assets.amount, totalLiabilityCapital: liabilityCapital.amount, balanced: Math.abs(difference) <= 0.01, difference: Math.abs(difference) <= 0.01 ? 0 : difference } };
 }
-function sectionByKeys(root: Record<string, unknown>, keys: string[]): FinancialSection { const raw = findSection(root, keys); return raw == null ? { amount: 0, formattedAmount: null, children: [] } : sectionFrom(raw); }
+function sectionByKeys(root: Record<string, unknown>, keys: string[]): FinancialSection { const raw = findSection(root, keys); return raw == null ? emptySection() : sectionFrom(raw); }
 export function normalizeProfitLossPayload(rawPayload: unknown) {
   const root = rootFrom(rawPayload); const operational = asObject(root.operasional ?? root.operating); const source = { ...root, ...operational }; const grossRaw = findDeepByKey(source, ["laba_kotor", "gross_profit"]) ?? findDeepByLabel(source, ["laba kotor", "gross profit"]); const nonOperatingRaw = findDeepByKey(source, ["non_operasional", "nonOperating", "non_operating"]); const revenue = sectionFrom(childByLabel(grossRaw, ["pendapatan"]) ?? operational.pendapatan ?? findDeepByKey(grossRaw, ["revenue", "pendapatan", "total_pendapatan"]) ?? findDeepByKey(source, ["revenue", "total_pendapatan"]) ?? { }); const costOfGoodsSold = sectionFrom(childByLabel(grossRaw, ["biaya pokok", "hpp", "harga pokok"]) ?? operational.hpp ?? findDeepByKey(grossRaw, ["costOfGoodsSold", "cost_of_goods_sold", "hpp"]) ?? findDeepByKey(source, ["costOfGoodsSold", "cost_of_goods_sold", "hpp"]) ?? { }); const grossProfit = sectionFrom(grossRaw ?? { }); const operatingExpenses = semanticSection(source, ["operatingExpenses", "operating_expenses", "biaya_operasional"], ["biaya operasional", "operating expense"]); const operatingIncome = source.operatingIncome == null ? null : sectionFrom(source.operatingIncome); const nonOperatingIncome = sectionFrom(childByLabel(nonOperatingRaw, ["pendapatan non operasional", "pendapatan non-operasional"]) ?? findDeepByKey(nonOperatingRaw, ["pendapatan_non_operasional", "nonOperatingIncome"]) ?? findDeepByKey(source, ["nonOperatingIncome", "non_operating_income", "pendapatan_non_operasional"]) ?? { }); const nonOperatingExpenses = sectionFrom(childByLabel(nonOperatingRaw, ["biaya non operasional", "biaya non-operasional"]) ?? findDeepByKey(nonOperatingRaw, ["biaya_non_operasional", "nonOperatingExpenses"]) ?? findDeepByKey(source, ["nonOperatingExpenses", "non_operating_expenses", "biaya_non_operasional"]) ?? { }); const netNonOperating = nonOperatingRaw == null ? null : sectionFrom(nonOperatingRaw); const netProfit = semanticSection(source, ["netProfit", "net_profit", "laba_bersih"], ["laba bersih", "net profit"]);
   const grossExpected = revenue.amount - costOfGoodsSold.amount; const netExpected = grossExpected - operatingExpenses.amount + nonOperatingIncome.amount - nonOperatingExpenses.amount;

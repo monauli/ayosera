@@ -107,8 +107,8 @@ async function readResponse(response: Response): Promise<FinancialResponseInput>
   return { httpStatus: response.status, contentType: response.headers.get("content-type"), bodyText };
 }
 
-type NormalizedNode = { name: string | null; accountCode: string | null; amount: number; formattedAmount: string | null; children: NormalizedNode[] };
-type NormalizedSection = { amount: number; formattedAmount: string | null; children: NormalizedNode[] };
+type NormalizedNode = { name: string | null; accountCode: string | null; amount: number; formattedAmount: string | null; children: NormalizedNode[]; subtotalMatches?: boolean; subtotalDiagnostic?: string | null };
+type NormalizedSection = { amount: number; formattedAmount: string | null; children: NormalizedNode[]; subtotalMatches?: boolean; subtotalDiagnostic?: string | null };
 
 type BalanceSheetPayload = {
   assets: NormalizedSection;
@@ -161,6 +161,9 @@ type SyncLogInfo = {
   accountsTotal: number;
   recordsProcessed: number;
   errorMessage: string | null;
+  failedAccountCodes?: string[];
+  recoveredAccountCodes?: string[];
+  accountAttempts?: Array<{ code: string; attempts: number }>;
   completedAt: string | null;
 } | null;
 
@@ -180,6 +183,8 @@ type SnapshotResponse = {
     ledgerSummary: LedgerSummaryRow[] | null;
   };
   accounts: AccountRow[];
+  periodStatus?: { code: string; label: string };
+  summaryDiagnostics?: Array<{ accountCode: string; accountName: string | null; status: string; summaryDebit: number; summaryCredit: number; detailDebit: number; detailCredit: number }>;
 };
 
 type LedgerEntryRow = {
@@ -220,6 +225,13 @@ function SummaryLine({ label, value, emphasis = false }: { label: string; value:
       <dd className={`tabular-nums ${emphasis ? "text-[15px] font-semibold text-slate-50" : "text-[13.5px] text-slate-200"}`}>{value}</dd>
     </div>
   );
+}
+
+function hasSubtotalMismatch(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasSubtotalMismatch);
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return row.subtotalMatches === false || Object.values(row).some(hasSubtotalMismatch);
 }
 
 function Pagination({
@@ -597,6 +609,8 @@ export function OlseraFinancialPanel() {
   const pl = snapshot?.reports.profitLoss ?? null;
   const cf = snapshot?.reports.cashFlow ?? null;
   const ls = snapshot?.reports.ledgerSummary ?? null;
+  const summaryWarnings = snapshot?.summaryDiagnostics?.filter((row) => !["Data Lengkap", "Tidak Ada Transaksi"].includes(row.status)) ?? [];
+  const subtotalWarning = hasSubtotalMismatch(bs) || hasSubtotalMismatch(pl) || hasSubtotalMismatch(cf);
 
   return (
     <div>
@@ -633,6 +647,7 @@ export function OlseraFinancialPanel() {
                     </span>
                   )}
                 </p>
+                {snapshot?.periodStatus && <span className={`mt-1 inline-flex rd-chip ${snapshot.periodStatus.code === "final" ? "rd-chip-ok" : snapshot.periodStatus.code === "current" ? "border-amber-400/40 bg-amber-400/10 text-amber-300" : "border-sky-400/30 bg-sky-400/10 text-sky-200"}`}>{snapshot.periodStatus.label}</span>}
                 <p className={DESC}>
                   Periode{" "}
                   <span className="font-medium text-slate-200">{formatPeriodLabel(period)}</span>
@@ -699,8 +714,17 @@ export function OlseraFinancialPanel() {
                 : syncMessage}
             </p>
           )}
+          {snapshot?.syncLog?.failedAccountCodes?.length ? <p className="mt-2 text-[12.5px] text-rose-300">Akun gagal disinkronkan: {snapshot.syncLog.failedAccountCodes.join(", ")}</p> : null}
         </div>
       </section>
+
+      {(summaryWarnings.length > 0 || subtotalWarning) && (
+        <section className="rd-enter mb-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-[13px] text-amber-100">
+          <p className="font-semibold">Perlu Dicek — diagnostic sumber</p>
+          {subtotalWarning && <p className="mt-1">Subtotal sumber Olsera tidak cocok dengan jumlah detail. Angka sumber tidak diubah otomatis.</p>}
+          {summaryWarnings.slice(0, 5).map((row) => <p key={row.accountCode} className="mt-1">Akun {row.accountCode}: {row.status} (summary {row.summaryDebit}/{row.summaryCredit}, detail {row.detailDebit}/{row.detailCredit}).</p>)}
+        </section>
+      )}
 
       {snapshotError && (
         <section className="rd-enter mb-4">

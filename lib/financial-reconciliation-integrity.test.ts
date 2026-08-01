@@ -186,12 +186,15 @@ async function reproduceC1() {
   const { startFinancialSync, stepFinancialSync } = await import("./olsera-financial-sync.ts");
   const fc = fakeCollections();
 
-  let run = await startFinancialSync(2026, 5, fc);
-  run = await stepFinancialSync(run._id, fc); // fase monthly-reports -> ledger-details
+  const startedRun = await startFinancialSync(2026, 5, fc);
+  const run = await stepFinancialSync(startedRun._id, fc); // fase monthly-reports -> ledger-details
+  assert.ok(run, "Setup sync run tidak ditemukan setelah fase monthly-reports.");
   assert.equal(run.phase, "ledger-details", "setup rusak: sync belum sampai fase ledger-details");
 
   const afterFirstBatch = await stepFinancialSync(run._id, fc); // batch 1: akun gagal ikut di sini
+  assert.ok(afterFirstBatch, "Setup sync run tidak ditemukan setelah batch pertama.");
   const afterSecondBatch = await stepFinancialSync(afterFirstBatch._id, fc); // batch 2 (invocation terpisah, checkpoint sama)
+  assert.ok(afterSecondBatch, "Setup sync run tidak ditemukan setelah batch kedua.");
 
   return { fc, afterFirstBatch, afterSecondBatch, ledgerDetailCallLog: [...ledgerDetailCallLog] };
 }

@@ -38,6 +38,7 @@ import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-sync-lock";
 import { runOlseraSyncAll, type StageId, type StageStatus } from "@/lib/olsera-sync-orchestrator";
 import { UsersPanel } from "@/components/users-panel";
+import { SupervisorAuditPanel } from "@/components/supervisor-audit-panel";
 import { AyoseraHeader } from "@/components/redesign/ayosera-header";
 import { AyoseraShell } from "@/components/redesign/ayosera-shell";
 import { AyoseraSidebar } from "@/components/redesign/ayosera-sidebar";
@@ -193,6 +194,7 @@ const navItems = [
   },
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
   { label: "Rekonsiliasi", display: "Rekonsiliasi", icon: ShieldCheck, module: "rekonsiliasi" },
+  { label: "AuditSupervisor", display: "Audit & Sinkronisasi", icon: ShieldCheck, module: "supervisor" },
 ];
 
 type SessionUserInfo = {
@@ -1997,6 +1999,8 @@ export default function DashboardPage() {
               ? "Monitoring Webhook AYO"
               : activeNav === "Pengguna"
                 ? "Manajemen Pengguna"
+                : activeNav === "AuditSupervisor"
+                  ? "Audit & Sinkronisasi"
                 : "Dashboard AYO";
   const headerDescription =
     activeNav === "OlseraInventori"
@@ -2190,6 +2194,8 @@ export default function DashboardPage() {
               <UsersPanel currentUserId={sessionUser!.id} />
             </div>
           )}
+
+          {activeNavAllowed && activeNav === "AuditSupervisor" && isSupervisor && <SupervisorAuditPanel />}
 
           {activeNavAllowed && activeNav === "Dasbor" && (
             <div>

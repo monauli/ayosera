@@ -14,6 +14,8 @@ export type FinancialCollections = {
   accounts: any;
   ledgerEntries: any;
   syncLogs: any;
+  emptyLedgerConfirmations?: any;
+  staleCleanupAudits?: any;
 };
 export type FinancialStoreContext = FinancialCollections;
 
@@ -105,6 +107,8 @@ async function runWithCollections<T>(
       accounts: c.olseraFinancialAccounts,
       ledgerEntries: c.olseraFinancialLedgerEntries,
       syncLogs: c.olseraFinancialSyncLogs,
+      emptyLedgerConfirmations: c.olseraFinancialEmptyLedgerConfirmations,
+      staleCleanupAudits: c.olseraFinancialStaleCleanupAudits,
     });
   });
 }
@@ -122,6 +126,8 @@ async function runWithReadCollections<T>(
     accounts: c.olseraFinancialAccounts,
     ledgerEntries: c.olseraFinancialLedgerEntries,
     syncLogs: c.olseraFinancialSyncLogs,
+    emptyLedgerConfirmations: c.olseraFinancialEmptyLedgerConfirmations,
+    staleCleanupAudits: c.olseraFinancialStaleCleanupAudits,
   });
 }
 
@@ -367,7 +373,120 @@ export async function reconcileLedgerSummarySnapshot(
   if (!report) return;
   const normalizedPayload = reconcileLedgerSummaryWithDetails(report.normalizedPayload, entries);
   await updateMonthlyReportNormalizedPayload(period, "ledger-summary", normalizedPayload, context);
+  await zeroConfirmedEmptyLedgerSummaryRows(period, context);
 }
+
+/** Safety barrier for an account whose successful empty response was confirmed twice. */
+export const EMPTY_LEDGER_CONFIRMATION_COUNT = 2;
+export const EMPTY_LEDGER_CONFIRMATION_MIN_GAP_MS = 60_000;
+
+export async function recordLedgerEmptyObservation(
+  period: string,
+  accountCode: string,
+  runId: string,
+  invocationId: string,
+  context?: FinancialCollections,
+  now = new Date(),
+): Promise<{ status: "unavailable" | "candidate" | "confirmed"; deletedCount: number }> {
+  return runWithCollections(context, async (fc) => {
+    const confirmations = fc.emptyLedgerConfirmations;
+    if (!confirmations) return { status: "unavailable", deletedCount: 0 };
+    const id = `${storeId()}:${period}:${accountCode}`;
+    const current = await confirmations.findOne({ _id: id });
+    const previous = Array.isArray(current?.observations) ? current.observations : [];
+    const last = previous[previous.length - 1];
+    if (last?.invocationId === invocationId) return { status: current?.status === "confirmed" ? "confirmed" : "candidate", deletedCount: 0 };
+    if (last && now.getTime() - new Date(last.observedAt).getTime() < EMPTY_LEDGER_CONFIRMATION_MIN_GAP_MS) {
+      return { status: "candidate", deletedCount: 0 };
+    }
+    const observation = { runId, invocationId, observedAt: now, rowCount: 0, sourceStatus: "success-empty" };
+    const observations = [...previous, observation].slice(-EMPTY_LEDGER_CONFIRMATION_COUNT);
+    const confirmed = observations.length >= EMPTY_LEDGER_CONFIRMATION_COUNT;
+    await confirmations.updateOne(
+      { _id: id },
+      { $set: { _id: id, storeId: storeId(), period, accountCode, status: confirmed ? "confirmed" : "candidate", observations, confirmedAt: confirmed ? now : current?.confirmedAt ?? null, updatedAt: now }, $setOnInsert: { createdAt: now, lastNonEmptyAt: null } },
+      { upsert: true },
+    );
+    if (!confirmed) return { status: "candidate", deletedCount: 0 };
+
+    const result = typeof fc.ledgerEntries.deleteMany === "function"
+      ? await fc.ledgerEntries.deleteMany({ storeId: storeId(), period, accountCode })
+      : { deletedCount: 0 };
+    const deletedCount = Number(result?.deletedCount ?? 0);
+    const audit = {
+      _id: `${id}:${now.getTime()}`,
+      storeId: storeId(), period, accountCode, runId,
+      reason: "dua pemeriksaan sukses terpisah mengembalikan akun kosong",
+      firstCheck: observations[0], secondCheck: observations[1], deletedCount, succeeded: true, createdAt: now,
+    };
+    if (fc.staleCleanupAudits?.insertOne) await fc.staleCleanupAudits.insertOne(audit);
+    return { status: "confirmed", deletedCount };
+  });
+}
+
+export async function markLedgerNonEmptyObservation(period: string, accountCode: string, context?: FinancialCollections, now = new Date()): Promise<void> {
+  return runWithCollections(context, async (fc) => {
+    if (!fc.emptyLedgerConfirmations) return;
+    const id = `${storeId()}:${period}:${accountCode}`;
+    await fc.emptyLedgerConfirmations.updateOne({ _id: id }, { $set: { status: "cancelled", observations: [], lastNonEmptyAt: now, updatedAt: now }, $setOnInsert: { _id: id, storeId: storeId(), period, accountCode, confirmedAt: null, createdAt: now } }, { upsert: true });
+  });
+}
+
+export async function cleanupConfirmedStaleLedgerAccount(period: string, accountCode: string, context?: FinancialCollections): Promise<{ deletedCount: number; confirmed: boolean }> {
+  return runWithCollections(context, async (fc) => {
+    if (!fc.staleCleanupAudits) return { deletedCount: 0, confirmed: false };
+    const audits = await fc.staleCleanupAudits.find({ storeId: storeId(), period, accountCode, succeeded: true }).sort({ createdAt: -1 }).limit(1).toArray();
+    if (!audits.length) return { deletedCount: 0, confirmed: false };
+    const result = await fc.ledgerEntries.deleteMany({ storeId: storeId(), period, accountCode });
+    await zeroConfirmedEmptyLedgerSummaryRows(period, context);
+    return { deletedCount: Number(result?.deletedCount ?? 0), confirmed: true };
+  });
+}
+
+export async function zeroConfirmedEmptyLedgerSummaryRows(period: string, context?: FinancialCollections): Promise<void> {
+  return runWithCollections(context, async (fc) => {
+    if (!fc.staleCleanupAudits) return;
+    const audits = await fc.staleCleanupAudits.find({ storeId: storeId(), period, succeeded: true }).toArray();
+    const codes = [...new Set(audits.map((row: any) => String(row.accountCode)).filter(Boolean))];
+    if (!codes.length) return;
+    const reports = await getMonthlyReportsForPeriod(period, context);
+    const report = reports["ledger-summary"];
+    if (!report || !Array.isArray(report.normalizedPayload)) return;
+    const entries = await fc.ledgerEntries.find({ storeId: storeId(), period }).toArray();
+    const hasDetail = new Set(entries.filter((row: any) => row.isOpeningBalance !== true).map((row: any) => String(row.accountCode)));
+    const next = report.normalizedPayload.map((row: any) => codes.includes(String(row.accountCode)) && !hasDetail.has(String(row.accountCode)) ? { ...row, debit: 0, credit: 0, formattedDebit: "0", formattedCredit: "0" } : row);
+    await updateMonthlyReportNormalizedPayload(period, "ledger-summary", next, context);
+  });
+}
+
+export type FinancialSummaryDiagnosticStatus = "Data Lengkap" | "Tidak Ada Transaksi" | "Gagal Disinkronkan" | "Perlu Dicek" | "Kandidat Data Lama";
+export async function getFinancialSummaryDiagnostics(period: string, context?: FinancialCollections): Promise<Array<Record<string, unknown>>> {
+  return runWithReadCollections(context, async (fc) => {
+    const [reports, entries, syncLog, candidates] = await Promise.all([
+      getMonthlyReportsForPeriod(period, context),
+      listAllFinancialLedgerEntriesForPeriod(period, context),
+      getFinancialSyncLogForPeriod(period, context),
+      fc.emptyLedgerConfirmations?.find({ storeId: storeId(), period }).toArray() ?? Promise.resolve([]),
+    ]);
+    const detailTotals = new Map<string, { debit: number; credit: number }>();
+    for (const row of entries) { if (row.isOpeningBalance) continue; const code = String(row.accountCode); const total = detailTotals.get(code) ?? { debit: 0, credit: 0 }; total.debit += Number(row.debit) || 0; total.credit += Number(row.credit) || 0; detailTotals.set(code, total); }
+    const failed = new Set(readCodesForAudit(syncLog?.failedAccountCodes));
+    const candidateMap = new Map((candidates as any[]).map((row: any) => [String(row.accountCode), row]));
+    const summary = Array.isArray(reports["ledger-summary"]?.normalizedPayload) ? reports["ledger-summary"]!.normalizedPayload as any[] : [];
+    return summary.map((row) => {
+      const code = String(row.accountCode ?? ""); const detail = detailTotals.get(code); const candidate = candidateMap.get(code); const summaryDebit = Number(row.debit) || 0; const summaryCredit = Number(row.credit) || 0;
+      let status: FinancialSummaryDiagnosticStatus = "Tidak Ada Transaksi";
+      if (failed.has(code)) status = "Gagal Disinkronkan";
+      else if (candidate?.status === "candidate") status = "Kandidat Data Lama";
+      else if (!detail && (summaryDebit !== 0 || summaryCredit !== 0)) status = "Perlu Dicek";
+      else if (detail && (Math.abs(summaryDebit - detail.debit) > 1 || Math.abs(summaryCredit - detail.credit) > 1)) status = "Perlu Dicek";
+      else if (detail) status = "Data Lengkap";
+      return { accountCode: code, accountName: row.accountName ?? null, status, summaryDebit, summaryCredit, detailDebit: detail?.debit ?? 0, detailCredit: detail?.credit ?? 0, failed: failed.has(code), candidateStatus: candidate?.status ?? null };
+    });
+  });
+}
+
+function readCodesForAudit(value: unknown): string[] { return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : []; }
 
 /** Katalog akun tersimpan (tidak per-periode — snapshot terbaru storeId). */
 export async function listFinancialAccounts(context?: FinancialCollections): Promise<any[]> {

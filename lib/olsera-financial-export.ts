@@ -17,7 +17,7 @@ import {
   listFinancialAccounts,
   type FinancialCollections,
 } from "./olsera-financial-store.ts";
-import { validatePeriod } from "./olsera-financial-core.ts";
+import { collectSubtotalDiagnostics, validatePeriod } from "./olsera-financial-core.ts";
 import {
   buildLedgerAccountDetail,
   DEFAULT_COMPANY_NAME,
@@ -67,9 +67,9 @@ function safeAccountCode(value: string): string | null {
   return /^\d{1,20}$/.test(trimmed) ? trimmed : null;
 }
 
-function accountNameMap(accounts: Array<{ accountCode?: string | null; accountName?: string | null }>): Map<string, string> {
+function accountNameMap(accounts: Array<{ accountCode?: string | null; accountName?: string | null }>, preferredEntries: Array<{ accountCode?: string | null; accountName?: string | null }> = [], preferredSummary: Array<{ accountCode?: string | null; accountName?: string | null }> = []): Map<string, string> {
   const map = new Map<string, string>();
-  for (const row of accounts) {
+  for (const row of [...preferredEntries, ...preferredSummary, ...accounts]) {
     const code = (row.accountCode ?? "").toString().trim();
     if (code && !map.has(code)) map.set(code, (row.accountName ?? "").toString().trim());
   }
@@ -89,6 +89,11 @@ export async function generateFinancialExcelExport(rawPeriod: string, context?: 
   ]);
 
   if (!reports || Object.keys(reports).length === 0) return { ok: false, reason: "snapshot-missing" };
+  const sourceWarningLines = collectSubtotalDiagnostics([
+    reports["balance-sheet"]?.normalizedPayload,
+    reports["profit-loss"]?.normalizedPayload,
+    reports["cash-flow"]?.normalizedPayload,
+  ]).map((line) => `PERINGATAN SUMBER: ${line}`);
 
   try {
     const workbook = buildFinancialWorkbook({
@@ -99,7 +104,8 @@ export async function generateFinancialExcelExport(rawPeriod: string, context?: 
       cashFlow: (reports["cash-flow"]?.normalizedPayload as never) ?? null,
       ledgerSummary: (reports["ledger-summary"]?.normalizedPayload as never) ?? null,
       ledgerEntries: ledgerEntries as unknown as LedgerEntryInput[],
-      accountNameByCode: accountNameMap(accounts),
+      accountNameByCode: accountNameMap(accounts, ledgerEntries, (reports["ledger-summary"]?.normalizedPayload as unknown as any[]) ?? []),
+      sourceWarningLines,
       lastSyncedAt: syncLog?.completedAt ?? null,
     });
     const body = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
@@ -131,7 +137,7 @@ export async function generateFinancialPdfExport(
     ]);
     if (!ledgerEntries.length) return { ok: false, reason: "ledger-empty" };
     try {
-      const body = await renderBukuBesarDetailPdf(company, period, ledgerEntries as unknown as LedgerEntryInput[], accountNameMap(accounts), lastSyncedAt);
+      const body = await renderBukuBesarDetailPdf(company, period, ledgerEntries as unknown as LedgerEntryInput[], accountNameMap(accounts, ledgerEntries), lastSyncedAt);
       return { ok: true, filename: financialExportFileName(kind, period), contentType: PDF_CONTENT_TYPE, body };
     } catch {
       return { ok: false, reason: "generation-failed" };
@@ -150,21 +156,22 @@ export async function generateFinancialPdfExport(
   const payload =
     (reports as Record<string, { normalizedPayload?: unknown } | undefined>)[reportTypeByKind[kind]]?.normalizedPayload ?? null;
   if (!payload) return { ok: false, reason: "invalid-payload" };
+  const sourceWarningLines = collectSubtotalDiagnostics(payload).map((line) => `PERINGATAN SUMBER: ${line}`);
 
   try {
     let body: Uint8Array;
     switch (kind) {
       case "neraca":
-        body = await renderNeracaPdf(company, period, payload as never, lastSyncedAt);
+        body = await renderNeracaPdf(company, period, payload as never, lastSyncedAt, sourceWarningLines);
         break;
       case "laba-rugi":
-        body = await renderLabaRugiPdf(company, period, payload as never, lastSyncedAt);
+        body = await renderLabaRugiPdf(company, period, payload as never, lastSyncedAt, sourceWarningLines);
         break;
       case "arus-kas":
-        body = await renderArusKasPdf(company, period, payload as never, lastSyncedAt);
+        body = await renderArusKasPdf(company, period, payload as never, lastSyncedAt, sourceWarningLines);
         break;
       case "ringkasan-buku-besar":
-        body = await renderRingkasanBukuBesarPdf(company, period, payload as never, lastSyncedAt);
+        body = await renderRingkasanBukuBesarPdf(company, period, payload as never, lastSyncedAt, sourceWarningLines);
         break;
     }
     return { ok: true, filename: financialExportFileName(kind, period), contentType: PDF_CONTENT_TYPE, body };
@@ -200,7 +207,7 @@ async function loadLedgerAccountDetail(
   ]);
   if (!rawEntries.length) return { ok: false, reason: "ledger-empty" };
 
-  const detail = buildLedgerAccountDetail(rawEntries as unknown as LedgerEntryInput[], accountCode, accountNameMap(accounts));
+  const detail = buildLedgerAccountDetail(rawEntries as unknown as LedgerEntryInput[], accountCode, accountNameMap(accounts, rawEntries));
   return { ok: true, period, accountCode, detail, lastSyncedAt: syncLog?.completedAt ?? null };
 }
 

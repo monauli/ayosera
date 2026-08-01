@@ -1,11 +1,13 @@
-import { validatePeriod } from "@/lib/olsera-financial-core";
+import { isCurrentJakartaPeriod, validatePeriod } from "@/lib/olsera-financial-core";
 import {
   getFinancialSyncLogForPeriod,
   getLatestSuccessfulFinancialSyncLog,
   getMonthlyReportsForPeriod,
+  getFinancialSummaryDiagnostics,
   listFinancialAccounts,
 } from "@/lib/olsera-financial-store";
 import { guard, json, isDatabaseTimeoutError, withDatabaseRetry } from "../_shared";
+import { withTimeout } from "@/lib/with-timeout";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,10 +16,7 @@ const REQUEST_TIMEOUT_MS = 15000;
 async function timed<T>(label: string, task: Promise<T>): Promise<T> {
   const started = performance.now();
   try {
-    return await Promise.race([
-      task,
-      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`snapshot ${label} timeout`)), REQUEST_TIMEOUT_MS)),
-    ]);
+    return await withTimeout(task, REQUEST_TIMEOUT_MS, `snapshot ${label} timeout`);
   } finally {
     console.info(`[financial-snapshot] ${label} ${Math.round(performance.now() - started)}ms`);
   }
@@ -37,17 +36,21 @@ export async function GET(req: Request) {
     const [yearText, monthText] = periodParam.split("-");
     const period = validatePeriod(yearText, monthText);
 
-    const [reports, accounts, syncLog, latestSuccessfulRun] = await withDatabaseRetry(() =>
+    const [reports, accounts, syncLog, latestSuccessfulRun, summaryDiagnostics] = await withDatabaseRetry(() =>
       Promise.all([
         timed("monthlyReports", getMonthlyReportsForPeriod(period)),
         timed("accounts", listFinancialAccounts()),
         timed("syncLog", getFinancialSyncLogForPeriod(period)),
         timed("latestSyncLog", getLatestSuccessfulFinancialSyncLog()),
+        timed("summaryDiagnostics", getFinancialSummaryDiagnostics(period)),
       ]),
     );
 
     const hasData = Object.keys(reports).length > 0;
 
+    const allReportsValidated = ["balance-sheet", "profit-loss", "cash-flow", "ledger-summary"].every((type) => reports[type as keyof typeof reports]?.validated === true);
+    const currentMonth = isCurrentJakartaPeriod(period);
+    const periodStatus = currentMonth ? { code: "current", label: "Bulan Berjalan / Belum Final" } : syncLog?.status === "success" && allReportsValidated ? { code: "final", label: "Final" } : syncLog?.status === "success" ? { code: "waiting-validation", label: "Menunggu Validasi" } : { code: "sync", label: "Sync Belum Selesai" };
     return json({
       status: "success",
       period,
@@ -62,6 +65,9 @@ export async function GET(req: Request) {
             accountsTotal: syncLog.accountCodes?.length ?? 0,
             recordsProcessed: syncLog.recordsProcessed,
             errorMessage: syncLog.errorMessage,
+            failedAccountCodes: syncLog.failedAccountCodes ?? [],
+            recoveredAccountCodes: syncLog.recoveredAccountCodes ?? [],
+            accountAttempts: syncLog.accountAttempts ?? [],
             completedAt: syncLog.completedAt ? new Date(syncLog.completedAt).toISOString() : null,
           }
         : null,
@@ -76,6 +82,8 @@ export async function GET(req: Request) {
         accountName: row.accountName ?? null,
         classification: row.classification ?? null,
       })),
+      periodStatus,
+      summaryDiagnostics,
     });
   } catch (error) {
     if (error instanceof Response) return error;

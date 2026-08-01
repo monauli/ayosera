@@ -80,6 +80,7 @@ export interface FinancialExcelInput {
   accountNameByCode?: Map<string, string>;
   /** Waktu sinkron terakhir (ISO/Date) — dipakai hanya untuk label bulan berjalan. */
   lastSyncedAt?: string | Date | null;
+  sourceWarningLines?: string[];
 }
 
 function titleBlock(
@@ -139,10 +140,11 @@ function renderStatementSheet(
   lines: StatementLine[],
   layout: "code-name-amount" | "name-amount",
   draftLines?: string[],
+  infoLines?: string[],
 ) {
   const sheet = workbook.addWorksheet(sheetName);
   const amountCol = layout === "code-name-amount" ? 3 : 2;
-  const headerRow = titleBlock(sheet, companyName, reportTitle, periodText, amountCol, draftLines);
+  const headerRow = titleBlock(sheet, companyName, reportTitle, periodText, amountCol, draftLines, infoLines);
 
   // Header kolom
   const header =
@@ -234,7 +236,7 @@ function renderStatementSheet(
 
 function renderLedgerSummarySheet(workbook: ExcelJS.Workbook, input: FinancialExcelInput, periodText: string, draftLines?: string[]) {
   const sheet = workbook.addWorksheet("Ringkasan Buku Besar");
-  const headerRow = titleBlock(sheet, input.companyName, "Ringkasan Buku Besar", periodText, 6, draftLines);
+  const headerRow = titleBlock(sheet, input.companyName, "Ringkasan Buku Besar", periodText, 6, draftLines, input.sourceWarningLines);
 
   const header = sheet.addRow(["Nomor Akun", "Nama Akun", "Klasifikasi", "Debit", "Kredit", "Saldo"]);
   header.eachCell((cell, colNumber) => {
@@ -274,7 +276,7 @@ function renderLedgerSummarySheet(workbook: ExcelJS.Workbook, input: FinancialEx
 
 function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExcelInput, periodText: string, draftLines?: string[]) {
   const sheet = workbook.addWorksheet("Buku Besar Detail");
-  const headerRow = titleBlock(sheet, input.companyName, "Buku Besar Detail", periodText, 5, draftLines);
+  const headerRow = titleBlock(sheet, input.companyName, "Buku Besar Detail", periodText, 5, draftLines, input.sourceWarningLines);
 
   const header = sheet.addRow(["Tanggal", "No. Jurnal", "Deskripsi", "Debit", "Kredit"]);
   header.eachCell((cell, colNumber) => {
@@ -340,6 +342,7 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
   const periodLabel = formatPeriodLabelID(input.period);
   const notice = draftReportNotice(input.period, input.lastSyncedAt);
   const draftLines = notice.isDraft ? [notice.label, notice.detail] : undefined;
+  const warningLines = input.sourceWarningLines;
 
   renderLedgerSummarySheet(workbook, input, periodLabel, draftLines);
 
@@ -352,6 +355,7 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     input.cashFlow ? filterZeroStatementLines(buildCashFlowLines(input.cashFlow)) : [],
     "name-amount",
     draftLines,
+    warningLines,
   );
 
   renderStatementSheet(
@@ -363,6 +367,7 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     input.profitLoss ? filterZeroStatementLines(buildProfitLossLines(input.profitLoss)) : [],
     "code-name-amount",
     draftLines,
+    warningLines,
   );
 
   renderStatementSheet(
@@ -374,6 +379,7 @@ export function buildFinancialWorkbook(input: FinancialExcelInput): ExcelJS.Work
     input.balanceSheet ? filterZeroStatementLines(buildBalanceSheetLines(input.balanceSheet)) : [],
     "code-name-amount",
     draftLines,
+    warningLines,
   );
 
   renderLedgerDetailSheet(workbook, input, periodLabel, draftLines);

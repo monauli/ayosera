@@ -390,8 +390,9 @@ async function renderStatementPdf(
   lines: StatementLine[],
   layout: "code-name-amount" | "name-amount",
   draftLines?: string[],
+  warningLines?: string[],
 ): Promise<Uint8Array> {
-  const report = await ReportPdf.create({ orientation: "portrait", companyName, title, periodText, draftLines });
+  const report = await ReportPdf.create({ orientation: "portrait", companyName, title, periodText, draftLines: [...(draftLines ?? []), ...(warningLines ?? [])] });
   const left = report.contentLeft;
   const right = report.contentRight;
   const codeX = left;
@@ -442,14 +443,14 @@ function draftLinesFor(period: string, lastSyncedAt: string | Date | null | unde
   return notice.isDraft ? [notice.label, notice.detail] : undefined;
 }
 
-export function renderNeracaPdf(companyName: string, period: string, balanceSheet: BalanceSheetPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Neraca", formatPeriodLabelID(period), filterZeroStatementLines(buildBalanceSheetLines(balanceSheet)), "code-name-amount", draftLinesFor(period, lastSyncedAt));
+export function renderNeracaPdf(companyName: string, period: string, balanceSheet: BalanceSheetPayload, lastSyncedAt?: string | Date | null, warningLines?: string[]): Promise<Uint8Array> {
+  return renderStatementPdf(companyName, "Laporan Neraca", formatPeriodLabelID(period), filterZeroStatementLines(buildBalanceSheetLines(balanceSheet)), "code-name-amount", draftLinesFor(period, lastSyncedAt), warningLines);
 }
-export function renderLabaRugiPdf(companyName: string, period: string, profitLoss: ProfitLossPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Laba Rugi", formatPeriodLabelID(period), filterZeroStatementLines(buildProfitLossLines(profitLoss)), "code-name-amount", draftLinesFor(period, lastSyncedAt));
+export function renderLabaRugiPdf(companyName: string, period: string, profitLoss: ProfitLossPayload, lastSyncedAt?: string | Date | null, warningLines?: string[]): Promise<Uint8Array> {
+  return renderStatementPdf(companyName, "Laporan Laba Rugi", formatPeriodLabelID(period), filterZeroStatementLines(buildProfitLossLines(profitLoss)), "code-name-amount", draftLinesFor(period, lastSyncedAt), warningLines);
 }
-export function renderArusKasPdf(companyName: string, period: string, cashFlow: CashFlowPayload, lastSyncedAt?: string | Date | null): Promise<Uint8Array> {
-  return renderStatementPdf(companyName, "Laporan Arus Kas", formatPeriodDateRangeEN(period), filterZeroStatementLines(buildCashFlowLines(cashFlow)), "name-amount", draftLinesFor(period, lastSyncedAt));
+export function renderArusKasPdf(companyName: string, period: string, cashFlow: CashFlowPayload, lastSyncedAt?: string | Date | null, warningLines?: string[]): Promise<Uint8Array> {
+  return renderStatementPdf(companyName, "Laporan Arus Kas", formatPeriodDateRangeEN(period), filterZeroStatementLines(buildCashFlowLines(cashFlow)), "name-amount", draftLinesFor(period, lastSyncedAt), warningLines);
 }
 
 // ---------------------------------------------------------------------------
@@ -461,6 +462,7 @@ export async function renderRingkasanBukuBesarPdf(
   period: string,
   ledgerSummary: LedgerSummaryRow[] | null,
   lastSyncedAt?: string | Date | null,
+  warningLines?: string[],
 ): Promise<Uint8Array> {
   const pageW = A4.h;
   const tableRight = pageW - MARGIN - 6;
@@ -481,7 +483,7 @@ export async function renderRingkasanBukuBesarPdf(
     title: "Ringkasan Buku Besar",
     periodText: formatPeriodLabelID(period),
     columns,
-    draftLines: draftLinesFor(period, lastSyncedAt),
+    draftLines: [...(draftLinesFor(period, lastSyncedAt) ?? []), ...(warningLines ?? [])],
   });
 
   for (const row of filterZeroLedgerSummaryRows(buildLedgerSummaryRows(ledgerSummary))) {

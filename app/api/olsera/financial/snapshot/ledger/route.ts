@@ -1,6 +1,7 @@
 import { validatePeriod } from "@/lib/olsera-financial-core";
 import { getFinancialLedgerMovementTotals, listFinancialAccounts, listFinancialLedgerEntriesPage } from "@/lib/olsera-financial-store";
 import { guard, json, isDatabaseTimeoutError, withDatabaseRetry } from "../../_shared";
+import { withTimeout } from "@/lib/with-timeout";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,10 +12,7 @@ const MAX_LIMIT = 200;
 async function timed<T>(label: string, task: Promise<T>): Promise<T> {
   const started = performance.now();
   try {
-    return await Promise.race([
-      task,
-      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`ledger ${label} timeout`)), REQUEST_TIMEOUT_MS)),
-    ]);
+    return await withTimeout(task, REQUEST_TIMEOUT_MS, `ledger ${label} timeout`);
   } finally {
     console.info(`[financial-snapshot-ledger] ${label} ${Math.round(performance.now() - started)}ms`);
   }
