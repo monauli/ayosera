@@ -156,7 +156,7 @@ type LedgerSummaryRow = {
 type SyncLogInfo = {
   runId: string;
   status: "running" | "success" | "partial" | "failed";
-  phase: "monthly-reports" | "ledger-details" | "completed";
+  phase: "monthly-reports" | "ledger-details" | "reconcile" | "completed";
   accountsProcessed: number;
   accountsTotal: number;
   recordsProcessed: number;
@@ -695,7 +695,7 @@ export function OlseraFinancialPanel() {
           {(syncMessage || syncProgress) && (
             <p className="mt-3 text-sm text-slate-300" aria-live="polite">
               {syncProgress && (syncing || isSyncRunningRemotely)
-                ? `Fase ${syncProgress.phase === "monthly-reports" ? "laporan bulanan" : syncProgress.phase === "ledger-details" ? "buku besar detail" : "selesai"} — ${syncProgress.accountsProcessed}/${syncProgress.accountsTotal} akun, ${syncProgress.recordsProcessed} baris diproses.`
+                ? `Fase ${syncProgress.phase === "monthly-reports" ? "laporan bulanan" : syncProgress.phase === "ledger-details" ? "buku besar detail" : syncProgress.phase === "reconcile" ? "rekonsiliasi" : "selesai"} — ${syncProgress.accountsProcessed}/${syncProgress.accountsTotal} akun, ${syncProgress.recordsProcessed} baris diproses.`
                 : syncMessage}
             </p>
           )}

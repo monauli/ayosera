@@ -33,6 +33,9 @@ const MAX_STEPS_PER_REQUEST = 8;
 // berjalan (tidak memotong step yang sudah dimulai), checkpoint tersimpan,
 // dan request berikutnya melanjutkan.
 const TIME_BUDGET_MS = 240_000;
+// Jeda minimum sebelum cron memulai ulang run yang sudah final sebagai
+// "partial" — mencegah restart beruntun setiap invocation.
+const PARTIAL_RESTART_COOLDOWN_MS = 30 * 60 * 1000;
 
 export type CronOlseraFinancialResponse = {
   status: number;
@@ -99,7 +102,17 @@ export async function runOlseraFinancialCron(
 
     // Jangan membuat run baru bila periode ini masih punya run aktif
     // (running/partial) — resume dari checkpoint yang sama.
-    let run = existing ?? (await startFinancialSync(period.slice(0, 4), Number(period.slice(5))));
+    //
+    // Perkecualian: run yang sudah FINAL sebagai "partial" (ada akun yang gagal
+    // permanen setelah batas retry) tidak bisa dilanjutkan lagi oleh step —
+    // setelah cooldown, cron memulai run baru supaya akun gagal punya
+    // kesempatan pulih, tanpa memicu restart beruntun dalam satu jam.
+    // (status "success" sudah di-return lebih dulu di atas, jadi `existing` di
+    // sini pasti running/partial/failed.)
+    const stalePartial =
+      existing?.finalized === true && Date.now() - new Date(existing.updatedAt ?? 0).getTime() >= PARTIAL_RESTART_COOLDOWN_MS;
+    if (stalePartial) console.log(`[cron:olsera:financial] runId=${runId} period=${period} run partial final -> restart terjadwal.`);
+    let run = stalePartial || !existing ? await startFinancialSync(period.slice(0, 4), Number(period.slice(5))) : existing;
 
     // Sequential SATU per satu (tidak pernah paralel) — berhenti begitu salah
     // satu kondisi berikut terpenuhi: run selesai (phase != "running"), batas
@@ -126,10 +139,13 @@ export async function runOlseraFinancialCron(
       }
       run = stepped;
       stepsExecuted++;
-      if (run.status !== "running") break; // "success" atau "partial" -> fase sudah "completed", tidak perlu step lagi.
+      // "partial" BUKAN alasan berhenti selama run belum final: akun yang gagal
+      // masih dijadwalkan retry pada step berikutnya (lib/olsera-financial-sync.ts).
+      // Berhenti hanya bila run selesai atau sudah final (termasuk partial permanen).
+      if (run.phase === "completed" || run.status === "success" || run.finalized === true) break;
     }
 
-    const completed = run.status !== "running";
+    const completed = run.phase === "completed" || run.status === "success";
     console.log(
       `[cron:olsera:financial] runId=${runId} finishedAt=${new Date().toISOString()} period=${period} stepsExecuted=${stepsExecuted} status=${run.status} phase=${run.phase}`,
     );

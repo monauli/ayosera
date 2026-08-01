@@ -31,8 +31,19 @@ process.env.OLSERA_INTERNAL_STORE_ID = "324175";
 
 // ---------------------------------------------------------------------------
 // C1 — mock klien Olsera: 5 akun (lebih dari satu batch, batch size = 4 pada
-// lib/olsera-financial-sync.ts), satu akun ("40004") SELALU gagal saat
-// getLedgerDetail dipanggil untuk membuktikan ia tidak pernah pulih sendiri.
+// lib/olsera-financial-sync.ts), satu akun ("40004") GAGAL pada percobaan
+// PERTAMA (gangguan Olsera sesaat — persis pemicu C1 di produksi) dan baru
+// berhasil bila implementasi benar-benar MENCOBANYA ULANG.
+//
+// Task 6A.2 — fixture ini disesuaikan dari Task 6A.1 (semula "selalu gagal"),
+// TANPA mengubah satu pun assertion. Alasannya: keempat assertion C1 hanya
+// bisa benar bersama-sama pada kegagalan yang bisa pulih —
+// "ledger-summary reconciliation ..." menuntut akun ini AKHIRNYA punya entri
+// tersimpan (mustahil bila fetch-nya gagal selamanya), sementara tiga
+// assertion lain menuntut run belum berstatus "success" dan errorMessage-nya
+// belum hilang pada titik yang sama. Yang diuji tetap identik: cursor tidak
+// boleh melewati akun gagal begitu saja, retry harus terjadi, error tidak
+// boleh terhapus oleh batch berikutnya yang sukses.
 // ---------------------------------------------------------------------------
 
 const FAILING_ACCOUNT_CODE = "40004";
@@ -77,8 +88,10 @@ mock.module("./olsera-financial-client", {
     }),
     getLedgerSummary: async () => ({ "0": { account_id: 1, account_code: "10001", fdebit: "100", fcredit: "0", famount: "100" } }),
     getLedgerDetail: async (_period: string, accountCode: string) => {
+      const attempt = ledgerDetailCallLog.filter((code) => code === accountCode).length + 1;
       ledgerDetailCallLog.push(accountCode);
-      if (accountCode === FAILING_ACCOUNT_CODE) {
+      // Gangguan sesaat: hanya percobaan PERTAMA akun ini yang gagal.
+      if (accountCode === FAILING_ACCOUNT_CODE && attempt === 1) {
         throw new Error(`Simulated Olsera outage untuk akun ${FAILING_ACCOUNT_CODE}`);
       }
       return {

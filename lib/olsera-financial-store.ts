@@ -40,8 +40,47 @@ const storeId = () => {
 export const monthlyReportId = (id: number, period: string, type: string) => `${id}:${period}:${type}`;
 export const accountDocumentId = (id: number, row: Record<string, unknown>) =>
   `${id}:account:${row.account_id ?? row.id ?? row.account_code ?? row.account_no ?? hash(row)}`;
-export const ledgerEntryId = (id: number, period: string, code: string, row: Record<string, unknown>) =>
-  `${id}:${period}:${code}:${row.id ?? hash({ transactionNo: row.transaction_no, date: row.transaction_date, debit: row.debit ?? row.fdebit, credit: row.credit ?? row.fcredit, raw: row })}`;
+
+const nonEmptyText = (value: unknown): string | null => {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text === "" ? null : text;
+};
+const pickText = (keys: string[], ...sources: Array<Record<string, unknown>>): string | null => {
+  for (const source of sources) for (const key of keys) { const text = nonEmptyText(source[key]); if (text) return text; }
+  return null;
+};
+/** Id transaksi ASLI Olsera bila payload ledger/detail menyertakannya — identitas paling stabil. */
+const LEDGER_NATIVE_ID_KEYS = ["id", "transaction_id", "trans_id", "journal_id", "journal_detail_id", "detail_id", "ledger_id"];
+/** Identitas BARIS di dalam satu transaksi (jurnal multi-baris), bila disediakan Olsera. */
+const LEDGER_LINE_ID_KEYS = ["line_id", "line_no", "detail_no", "seq", "sequence", "row_no", "urut"];
+
+/**
+ * Identitas dokumen buku besar (C2). WAJIB stabil terhadap KOREKSI NILAI:
+ * nominal (debit/credit/balance), deskripsi, dan raw payload TIDAK BOLEH ikut
+ * masuk ke `_id` — bila ikut, koreksi nominal dari Olsera menghasilkan `_id`
+ * baru sehingga versi lama jadi yatim dan ikut terjumlah dua kali.
+ *
+ * Urutan prioritas:
+ *  1. id transaksi asli Olsera (bila ada),
+ *  2. penanda saldo awal (satu per akun+periode — tidak boleh tertabrak baris transaksi),
+ *  3. business key stabil: transactionNo + tanggal + line identifier.
+ *
+ * `occurrence` > 0 dipakai HANYA untuk membedakan beberapa baris valid dengan
+ * business key identik dalam satu payload akun (lihat bulkUpsertLedgerEntries);
+ * urutannya berasal dari urutan baris Olsera, bukan dari nominal.
+ */
+export const ledgerEntryId = (id: number, period: string, code: string, row: Record<string, unknown>, occurrence = 0) => {
+  const raw = row.rawPayload && typeof row.rawPayload === "object" ? (row.rawPayload as Record<string, unknown>) : row;
+  const suffix = occurrence > 0 ? `#${occurrence}` : "";
+  const native = pickText(LEDGER_NATIVE_ID_KEYS, row, raw);
+  if (native) return `${id}:${period}:${code}:${native}${suffix}`;
+  if (row.isOpeningBalance === true) return `${id}:${period}:${code}:opening${suffix}`;
+  const transactionNo = pickText(["transactionNo"], row) ?? pickText(["transaction_no", "journal_no", "no"], raw);
+  const date = pickText(["transactionDate"], row) ?? pickText(["transaction_date", "ftransaction_date"], raw);
+  const line = pickText(LEDGER_LINE_ID_KEYS, row, raw);
+  return `${id}:${period}:${code}:txn:${hash({ transactionNo, date, line })}${suffix}`;
+};
 
 /**
  * Resolusi koleksi PRODUCTION di-dynamic-import supaya modul ini (dan siapa
@@ -153,9 +192,17 @@ export async function bulkUpsertLedgerEntries(
     const id = storeId();
     const now = new Date();
     if (!entries.length) return;
+    // Discriminator baris ganda: beberapa baris VALID boleh punya business key
+    // identik (jurnal multi-baris tanpa line id). Dibedakan lewat urutan
+    // kemunculan dalam payload akun ini — stabil dan tidak berbasis nominal,
+    // sehingga dua baris berbeda tidak pernah digabung jadi satu dokumen.
+    const seen = new Map<string, number>();
     await fc.ledgerEntries.bulkWrite(
       entries.map((row) => {
-        const _id = ledgerEntryId(id, period, accountCode, row);
+        const base = ledgerEntryId(id, period, accountCode, row);
+        const occurrence = seen.get(base) ?? 0;
+        seen.set(base, occurrence + 1);
+        const _id = occurrence === 0 ? base : `${base}#${occurrence}`;
         return {
           updateOne: {
             filter: { _id },
@@ -186,6 +233,22 @@ export async function bulkUpsertLedgerEntries(
       }),
       { ordered: false },
     );
+    // Replace-per-account+periode (Bagian C Task 6A.2): baris LAMA milik akun +
+    // periode INI yang tidak ikut ditulis ulang barusan (mis. dokumen dengan
+    // `_id` hash-konten dari implementasi lama, atau baris yang sudah dihapus di
+    // Olsera) dibuang. Dipilih daripada migrasi `_id` karena tidak butuh membaca
+    // /menulis ulang seluruh koleksi historis dan scope-nya sempit.
+    //
+    // AMAN karena fungsi ini HANYA dipanggil setelah satu akun berhasil di-fetch
+    // PENUH dan seluruh barisnya sukses di-upsert (lihat lib/olsera-financial-sync.ts):
+    //  - fetch gagal  -> bulkUpsertLedgerEntries tidak pernah dipanggil -> tidak ada delete,
+    //  - payload kosong -> early return di atas -> tidak ada delete,
+    //  - filter dibatasi storeId + period + accountCode (akun/periode/store lain tidak tersentuh),
+    //  - `syncedAt: { $lt: now }` memakai timestamp batch ini sendiri, jadi baris
+    //    yang BARU ditulis (syncedAt === now, termasuk saldo awal) mustahil ikut terhapus.
+    if (typeof fc.ledgerEntries.deleteMany === "function") {
+      await fc.ledgerEntries.deleteMany({ storeId: id, period, accountCode, syncedAt: { $lt: now } });
+    }
   });
 }
 
@@ -194,13 +257,21 @@ export type FinancialSyncRun = {
   storeId: number;
   period: string;
   status: "running" | "success" | "partial" | "failed";
-  phase: "monthly-reports" | "ledger-details" | "completed";
+  phase: "monthly-reports" | "ledger-details" | "reconcile" | "completed";
   accountCursor: number;
   accountCodes: string[];
   reportsCompleted: string[];
   recordsProcessed: number;
   accountsProcessed: number;
   errorMessage: string | null;
+  /** Akun yang gagal disinkronkan dan BELUM pernah berhasil — unik, bertahan lintas invocation. */
+  failedAccountCodes: string[];
+  /** Akun yang sempat gagal lalu berhasil setelah retry (jejak audit, tidak menghalangi success). */
+  recoveredAccountCodes: string[];
+  /** Jumlah percobaan per akun — batas keras agar retry tidak pernah tak berujung. */
+  accountAttempts: Array<{ code: string; attempts: number }>;
+  /** true = run sudah final (success, atau partial dengan akun gagal permanen): step berikutnya no-op. */
+  finalized: boolean;
   startedAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
@@ -222,6 +293,10 @@ export async function createFinancialSyncRun(period: string, accountCodes: strin
       recordsProcessed: 0,
       accountsProcessed: 0,
       errorMessage: null,
+      failedAccountCodes: [],
+      recoveredAccountCodes: [],
+      accountAttempts: [],
+      finalized: false,
       startedAt: now,
       updatedAt: now,
       completedAt: null,

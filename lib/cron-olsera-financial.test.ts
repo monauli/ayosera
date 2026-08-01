@@ -213,6 +213,60 @@ test("9) lock selalu dilepas baik saat sukses maupun gagal", async () => {
   assert.equal(releaseOlseraSyncLockMock.mock.callCount(), 1);
 });
 
+// --- Task 6A.2 (C1): status "partial" bukan alasan berhenti selama akun gagal
+// masih dijadwalkan retry, dan run yang sudah final tidak pernah dipaksa jalan. ---
+
+test("10) status partial yang belum final TETAP dilanjutkan (retry akun gagal), tidak dianggap selesai", async () => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  let call = 0;
+  stepFinancialSyncMock.mock.mockImplementation(async () => {
+    call++;
+    // Akun gagal pada batch pertama, pulih pada step ketiga.
+    if (call < 3) return fakeRun({ status: "partial", phase: "ledger-details", finalized: false, errorMessage: "gagal akun 40004" });
+    return fakeRun({ status: "success", phase: "completed", finalized: true, errorMessage: null });
+  });
+
+  const res = await runOlseraFinancialCron("Bearer test-secret");
+  assert.equal(stepFinancialSyncMock.mock.callCount(), 3, "partial belum final harus dilanjutkan, bukan dihentikan");
+  assert.equal(res.body.status, "completed");
+  assert.equal(res.body.completed, true);
+});
+
+test("11) run partial FINAL menghentikan loop, dilaporkan belum selesai, dan lock tetap dilepas", async () => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  stepFinancialSyncMock.mock.mockImplementation(async () =>
+    fakeRun({ status: "partial", phase: "ledger-details", finalized: true, errorMessage: "gagal permanen akun 40004" }),
+  );
+
+  const res = await runOlseraFinancialCron("Bearer test-secret");
+  assert.equal(stepFinancialSyncMock.mock.callCount(), 1);
+  assert.equal(res.body.status, "partial-progress");
+  assert.equal(res.body.completed, false, "run partial tidak boleh dilaporkan selesai");
+  assert.equal(releaseOlseraSyncLockMock.mock.callCount(), 1);
+});
+
+test("12) run partial final di-restart hanya setelah cooldown, tidak pada invocation berikutnya", async () => {
+  resetAll();
+  stepFinancialSyncMock.mock.mockImplementation(async () => fakeRun({ status: "partial", phase: "ledger-details", finalized: true }));
+
+  // Baru saja final -> jangan restart (hindari restart beruntun).
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () =>
+    fakeRun({ status: "partial", finalized: true, updatedAt: new Date() }),
+  );
+  await runOlseraFinancialCron("Bearer test-secret");
+  assert.equal(startFinancialSyncMock.mock.callCount(), 0);
+
+  // Sudah lewat cooldown -> mulai run baru supaya akun gagal punya kesempatan pulih.
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () =>
+    fakeRun({ status: "partial", finalized: true, updatedAt: new Date(Date.now() - 60 * 60 * 1000) }),
+  );
+  await runOlseraFinancialCron("Bearer test-secret");
+  assert.equal(startFinancialSyncMock.mock.callCount(), 1);
+});
+
 test("response tidak pernah menyertakan CRON_SECRET, BSON, atau field mentah", async () => {
   resetAll();
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
