@@ -25,3 +25,5 @@ pnpm-debug.log*
 /backfill-logs/
 .vercel
 .env*
+
+tmp/
