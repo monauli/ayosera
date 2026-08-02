@@ -138,6 +138,26 @@ export type FinancialEmptyLedgerConfirmationDocument = { _id: string; storeId: n
 export type FinancialStaleCleanupAuditDocument = { _id: string; storeId: number; period: string; accountCode: string; runId: string; reason: string; firstCheck: FinancialEmptyLedgerObservation; secondCheck: FinancialEmptyLedgerObservation; deletedCount: number; succeeded: boolean; createdAt: Date };
 export type SystemAuditRunDocument = { _id: string; storeId: number; status: "completed" | "failed"; scope: string; startedAt: Date; completedAt: Date; checks: Array<Record<string, unknown>>; summary: Record<string, number>; createdAt: Date };
 export type SystemAuditActionDocument = { _id: string; storeId: number; actorId: string; action: string; scope: Record<string, unknown>; status: "success" | "failed" | "blocked"; reason: string | null; before: Record<string, unknown> | null; after: Record<string, unknown> | null; createdAt: Date };
+/**
+ * Jejak audit reversibel Milestone 4 Bagian C (Safe Backfill) — SATU dokumen
+ * per baris olsera_order_items yang berhasil dibackfill (HIGH CONFIDENCE
+ * "Exact Match" saja). `before` menyimpan state productId/variantId/sku
+ * SEBELUM backfill (persis seperti tersimpan di Mongo — bisa "absent" via
+ * penanda null di sini karena Mongo tidak menyimpan konsep "absent" sbg
+ * value) sehingga operasi ini bisa dibatalkan manual (unset field) bila
+ * pernah diperlukan. `_id` = `orderItemId` — idempoten, satu jejak final per baris.
+ */
+export type HistoricalBackfillAuditLogDocument = {
+  _id: number;
+  storeId: number;
+  orderItemId: number;
+  classification: "Exact Match";
+  before: { productId: number | null; variantId: number | null; sku: string | null };
+  after: { productId: number; variantId: number | null; sku: string | null };
+  triggeredBy: string;
+  runId: string;
+  createdAt: Date;
+};
 
 /**
  * Bukti jurnal nyata yang menjelaskan selisih Rekonsiliasi Omzet AYOSERA pada
@@ -737,6 +757,7 @@ export async function collections() {
     inventoryStockOpnameReconciliations: db.collection<InventoryStockOpnameDocument>("inventory_stock_opname_reconciliations"),
     olseraOmzetReconciliationNotes: db.collection<OlseraOmzetReconciliationNoteDocument>("olsera_omzet_reconciliation_notes"),
     rateLimits: db.collection<RateLimitDocument>("rate_limits"),
+    historicalBackfillAuditLog: db.collection<HistoricalBackfillAuditLogDocument>("historical_backfill_audit_log"),
   };
 }
 
@@ -790,6 +811,7 @@ async function createIndexes() {
     inventoryStockOpnameReconciliations,
     olseraOmzetReconciliationNotes,
     rateLimits,
+    historicalBackfillAuditLog,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -892,6 +914,8 @@ async function createIndexes() {
     // Rate limiting (Task 4) — TTL: bucket kedaluwarsa dihapus otomatis, tidak
     // menumpuk dokumen selamanya.
     rateLimits.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    // Milestone 4 Bagian C — jejak audit backfill reversibel, satu per orderItemId.
+    historicalBackfillAuditLog.createIndex({ storeId: 1, createdAt: -1 }),
   ]);
 }
 

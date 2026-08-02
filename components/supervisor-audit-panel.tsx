@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Download, Loader2, Play, ShieldAlert, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CourtRevenueReconciliation } from "@/components/court-revenue-reconciliation";
+import { HistoricalDataAudit } from "@/components/historical-data-audit";
 
 function currentPeriod() {
   const now = new Date();
@@ -81,6 +82,7 @@ export function SupervisorAuditPanel() {
         <div className="overflow-x-auto rounded-xl border border-white/10"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-white/[0.04] text-xs uppercase text-slate-500"><tr><th className="p-3">Modul</th><th className="p-3">Pemeriksaan</th><th className="p-3">Status</th><th className="p-3">Diagnostic aman</th></tr></thead><tbody>{audit.checks.map((check) => <tr key={check.id} className="border-t border-white/5"><td className="p-3 text-slate-400">{check.module}</td><td className="p-3 text-slate-200">{check.subject ?? check.id}</td><td className={`p-3 font-medium ${statusClass[check.status]}`}>{check.status === "pass" ? <CheckCircle2 className="mr-1 inline h-4 w-4" /> : check.status === "failed" ? <XCircle className="mr-1 inline h-4 w-4" /> : <ShieldAlert className="mr-1 inline h-4 w-4" />}{statusLabel[check.status]}</td><td className="p-3 text-slate-400">{safeDifference(check.difference) || check.recommendation}</td></tr>)}</tbody></table></div>
       </>}
       <CourtRevenueReconciliation period={/^\d{4}-\d{2}$/.test(period) ? period : currentPeriod()} />
+      <HistoricalDataAudit />
     </div>
   );
 }
