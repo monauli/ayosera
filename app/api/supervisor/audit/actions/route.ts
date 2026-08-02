@@ -5,12 +5,20 @@ import { validatePeriod } from "@/lib/olsera-financial-core";
 import { cleanupConfirmedStaleLedgerAccount, reconcileLedgerSummarySnapshot } from "@/lib/olsera-financial-store";
 import { startFinancialSync, stepFinancialSync } from "@/lib/olsera-financial-sync";
 import { withOlseraSyncLock } from "@/lib/olsera-cron-lock";
+import { runCourtRevenueReconciliationRange } from "@/lib/reconciliation-court-revenue-runner";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 const LEASE_MS = 5 * 60 * 1000;
-const ACTIONS = ["sync-period", "retry-failed", "reconcile", "cleanup-stale"] as const;
+const ACTIONS = ["sync-period", "retry-failed", "reconcile", "cleanup-stale", "court-revenue-audit-run"] as const;
+
+function periodToMonthRange(period: string): { start: string; end: string } {
+  const [year, month] = period.split("-").map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  return { start: `${period}-01`, end: `${period}-${String(lastDay).padStart(2, "0")}` };
+}
 
 export async function POST(request: Request) {
   try {
@@ -45,6 +53,12 @@ export async function POST(request: Request) {
     } else if (action === "reconcile") {
       await reconcileLedgerSummarySnapshot(period);
       result = { period, reconciled: true };
+    } else if (action === "court-revenue-audit-run") {
+      const { start, end } = periodToMonthRange(period);
+      const runs = await runCourtRevenueReconciliationRange({ storeId: scope.storeId, startDate: start, endDate: end, dryRun: false, triggeredBy: `supervisor:${actor.id}`, runVersion: 1 });
+      const totalFindings = runs.reduce((sum, r) => sum + r.findings.length, 0);
+      const manualReviewCount = runs.reduce((sum, r) => sum + r.summary.requiresManualAdjustmentCount, 0);
+      result = { period, daysAudited: runs.length, totalFindings, manualReviewCount };
     } else {
       if (!accountCode || !/^\d{1,20}$/.test(accountCode)) return NextResponse.json({ status: "blocked", message: "accountCode wajib untuk cleanup scoped." }, { status: 400, headers: NO_CACHE_HEADERS });
       const cleaned = await cleanupConfirmedStaleLedgerAccount(period, accountCode);

@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Download, Loader2, Play, ShieldAlert, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CourtRevenueReconciliation } from "@/components/court-revenue-reconciliation";
+
+function currentPeriod() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
 
 type Check = { id: string; module: string; period?: string | null; subject?: string | null; status: "pass" | "warning" | "manual" | "failed" | "unavailable"; difference?: Record<string, unknown> | null; recommendation: string };
 type Audit = { runId: string; scope: string; status: string; startedAt: string; completedAt: string; checks: Check[]; summary: Record<string, number> } | null;
@@ -17,7 +23,7 @@ function safeDifference(value: Record<string, unknown> | null | undefined) {
 }
 
 export function SupervisorAuditPanel() {
-  const [period, setPeriod] = useState("");
+  const [period, setPeriod] = useState(currentPeriod);
   const [accountCode, setAccountCode] = useState("");
   const [runId, setRunId] = useState("");
   const [audit, setAudit] = useState<Audit>(null);
@@ -74,6 +80,7 @@ export function SupervisorAuditPanel() {
         <div className="grid gap-2 sm:grid-cols-5">{(["pass", "warning", "manual", "failed", "unavailable"] as Check["status"][]).map((status) => <div key={status} className="rounded-lg border border-white/10 p-3"><div className={`text-xs font-semibold ${statusClass[status]}`}>{statusLabel[status]}</div><div className="mt-1 text-xl font-semibold text-slate-100">{audit.summary[status] ?? 0}</div></div>)}</div>
         <div className="overflow-x-auto rounded-xl border border-white/10"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-white/[0.04] text-xs uppercase text-slate-500"><tr><th className="p-3">Modul</th><th className="p-3">Pemeriksaan</th><th className="p-3">Status</th><th className="p-3">Diagnostic aman</th></tr></thead><tbody>{audit.checks.map((check) => <tr key={check.id} className="border-t border-white/5"><td className="p-3 text-slate-400">{check.module}</td><td className="p-3 text-slate-200">{check.subject ?? check.id}</td><td className={`p-3 font-medium ${statusClass[check.status]}`}>{check.status === "pass" ? <CheckCircle2 className="mr-1 inline h-4 w-4" /> : check.status === "failed" ? <XCircle className="mr-1 inline h-4 w-4" /> : <ShieldAlert className="mr-1 inline h-4 w-4" />}{statusLabel[check.status]}</td><td className="p-3 text-slate-400">{safeDifference(check.difference) || check.recommendation}</td></tr>)}</tbody></table></div>
       </>}
+      <CourtRevenueReconciliation period={/^\d{4}-\d{2}$/.test(period) ? period : currentPeriod()} />
     </div>
   );
 }
