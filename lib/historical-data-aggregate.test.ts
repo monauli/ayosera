@@ -120,6 +120,22 @@ test("buildReconciliationReport: finding requiresManualAdjustment -> selalu manu
   assert.equal(category.jumlahData, 1);
 });
 
+test("buildReconciliationReport: jumlahData kategori memakai items.length, BUKAN totalFindings — regresi Milestone 5 (ditemukan saat verifikasi production: kartu kategori menampilkan 0 padahal Issue Detail memuat 4 baris ledger PERLU_DICEK nyata)", () => {
+  // totalFindings HANYA menghitung sumber 'FINDING' (reconciliation_findings);
+  // item sumber 'LEDGER' (loadOmzetLedgerRecentSummaries, PERLU_DICEK) tidak
+  // pernah masuk totalFindings meski tetap ada di items — buildManualReviewSummary
+  // memang menggabungkan dua sumber tsb (lihat reconciliation-manual-review.ts).
+  const { issues, category } = buildReconciliationReport("test", {
+    items: [
+      { source: "LEDGER", id: "omzet-ledger:2026-07", reconciliationType: null, domain: "LEDGER", domainLabel: "Ledger", period: "2026-07", status: "PERLU_DICEK", impact: null, confidence: null, reason: "test", canAutoResolve: false, recommendedAction: "cek manual", lastCheckedAt: null },
+      { source: "LEDGER", id: "omzet-ledger:2026-06", reconciliationType: null, domain: "LEDGER", domainLabel: "Ledger", period: "2026-06", status: "PERLU_DICEK", impact: null, confidence: null, reason: "test", canAutoResolve: false, recommendedAction: "cek manual", lastCheckedAt: null },
+    ],
+    totalFindings: 0, // sengaja 0 — tidak ada finding di reconciliation_findings, tapi tetap ada 2 item ledger
+  });
+  assert.equal(issues.length, 2, "kedua item ledger harus tetap muncul di Issue Detail");
+  assert.equal(category.jumlahData, 2, "kartu kategori HARUS mencerminkan items.length (2), bukan totalFindings (0)");
+});
+
 test("combineHistoricalDataSummary: bucket auto fixable/manual/selesai/pending dihitung konsisten dari seluruh kategori", () => {
   const summary = emptySummary({ "Exact Match": 10, "Butuh Adjust Manual": 2 });
   const productMapping = buildProductMappingReport({ periode: "test", summary, resolvedCount: 0 });

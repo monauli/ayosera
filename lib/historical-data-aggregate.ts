@@ -284,9 +284,16 @@ export function buildReconciliationReport(periode: string, manualReview: { items
       }))
     : [{ id: `reconciliation:${periode}:clean`, category: "RECONCILIATION" as const, categoryLabel: CATEGORY_LABEL.RECONCILIATION, period: periode, issue: "Tidak ada finding requiresManualAdjustment=true saat ini", penyebab: "-", confidence: "HIGH" as const, canAutoFix: false, tindakan: "Tidak ada tindakan diperlukan.", status: "selesai" as const, jumlahData: 0 }];
   const category: HistoricalCategoryReport = {
-    category: "RECONCILIATION", categoryLabel: CATEGORY_LABEL.RECONCILIATION, periode, jumlahData: manualReview.totalFindings,
-    penyebab: manualReview.totalFindings === 0 ? "Tidak ada penyebab — bersih." : "Lihat buildManualReviewSummary lintas domain untuk rincian per finding.",
-    dampak: manualReview.totalFindings === 0 ? "Tidak ada dampak." : "Butuh keputusan manusia sebelum finding-finding ini dianggap selesai.",
+    // SENGAJA pakai manualReview.items.length, BUKAN manualReview.totalFindings —
+    // totalFindings hanya menghitung sumber "FINDING" (reconciliation_findings),
+    // sedangkan items juga memuat sumber "LEDGER" (loadOmzetLedgerRecentSummaries,
+    // PERLU_DICEK) yang tidak pernah masuk hitungan totalFindings. Memakai
+    // totalFindings di sini pernah membuat kartu kategori menampilkan 0 padahal
+    // Issue Detail-nya sendiri memuat 4 baris ledger PERLU_DICEK nyata —
+    // ditemukan saat verifikasi Milestone 5 terhadap production live.
+    category: "RECONCILIATION", categoryLabel: CATEGORY_LABEL.RECONCILIATION, periode, jumlahData: manualReview.items.length,
+    penyebab: manualReview.items.length === 0 ? "Tidak ada penyebab — bersih." : "Lihat buildManualReviewSummary lintas domain untuk rincian per finding.",
+    dampak: manualReview.items.length === 0 ? "Tidak ada dampak." : "Butuh keputusan manusia sebelum finding-finding ini dianggap selesai.",
     canAutoFix: false, confidence: "LOW",
   };
   return { category, issues };
