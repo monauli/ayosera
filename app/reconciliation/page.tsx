@@ -329,6 +329,14 @@ export default function ReconciliationPage() {
                   <span>Alasan verifikasi</span>
                   <b>{detail.pickleballVerification.reason}</b>
                 </div>
+                {detail.pickleballVerification.matchedEntry && (
+                  <div>
+                    <span>Entri 21003 yang cocok</span>
+                    <b>
+                      {dateLabel(detail.pickleballVerification.matchedEntry.transactionDate)} · {formatRupiah(detail.pickleballVerification.matchedEntry.credit)} · No. {detail.pickleballVerification.matchedEntry.transactionNo ?? "-"}
+                    </b>
+                  </div>
+                )}
                 <div>
                   <span>Total Omzet Olsera final (40001+40004)</span>
                   <b>{formatRupiah(detail.olseraTotal)}</b>
@@ -342,34 +350,6 @@ export default function ReconciliationPage() {
                   <StatusBadge status={detail.status} />
                 </div>
               </section>
-
-              {(detail.courtFees.otherDebitEntries.length > 0 || detail.pickleball.otherDebitEntries.length > 0) && (
-                <>
-                  <h3>Koreksi/reversal dalam periode ini (sudah dinetkan)</h3>
-                  <table className="recon-table">
-                    <thead>
-                      <tr>
-                        <th>Akun</th>
-                        <th>Tanggal</th>
-                        <th>No. Transaksi</th>
-                        <th>Nominal</th>
-                        <th>Keterangan</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...detail.courtFees.otherDebitEntries.map((e) => ({ ...e, account: "40001" })), ...detail.pickleball.otherDebitEntries.map((e) => ({ ...e, account: "40004" }))].map((e, i) => (
-                        <tr key={`${e.account}-${e.transactionNo}-${i}`}>
-                          <td>{e.account}</td>
-                          <td>{dateLabel(e.transactionDate)}</td>
-                          <td>{e.transactionNo ?? "-"}</td>
-                          <td>{formatRupiah(e.debit)}</td>
-                          <td>{e.description ?? "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </>
-              )}
 
               {detail.explanation ? (
                 <>
