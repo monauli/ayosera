@@ -103,24 +103,10 @@ function LockBadge() {
 
 function AccountCard({ title, breakdown }: { title: string; breakdown: AccountBreakdown }) {
   return (
-    <>
-      <div>
-        <span>{title} — total kredit periode ini</span>
-        <b>{formatRupiah(breakdown.creditTotal)}</b>
-      </div>
-      <div>
-        <span>{title} — koreksi/reversal (dinetkan)</span>
-        <b>{breakdown.otherDebitEntries.length > 0 ? `-${formatRupiah(breakdown.otherDebitTotal)} (${breakdown.otherDebitEntries.length} entri)` : "Tidak ada"}</b>
-      </div>
-      <div>
-        <span>{title} — bersih (sebelum reklasifikasi)</span>
-        <b>{formatRupiah(breakdown.net)}</b>
-      </div>
-      <div>
-        <span>{title} — duplikat dihapus</span>
-        <b>{breakdown.duplicatesRemoved > 0 ? `${breakdown.duplicatesRemoved} baris` : "Tidak ada"}</b>
-      </div>
-    </>
+    <div>
+      <span>{title} — bersih (sebelum reklasifikasi)</span>
+      <b>{formatRupiah(breakdown.net)}</b>
+    </div>
   );
 }
 
@@ -414,14 +400,6 @@ export default function ReconciliationPage() {
                   <span>Alasan verifikasi</span>
                   <b>{detail.pickleballVerification.reason}</b>
                 </div>
-                {detail.pickleballVerification.matchedEntry && (
-                  <div>
-                    <span>Entri 21003 yang cocok</span>
-                    <b>
-                      {dateLabel(detail.pickleballVerification.matchedEntry.transactionDate)} · {formatRupiah(detail.pickleballVerification.matchedEntry.credit)} · No. {detail.pickleballVerification.matchedEntry.transactionNo ?? "-"}
-                    </b>
-                  </div>
-                )}
                 <div>
                   <span>Total Omzet Olsera final (40001+40004)</span>
                   <b>{formatRupiah(detail.olseraTotal)}</b>
