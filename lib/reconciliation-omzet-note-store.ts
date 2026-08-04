@@ -16,6 +16,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import {
   OMZET_EVIDENCE_TYPES,
+  OMZET_LOCK_WITHOUT_EXPLANATION_MARKER,
   type OmzetEvidenceType,
 } from "./reconciliation-omzet-ledger.ts";
 import type {
@@ -111,7 +112,7 @@ export async function writeOmzetAuditLog(
     actor: string;
     noteId: string;
     previousNoteId: string | null;
-    detail: { evidenceType?: OmzetEvidenceType; explainedAmount?: number; hasAttachment?: boolean };
+    detail: { evidenceType?: OmzetEvidenceType | typeof OMZET_LOCK_WITHOUT_EXPLANATION_MARKER; explainedAmount?: number; hasAttachment?: boolean };
   },
   suppliedContext?: OmzetNoteContext,
 ): Promise<void> {
@@ -296,7 +297,15 @@ export async function lockOmzetPeriod(input: LockOmzetPeriodInput, suppliedConte
 
   const current = await context.notes.findOne({ storeId: sId, period: p, isCurrent: true });
   if (!current) {
-    throw new OmzetNoteError("Belum ada penjelasan untuk periode ini — kirim penjelasan dulu sebelum mengunci.", "NOT_FOUND");
+    // Tidak ada penjelasan aktif — TETAP boleh dikunci HANYA bila memang
+    // sudah Cocok (selisih Rp0) SEKARANG: tidak ada apa pun untuk dijelaskan,
+    // jadi mewajibkan penjelasan manual lebih dulu (seperti kasus Selisih
+    // Terjelaskan) tidak masuk akal. Kalau selisih bukan 0, pesan/kode error
+    // TETAP sama seperti sebelumnya (tidak ada regresi untuk kasus lama).
+    if (currentDifferenceRevenue !== 0) {
+      throw new OmzetNoteError("Belum ada penjelasan untuk periode ini — kirim penjelasan dulu sebelum mengunci.", "NOT_FOUND");
+    }
+    return lockCocokWithoutExplanation({ sId, p, actor }, context);
   }
   if (current.locked) {
     throw new OmzetNoteError("Periode ini sudah dikunci.", "INVALID_TRANSITION");
@@ -337,4 +346,70 @@ export async function lockOmzetPeriod(input: LockOmzetPeriodInput, suppliedConte
     context,
   );
   return { note: locked };
+}
+
+/**
+ * Kunci periode yang SUDAH Cocok (selisih Rp0) TANPA note aktif sama sekali
+ * — insert LANGSUNG dokumen isCurrent:true+locked:true, memakai
+ * OMZET_LOCK_WITHOUT_EXPLANATION_MARKER sebagai evidenceType (bukan salah
+ * satu OMZET_EVIDENCE_TYPES sungguhan) supaya classifyStatus bisa membekukan
+ * status COCOK secara jujur (bukan SELISIH_TERJELASKAN, karena memang tidak
+ * ada selisih/penjelasan). `_id` memakai randomUUID (bukan generateNoteId
+ * berbasis idempotencyKey) — konsisten dengan lockOmzetPeriod di atas: Lock
+ * SENGAJA tidak idempotent/retry, harus jadi tindakan tunggal yang jelas
+ * pelakunya di audit log.
+ */
+async function lockCocokWithoutExplanation(
+  input: { sId: number; p: string; actor: string },
+  context: OmzetNoteContext,
+): Promise<LockOmzetPeriodResult> {
+  const now = new Date();
+  const id = `note:v1:lock:${randomUUID()}`;
+  const document: OlseraOmzetReconciliationNoteV2Document = {
+    _id: id,
+    storeId: input.sId,
+    period: input.p,
+    evidenceType: OMZET_LOCK_WITHOUT_EXPLANATION_MARKER,
+    description: "Dikunci langsung dari status Cocok (selisih Rp0) — tidak ada penjelasan manual.",
+    explainedAmount: 0,
+    attachmentUrl: null,
+    attachmentFileName: null,
+    isCurrent: true,
+    supersededBy: null,
+    supersededAt: null,
+    previousNoteId: null,
+    locked: true,
+    lockedBy: input.actor,
+    lockedAt: now,
+    createdBy: input.actor,
+    createdAt: now,
+    updatedBy: input.actor,
+    updatedAt: now,
+  };
+
+  try {
+    await context.notes.insertOne(document);
+  } catch (error) {
+    // Race: request lain berhasil membuat isCurrent:true lebih dulu (index
+    // unik partial {storeId,period,isCurrent:true}) — TIDAK retry, sama
+    // seperti lockOmzetPeriod (Lock harus tindakan tunggal yang jelas).
+    if (isDuplicateKey(error)) {
+      throw new OmzetNoteError("Konflik saat mengunci periode ini; silakan coba lagi.", "CONFLICT");
+    }
+    throw error;
+  }
+
+  await writeOmzetAuditLog(
+    {
+      storeId: input.sId,
+      period: input.p,
+      action: "LOCK",
+      actor: input.actor,
+      noteId: id,
+      previousNoteId: null,
+      detail: { evidenceType: OMZET_LOCK_WITHOUT_EXPLANATION_MARKER, explainedAmount: 0 },
+    },
+    context,
+  );
+  return { note: document };
 }

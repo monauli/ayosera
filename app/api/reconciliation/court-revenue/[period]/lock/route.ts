@@ -10,12 +10,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/reconciliation/court-revenue/:period/lock — kunci penjelasan
- * selisih SAAT INI lewat Berita Acara (lib/reconciliation-omzet-note-store.ts
- * lockOmzetPeriod). Syarat: sudah ada penjelasan aktif (isCurrent:true) untuk
- * periode ini, belum locked, dan explainedAmount-nya masih sama persis
- * dengan selisih yang dihitung engine SAAT INI (dicek ulang di sini —
- * mencegah mengunci penjelasan yang nominalnya sudah basi).
+ * POST /api/reconciliation/court-revenue/:period/lock — kunci periode ini
+ * (lib/reconciliation-omzet-note-store.ts lockOmzetPeriod). TIDAK ADA body
+ * request — endpoint ini SELALU menghitung ulang differenceRevenue SAAT INI
+ * lewat loadOmzetLedgerMonthDetail dan mengoper ke lockOmzetPeriod, yang lalu
+ * memutuskan salah satu dari DUA jalur (lihat lockOmzetPeriod untuk detail):
+ *   1. Selisih Terjelaskan: sudah ada penjelasan aktif (isCurrent:true),
+ *      belum locked, dan explainedAmount-nya masih sama persis dengan
+ *      selisih SAAT INI (mencegah mengunci penjelasan yang nominalnya basi).
+ *   2. Cocok TANPA penjelasan: belum ada penjelasan aktif SAMA SEKALI, TAPI
+ *      selisih SAAT INI benar-benar Rp0 — boleh dikunci langsung tanpa
+ *      mewajibkan penjelasan manual (tidak ada apa pun untuk dijelaskan).
+ * Kalau belum ada penjelasan aktif DAN selisih bukan Rp0, tetap ditolak
+ * (NOT_FOUND) — harus kirim penjelasan dulu.
  *
  * TIDAK ADA endpoint unlock — lihat "Desain Skema Lock+Berita Acara" di
  * tmp/ai-handoff.md: pembukaan kunci SENGAJA ditunda untuk sistem role

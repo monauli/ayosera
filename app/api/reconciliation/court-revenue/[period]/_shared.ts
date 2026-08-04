@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
-import { OMZET_EVIDENCE_TYPES, type OmzetEvidenceType } from "@/lib/reconciliation-omzet-ledger";
+import { OMZET_EVIDENCE_TYPES, OMZET_LOCK_WITHOUT_EXPLANATION_MARKER, type OmzetEvidenceType } from "@/lib/reconciliation-omzet-ledger";
 import { OmzetNoteError } from "@/lib/reconciliation-omzet-note-store";
 import type { OlseraOmzetReconciliationNoteV2Document } from "@/lib/mongodb";
 
@@ -65,7 +65,8 @@ export function omzetNoteErrorResponse(error: OmzetNoteError) {
 }
 
 export type OmzetNoteResponseData = {
-  evidenceType: OmzetEvidenceType;
+  /** OmzetEvidenceType sungguhan, ATAU OMZET_LOCK_WITHOUT_EXPLANATION_MARKER bila note ini hasil lock langsung dari status Cocok (lihat lockOmzetPeriod). */
+  evidenceType: OmzetEvidenceType | typeof OMZET_LOCK_WITHOUT_EXPLANATION_MARKER;
   description: string;
   explainedAmount: number;
   attachmentUrl: string | null;

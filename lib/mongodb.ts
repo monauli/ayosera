@@ -213,7 +213,13 @@ export type OlseraOmzetReconciliationNoteV2Document = {
   _id: string;
   storeId: number;
   period: string; // format YYYY-MM
-  evidenceType: "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
+  /**
+   * "matched-no-explanation" = penanda KHUSUS (lihat
+   * OMZET_LOCK_WITHOUT_EXPLANATION_MARKER di lib/reconciliation-omzet-ledger.ts)
+   * untuk note yang dikunci LANGSUNG dari status Cocok (selisih Rp0) TANPA
+   * penjelasan manual — bukan kategori bukti jurnal nyata sungguhan.
+   */
+  evidenceType: "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account" | "matched-no-explanation";
   description: string;
   /** HARUS sama persis dengan differenceRevenue yang dihitung engine saat submit/lock — divalidasi di lib/reconciliation-omzet-note-store.ts, bukan hanya di classifyStatus. */
   explainedAmount: number;
@@ -270,7 +276,7 @@ export type OlseraOmzetReconciliationAuditLogDocument = {
   previousNoteId: string | null;
   /** Snapshot ringkas untuk audit trail manusiawi — TIDAK berisi credential. */
   detail: {
-    evidenceType?: "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
+    evidenceType?: "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account" | "matched-no-explanation";
     explainedAmount?: number;
     hasAttachment?: boolean;
   };

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { OlseraOmzetReconciliationAuditLogDocument, OlseraOmzetReconciliationNoteV2Document } from "./mongodb.ts";
+import { OMZET_LOCK_WITHOUT_EXPLANATION_MARKER } from "./reconciliation-omzet-ledger.ts";
 import {
   generateNoteId,
   getCurrentOmzetNote,
@@ -194,6 +195,50 @@ test("lock ditolak bila explainedAmount sudah tidak sesuai currentDifferenceReve
   );
   const stored = f.notes[0];
   assert.equal(stored.locked, false);
+});
+
+// ---------------------------------------------------------------------------
+// Lock untuk status Cocok TANPA note aktif sama sekali (perbaikan: sebelumnya
+// selalu ditolak NOT_FOUND walau selisih sudah Rp0 — lihat "Perbaikan Lock
+// untuk Status Cocok" di tmp/ai-handoff.md).
+// ---------------------------------------------------------------------------
+test("lock berhasil untuk status Cocok TANPA note aktif (currentDifferenceRevenue 0): insert note baru locked dengan penanda MATCHED_NO_EXPLANATION", async () => {
+  const f = fixture();
+  assert.equal(await getCurrentOmzetNote(1, "2026-06", f.context), null);
+
+  const result = await lockOmzetPeriod({ storeId: 1, period: "2026-06", actor: "supervisor-1", currentDifferenceRevenue: 0 }, f.context);
+
+  assert.equal(result.note.locked, true);
+  assert.equal(result.note.lockedBy, "supervisor-1");
+  assert.notEqual(result.note.lockedAt, null);
+  assert.equal(result.note.isCurrent, true);
+  assert.equal(result.note.evidenceType, OMZET_LOCK_WITHOUT_EXPLANATION_MARKER);
+  assert.equal(result.note.explainedAmount, 0);
+  assert.equal(result.note.attachmentUrl, null);
+  assert.equal(result.note.previousNoteId, null);
+
+  assert.equal(f.notes.length, 1);
+  assert.equal((await getCurrentOmzetNote(1, "2026-06", f.context))?._id, result.note._id);
+  assert.equal(f.audit.some((a) => a.action === "LOCK" && a.noteId === result.note._id && a.detail.evidenceType === OMZET_LOCK_WITHOUT_EXPLANATION_MARKER), true);
+});
+
+test("lock ditolak untuk periode tanpa note aktif kalau ternyata selisih BUKAN 0 (mis. race — data berubah sebelum lock diproses), pesan/kode SAMA seperti sebelumnya", async () => {
+  const f = fixture();
+  await assert.rejects(
+    () => lockOmzetPeriod({ storeId: 1, period: "2026-06", actor: "supervisor-1", currentDifferenceRevenue: 50_000 }, f.context),
+    (error: unknown) => error instanceof OmzetNoteError && error.code === "NOT_FOUND" && error.message.includes("kirim penjelasan dulu"),
+  );
+  assert.equal(f.notes.length, 0);
+});
+
+test("lock untuk Selisih Terjelaskan (note aktif dengan penjelasan manual sungguhan) TIDAK regresi setelah perbaikan status Cocok", async () => {
+  const f = fixture();
+  const submitted = await submitOmzetExplanation(input(), f.context);
+  const result = await lockOmzetPeriod({ storeId: 1, period: "2026-06", actor: "supervisor-1", currentDifferenceRevenue: 150_000 }, f.context);
+  assert.equal(result.note.locked, true);
+  assert.equal(result.note._id, submitted.note._id);
+  assert.equal(result.note.evidenceType, "shifted-period");
+  assert.notEqual(result.note.evidenceType, OMZET_LOCK_WITHOUT_EXPLANATION_MARKER);
 });
 
 test("getCurrentOmzetNote mengembalikan null bila belum ada penjelasan", async () => {

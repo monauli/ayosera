@@ -66,10 +66,23 @@ export const OMZET_EVIDENCE_TYPE_LABEL: Record<OmzetEvidenceType, string> = {
   "wrong-account": "Salah akun",
 };
 
+/**
+ * Penanda KHUSUS untuk note yang dikunci LANGSUNG dari status Cocok (selisih
+ * Rp0) TANPA penjelasan manual — lihat lockOmzetPeriod di
+ * lib/reconciliation-omzet-note-store.ts. SENGAJA dipisah dari
+ * OMZET_EVIDENCE_TYPES/OmzetEvidenceType (bukan ditambahkan ke array itu)
+ * supaya isOmzetEvidenceTypeValue (dipakai validasi POST .../explanation di
+ * app/api/.../_shared.ts) otomatis MENOLAK nilai ini — mencegah penanda
+ * internal ini disalahgunakan lewat jalur submit penjelasan manual biasa,
+ * tanpa perlu guard eksplisit tambahan.
+ */
+export const OMZET_LOCK_WITHOUT_EXPLANATION_MARKER = "matched-no-explanation" as const;
+
 export type OmzetExplanation = {
-  evidenceType: OmzetEvidenceType;
+  /** OmzetEvidenceType untuk penjelasan manual sungguhan, ATAU OMZET_LOCK_WITHOUT_EXPLANATION_MARKER bila note ini hasil lock langsung dari status Cocok (lihat classifyStatus). */
+  evidenceType: OmzetEvidenceType | typeof OMZET_LOCK_WITHOUT_EXPLANATION_MARKER;
   description: string;
-  /** Nominal selisih yang dijelaskan — HARUS sama persis dengan differenceRevenue yang dihitung saat ini, tidak ada toleransi (kecuali locked:true, lihat classifyStatus). */
+  /** Nominal selisih yang dijelaskan — HARUS sama persis dengan differenceRevenue yang dihitung saat ini, tidak ada toleransi (kecuali locked:true, lihat classifyStatus). Selalu 0 bila evidenceType === OMZET_LOCK_WITHOUT_EXPLANATION_MARKER. */
   explainedAmount: number;
   createdBy: string;
   createdAt: Date;
@@ -310,6 +323,19 @@ function classifyStatus(input: {
   // ke SELISIH_TERJELASKAN di sini aman. Lihat "Desain Skema Lock+Berita
   // Acara" section 3c di tmp/ai-handoff.md.
   if (input.explanation?.locked) {
+    // Dikunci LANGSUNG dari status Cocok (selisih Rp0), TANPA penjelasan
+    // manual — bahasa status HARUS jujur (bukan "Selisih Terjelaskan", karena
+    // tidak ada selisih yang dijelaskan). Tetap status COCOK yang sudah ada
+    // (bukan status baru) supaya dibekukan sama seperti kasus lock lainnya:
+    // begitu locked, TIDAK PERNAH di-recompute dari differenceRevenue terkini
+    // (mis. re-sync susulan yang memunculkan selisih baru tidak diam-diam
+    // membatalkan status Cocok yang sudah dikunci).
+    if (input.explanation.evidenceType === OMZET_LOCK_WITHOUT_EXPLANATION_MARKER) {
+      return {
+        status: "COCOK",
+        statusReason: `Status Cocok dikunci oleh ${input.explanation.lockedBy} pada ${input.explanation.lockedAt?.toISOString()} — dibekukan, tidak akan berubah otomatis meski data disinkron ulang di kemudian hari.`,
+      };
+    }
     return {
       status: "SELISIH_TERJELASKAN",
       statusReason: `Selisih dikunci lewat Berita Acara oleh ${input.explanation.lockedBy} pada ${input.explanation.lockedAt?.toISOString()}: ${OMZET_EVIDENCE_TYPE_LABEL[input.explanation.evidenceType]} — ${input.explanation.description}`,
@@ -335,7 +361,13 @@ function classifyStatus(input: {
     return { status: "COCOK", statusReason: "Omzet AYO dan Olsera (akun 40001+40004 sebelum reklasifikasi) sama persis." };
   }
 
-  if (input.explanation && input.explanation.explainedAmount === input.differenceRevenue) {
+  // evidenceType !== marker: note dengan penanda lock-tanpa-penjelasan hanya
+  // pernah dibuat SEKALIGUS locked:true (lihat lockOmzetPeriod) — tidak
+  // pernah unlocked, jadi baris ini pada praktiknya tidak akan pernah
+  // menerima penanda tsb (sudah ditangkap cabang locked di atas). Guard ini
+  // tetap eksplisit supaya OMZET_EVIDENCE_TYPE_LABEL di bawah type-safe
+  // (Record hanya mengenal OmzetEvidenceType asli, bukan penanda).
+  if (input.explanation && input.explanation.evidenceType !== OMZET_LOCK_WITHOUT_EXPLANATION_MARKER && input.explanation.explainedAmount === input.differenceRevenue) {
     return {
       status: "SELISIH_TERJELASKAN",
       statusReason: `Selisih ${input.differenceRevenue} dijelaskan: ${OMZET_EVIDENCE_TYPE_LABEL[input.explanation.evidenceType]} — ${input.explanation.description}`,

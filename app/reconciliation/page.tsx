@@ -18,8 +18,10 @@ type AccountBreakdown = {
 type PickleballVerification = { applicable: boolean; verified: boolean | null; matchedEntry: LedgerEntry | null; reason: string };
 type OmzetStatus = "COCOK" | "SELISIH_TERJELASKAN" | "PERLU_DICEK" | "BULAN_BERJALAN";
 type EvidenceType = "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
+/** Penanda note yang dikunci LANGSUNG dari status Cocok (selisih Rp0), TANPA penjelasan manual — lihat lib/reconciliation-omzet-ledger.ts OMZET_LOCK_WITHOUT_EXPLANATION_MARKER. TIDAK muncul di dropdown "Jenis bukti" (bukan kategori bukti sungguhan). */
+const LOCK_WITHOUT_EXPLANATION_MARKER = "matched-no-explanation" as const;
 type Explanation = {
-  evidenceType: EvidenceType;
+  evidenceType: EvidenceType | typeof LOCK_WITHOUT_EXPLANATION_MARKER;
   description: string;
   explainedAmount: number;
   attachmentUrl: string | null;
@@ -94,7 +96,7 @@ function StatusBadge({ status }: { status: OmzetStatus }) {
 function LockBadge() {
   return (
     <span className="recon-badge recon-badge-warn">
-      <Lock size={12} /> Dikunci (Berita Acara)
+      <Lock size={12} /> Dikunci
     </span>
   );
 }
@@ -436,12 +438,25 @@ export default function ReconciliationPage() {
                 </div>
               </section>
 
-              {detail.explanation ? (
+              {detail.explanation && detail.explanation.evidenceType === LOCK_WITHOUT_EXPLANATION_MARKER ? (
+                <>
+                  <h3>Status Cocok Dikunci</h3>
+                  <ul className="recon-history">
+                    <li>
+                      <span>Dikunci langsung dari status Cocok — tidak ada selisih untuk dijelaskan.</span>
+                      <small>
+                        <Lock size={12} /> Dikunci oleh {detail.explanation.lockedBy} pada {dateTimeLabel(detail.explanation.lockedAt)}
+                      </small>
+                    </li>
+                  </ul>
+                </>
+              ) : detail.explanation ? (
                 <>
                   <h3>Penjelasan selisih (bukti jurnal nyata)</h3>
                   <ul className="recon-history">
                     <li>
-                      <span>{EVIDENCE_LABEL[detail.explanation.evidenceType]} — {formatRupiah(detail.explanation.explainedAmount)}</span>
+                      {/* evidenceType di sini TIDAK PERNAH LOCK_WITHOUT_EXPLANATION_MARKER — sudah ditangkap cabang di atas; cast murni supaya TS tahu itu */}
+                      <span>{EVIDENCE_LABEL[detail.explanation.evidenceType as EvidenceType]} — {formatRupiah(detail.explanation.explainedAmount)}</span>
                       <span>{detail.explanation.description}</span>
                       <small>oleh {detail.explanation.createdBy} · {dateLabel(detail.explanation.updatedAt)}</small>
                       <small>
@@ -524,13 +539,15 @@ export default function ReconciliationPage() {
                 </section>
               )}
 
-              {supervisor && detail.explanation && !detail.explanation.locked && detail.explanation.explainedAmount === detail.differenceRevenue && (
-                <section className="recon-resolution">
-                  <button className="recon-button secondary" onClick={() => setShowLockConfirm(true)}>
-                    <Lock size={14} /> Kunci Periode Ini
-                  </button>
-                </section>
-              )}
+              {supervisor &&
+                !detail.explanation?.locked &&
+                (detail.status === "COCOK" || (detail.explanation && detail.explanation.explainedAmount === detail.differenceRevenue)) && (
+                  <section className="recon-resolution">
+                    <button className="recon-button secondary" onClick={() => setShowLockConfirm(true)}>
+                      <Lock size={14} /> Kunci Periode Ini
+                    </button>
+                  </section>
+                )}
             </div>
           ) : null}
         </aside>
@@ -539,8 +556,17 @@ export default function ReconciliationPage() {
       {showLockConfirm && (
         <div className="recon-confirm-overlay" role="alertdialog" aria-modal="true" aria-label="Konfirmasi kunci periode">
           <div className="recon-confirm-box">
-            <h3>Kunci periode ini?</h3>
-            <p>Setelah dikunci, penjelasan ini tidak bisa diubah lagi. Lanjutkan?</p>
+            {detail?.status === "COCOK" ? (
+              <>
+                <h3>Kunci bulan ini?</h3>
+                <p>Setelah dikunci, status Cocok akan tetap berlaku walau data disinkron ulang di kemudian hari.</p>
+              </>
+            ) : (
+              <>
+                <h3>Kunci periode ini?</h3>
+                <p>Setelah dikunci, penjelasan ini tidak bisa diubah lagi. Lanjutkan?</p>
+              </>
+            )}
             {lockError && <p className="recon-error">{lockError}</p>}
             <div className="recon-actions">
               <button className="recon-button" disabled={lockSubmitting} onClick={() => void confirmLock()}>

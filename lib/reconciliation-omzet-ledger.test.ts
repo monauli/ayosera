@@ -13,6 +13,7 @@ import {
   loadOmzetLedgerMonthDetail,
   loadOmzetLedgerMonthSummary,
   loadOmzetLedgerRecentSummaries,
+  OMZET_LOCK_WITHOUT_EXPLANATION_MARKER,
   recentOmzetLedgerPeriods,
   type LedgerEntryInput,
   type OmzetExplanation,
@@ -249,6 +250,58 @@ test("locked:true melewati SEMUA cabang lain (bulan berjalan/data belum tersedia
   assert.equal(result.status, "SELISIH_TERJELASKAN");
   assert.notEqual(result.status, "BULAN_BERJALAN");
   assert.match(result.statusReason, /supervisor-2/);
+});
+
+// ---------------------------------------------------------------------------
+// 4c. Perbaikan Lock untuk Status Cocok — note dengan penanda
+// OMZET_LOCK_WITHOUT_EXPLANATION_MARKER (dikunci LANGSUNG dari Cocok, bukan
+// dari penjelasan manual) HARUS tetap COCOK, BUKAN Selisih Terjelaskan.
+// ---------------------------------------------------------------------------
+test("locked:true dengan penanda MATCHED_NO_EXPLANATION -> status COCOK, statusReason jujur (tidak menyebut Berita Acara/kategori bukti)", () => {
+  const entries40001 = [
+    entry({ transactionNo: "JU054", transactionDate: "2026-05-05", credit: 1_000_000 }),
+    entry({ transactionNo: "CL054", transactionDate: "2026-05-31", debit: 1_000_000 }),
+  ];
+  // differenceRevenue SAAT INI = 300_000 (data berubah lewat re-sync setelah
+  // dikunci, sama seperti test "Berita Acara otoritatif" di atas) — status
+  // HARUS tetap dibekukan ke COCOK, TIDAK jatuh ke PERLU_DICEK/SELISIH_TERJELASKAN.
+  const lockedFromCocok: OmzetExplanation = {
+    evidenceType: OMZET_LOCK_WITHOUT_EXPLANATION_MARKER,
+    description: "Dikunci langsung dari status Cocok (selisih Rp0) — tidak ada penjelasan manual.",
+    explainedAmount: 0,
+    createdBy: "supervisor-3",
+    createdAt: NOW,
+    updatedAt: NOW,
+    locked: true,
+    lockedBy: "supervisor-3",
+    lockedAt: NOW,
+  };
+  const result = computeOmzetOlseraLedger("2026-05", ayo(1, 700_000), entries40001, [], [], lockedFromCocok, NOW);
+
+  assert.equal(result.differenceRevenue, 300_000, "differenceRevenue tetap dihitung apa adanya, hanya STATUS yang dibekukan");
+  assert.equal(result.status, "COCOK");
+  assert.match(result.statusReason, /supervisor-3/);
+  assert.doesNotMatch(result.statusReason, /Berita Acara/, "tidak ada Berita Acara yang dikunci untuk kasus ini — jangan menyebutnya");
+  assert.doesNotMatch(result.statusReason, /Selisih/i, "bahasa status harus jujur: tidak ada selisih yang dijelaskan");
+});
+
+test("locked:true dengan penanda MATCHED_NO_EXPLANATION melewati SEMUA cabang lain (menang atas BULAN_BERJALAN) — sama seperti lock Selisih Terjelaskan", () => {
+  const lockedFromCocokOnCurrentMonth: OmzetExplanation = {
+    evidenceType: OMZET_LOCK_WITHOUT_EXPLANATION_MARKER,
+    description: "Dikunci langsung dari status Cocok (selisih Rp0) — tidak ada penjelasan manual.",
+    explainedAmount: 0,
+    createdBy: "supervisor-4",
+    createdAt: NOW,
+    updatedAt: NOW,
+    locked: true,
+    lockedBy: "supervisor-4",
+    lockedAt: NOW,
+  };
+  const result = computeOmzetOlseraLedger("2026-06", ayo(0, 0), [], [], [], lockedFromCocokOnCurrentMonth, NOW);
+
+  assert.equal(result.status, "COCOK");
+  assert.notEqual(result.status, "BULAN_BERJALAN");
+  assert.match(result.statusReason, /supervisor-4/);
 });
 
 // ---------------------------------------------------------------------------
