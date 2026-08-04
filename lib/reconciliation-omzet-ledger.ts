@@ -69,11 +69,17 @@ export const OMZET_EVIDENCE_TYPE_LABEL: Record<OmzetEvidenceType, string> = {
 export type OmzetExplanation = {
   evidenceType: OmzetEvidenceType;
   description: string;
-  /** Nominal selisih yang dijelaskan — HARUS sama persis dengan differenceRevenue yang dihitung saat ini, tidak ada toleransi. */
+  /** Nominal selisih yang dijelaskan — HARUS sama persis dengan differenceRevenue yang dihitung saat ini, tidak ada toleransi (kecuali locked:true, lihat classifyStatus). */
   explainedAmount: number;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  /** true bila periode ini sudah dikunci lewat Berita Acara (fitur Lock+Berita Acara) — lihat classifyStatus: begitu locked, status DIBEKUKAN ke SELISIH_TERJELASKAN tanpa recompute dari differenceRevenue. TIDAK ADA jalur unlock. */
+  locked: boolean;
+  /** userId yang mengunci — null bila locked:false. */
+  lockedBy: string | null;
+  /** Timestamp saat dikunci — null bila locked:false. */
+  lockedAt: Date | null;
 };
 
 /** Satu akun (40001 atau 40004) setelah dedup + identifikasi jurnal penutup/reklasifikasi + netting koreksi/reversal. */
@@ -293,6 +299,22 @@ function classifyStatus(input: {
   differenceRevenue: number;
   explanation: OmzetExplanation | null;
 }): { status: OmzetStatus; statusReason: string } {
+  // Fitur Lock+Berita Acara — CABANG PALING AWAL, SEBELUM pengecekan apa
+  // pun (termasuk isCurrent/dataAvailable/ambiguitas/verifikasi 40004): begitu
+  // periode dikunci lewat Berita Acara, statusnya OTORITATIF di atas SEMUA
+  // pengecekan otomatis lain, TIDAK PERNAH di-recompute dari differenceRevenue
+  // terkini (mis. re-sync ledger susulan tidak boleh diam-diam membatalkan
+  // status yang sudah ditandatangani). Syarat lock (lockOmzetPeriod di
+  // lib/reconciliation-omzet-note-store.ts) sudah memvalidasi
+  // explainedAmount === differenceRevenue PADA SAAT dikunci, jadi membekukan
+  // ke SELISIH_TERJELASKAN di sini aman. Lihat "Desain Skema Lock+Berita
+  // Acara" section 3c di tmp/ai-handoff.md.
+  if (input.explanation?.locked) {
+    return {
+      status: "SELISIH_TERJELASKAN",
+      statusReason: `Selisih dikunci lewat Berita Acara oleh ${input.explanation.lockedBy} pada ${input.explanation.lockedAt?.toISOString()}: ${OMZET_EVIDENCE_TYPE_LABEL[input.explanation.evidenceType]} — ${input.explanation.description}`,
+    };
+  }
   if (input.isCurrent) {
     return { status: "BULAN_BERJALAN", statusReason: "Bulan berjalan — data masih dapat berubah sampai bulan ini ditutup dan jurnal penutup/reklasifikasi diproses." };
   }
@@ -359,12 +381,35 @@ export type OmzetLedgerSourceContext = {
 async function resolveContext(context?: OmzetLedgerSourceContext): Promise<OmzetLedgerSourceContext> {
   if (context) return context;
   const { collections } = await import("./mongodb.ts");
-  const { getOmzetExplanation } = await import("./reconciliation-omzet-explanation-store.ts");
+  const { getCurrentOmzetNote } = await import("./reconciliation-omzet-note-store.ts");
   const { bookings, olseraFinancialLedgerEntries } = await collections();
   return {
     bookings,
     ledgerEntries: olseraFinancialLedgerEntries,
-    loadExplanation: (period: string) => getOmzetExplanation(period),
+    // Skema BARU append-only (OlseraOmzetReconciliationNoteV2Document, lihat
+    // lib/reconciliation-omzet-note-store.ts) — menggantikan
+    // getOmzetExplanation (skema lama, lib/reconciliation-omzet-explanation-store.ts,
+    // SENGAJA dibiarkan ada tapi tidak lagi dipanggil di sini, lihat "Desain
+    // Skema Lock+Berita Acara" section 3c di tmp/ai-handoff.md). `storeId()`
+    // (fungsi module ini, dipakai juga untuk query ledgerEntries di
+    // loadPeriodData) sudah tersedia tanpa perlu memperluas signature
+    // loadExplanation — SATU store per deployment, sama seperti seluruh
+    // engine ledger ini.
+    loadExplanation: async (period: string) => {
+      const note = await getCurrentOmzetNote(storeId(), period);
+      if (!note) return null;
+      return {
+        evidenceType: note.evidenceType,
+        description: note.description,
+        explainedAmount: note.explainedAmount,
+        createdBy: note.createdBy,
+        createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
+        locked: note.locked,
+        lockedBy: note.lockedBy,
+        lockedAt: note.lockedAt,
+      };
+    },
   };
 }
 

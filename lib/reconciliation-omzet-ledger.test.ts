@@ -174,6 +174,9 @@ test("beda periode: penjelasan eksplisit dengan bukti jurnal nyata (nominal sama
     createdBy: "user-1",
     createdAt: NOW,
     updatedAt: NOW,
+    locked: false,
+    lockedBy: null,
+    lockedAt: null,
   };
   const result = computeOmzetOlseraLedger("2026-05", ayo(1, 700_000), entries40001, [], [], explanation, NOW);
 
@@ -185,11 +188,67 @@ test("penjelasan dengan nominal TIDAK sama persis dengan selisih saat ini -> tet
     entry({ transactionNo: "JU052", transactionDate: "2026-05-05", credit: 1_000_000 }),
     entry({ transactionNo: "CL052", transactionDate: "2026-05-31", debit: 1_000_000 }),
   ];
-  const stale: OmzetExplanation = { evidenceType: "correction", description: "nominal basi", explainedAmount: 250_000, createdBy: "u", createdAt: NOW, updatedAt: NOW };
+  const stale: OmzetExplanation = { evidenceType: "correction", description: "nominal basi", explainedAmount: 250_000, createdBy: "u", createdAt: NOW, updatedAt: NOW, locked: false, lockedBy: null, lockedAt: null };
   const result = computeOmzetOlseraLedger("2026-05", ayo(1, 700_000), entries40001, [], [], stale, NOW);
 
   assert.equal(result.differenceRevenue, 300_000);
   assert.equal(result.status, "PERLU_DICEK");
+});
+
+// ---------------------------------------------------------------------------
+// 4b. Fitur Lock+Berita Acara — locked:true membekukan status, TIDAK PERNAH
+// di-recompute dari differenceRevenue/dataAvailable/ambiguitas terkini.
+// ---------------------------------------------------------------------------
+test("locked:true tetap SELISIH_TERJELASKAN meski explainedAmount SUDAH TIDAK sama dengan differenceRevenue saat ini (Berita Acara otoritatif)", () => {
+  const entries40001 = [
+    entry({ transactionNo: "JU053", transactionDate: "2026-05-05", credit: 1_000_000 }),
+    entry({ transactionNo: "CL053", transactionDate: "2026-05-31", debit: 1_000_000 }),
+  ];
+  // differenceRevenue saat ini = 300_000 (sama seperti test di atas), tapi
+  // explainedAmount yang dikunci sengaja BEDA (250_000) — mensimulasikan
+  // re-sync/koreksi ledger susulan SETELAH periode dikunci. Tanpa cabang
+  // locked, ini akan jatuh ke PERLU_DICEK (lihat test "nominal TIDAK sama
+  // persis" di atas) — DENGAN locked:true, status HARUS tetap dibekukan.
+  const locked: OmzetExplanation = {
+    evidenceType: "correction",
+    description: "Sudah diverifikasi & ditandatangani Berita Acara.",
+    explainedAmount: 250_000,
+    createdBy: "user-1",
+    createdAt: NOW,
+    updatedAt: NOW,
+    locked: true,
+    lockedBy: "supervisor-1",
+    lockedAt: NOW,
+  };
+  const result = computeOmzetOlseraLedger("2026-05", ayo(1, 700_000), entries40001, [], [], locked, NOW);
+
+  assert.equal(result.differenceRevenue, 300_000, "differenceRevenue tetap dihitung apa adanya, hanya STATUS yang dibekukan");
+  assert.equal(result.status, "SELISIH_TERJELASKAN");
+  assert.match(result.statusReason, /dikunci lewat Berita Acara/);
+  assert.match(result.statusReason, /supervisor-1/);
+});
+
+test("locked:true melewati SEMUA cabang lain (bulan berjalan/data belum tersedia/ambigu) — cabang PALING AWAL di classifyStatus", () => {
+  const lockedOnCurrentMonth: OmzetExplanation = {
+    evidenceType: "duplicate",
+    description: "Dikunci walau data ledger kosong — kasus ekstrem untuk membuktikan urutan cabang.",
+    explainedAmount: 999_999,
+    createdBy: "user-1",
+    createdAt: NOW,
+    updatedAt: NOW,
+    locked: true,
+    lockedBy: "supervisor-2",
+    lockedAt: NOW,
+  };
+  // Periode BERJALAN (2026-06, sama dengan NOW) + tanpa data ledger sama
+  // sekali -> tanpa cabang locked ini akan BULAN_BERJALAN (baris isCurrent,
+  // cabang pertama SEBELUM perubahan ini). Dengan locked:true, cabang Lock
+  // HARUS menang karena ditempatkan lebih awal dari isCurrent.
+  const result = computeOmzetOlseraLedger("2026-06", ayo(0, 0), [], [], [], lockedOnCurrentMonth, NOW);
+
+  assert.equal(result.status, "SELISIH_TERJELASKAN");
+  assert.notEqual(result.status, "BULAN_BERJALAN");
+  assert.match(result.statusReason, /supervisor-2/);
 });
 
 // ---------------------------------------------------------------------------

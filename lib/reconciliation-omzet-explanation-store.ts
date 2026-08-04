@@ -32,6 +32,11 @@ export async function getOmzetExplanation(period: string): Promise<OmzetExplanat
     createdBy: doc.createdBy,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+    // Skema lama tidak punya konsep lock (lihat OlseraOmzetReconciliationNoteV2Document
+    // di lib/mongodb.ts) — catatan lama secara definisi belum pernah dikunci.
+    locked: false,
+    lockedBy: null,
+    lockedAt: null,
   };
 }
 
@@ -67,7 +72,7 @@ export async function saveOmzetExplanation(input: SaveOmzetExplanationInput): Pr
   );
   const saved = await olseraOmzetReconciliationNotes.findOne({ _id });
   if (!saved) throw new Error("Gagal menyimpan penjelasan selisih.");
-  return { evidenceType: saved.evidenceType, description: saved.description, explainedAmount: saved.explainedAmount, createdBy: saved.createdBy, createdAt: saved.createdAt, updatedAt: saved.updatedAt };
+  return { evidenceType: saved.evidenceType, description: saved.description, explainedAmount: saved.explainedAmount, createdBy: saved.createdBy, createdAt: saved.createdAt, updatedAt: saved.updatedAt, locked: false, lockedBy: null, lockedAt: null };
 }
 
 export async function deleteOmzetExplanation(period: string): Promise<void> {

@@ -181,6 +181,101 @@ export type OlseraOmzetReconciliationNoteDocument = {
   updatedAt: Date;
 };
 
+/**
+ * Skema BARU (Fitur Lock+Berita Acara, lihat "Desain Skema Lock+Berita Acara"
+ * di tmp/ai-handoff.md) — menggantikan `OlseraOmzetReconciliationNoteDocument`
+ * di atas, mengikuti pola APPEND-ONLY dari `ReconciliationManualResolutionDocument`
+ * (baris ~603 di bawah) alih-alih overwrite satu-dokumen-per-periode. Setiap
+ * submit/revisi penjelasan adalah DOKUMEN BARU; dokumen lama ditandai
+ * `isCurrent:false`+`supersededBy`, tidak pernah dihapus/ditimpa.
+ *
+ * LANGKAH 1 (implementasi ini): kedua type sengaja dibiarkan BERDAMPINGAN —
+ * `OlseraOmzetReconciliationNoteDocument` (lama) TIDAK diubah/dihapus supaya
+ * `lib/reconciliation-omzet-explanation-store.ts` dan
+ * `lib/reconciliation-omzet-ledger.ts` (classifyStatus/computeOmzetOlseraLedger)
+ * yang masih memakainya tetap kompatibel — migrasi jalur baca engine ke skema
+ * baru ini adalah langkah TERPISAH berikutnya (lihat catatan di dokumen
+ * desain, section 3c). Dua bentuk dokumen ini bisa hidup berdampingan di
+ * collection fisik yang sama (`olsera_omzet_reconciliation_notes`) karena
+ * format `_id` berbeda (lama: `${storeId}:${period}`, baru: `note:v1:${hash}`)
+ * — lihat rencana migrasi (Opsi A, script backfill) di dokumen desain.
+ */
+export type OlseraOmzetReconciliationNoteV2Document = {
+  /**
+   * Deterministik, mirip pola `resolution:v1:${hash}` di
+   * lib/reconciliation-manual-resolution.ts. Formula:
+   *   `note:v1:${sha256(JSON.stringify({ storeId, period, actor, idempotencyKey })).slice(0, 32)}`
+   * — lihat `generateNoteId` di lib/reconciliation-omzet-note-store.ts.
+   * `idempotencyKey` disuplai caller (mis. UI generate sekali per klik submit)
+   * sehingga retry jaringan dengan key yang sama dianggap request yang sama
+   * (idempotent), bukan revisi baru.
+   */
+  _id: string;
+  storeId: number;
+  period: string; // format YYYY-MM
+  evidenceType: "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
+  description: string;
+  /** HARUS sama persis dengan differenceRevenue yang dihitung engine saat submit/lock — divalidasi di lib/reconciliation-omzet-note-store.ts, bukan hanya di classifyStatus. */
+  explainedAmount: number;
+
+  /** URL file lampiran Berita Acara (mis. hasil upload ke Vercel Blob) — null bila belum ada lampiran. Infrastruktur upload BELUM dibangun (lihat dokumen desain section 3); field ini siap dipakai begitu tersedia. */
+  attachmentUrl: string | null;
+  /** Nama file asli saat diunggah — null bila attachmentUrl null. */
+  attachmentFileName: string | null;
+
+  /** true HANYA pada dokumen aktif untuk (storeId, period) ini; di-$set jadi false pada dokumen lama saat digantikan. */
+  isCurrent: boolean;
+  /** _id dokumen PENGGANTI — null bila masih berlaku. */
+  supersededBy: string | null;
+  /** Timestamp saat digantikan — null bila masih berlaku. */
+  supersededAt: Date | null;
+  /** Pointer MUNDUR ke dokumen yang digantikan dokumen ini — null bila ini submit pertama untuk (storeId, period). */
+  previousNoteId: string | null;
+
+  /** true bila periode ini sudah dikunci lewat Berita Acara. TIDAK ADA jalur unlock (lihat lockOmzetPeriod di lib/reconciliation-omzet-note-store.ts — pembukaan kunci ditunda untuk role developer di masa depan). */
+  locked: boolean;
+  /** userId yang mengunci — null bila locked:false. */
+  lockedBy: string | null;
+  /** Timestamp saat dikunci — null bila locked:false. */
+  lockedAt: Date | null;
+
+  createdBy: string;
+  createdAt: Date;
+  updatedBy: string;
+  updatedAt: Date;
+};
+
+export type OlseraOmzetReconciliationAuditAction = "SUBMIT_EXPLANATION" | "SUPERSEDE_EXPLANATION" | "LOCK";
+
+/**
+ * Jejak audit APPEND-ONLY untuk fitur Lock+Berita Acara — collection
+ * TERPISAH dari `olsera_omzet_reconciliation_notes`, HANYA `insertOne`
+ * (lihat `writeOmzetAuditLog` di lib/reconciliation-omzet-note-store.ts),
+ * tidak pernah diubah/dihapus. Beda dari `ReconciliationAuditLogDocument`
+ * (baris ~632 di bawah) yang untuk modul Rekonsiliasi Findings — collection
+ * ini khusus fitur Lock+Berita Acara Rekonsiliasi Omzet.
+ */
+export type OlseraOmzetReconciliationAuditLogDocument = {
+  /** `omzet-audit:v1:${randomUUID()}`. */
+  _id: string;
+  storeId: number;
+  period: string;
+  action: OlseraOmzetReconciliationAuditAction;
+  /** userId pelaku. */
+  actor: string;
+  timestamp: Date;
+  /** _id dokumen note yang terlibat — dokumen baru untuk SUBMIT_EXPLANATION/SUPERSEDE_EXPLANATION, dokumen current untuk LOCK. */
+  noteId: string;
+  /** _id dokumen note yang digantikan — hanya diisi untuk SUPERSEDE_EXPLANATION, null selainnya. */
+  previousNoteId: string | null;
+  /** Snapshot ringkas untuk audit trail manusiawi — TIDAK berisi credential. */
+  detail: {
+    evidenceType?: "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
+    explainedAmount?: number;
+    hasAttachment?: boolean;
+  };
+};
+
 export type OlseraSyncedDayDocument = {
   /** Tanggal (YYYY-MM-DD, WIB) yang sudah tuntas disync penuh. */
   _id: string;
@@ -756,6 +851,7 @@ export async function collections() {
     reconciliationAuditLog: db.collection<ReconciliationAuditLogDocument>("reconciliation_audit_log"),
     inventoryStockOpnameReconciliations: db.collection<InventoryStockOpnameDocument>("inventory_stock_opname_reconciliations"),
     olseraOmzetReconciliationNotes: db.collection<OlseraOmzetReconciliationNoteDocument>("olsera_omzet_reconciliation_notes"),
+    olseraOmzetReconciliationAuditLog: db.collection<OlseraOmzetReconciliationAuditLogDocument>("olsera_omzet_reconciliation_audit_log"),
     rateLimits: db.collection<RateLimitDocument>("rate_limits"),
     historicalBackfillAuditLog: db.collection<HistoricalBackfillAuditLogDocument>("historical_backfill_audit_log"),
   };
@@ -810,6 +906,7 @@ async function createIndexes() {
     reconciliationAuditLog,
     inventoryStockOpnameReconciliations,
     olseraOmzetReconciliationNotes,
+    olseraOmzetReconciliationAuditLog,
     rateLimits,
     historicalBackfillAuditLog,
   } = await collections();
@@ -911,6 +1008,21 @@ async function createIndexes() {
     // unik secara native (`${storeId}:${period}`), index tambahan untuk
     // query "seluruh catatan satu toko".
     olseraOmzetReconciliationNotes.createIndex({ storeId: 1, updatedAt: -1 }),
+    // Fitur Lock+Berita Acara (skema baru append-only, lihat
+    // OlseraOmzetReconciliationNoteV2Document) — index BARU, TIDAK mengganti
+    // index lama di atas (dua bentuk dokumen berdampingan di collection yang
+    // sama, lihat dokumen desain "Desain Skema Lock+Berita Acara" di
+    // tmp/ai-handoff.md, section 5). Unique partial index menegakkan
+    // invarian "maksimal satu isCurrent:true per (storeId, period)" di level
+    // database, lapisan pertahanan kedua di luar conditional update aplikasi.
+    olseraOmzetReconciliationNotes.createIndex(
+      { storeId: 1, period: 1, isCurrent: 1 },
+      { unique: true, partialFilterExpression: { isCurrent: true } },
+    ),
+    olseraOmzetReconciliationNotes.createIndex({ storeId: 1, period: 1, createdAt: -1 }),
+    olseraOmzetReconciliationNotes.createIndex({ locked: 1, storeId: 1 }),
+    olseraOmzetReconciliationAuditLog.createIndex({ storeId: 1, period: 1, timestamp: -1 }),
+    olseraOmzetReconciliationAuditLog.createIndex({ noteId: 1 }),
     // Rate limiting (Task 4) — TTL: bucket kedaluwarsa dihapus otomatis, tidak
     // menumpuk dokumen selamanya.
     rateLimits.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),

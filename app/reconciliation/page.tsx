@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertTriangle, ChevronRight, FileSearch, RefreshCw, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, ChevronRight, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 
 type LedgerEntry = { transactionNo: string | null; transactionDate: string | null; description: string | null; debit: number; credit: number };
 type AccountBreakdown = {
@@ -18,7 +18,19 @@ type AccountBreakdown = {
 type PickleballVerification = { applicable: boolean; verified: boolean | null; matchedEntry: LedgerEntry | null; reason: string };
 type OmzetStatus = "COCOK" | "SELISIH_TERJELASKAN" | "PERLU_DICEK" | "BULAN_BERJALAN";
 type EvidenceType = "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
-type Explanation = { evidenceType: EvidenceType; description: string; explainedAmount: number; createdBy: string; createdAt: string; updatedAt: string };
+type Explanation = {
+  evidenceType: EvidenceType;
+  description: string;
+  explainedAmount: number;
+  attachmentUrl: string | null;
+  attachmentFileName: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  locked: boolean;
+  lockedBy: string | null;
+  lockedAt: string | null;
+};
 type OmzetResult = {
   period: string;
   ayo: { count: number; revenue: number };
@@ -68,9 +80,23 @@ function dateLabel(date: string | null) {
   if (Number.isNaN(d.getTime())) return date;
   return new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Jakarta" }).format(d);
 }
+function dateTimeLabel(date: string | null) {
+  if (!date) return "-";
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return date;
+  return `${new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).format(d)} WIB`;
+}
 
 function StatusBadge({ status }: { status: OmzetStatus }) {
   return <span className={`recon-badge recon-badge-${STATUS_TONE[status]}`}>{STATUS_LABEL[status]}</span>;
+}
+
+function LockBadge() {
+  return (
+    <span className="recon-badge recon-badge-warn">
+      <Lock size={12} /> Dikunci (Berita Acara)
+    </span>
+  );
 }
 
 function AccountCard({ title, breakdown }: { title: string; breakdown: AccountBreakdown }) {
@@ -110,6 +136,13 @@ export default function ReconciliationPage() {
   const [explainError, setExplainError] = useState("");
   const [evidenceType, setEvidenceType] = useState<EvidenceType>("shifted-period");
   const [explainDescription, setExplainDescription] = useState("");
+  const [uploadedAttachment, setUploadedAttachment] = useState<{ attachmentUrl: string; attachmentFileName: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showLockConfirm, setShowLockConfirm] = useState(false);
+  const [lockSubmitting, setLockSubmitting] = useState(false);
+  const [lockError, setLockError] = useState("");
 
   const refresh = async () => {
     setLoading(true);
@@ -143,6 +176,12 @@ export default function ReconciliationPage() {
     setDetailLoading(true);
     setShowExplainForm(false);
     setExplainError("");
+    setUploadedAttachment(null);
+    setUploadError("");
+    setUploading(false);
+    setShowLockConfirm(false);
+    setLockError("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
@@ -157,6 +196,26 @@ export default function ReconciliationPage() {
     }
   };
 
+  const uploadAttachment = async (file: File) => {
+    if (!selectedPeriod) return;
+    setUploading(true);
+    setUploadError("");
+    setUploadedAttachment(null);
+    try {
+      const formData = new FormData();
+      formData.set("file", file);
+      const response = await fetch(`/api/reconciliation/court-revenue/${selectedPeriod}/attachment`, { method: "POST", body: formData });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Gagal mengunggah lampiran.");
+      setUploadedAttachment(data.data);
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Gagal mengunggah lampiran.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const submitExplanation = async () => {
     if (!selectedPeriod || !detail) return;
     setExplainSubmitting(true);
@@ -165,7 +224,13 @@ export default function ReconciliationPage() {
       const response = await fetch(`/api/reconciliation/court-revenue/${selectedPeriod}/explanation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ evidenceType, description: explainDescription, explainedAmount: detail.differenceRevenue }),
+        body: JSON.stringify({
+          evidenceType,
+          description: explainDescription,
+          explainedAmount: detail.differenceRevenue,
+          attachmentUrl: uploadedAttachment?.attachmentUrl ?? null,
+          attachmentFileName: uploadedAttachment?.attachmentFileName ?? null,
+        }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || "Gagal menyimpan penjelasan selisih.");
@@ -176,6 +241,24 @@ export default function ReconciliationPage() {
       setExplainError(e instanceof Error ? e.message : "Gagal menyimpan penjelasan selisih.");
     } finally {
       setExplainSubmitting(false);
+    }
+  };
+
+  const confirmLock = async () => {
+    if (!selectedPeriod) return;
+    setLockSubmitting(true);
+    setLockError("");
+    try {
+      const response = await fetch(`/api/reconciliation/court-revenue/${selectedPeriod}/lock`, { method: "POST" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Gagal mengunci periode ini.");
+      setShowLockConfirm(false);
+      await openDetail(selectedPeriod);
+      await refresh();
+    } catch (e) {
+      setLockError(e instanceof Error ? e.message : "Gagal mengunci periode ini.");
+    } finally {
+      setLockSubmitting(false);
     }
   };
 
@@ -245,7 +328,7 @@ export default function ReconciliationPage() {
                   <td>{row.dataAvailable ? formatRupiah(row.olseraTotal) : "Data belum tersedia"}</td>
                   <td>{row.dataAvailable ? formatRupiah(row.differenceRevenue) : "-"}</td>
                   <td>
-                    <StatusBadge status={row.status} />
+                    <StatusBadge status={row.status} /> {row.explanation?.locked && <LockBadge />}
                   </td>
                   <td>
                     <button className="recon-link" onClick={() => void openDetail(row.period)}>
@@ -266,7 +349,7 @@ export default function ReconciliationPage() {
                   </span>
                 </div>
                 <div>
-                  <StatusBadge status={row.status} />
+                  <StatusBadge status={row.status} /> {row.explanation?.locked && <LockBadge />}
                 </div>
               </button>
             ))}
@@ -347,7 +430,9 @@ export default function ReconciliationPage() {
                 </div>
                 <div>
                   <span>Status</span>
-                  <StatusBadge status={detail.status} />
+                  <div style={{ display: "flex", gap: ".35rem", flexWrap: "wrap" }}>
+                    <StatusBadge status={detail.status} /> {detail.explanation?.locked && <LockBadge />}
+                  </div>
                 </div>
               </section>
 
@@ -359,6 +444,20 @@ export default function ReconciliationPage() {
                       <span>{EVIDENCE_LABEL[detail.explanation.evidenceType]} — {formatRupiah(detail.explanation.explainedAmount)}</span>
                       <span>{detail.explanation.description}</span>
                       <small>oleh {detail.explanation.createdBy} · {dateLabel(detail.explanation.updatedAt)}</small>
+                      <small>
+                        {detail.explanation.attachmentUrl ? (
+                          <a href={detail.explanation.attachmentUrl} target="_blank" rel="noreferrer" className="recon-link">
+                            <Paperclip size={12} /> Lihat Lampiran Berita Acara{detail.explanation.attachmentFileName ? ` (${detail.explanation.attachmentFileName})` : ""}
+                          </a>
+                        ) : (
+                          "Belum ada lampiran"
+                        )}
+                      </small>
+                      {detail.explanation.locked && (
+                        <small>
+                          <Lock size={12} /> Dikunci oleh {detail.explanation.lockedBy} pada {dateTimeLabel(detail.explanation.lockedAt)}
+                        </small>
+                      )}
                     </li>
                   </ul>
                 </>
@@ -366,7 +465,11 @@ export default function ReconciliationPage() {
 
               {supervisor && detail.differenceRevenue !== 0 && detail.status !== "BULAN_BERJALAN" && (
                 <section className="recon-resolution">
-                  {!showExplainForm ? (
+                  {detail.explanation?.locked ? (
+                    <p className="recon-readonly" style={{ width: "100%" }}>
+                      <Lock size={16} /> Periode ini sudah dikunci dan tidak bisa diubah. Hubungi admin/developer bila perlu revisi.
+                    </p>
+                  ) : !showExplainForm ? (
                     <button className="recon-button secondary" onClick={() => setShowExplainForm(true)}>
                       {detail.explanation ? "Perbarui penjelasan selisih" : "Tambahkan penjelasan selisih"}
                     </button>
@@ -387,9 +490,29 @@ export default function ReconciliationPage() {
                         Penjelasan (wajib — sebutkan transaksi/jurnal spesifik)
                         <textarea value={explainDescription} onChange={(e) => setExplainDescription(e.target.value)} placeholder="Contoh: transaksi BK/2428/260430 dibayar 1 Mei, dibukukan Olsera di bulan April (JU26050500001060)." />
                       </label>
+                      <label>
+                        Lampiran Berita Acara (opsional — PDF/JPG/PNG, maks 4MB)
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                          disabled={uploading || explainSubmitting}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) void uploadAttachment(file);
+                          }}
+                        />
+                      </label>
+                      {uploading && <p className="recon-before">Mengunggah lampiran…</p>}
+                      {uploadError && <p className="recon-error">{uploadError}</p>}
+                      {uploadedAttachment && !uploading && (
+                        <p className="recon-before">
+                          <Paperclip size={12} /> Terunggah: {uploadedAttachment.attachmentFileName}
+                        </p>
+                      )}
                       {explainError && <p className="recon-error">{explainError}</p>}
                       <div className="recon-actions">
-                        <button className="recon-button" disabled={explainSubmitting || !explainDescription.trim()} onClick={() => void submitExplanation()}>
+                        <button className="recon-button" disabled={explainSubmitting || uploading || !explainDescription.trim()} onClick={() => void submitExplanation()}>
                           Simpan penjelasan
                         </button>
                         <button className="recon-button secondary" disabled={explainSubmitting} onClick={() => setShowExplainForm(false)}>
@@ -400,9 +523,35 @@ export default function ReconciliationPage() {
                   )}
                 </section>
               )}
+
+              {supervisor && detail.explanation && !detail.explanation.locked && detail.explanation.explainedAmount === detail.differenceRevenue && (
+                <section className="recon-resolution">
+                  <button className="recon-button secondary" onClick={() => setShowLockConfirm(true)}>
+                    <Lock size={14} /> Kunci Periode Ini
+                  </button>
+                </section>
+              )}
             </div>
           ) : null}
         </aside>
+      )}
+
+      {showLockConfirm && (
+        <div className="recon-confirm-overlay" role="alertdialog" aria-modal="true" aria-label="Konfirmasi kunci periode">
+          <div className="recon-confirm-box">
+            <h3>Kunci periode ini?</h3>
+            <p>Setelah dikunci, penjelasan ini tidak bisa diubah lagi. Lanjutkan?</p>
+            {lockError && <p className="recon-error">{lockError}</p>}
+            <div className="recon-actions">
+              <button className="recon-button" disabled={lockSubmitting} onClick={() => void confirmLock()}>
+                Ya, kunci
+              </button>
+              <button className="recon-button secondary" disabled={lockSubmitting} onClick={() => setShowLockConfirm(false)}>
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
