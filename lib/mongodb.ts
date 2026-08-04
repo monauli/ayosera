@@ -136,8 +136,6 @@ export type OlseraFinancialSyncLogDocument = { _id: string; storeId: number; per
 export type FinancialEmptyLedgerObservation = { runId: string; invocationId: string; observedAt: Date; rowCount: number; sourceStatus: "success-empty" };
 export type FinancialEmptyLedgerConfirmationDocument = { _id: string; storeId: number; period: string; accountCode: string; status: "candidate" | "confirmed" | "cancelled"; observations: FinancialEmptyLedgerObservation[]; confirmedAt: Date | null; lastNonEmptyAt: Date | null; updatedAt: Date; createdAt: Date };
 export type FinancialStaleCleanupAuditDocument = { _id: string; storeId: number; period: string; accountCode: string; runId: string; reason: string; firstCheck: FinancialEmptyLedgerObservation; secondCheck: FinancialEmptyLedgerObservation; deletedCount: number; succeeded: boolean; createdAt: Date };
-export type SystemAuditRunDocument = { _id: string; storeId: number; status: "completed" | "failed"; scope: string; startedAt: Date; completedAt: Date; checks: Array<Record<string, unknown>>; summary: Record<string, number>; createdAt: Date };
-export type SystemAuditActionDocument = { _id: string; storeId: number; actorId: string; action: string; scope: Record<string, unknown>; status: "success" | "failed" | "blocked"; reason: string | null; before: Record<string, unknown> | null; after: Record<string, unknown> | null; createdAt: Date };
 /**
  * Jejak audit reversibel Milestone 4 Bagian C (Safe Backfill) — SATU dokumen
  * per baris olsera_order_items yang berhasil dibackfill (HIGH CONFIDENCE
@@ -848,8 +846,6 @@ export async function collections() {
     olseraFinancialSyncLogs: db.collection<OlseraFinancialSyncLogDocument>("olsera_financial_sync_logs"),
     olseraFinancialEmptyLedgerConfirmations: db.collection<FinancialEmptyLedgerConfirmationDocument>("olsera_financial_empty_ledger_confirmations"),
     olseraFinancialStaleCleanupAudits: db.collection<FinancialStaleCleanupAuditDocument>("olsera_financial_stale_cleanup_audits"),
-    systemAuditRuns: db.collection<SystemAuditRunDocument>("system_audit_runs"),
-    systemAuditActions: db.collection<SystemAuditActionDocument>("system_audit_actions"),
     olseraSyncLocks: db.collection<OlseraSyncLockDocument>("olsera_sync_locks"),
     reconciliationRuns: db.collection<ReconciliationRunDocument>("reconciliation_runs"),
     reconciliationFindings: db.collection<ReconciliationFindingDocument>("reconciliation_findings"),
@@ -898,8 +894,6 @@ async function createIndexes() {
     olseraInventoryMovements,
     olseraFinancialEmptyLedgerConfirmations,
     olseraFinancialStaleCleanupAudits,
-    systemAuditRuns,
-    systemAuditActions,
     olseraInventorySyncRuns,
     olseraFinancialMonthlyReports,
     olseraFinancialAccounts,
@@ -978,8 +972,6 @@ async function createIndexes() {
     olseraFinancialSyncLogs.createIndex({ status: 1, updatedAt: -1 }),
     olseraFinancialEmptyLedgerConfirmations.createIndex({ storeId: 1, period: 1, accountCode: 1 }, { unique: true }),
     olseraFinancialStaleCleanupAudits.createIndex({ storeId: 1, period: 1, accountCode: 1, createdAt: -1 }),
-    systemAuditRuns.createIndex({ storeId: 1, createdAt: -1 }),
-    systemAuditActions.createIndex({ storeId: 1, createdAt: -1 }),
     // TTL jaga-jaga: dokumen lock singleton dibersihkan otomatis lama setelah
     // lease kedaluwarsa (release/acquire tetap bekerja tanpa TTL — ini hanya
     // housekeeping, bukan mekanisme utama lock).
