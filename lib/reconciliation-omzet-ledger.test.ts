@@ -392,6 +392,22 @@ test("loader: ringkasan dan detail bulan yang sama menghasilkan angka & status i
   assert.equal(summary.status, "COCOK");
 });
 
+test("payment events tidak dipakai tanpa validasi periode; hanya opt-in validated", async () => {
+  const base = {
+    bookings: fake([{ date: "2026-05-10", total_price: 500_000, status: "paid" }]),
+    ayoPaymentEvents: fake([{ date: "2026-05-10", total_price: 900_000, status: "SUCCESS", raw: {} }]),
+    ledgerEntries: fake([
+      { storeId: 324175, accountCode: "40001", period: "2026-05", ...entry({ transactionNo: "JU091", transactionDate: "2026-05-10", credit: 500_000 }) },
+      { storeId: 324175, accountCode: "40001", period: "2026-05", ...entry({ transactionNo: "CL091", transactionDate: "2026-05-31", debit: 500_000 }) },
+    ]),
+    loadExplanation: async () => null,
+  };
+  const unvalidated = await loadOmzetLedgerMonthSummary("2026-05", base, NOW);
+  const validated = await loadOmzetLedgerMonthSummary("2026-05", { ...base, ayoPaymentEventsValidated: true }, NOW);
+  assert.equal(unvalidated.ayo.revenue, 500_000);
+  assert.equal(validated.ayo.revenue, 900_000);
+});
+
 test("recentOmzetLedgerPeriods: mundur dari bulan berjalan, menangani pergantian tahun", () => {
   assert.deepEqual(recentOmzetLedgerPeriods(3, new Date("2026-01-15T00:00:00Z")), ["2026-01", "2025-12", "2025-11"]);
 });

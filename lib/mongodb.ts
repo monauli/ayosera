@@ -1,6 +1,7 @@
 import "./mongodb-dns.ts";
 import { MongoClient, type Db } from "mongodb";
 import type { ReconciliationConfidence, ReconciliationDomain, ReconciliationImpact, ReconciliationStatus, ReconciliationType } from "./reconciliation-types.ts";
+import type { AyoPaymentEventDocument } from "./ayo-payment-events.ts";
 
 declare global {
   var __mongoClient: MongoClient | undefined;
@@ -823,6 +824,7 @@ export async function collections() {
   return {
     users: db.collection<UserDocument>("users"),
     bookings: db.collection<BookingDocument>("bookings"),
+    ayoPaymentEvents: db.collection<AyoPaymentEventDocument>("ayo_payment_events"),
     syncLogs: db.collection<SyncLogDocument>("sync_logs"),
     fields: db.collection<FieldDocument>("fields"),
     webhookLogs: db.collection<WebhookLogDocument>("webhook_logs"),
@@ -879,6 +881,7 @@ async function createIndexes() {
   const {
     users,
     bookings,
+    ayoPaymentEvents,
     syncLogs,
     fields,
     webhookLogs,

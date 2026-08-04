@@ -191,6 +191,7 @@ export async function upsertBookingItems(items: Record<string, unknown>[]): Prom
     if (operations.length) {
       await bookings.bulkWrite(operations, { ordered: false });
     }
+
   });
 
   return result;

@@ -22,6 +22,8 @@ import "server-only";
 import { isCurrentJakartaPeriod, jakartaCurrentPeriod } from "./olsera-financial-core.ts";
 import { getRevenueAmount, isRevenueEligibleTransaction } from "./revenue.ts";
 import type { BookingDocument } from "./mongodb.ts";
+import type { AyoPaymentEventDocument } from "./ayo-payment-events.ts";
+import { sumAyoPaymentEvents } from "./ayo-payment-events.ts";
 
 // ---------------------------------------------------------------------------
 // Konstanta akun (SATU-SATUNYA tempat kode akun ini dirujuk untuk omzet)
@@ -406,6 +408,9 @@ export type MinimalReadCollection<T> = {
 
 export type OmzetLedgerSourceContext = {
   bookings: MinimalReadCollection<Pick<BookingDocument, "date" | "total_price" | "status">>;
+  ayoPaymentEvents?: MinimalReadCollection<Pick<AyoPaymentEventDocument, "date" | "total_price" | "status" | "raw">>;
+  /** Payment-event data is opt-in only after an external, period-level validation. */
+  ayoPaymentEventsValidated?: boolean;
   ledgerEntries: MinimalReadCollection<LedgerEntryInput & { accountCode: string; period: string }>;
   loadExplanation: (period: string) => Promise<OmzetExplanation | null>;
 };
@@ -460,20 +465,23 @@ function periodToMonthRange(period: string): { start: string; end: string } {
 async function loadPeriodData(period: string, context?: OmzetLedgerSourceContext) {
   const ctx = await resolveContext(context);
   const { start, end } = periodToMonthRange(period);
-  const [bookingRows, entries40001, entries40004, entries21003, explanation] = await Promise.all([
+  const [bookingRows, paymentEvents, entries40001, entries40004, entries21003, explanation] = await Promise.all([
     ctx.bookings.find({ date: { $gte: start, $lte: end } }).toArray(),
+    ctx.ayoPaymentEventsValidated && ctx.ayoPaymentEvents
+      ? ctx.ayoPaymentEvents.find({ date: { $gte: start, $lte: end } }).toArray()
+      : Promise.resolve([]),
     ctx.ledgerEntries.find({ storeId: storeId(), period, accountCode: ACCOUNT_COURT_FEES }).toArray(),
     ctx.ledgerEntries.find({ storeId: storeId(), period, accountCode: ACCOUNT_PICKLEBALL }).toArray(),
     ctx.ledgerEntries.find({ storeId: storeId(), period, accountCode: ACCOUNT_PICKLEBALL_PAYABLE }).toArray(),
     ctx.loadExplanation(period),
   ]);
-  return { bookingRows, entries40001, entries40004, entries21003, explanation };
+  return { bookingRows, paymentEvents, entries40001, entries40004, entries21003, explanation };
 }
 
 /** Ringkasan SATU bulan — dipakai daftar bulanan di /reconciliation. */
 export async function loadOmzetLedgerMonthSummary(period: string, context?: OmzetLedgerSourceContext, now: Date = new Date()): Promise<OmzetOlseraLedgerResult> {
-  const { bookingRows, entries40001, entries40004, entries21003, explanation } = await loadPeriodData(period, context);
-  const ayo = computeAyoSide(bookingRows);
+  const { bookingRows, paymentEvents, entries40001, entries40004, entries21003, explanation } = await loadPeriodData(period, context);
+  const ayo = paymentEvents.length ? sumAyoPaymentEvents(paymentEvents) : computeAyoSide(bookingRows);
   return computeOmzetOlseraLedger(period, ayo, entries40001, entries40004, entries21003, explanation, now);
 }
 
