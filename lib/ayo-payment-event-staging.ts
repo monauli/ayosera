@@ -83,7 +83,7 @@ export function isActivatableRun(run: AyoPaymentEventStagingRun | null): run is 
 
 export async function readActiveStagedPaymentEvents(startDate: string, endDate: string, context?: StagingReadContext) {
   const resolved = resolveStagingRange({ startDate, endDate });
-  if ("error" in resolved) return null;
+  if ("error" in resolved || startDate < "2026-06-01") return null;
   try {
     const source = context ?? await (async () => {
       const { collections } = await import("./mongodb.ts");
@@ -93,10 +93,21 @@ export async function readActiveStagedPaymentEvents(startDate: string, endDate: 
     const activation = await source.activation.findOne({ _id: "ayo-payment-events-active" });
     if (!activation?.activeRunId) return null;
     const run = await source.runs.findOne({ _id: activation.activeRunId });
-    if (!isActivatableRun(run) || run.periods[resolved.range.period]?.validationStatus !== "validated") return null;
-    const events = await source.events.find({ runId: run._id, period: resolved.range.period }).toArray();
-    const status = validateStagingPeriod(resolved.range.period, events, 0, 0);
-    return status.validationStatus === "validated" ? { run, events } : null;
+    if (!isActivatableRun(run)) return null;
+    const official = resolved.range.period === "2026-06" || resolved.range.period === "2026-07";
+    if (official && run.periods[resolved.range.period]?.validationStatus !== "validated") return null;
+    const range = { $gte: new Date(`${startDate}T00:00:00.000Z`), $lte: new Date(`${endDate}T23:59:59.999Z`) };
+    const historical = await source.events.find({ runId: run._id, eventDate: range }).toArray();
+    if (official) {
+      const status = validateStagingPeriod(resolved.range.period, historical, 0, 0);
+      return status.validationStatus === "validated" ? { run, events: historical } : null;
+    }
+    // Rolling is intentionally combined only after a fully validated historical run is active.
+    // Its eventIdentity is the deterministic business identity, so overlap rows never count twice.
+    const rolling = await source.events.find({ runId: "ayo-sync:rolling", eventDate: range }).toArray();
+    const byIdentity = new Map<string, AyoPaymentEvent>();
+    for (const staged of [...historical, ...rolling]) byIdentity.set(staged.eventIdentity || staged.identity, staged);
+    return { run, events: [...byIdentity.values()] };
   } catch {
     return null;
   }

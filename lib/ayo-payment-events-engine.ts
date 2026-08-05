@@ -1,10 +1,10 @@
 import { canonicalPaymentEvent } from "./ayo-payment-events-backfill.ts";
 import { paymentEventRevenue, type AyoPaymentEvent } from "./ayo-payment-events.ts";
 
-export const PAYMENT_EVENT_RELEASE_GUARD = {
-  productionActivationBlocked: true,
-  reason: "Production activation blocked until the previous activeRunId is officially rolled back to null.",
-} as const;
+/** Activation is permitted only after the official rollback leaves the pointer explicitly null. */
+export function assertPaymentEventActivationAllowed(activeRunId: string | null | undefined) {
+  if (activeRunId !== null) throw new Error("Production activation blocked until the previous activeRunId is officially rolled back to null.");
+}
 
 /** Server-only opt-in. Missing or malformed configuration intentionally keeps bookings as the dashboard source. */
 export function isPaymentEventsReadEnabled(env: Record<string, string | undefined> = process.env) {

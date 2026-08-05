@@ -4,7 +4,7 @@ import { requireSupervisor } from "@/lib/auth";
 import { collections } from "@/lib/mongodb";
 import { fetchAyoPaymentEvents, type AyoPaymentEvent } from "@/lib/ayo-payment-events";
 import { assertBackfillWriteAllowed, planBackfill } from "@/lib/ayo-payment-events-backfill";
-import { PAYMENT_EVENT_RELEASE_GUARD } from "@/lib/ayo-payment-events-engine";
+import { assertPaymentEventActivationAllowed } from "@/lib/ayo-payment-events-engine";
 import { AYO_STAGING_PERIODS, isActivatableRun, resolveStagingRange, type AyoPaymentEventStagingEvent, type AyoPaymentEventStagingRun, type AyoStagingPeriod, validateStagingPeriod } from "@/lib/ayo-payment-event-staging";
 
 type RequestBody = { action?: unknown; runId?: unknown; month?: unknown; startDate?: unknown; endDate?: unknown; dryRun?: unknown; confirm?: unknown; rollbackToRunId?: unknown };
@@ -68,10 +68,15 @@ export async function POST(request: Request) {
     }
 
     if (action === "activate") {
-      if (PAYMENT_EVENT_RELEASE_GUARD.productionActivationBlocked) return NextResponse.json({ error: PAYMENT_EVENT_RELEASE_GUARD.reason }, { status: 423 });
+      try {
+        assertPaymentEventActivationAllowed((await activation.findOne({ _id: "ayo-payment-events-active" }))?.activeRunId);
+      } catch (error) {
+        return NextResponse.json({ error: safeError(error) }, { status: 423 });
+      }
       if (!isActivatableRun(run)) return NextResponse.json({ error: "Juni dan Juli harus tervalidasi lengkap sebelum aktivasi" }, { status: 422 });
       const now = new Date();
-      await activation.findOneAndUpdate({ _id: "ayo-payment-events-active" }, { $set: { activeRunId: runId, activatedAt: now, activatedBy: user.id } }, { upsert: true, returnDocument: "after" });
+      const activated = await activation.findOneAndUpdate({ _id: "ayo-payment-events-active", activeRunId: null }, { $set: { activeRunId: runId, activatedAt: now, activatedBy: user.id } }, { returnDocument: "after" });
+      if (!activated) return NextResponse.json({ error: "Pointer aktif berubah; aktivasi dibatalkan." }, { status: 409 });
       await runs.updateOne({ _id: runId }, { $set: { status: "active", updatedAt: now } });
       await audit.insertOne({ runId, action, actor: user.id, createdAt: now });
       return NextResponse.json({ ...responseStatus({ ...run, status: "active" }), activeRunId: runId });

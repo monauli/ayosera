@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { isActivatableRun, readActiveStagedPaymentEvents, resolveStagingRange, validateStagingPeriod, type AyoPaymentEventStagingRun } from "./ayo-payment-event-staging.ts";
+import { assertPaymentEventActivationAllowed } from "./ayo-payment-events-engine.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 function event(id: string, amount: number): AyoPaymentEvent {
@@ -47,12 +48,33 @@ test("hanya pointer run aktif tervalidasi dibaca; Mei, run lain, dan error Mongo
   const context = {
     activation: { findOne: async () => ({ _id: "ayo-payment-events-active" as const, activeRunId: "run-a", activatedAt: new Date(), activatedBy: "supervisor" }) },
     runs: { findOne: async () => run(periods) },
-    events: { find: (filter: Record<string, unknown>) => ({ toArray: async () => filter.runId === "run-a" && filter.period === "2026-06" ? Array.from({ length: 1421 }, (_, index) => ({ ...event(String(index), index + 1 === 1421 ? 242895499 : 0), _id: `run-a:${index}`, runId: "run-a", period: "2026-06" as const, eventIdentity: String(index), payload: event(String(index), index + 1 === 1421 ? 242895499 : 0), fetchedAt: new Date() })) : [] }) },
+    events: { find: (filter: Record<string, unknown>) => ({ toArray: async () => filter.runId === "run-a" ? Array.from({ length: 1421 }, (_, index) => ({ ...event(String(index), index + 1 === 1421 ? 242895499 : 0), _id: `run-a:${index}`, runId: "run-a", period: "2026-06" as const, eventIdentity: String(index), payload: event(String(index), index + 1 === 1421 ? 242895499 : 0), fetchedAt: new Date() })) : [] }) },
   };
   assert.equal((await readActiveStagedPaymentEvents("2026-05-01", "2026-05-31", context)) === null, true);
   assert.equal((await readActiveStagedPaymentEvents("2026-06-01", "2026-06-30", context))?.events.length, 1421);
   const broken = { ...context, events: { find: () => ({ toArray: async () => { throw new Error("Mongo error"); } }) } };
   assert.equal(await readActiveStagedPaymentEvents("2026-06-01", "2026-06-30", broken), null);
+});
+
+test("historical dan rolling Agustus di-union berdasarkan identity tanpa double count", async () => {
+  const periods = { "2026-06": valid("2026-06", 1421, 242895499), "2026-07": valid("2026-07", 1359, 237491000) };
+  const august = event("august", 100); august.eventDate = new Date("2026-08-02T00:00:00.000Z"); august.date = "2026-08-02";
+  const extra = event("august-new", 200); extra.eventDate = new Date("2026-08-03T00:00:00.000Z"); extra.date = "2026-08-03";
+  const staged = (runId: string, value: AyoPaymentEvent) => ({ ...value, _id: `${runId}:${value._id}`, runId, period: "2026-08", eventIdentity: value.identity, payload: value, fetchedAt: new Date() });
+  const context = {
+    activation: { findOne: async () => ({ _id: "ayo-payment-events-active" as const, activeRunId: "run-a", activatedAt: new Date(), activatedBy: "supervisor" }) },
+    runs: { findOne: async () => run(periods) },
+    events: { find: (filter: Record<string, unknown>) => ({ toArray: async () => filter.runId === "run-a" ? [staged("run-a", august)] : filter.runId === "ayo-sync:rolling" ? [staged("ayo-sync:rolling", august), staged("ayo-sync:rolling", extra)] : [] }) },
+  };
+  const result = await readActiveStagedPaymentEvents("2026-08-01", "2026-08-05", context);
+  assert.equal(result?.events.length, 2);
+  assert.equal(result?.events.reduce((sum, value) => sum + value.amount, 0), 300);
+});
+
+test("release guard hanya membuka aktivasi setelah pointer lama resmi null", () => {
+  assert.doesNotThrow(() => assertPaymentEventActivationAllowed(null));
+  assert.throws(() => assertPaymentEventActivationAllowed("legacy-run"), /officially rolled back/);
+  assert.throws(() => assertPaymentEventActivationAllowed(undefined), /officially rolled back/);
 });
 
 test("dashboard memakai staging aktif hanya untuk metrik, bukan mengganti widget booking", async () => {
@@ -82,7 +104,7 @@ test("aktivasi memakai satu pointer atomik, rollback tidak menghapus, dan Olsera
     readFile(new URL("./reconciliation-omzet-ledger.ts", import.meta.url), "utf8"),
   ]);
   assert.match(route, /findOneAndUpdate\(\{ _id: "ayo-payment-events-active" \}/);
-  assert.match(route, /PAYMENT_EVENT_RELEASE_GUARD/);
+  assert.match(route, /assertPaymentEventActivationAllowed/);
   assert.match(route, /status: 423/);
   assert.match(route, /if \(action === "rollback"\)/);
   assert.match(route, /activeRunId: rollbackToRunId/);
