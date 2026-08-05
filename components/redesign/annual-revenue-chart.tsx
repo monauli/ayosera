@@ -136,7 +136,7 @@ export function AnnualRevenueChart({
           <div className="flex h-full items-center justify-center text-sm text-slate-500">Memuat pendapatan bulanan…</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 4, right: 4, left: -12, bottom: 0 }}>
+            <BarChart data={data} margin={{ top: 4, right: 4, left: 8, bottom: 0 }}>
               <CartesianGrid stroke="#ffffff14" strokeDasharray="2 4" vertical={false} />
               <XAxis dataKey="label" stroke="#64748b" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
               <YAxis
@@ -144,7 +144,7 @@ export function AnnualRevenueChart({
                 tick={{ fontSize: 12 }}
                 tickLine={false}
                 axisLine={false}
-                width={52}
+                width={64}
                 tickFormatter={(value: number) => formatRupiahCompact(value)}
               />
               <Tooltip content={<RevenueTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />

@@ -48,6 +48,9 @@ export type LedgerEntryInput = {
 export const OMZET_STATUSES = ["COCOK", "SELISIH_TERJELASKAN", "PERLU_DICEK", "BULAN_BERJALAN"] as const;
 export type OmzetStatus = (typeof OMZET_STATUSES)[number];
 
+/** Perbedaan pembulatan antar-sistem hingga satu Rupiah tetap dianggap cocok. */
+export const OMZET_MATCH_TOLERANCE_IDR = 1;
+
 export const OMZET_STATUS_LABEL: Record<OmzetStatus, string> = {
   COCOK: "Cocok",
   SELISIH_TERJELASKAN: "Selisih Terjelaskan",
@@ -369,8 +372,13 @@ function classifyStatus(input: {
     return { status: "PERLU_DICEK", statusReason: `Reklasifikasi akun 40004 belum terverifikasi ke akun 21003: ${input.pickleballVerification.reason}` };
   }
 
-  if (input.differenceRevenue === 0) {
-    return { status: "COCOK", statusReason: "Omzet AYO dan Olsera (akun 40001+40004 sebelum reklasifikasi) sama persis." };
+  if (Math.abs(input.differenceRevenue) <= OMZET_MATCH_TOLERANCE_IDR) {
+    return {
+      status: "COCOK",
+      statusReason: input.differenceRevenue === 0
+        ? "Omzet AYO dan Olsera (akun 40001+40004 sebelum reklasifikasi) sama persis."
+        : `Omzet AYO dan Olsera (akun 40001+40004 sebelum reklasifikasi) berada dalam toleransi ±Rp${OMZET_MATCH_TOLERANCE_IDR}.`,
+    };
   }
 
   // evidenceType !== marker: note dengan penanda lock-tanpa-penjelasan hanya

@@ -45,3 +45,11 @@ test("route dan donut memakai kontrak payment-versus-booking yang terpisah", asy
   assert.match(route, /bookingTotal: paymentMetrics\.bookingTotal/);
   assert.match(page, /const totalBookings = metrics\?\.bookingTotal \?\? 0/);
 });
+
+test("chart Pendapatan Bulanan menyediakan ruang penuh untuk label sumbu-Y tanpa mengubah konfigurasi data", async () => {
+  const chart = await readFile(new URL("../components/redesign/annual-revenue-chart.tsx", import.meta.url), "utf8");
+  assert.match(chart, /<BarChart data=\{data\} margin=\{\{ top: 4, right: 4, left: 8, bottom: 0 \}\}>/);
+  assert.match(chart, /<YAxis[\s\S]*?width=\{64\}[\s\S]*?tickFormatter=\{\(value: number\) => formatRupiahCompact\(value\)\}/);
+  assert.match(chart, /<Tooltip content=\{<RevenueTooltip \/>} cursor=\{\{ fill: "rgba\(255,255,255,0\.04\)" \}\} \/>/);
+  assert.match(chart, /<Bar dataKey="amount" radius=\{\[5, 5, 0, 0\]\} maxBarSize=\{34\}/);
+});

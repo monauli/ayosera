@@ -113,6 +113,30 @@ test("cocok persis: 40001 tutup buku + 40004 reklasifikasi terverifikasi, sama p
   assert.equal(result.status, "COCOK");
 });
 
+test("toleransi rekonsiliasi ±Rp1 mengubah status saja, tanpa mengubah nominal atau rumus selisih", () => {
+  for (const [difference, expectedStatus] of [[0, "COCOK"], [1, "COCOK"], [-1, "COCOK"], [2, "PERLU_DICEK"], [-2, "PERLU_DICEK"]] as const) {
+    const ayoRevenue = 1_000;
+    const olseraRevenue = ayoRevenue + difference;
+    const result = computeOmzetOlseraLedger(
+      "2026-05",
+      ayo(1, ayoRevenue),
+      [
+        entry({ transactionNo: `JU-TOL-${difference}`, transactionDate: "2026-05-10", credit: olseraRevenue }),
+        entry({ transactionNo: `CL-TOL-${difference}`, transactionDate: "2026-05-31", debit: olseraRevenue }),
+      ],
+      [],
+      [],
+      null,
+      NOW,
+    );
+
+    assert.equal(result.ayo.revenue, ayoRevenue);
+    assert.equal(result.olseraTotal, olseraRevenue);
+    assert.equal(result.differenceRevenue, difference);
+    assert.equal(result.status, expectedStatus);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 2. Reklasifikasi 40004 — sebelum vs sesudah, dan verifikasi gagal bila 21003 tidak cocok
 // ---------------------------------------------------------------------------
