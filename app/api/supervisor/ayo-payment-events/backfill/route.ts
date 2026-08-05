@@ -5,9 +5,9 @@ import { collections } from "@/lib/mongodb";
 import { fetchAyoPaymentEvents, type AyoPaymentEvent } from "@/lib/ayo-payment-events";
 import { assertBackfillWriteAllowed, planBackfill } from "@/lib/ayo-payment-events-backfill";
 import { PAYMENT_EVENT_RELEASE_GUARD } from "@/lib/ayo-payment-events-engine";
-import { AYO_STAGING_PERIODS, isActivatableRun, type AyoPaymentEventStagingEvent, type AyoPaymentEventStagingRun, type AyoStagingPeriod, validateStagingPeriod } from "@/lib/ayo-payment-event-staging";
+import { AYO_STAGING_PERIODS, isActivatableRun, resolveStagingRange, type AyoPaymentEventStagingEvent, type AyoPaymentEventStagingRun, type AyoStagingPeriod, validateStagingPeriod } from "@/lib/ayo-payment-event-staging";
 
-type RequestBody = { action?: unknown; runId?: unknown; month?: unknown; dryRun?: unknown; confirm?: unknown; rollbackToRunId?: unknown };
+type RequestBody = { action?: unknown; runId?: unknown; month?: unknown; startDate?: unknown; endDate?: unknown; dryRun?: unknown; confirm?: unknown; rollbackToRunId?: unknown };
 const mutationActions = new Set(["create", "stage", "activate", "rollback"]);
 
 function safeError(error: unknown) {
@@ -15,7 +15,6 @@ function safeError(error: unknown) {
   return message.replace(/mongodb(?:\+srv)?:\/\/[^\s]+/gi, "mongodb://[redacted]").replace(/AYO_MOBILE_TOKEN\s*[=:]\s*[^\s&]+/gi, "AYO_MOBILE_TOKEN=[redacted]");
 }
 
-function isPeriod(value: unknown): value is AyoStagingPeriod { return typeof value === "string" && value in AYO_STAGING_PERIODS; }
 function responseStatus(run: AyoPaymentEventStagingRun) { return { runId: run._id, status: run.status, periods: run.periods }; }
 
 export async function POST(request: Request) {
@@ -48,16 +47,17 @@ export async function POST(request: Request) {
     if (action === "status") return NextResponse.json(responseStatus(run));
 
     if (action === "stage") {
-      if (!isPeriod(body.month)) return NextResponse.json({ error: "month harus 2026-06 atau 2026-07" }, { status: 400 });
-      const period = body.month;
-      const { start, end } = { start: `${period}-01`, end: `${period}-${period === "2026-06" ? "30" : "31"}` };
+      const resolved = resolveStagingRange(body);
+      if ("error" in resolved) return NextResponse.json({ error: resolved.error }, { status: 400 });
+      const { period, start, end } = resolved.range;
       const api = await fetchAyoPaymentEvents(start, end);
       const existing = await events.find({ runId, period }).toArray();
       const plan = planBackfill(api.events, existing.map((event) => event.payload));
       const status = validateStagingPeriod(period, plan.finalProjectedEvents, plan.duplicate, plan.conflict);
-      if (api.expectedTotalTransaction !== AYO_STAGING_PERIODS[period].rows || api.expectedTotal !== AYO_STAGING_PERIODS[period].total) status.validationStatus = "invalid";
+      const target = AYO_STAGING_PERIODS[period as keyof typeof AYO_STAGING_PERIODS];
+      if (target && (api.expectedTotalTransaction !== target.rows || api.expectedTotal !== target.total)) status.validationStatus = "invalid";
       const result = { runId, period, apiRows: api.events.length, apiTotal: api.expectedTotal, existingEvents: existing.length, inserted: plan.wouldInsert, updated: plan.wouldUpdate, unchanged: plan.unchanged, duplicate: plan.duplicate, conflict: plan.conflict, finalRows: status.rows, finalTotal: status.total, validationStatus: status.validationStatus };
-      if (dryRun || status.validationStatus !== "validated") return NextResponse.json(result, { status: status.validationStatus === "validated" ? 200 : 422 });
+      if (dryRun || status.validationStatus === "invalid") return NextResponse.json(result, { status: status.validationStatus === "invalid" ? 422 : 200 });
       const now = new Date();
       await events.bulkWrite(plan.finalProjectedEvents.map((event) => ({ updateOne: { filter: { _id: `${runId}:${event._id}` }, update: { $set: toStagingEvent(runId, period, event, now) }, upsert: true } })));
       const periods = { ...run.periods, [period]: status };

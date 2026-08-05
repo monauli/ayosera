@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { isActivatableRun, readActiveStagedPaymentEvents, validateStagingPeriod, type AyoPaymentEventStagingRun } from "./ayo-payment-event-staging.ts";
+import { isActivatableRun, readActiveStagedPaymentEvents, resolveStagingRange, validateStagingPeriod, type AyoPaymentEventStagingRun } from "./ayo-payment-event-staging.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 function event(id: string, amount: number): AyoPaymentEvent {
@@ -23,6 +23,23 @@ test("kedua bulan valid dapat aktif; duplicate atau conflict menolak run", () =>
   const periods = { "2026-06": valid("2026-06", 1421, 242895499), "2026-07": valid("2026-07", 1359, 237491000) };
   assert.equal(isActivatableRun(run(periods)), true);
   assert.equal(isActivatableRun(run({ ...periods, "2026-07": { ...periods["2026-07"], conflict: 1, validationStatus: "invalid" } })), false);
+});
+
+test("periode dinamis menerima Agustus dan bulan valid berikutnya, dengan target resmi tetap khusus Juni/Juli", () => {
+  const now = new Date("2026-08-05T12:00:00Z");
+  assert.deepEqual(resolveStagingRange({ month: "2026-08" }, now), { range: { period: "2026-08", start: "2026-08-01", end: "2026-08-05" } });
+  assert.deepEqual(resolveStagingRange({ month: "2026-09" }, new Date("2026-10-02T12:00:00Z")), { range: { period: "2026-09", start: "2026-09-01", end: "2026-09-30" } });
+  assert.deepEqual(resolveStagingRange({ startDate: "2026-08-01", endDate: "2026-08-05" }, now), { range: { period: "2026-08", start: "2026-08-01", end: "2026-08-05" } });
+  assert.equal(validateStagingPeriod("2026-08", [event("august", 123)], 0, 0).validationStatus, "pending-official-validation");
+  assert.equal(validateStagingPeriod("2026-08", [event("august", 123)], 1, 0).validationStatus, "invalid");
+});
+
+test("periode dinamis menolak future, format/rentang invalid, dan membatasi rentang", () => {
+  const now = new Date("2026-08-05T12:00:00Z");
+  assert.deepEqual(resolveStagingRange({ month: "2026-09" }, now), { error: "bulan masa depan tidak diizinkan" });
+  assert.match((resolveStagingRange({ month: "2026-8" }, now) as { error: string }).error, /YYYY-MM/);
+  assert.match((resolveStagingRange({ startDate: "2026-08-05", endDate: "2026-08-01" }, now) as { error: string }).error, /tidak boleh sebelum/);
+  assert.match((resolveStagingRange({ startDate: "2026-07-01", endDate: "2026-08-05" }, now) as { error: string }).error, /maksimal 31 hari/);
 });
 
 test("hanya pointer run aktif tervalidasi dibaca; Mei, run lain, dan error Mongo fallback null", async () => {
