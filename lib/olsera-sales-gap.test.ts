@@ -1,0 +1,8 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { compareOlseraSalesGap, type OlseraAuditItem, type OlseraAuditOrder } from "./olsera-sales-gap";
+const order = (identity: string, total = 10): OlseraAuditOrder => ({ identity, total, status: "paid" });
+const item = (identity: string, orderIdentity = "O-1", amount = 10): OlseraAuditItem => ({ identity, orderIdentity, productId: 1, variantId: 2, sku: "SKU", qty: 1, amount });
+test("orders and items use their existing distinct identities", () => { const result = compareOlseraSalesGap([order("O-1")], [order("O-1")], [item("I-1"), item("I-2")], [item("I-1")]); assert.equal(result.status, "GAP_FOUND"); assert.equal(result.missingItemCount, 1); assert.deepEqual(result.missingItemIdentities, ["I-2"]); });
+test("conflict and duplicate block repair while local-only rows remain reported", () => { const conflict = compareOlseraSalesGap([order("O-1", 10)], [order("O-1", 20), order("O-2")], [item("I-1")], [item("I-1", "O-1", 20)]); assert.equal(conflict.status, "MANUAL_REVIEW_REQUIRED"); assert.equal(conflict.localOnlyOrderCount, 1); const duplicate = compareOlseraSalesGap([order("O-1"), order("O-1")], [], [], []); assert.equal(duplicate.status, "DUPLICATE_FOUND"); });
+test("missing product identity requires manual review and is never invented", () => { const unsafe = { ...item("I-1"), productId: null, variantId: null, sku: null }; const result = compareOlseraSalesGap([order("O-1")], [order("O-1")], [unsafe], []); assert.equal(result.status, "MANUAL_REVIEW_REQUIRED"); assert.equal(result.missingProductIdentityCount, 1); });

@@ -4,6 +4,8 @@ import { compareAyoGap, type AyoGapSource, type AyoGapStatus, type GapComparison
 import { fetchAyoBookingsByDateRange } from "@/lib/ayo";
 import { normalizeBooking } from "@/lib/booking-mapper";
 import { fetchAyoPaymentEvents, paymentEventIdentity } from "@/lib/ayo-payment-events";
+import { fetchOlseraSalesAuditSource, OlseraSalesAuditSourceError } from "@/lib/olsera-sync";
+import { compareOlseraSalesGap, type OlseraAuditItem, type OlseraAuditOrder } from "@/lib/olsera-sales-gap";
 import { collections, getDb } from "@/lib/mongodb";
 import { integrationTokenHealth, requirePrivateToolsUser } from "@/lib/private-integration-monitor";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
@@ -12,14 +14,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const schema = z.object({
-  source: z.enum(["ayo-booking", "ayo-payment-events"]),
+  source: z.enum(["olsera", "ayo-booking", "ayo-payment-events"]),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   action: z.enum(["check", "repair"]),
 });
 const maxRangeDays = 31;
 const stateId = (source: AyoGapSource, startDate: string, endDate: string) => `ayo-gap:${source}:${startDate}:${endDate}`;
-const lockId = (source: AyoGapSource, startDate: string, endDate: string) => `ayo-gap-lock:${source}:${startDate}:${endDate}`;
+const lockId = (source: string, startDate: string, endDate: string) => `${source}-gap-lock:${startDate}:${endDate}`;
+const olseraStateId = (startDate: string, endDate: string) => `olsera-sales-gap:${startDate}:${endDate}`;
 
 type StoredAudit = GapComparison & {
   _id: string;
@@ -44,7 +47,7 @@ function rangeIsValid(startDate: string, endDate: string) {
   return Number.isFinite(start) && Number.isFinite(end) && end >= start && ((end - start) / 86_400_000) + 1 <= maxRangeDays;
 }
 
-async function acquireLock(source: AyoGapSource, startDate: string, endDate: string, actor: string) {
+async function acquireLock(source: string, startDate: string, endDate: string, actor: string) {
   const locks = (await getDb()).collection<{ _id: string; lockedUntil: Date; actor: string }>("data_gap_audit_locks");
   const now = new Date();
   const lockedUntil = new Date(now.getTime() + 5 * 60_000);
@@ -125,6 +128,46 @@ async function repair(source: AyoGapSource, startDate: string, endDate: string, 
   } finally { await release(); }
 }
 
+type OlseraAuditResult = Omit<ReturnType<typeof compareOlseraSalesGap>, "status"> & { status: import("@/lib/olsera-sales-gap").OlseraGapStatus; source: "olsera"; startedAt: string; checkedAt: string; completedAt: string; range: { startDate: string; endDate: string }; startedBy: string; repaired: number };
+
+async function loadOlseraRows(startDate: string, endDate: string) {
+  const source = await fetchOlseraSalesAuditSource(startDate, endDate);
+  const localDocs = await (await collections()).olseraOrderItems.find({ date: { $gte: startDate, $lte: endDate } }).toArray();
+  const localItems: OlseraAuditItem[] = localDocs.map((row) => ({ identity: String(row._id), orderIdentity: row.orderNo, productId: row.productId ?? null, variantId: row.variantId ?? null, sku: row.sku ?? null, qty: row.qty, amount: row.amount }));
+  const orderTotals = new Map<string, number>();
+  for (const row of localItems) orderTotals.set(row.orderIdentity, (orderTotals.get(row.orderIdentity) ?? 0) + row.amount);
+  const localOrders: OlseraAuditOrder[] = [...orderTotals].map(([identity, total]) => ({ identity, total, status: null }));
+  return { source, localDocs, localItems, localOrders };
+}
+
+async function runOlseraGapAudit(startDate: string, endDate: string, actor: string): Promise<OlseraAuditResult> {
+  const startedAt = new Date().toISOString();
+  const release = await acquireLock("olsera-sales", startDate, endDate, actor);
+  try {
+    const { source, localItems, localOrders } = await loadOlseraRows(startDate, endDate);
+    const compared = compareOlseraSalesGap(source.orders, localOrders, source.items, localItems);
+    const result: OlseraAuditResult = { ...compared, source: "olsera", startedAt, checkedAt: new Date().toISOString(), completedAt: new Date().toISOString(), range: { startDate, endDate }, startedBy: actor, repaired: 0 };
+    const db = await getDb();
+    await db.collection<{ _id: string } & Record<string, unknown>>("data_gap_audit_state").updateOne({ _id: olseraStateId(startDate, endDate) }, { $set: { ...result, completedAt: new Date() } }, { upsert: true });
+    await db.collection<Record<string, unknown>>("data_gap_audit_runs").insertOne({ source: "olsera", action: "CHECK_COMPLETED", status: result.status, range: result.range, counts: result, actor, createdAt: new Date() });
+    return result;
+  } finally { await release(); }
+}
+
+async function repairOlsera(startDate: string, endDate: string, actor: string): Promise<OlseraAuditResult> {
+  const db = await getDb(); const stored = await db.collection<OlseraAuditResult & { _id: string; completedAt: Date }>("data_gap_audit_state").findOne({ _id: olseraStateId(startDate, endDate) });
+  if (!stored || stored.status !== "GAP_FOUND" || Date.now() - stored.completedAt.getTime() > 15 * 60_000) throw new Error("REPAIR_REQUIRES_FRESH_GAP_AUDIT");
+  const release = await acquireLock("olsera-sales", startDate, endDate, actor);
+  try {
+    const { source, localDocs } = await loadOlseraRows(startDate, endDate);
+    const localIds = new Set(localDocs.map((row) => String(row._id))); const sourceById = new Map(source.items.map((row) => [row.identity, row]));
+    const rows = stored.missingItemIdentities.map((id) => sourceById.get(id)).filter((row): row is typeof source.items[number] => Boolean(row));
+    if (rows.length !== stored.missingItemIdentities.length) throw new Error("SOURCE_INCOMPLETE");
+    await (await collections()).olseraOrderItems.bulkWrite(rows.filter((row) => !localIds.has(row.identity)).map((row) => ({ updateOne: { filter: { _id: Number(row.identity) }, update: { $setOnInsert: { _id: Number(row.identity), date: row.date, orderNo: row.orderIdentity, orderDate: row.date, customerId: null, customerName: null, tableNo: null, salesByName: null, itemName: String(row.raw.product_variant_name ?? row.raw.product_name ?? ""), qty: row.qty, amount: row.amount, costAmount: Number(row.raw.cost_amount ?? 0), discount: Number(row.raw.discount ?? 0), productId: row.productId, variantId: row.variantId, sku: row.sku, raw: row.raw, syncedAt: new Date() } }, upsert: true } })));
+    const after = await runOlseraGapAudit(startDate, endDate, actor); return after.status === "SYNCED" ? { ...after, status: "REPAIRED", repaired: rows.length } : after;
+  } finally { await release(); }
+}
+
 export async function GET() {
   try { await requirePrivateToolsUser(); return NextResponse.json({ enabled: true, tokenHealth: integrationTokenHealth() }, { headers: NO_CACHE_HEADERS }); }
   catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Gagal memuat monitoring integritas." }, { status: 500 }); }
@@ -135,12 +178,12 @@ export async function POST(request: Request) {
     const user = await requirePrivateToolsUser();
     const body = schema.parse(await request.json());
     if (!rangeIsValid(body.startDate, body.endDate)) return NextResponse.json({ error: "Rentang tanggal harus valid dan maksimal 31 hari." }, { status: 400 });
-    const result = body.action === "repair" ? await repair(body.source, body.startDate, body.endDate, user.id) : await runAyoGapAudit(body.source, body.startDate, body.endDate, user.id);
+    const result = body.source === "olsera" ? body.action === "repair" ? await repairOlsera(body.startDate, body.endDate, user.id) : await runOlseraGapAudit(body.startDate, body.endDate, user.id) : body.action === "repair" ? await repair(body.source, body.startDate, body.endDate, user.id) : await runAyoGapAudit(body.source, body.startDate, body.endDate, user.id);
     return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) return NextResponse.json({ error: "Payload audit tidak valid." }, { status: 400 });
-    const status = error instanceof Error && error.message === "AUDIT_LOCKED" ? "LOCKED" : error instanceof Error && error.message === "REPAIR_REQUIRES_FRESH_GAP_AUDIT" ? "MANUAL_REVIEW_REQUIRED" : error instanceof Error && /token|unauthorized|401|403/i.test(error.message) ? "TOKEN_ERROR" : "SOURCE_INCOMPLETE";
+    const status = error instanceof Error && error.message === "AUDIT_LOCKED" ? "LOCKED" : error instanceof Error && error.message === "REPAIR_REQUIRES_FRESH_GAP_AUDIT" ? "MANUAL_REVIEW_REQUIRED" : error instanceof OlseraSalesAuditSourceError && error.code === "TOKEN_ERROR" ? "TOKEN_ERROR" : error instanceof Error && /token|unauthorized|401|403/i.test(error.message) ? "TOKEN_ERROR" : "SOURCE_INCOMPLETE";
     return NextResponse.json({ status, error: "Audit sumber gagal atau tidak lengkap." }, { status: 200, headers: NO_CACHE_HEADERS });
   }
 }

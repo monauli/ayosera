@@ -201,6 +201,18 @@ type OrderItem = {
   addon_price?: unknown;
 };
 
+/** Read-only representation for the private gap audit. It deliberately shares
+ * the authenticated client, list pagination, and detail mapper of this sync. */
+export type OlseraSalesAuditSource = {
+  orders: { identity: string; total: number; status: string | null }[];
+  items: { identity: string; date: string; orderIdentity: string; productId: number | null; variantId: number | null; sku: string | null; qty: number; amount: number; raw: Record<string, unknown> }[];
+};
+
+export class OlseraSalesAuditSourceError extends Error {
+  readonly code: "TOKEN_ERROR" | "SOURCE_INCOMPLETE";
+  constructor(code: "TOKEN_ERROR" | "SOURCE_INCOMPLETE", message: string) { super(message); this.code = code; this.name = "OlseraSalesAuditSourceError"; }
+}
+
 function toIdOrNull(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
@@ -712,6 +724,44 @@ export async function syncOlseraSalesByCategory(
   }
 
   return result;
+}
+
+/**
+ * Fetch the same Close/Open-paid lists and order details as production sync,
+ * but performs no database write, category resolution, checkpoint, or cleanup.
+ */
+export async function fetchOlseraSalesAuditSource(startDate: string, endDate: string): Promise<OlseraSalesAuditSource> {
+  const auth = await getAccessToken();
+  if ("error" in auth) throw new OlseraSalesAuditSourceError("TOKEN_ERROR", "Autentikasi Olsera tidak tersedia.");
+  const result: OlseraSalesAuditSource = { orders: [], items: [] };
+  try {
+    for (const date of eachDay(startDate, endDate)) {
+      const closeIds = await fetchOrderIds(auth.token, "closeorder", date);
+      await sleep(LIST_DELAY_MS);
+      const openIds = await fetchOrderIds(auth.token, "openorder", date);
+      const seen = new Set(closeIds);
+      const orders: OrderRef[] = closeIds.map((id) => ({ id, source: "close" }));
+      for (const id of openIds) if (!seen.has(id)) orders.push({ id, source: "open" });
+      for (const order of orders) {
+        const { meta, items } = await fetchOrderDetail(auth.token, order);
+        const orderIdentity = String(meta.order_no ?? order.id).trim();
+        if (!orderIdentity) throw new OlseraSalesAuditSourceError("SOURCE_INCOMPLETE", "Order Olsera tidak memiliki identity.");
+        const normalizedItems = items.map((item) => {
+          const itemId = Number(item.id);
+          if (!Number.isFinite(itemId)) throw new OlseraSalesAuditSourceError("SOURCE_INCOMPLETE", "Item Olsera tidak memiliki identity.");
+          return { identity: String(itemId), date, orderIdentity, productId: toIdOrNull(item.product_id), variantId: toIdOrNull(item.product_variant_id), sku: toTextOrNull(item.product_variant_sku) ?? toTextOrNull(item.product_sku), qty: toNumber(item.qty), amount: toNumber(item.amount), raw: rawItemPayload(item) };
+        });
+        result.orders.push({ identity: orderIdentity, total: normalizedItems.reduce((sum, item) => sum + item.amount, 0), status: firstText((meta as Record<string, unknown>).status, (meta as Record<string, unknown>).payment_status) });
+        result.items.push(...normalizedItems);
+      }
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof OlseraSalesAuditSourceError) throw error;
+    const message = error instanceof Error ? error.message : "Sumber Olsera tidak lengkap.";
+    if (/HTTP 401|HTTP 403|token|autentikasi/i.test(message)) throw new OlseraSalesAuditSourceError("TOKEN_ERROR", "Token Olsera ditolak atau kedaluwarsa.");
+    throw new OlseraSalesAuditSourceError("SOURCE_INCOMPLETE", "Sumber Olsera tidak dapat dipastikan lengkap.");
+  }
 }
 
 export type OlseraDayAuditResult = {
