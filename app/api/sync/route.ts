@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAnyModule } from "@/lib/auth";
 import { logSyncFailure } from "@/lib/booking-sync";
 import { syncProductionListBookings } from "@/lib/production-sync";
+import { maybeSyncAyoPaymentEvents } from "@/lib/ayo-payment-events-auto-sync";
 
 export const runtime = "nodejs";
 
@@ -62,7 +63,8 @@ export async function POST(request: Request) {
       logProgress: true,
     });
 
-    return NextResponse.json(result);
+    const paymentEvents = await maybeSyncAyoPaymentEvents().catch((error) => ({ skipped: false, reason: "failed", error: error instanceof Error ? error.message.replace(/AYO_MOBILE_TOKEN\s*[=:]\s*[^\s&]+/gi, "AYO_MOBILE_TOKEN=[redacted]") : "failed" }));
+    return NextResponse.json({ ...result, paymentEvents });
   } catch (error) {
     await logSyncFailure({ type: "manual", startedAt, error });
 

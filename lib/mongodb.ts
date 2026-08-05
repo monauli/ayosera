@@ -54,6 +54,7 @@ export type BookingDocument = {
 
 export type AyoPaymentEventDocument = AyoPaymentEvent;
 export type AyoPaymentPeriodDocument = AyoPaymentPeriodMetadata;
+export type AyoPaymentEventSyncStateDocument = { _id: "ayo-payment-events-auto-sync"; lastAttemptAt: Date | null; lastSuccessfulSyncAt: Date | null; periodStart: string | null; periodEnd: string | null; rowsFetched: number; inserted: number; updated: number; unchanged: number; duplicate: number; conflict: number; invalid: number; totalAmount: number; lastError: string | null; lockUntil: Date; source: "ayo-report-transactions"; runId: string };
 
 export type SyncLogDocument = {
   type: "manual" | "scheduled" | "webhook" | "fields";
@@ -836,6 +837,7 @@ export async function collections() {
     ayoPaymentEventStagingEvents: db.collection<AyoPaymentEventStagingEvent>("ayo_payment_event_staging_events"),
     ayoPaymentEventActivation: db.collection<AyoPaymentEventActivation>("ayo_payment_event_activation"),
     ayoPaymentEventStagingAuditLogs: db.collection("ayo_payment_event_staging_audit_logs"),
+    ayoPaymentEventSyncState: db.collection<AyoPaymentEventSyncStateDocument>("ayo_payment_event_sync_state"),
     syncLogs: db.collection<SyncLogDocument>("sync_logs"),
     fields: db.collection<FieldDocument>("fields"),
     webhookLogs: db.collection<WebhookLogDocument>("webhook_logs"),

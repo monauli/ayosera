@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { logSyncFailure } from "@/lib/booking-sync";
 import { syncProductionListBookings } from "@/lib/production-sync";
 import { verifyCronSecret } from "@/lib/olsera-cron-auth";
+import { maybeSyncAyoPaymentEvents } from "@/lib/ayo-payment-events-auto-sync";
 
 export const runtime = "nodejs";
 // Vercel Hobby membatasi durasi function hingga 60 detik, jadi cron menarik
@@ -50,6 +51,7 @@ export async function GET(request: Request) {
       startedAt,
       logProgress: true,
     });
+    const paymentEvents = await maybeSyncAyoPaymentEvents().catch((error) => ({ skipped: false, reason: "failed", error: error instanceof Error ? error.message.replace(/AYO_MOBILE_TOKEN\s*[=:]\s*[^\s&]+/gi, "AYO_MOBILE_TOKEN=[redacted]") : "failed" }));
 
     return NextResponse.json({
       success: true,
@@ -60,6 +62,7 @@ export async function GET(request: Request) {
       updated: result.updated,
       total: result.total_received,
       details: result,
+      paymentEvents,
     });
   } catch (error) {
     await logSyncFailure({ type: "scheduled", startedAt, error });
