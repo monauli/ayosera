@@ -22,8 +22,8 @@ import "server-only";
 import { isCurrentJakartaPeriod, jakartaCurrentPeriod } from "./olsera-financial-core.ts";
 import { getRevenueAmount, isRevenueEligibleTransaction } from "./revenue.ts";
 import type { BookingDocument } from "./mongodb.ts";
-import { readValidatedPaymentEvents } from "./ayo-payment-events-sync.ts";
-import { paymentEventRevenue, type AyoPaymentEvent } from "./ayo-payment-events.ts";
+import { readActiveStagedPaymentEvents, type StagingReadContext } from "./ayo-payment-event-staging.ts";
+import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 // ---------------------------------------------------------------------------
 // Konstanta akun (SATU-SATUNYA tempat kode akun ini dirujuk untuk omzet)
@@ -240,6 +240,12 @@ export function computeAyoSide(bookings: Array<Pick<BookingDocument, "date" | "t
   return side;
 }
 
+/** Active payment events are monetary records, not bookings; dedupe by their deterministic identity. */
+export function computeAyoPaymentEventSide(events: readonly AyoPaymentEvent[]): OmzetLedgerSide {
+  const unique = new Map(events.filter((event) => event.bookingId.startsWith("BK")).map((event) => [event.identity, event]));
+  return { count: unique.size, revenue: [...unique.values()].reduce((sum, event) => sum + event.amount, 0) };
+}
+
 /**
  * Engine murni (tanpa I/O) — SATU-SATUNYA fungsi yang menghitung status/omzet
  * Rekonsiliasi Omzet AYOSERA. Dipanggil oleh loader ringkasan DAN detail
@@ -410,20 +416,18 @@ export type OmzetLedgerSourceContext = {
   bookings: MinimalReadCollection<Pick<BookingDocument, "date" | "total_price" | "status">>;
   ledgerEntries: MinimalReadCollection<LedgerEntryInput & { accountCode: string; period: string }>;
   loadExplanation: (period: string) => Promise<OmzetExplanation | null>;
-  paymentEvents?: { find(filter: Record<string, unknown>): { toArray(): Promise<AyoPaymentEvent[]> } };
-  paymentPeriods?: import("./ayo-payment-events-sync.ts").PaymentPeriodCollection;
+  staging?: StagingReadContext;
 };
 
 async function resolveContext(context?: OmzetLedgerSourceContext): Promise<OmzetLedgerSourceContext> {
   if (context) return context;
   const { collections } = await import("./mongodb.ts");
   const { getCurrentOmzetNote } = await import("./reconciliation-omzet-note-store.ts");
-  const { bookings, olseraFinancialLedgerEntries, ayoPaymentEvents, ayoPaymentPeriods } = await collections();
+  const { bookings, olseraFinancialLedgerEntries, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
   return {
     bookings,
     ledgerEntries: olseraFinancialLedgerEntries,
-    paymentEvents: ayoPaymentEvents,
-    paymentPeriods: ayoPaymentPeriods,
+    staging: { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation },
     // Skema BARU append-only (OlseraOmzetReconciliationNoteV2Document, lihat
     // lib/reconciliation-omzet-note-store.ts) — menggantikan
     // getOmzetExplanation (skema lama, lib/reconciliation-omzet-explanation-store.ts,
@@ -473,15 +477,14 @@ async function loadPeriodData(period: string, context?: OmzetLedgerSourceContext
     ctx.ledgerEntries.find({ storeId: storeId(), period, accountCode: ACCOUNT_PICKLEBALL_PAYABLE }).toArray(),
     ctx.loadExplanation(period),
   ]);
-  const validated = ctx.paymentEvents && ctx.paymentPeriods ? await readValidatedPaymentEvents(start, end, { events: ctx.paymentEvents, periods: ctx.paymentPeriods }) : null;
-  const paymentRows = validated?.events.filter((event) => event.bookingId.startsWith("BK")).map((event) => ({ date: event.date, total_price: paymentEventRevenue(event), status: event.finalStatus ?? event.detailStatus ?? "" })) ?? null;
-  return { bookingRows: paymentRows ?? bookingRows, entries40001, entries40004, entries21003, explanation };
+  const staged = ctx.staging ? await readActiveStagedPaymentEvents(start, end, ctx.staging) : null;
+  return { bookingRows, paymentEvents: staged?.events ?? null, entries40001, entries40004, entries21003, explanation };
 }
 
 /** Ringkasan SATU bulan — dipakai daftar bulanan di /reconciliation. */
 export async function loadOmzetLedgerMonthSummary(period: string, context?: OmzetLedgerSourceContext, now: Date = new Date()): Promise<OmzetOlseraLedgerResult> {
-  const { bookingRows, entries40001, entries40004, entries21003, explanation } = await loadPeriodData(period, context);
-  const ayo = computeAyoSide(bookingRows);
+  const { bookingRows, paymentEvents, entries40001, entries40004, entries21003, explanation } = await loadPeriodData(period, context);
+  const ayo = paymentEvents ? computeAyoPaymentEventSide(paymentEvents) : computeAyoSide(bookingRows);
   return computeOmzetOlseraLedger(period, ayo, entries40001, entries40004, entries21003, explanation, now);
 }
 

@@ -8,6 +8,7 @@ import test from "node:test";
 
 process.env.OLSERA_INTERNAL_STORE_ID = "324175";
 import {
+  computeAyoPaymentEventSide,
   computeOmzetOlseraLedger,
   hasOmzetActivity,
   loadOmzetLedgerMonthDetail,
@@ -20,6 +21,7 @@ import {
   type OmzetLedgerSourceContext,
 } from "./reconciliation-omzet-ledger.ts";
 import type { BookingDocument } from "./mongodb.ts";
+import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 type Doc = Record<string, unknown>;
 
@@ -44,6 +46,17 @@ function fake<T>(docs: Array<Partial<T>>) {
     },
   };
 }
+
+function paymentEvent(identity: string, bookingId: string, amount: number): AyoPaymentEvent {
+  return { identity, bookingId, amount } as AyoPaymentEvent;
+}
+
+test("payment events aktif menjadi sumber omzet AYO Juni/Juli, dedupe identity bukan booking", () => {
+  const june = [paymentEvent("payment-a", "BK-1", 242_895_499), paymentEvent("payment-a", "BK-1", 242_895_499)];
+  const july = [paymentEvent("dp", "BK-1", 100_000_000), paymentEvent("settlement", "BK-1", 137_491_000)];
+  assert.deepEqual(computeAyoPaymentEventSide(june), { count: 1, revenue: 242_895_499 });
+  assert.deepEqual(computeAyoPaymentEventSide(july), { count: 2, revenue: 237_491_000 });
+});
 
 function entry(overrides: Partial<LedgerEntryInput> & { transactionNo: string }): LedgerEntryInput {
   return { transactionDate: null, description: null, debit: 0, credit: 0, isOpeningBalance: false, ...overrides };
