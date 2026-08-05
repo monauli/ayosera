@@ -9,7 +9,8 @@ import {
   isDisplayEligibleTransaction,
 } from "@/lib/revenue";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
-import { paymentEventAsBooking, readValidatedPaymentEvents } from "@/lib/ayo-payment-events-sync";
+import { paymentEventAsBooking } from "@/lib/ayo-payment-events-sync";
+import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 
 /**
  * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
@@ -61,7 +62,7 @@ export async function GET(request: Request) {
     const courtOptionFilter = buildBookingFilter(courtOptionParams);
 
     const data = await withMongo(async () => {
-      const { bookings, syncLogs, fields, ayoPaymentEvents, ayoPaymentPeriods } = await collections();
+      const { bookings, syncLogs, fields, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
       const [filteredBookings, courtNames, todayBookings, latestLogs, fieldCount] = await Promise.all([
         bookings.find(dashboardFilter).sort({ date: -1, start_time: -1 }).toArray(),
         // distinct jauh lebih ringan daripada menarik s.d. 5000 dokumen hanya untuk daftar lapangan.
@@ -74,8 +75,10 @@ export async function GET(request: Request) {
       const explicitStart = searchParams.get("date") || searchParams.get("start_date");
       const explicitEnd = searchParams.get("date") || searchParams.get("end_date");
       const canUsePaymentEvents = Boolean(explicitStart && explicitEnd && !searchParams.get("status") && !searchParams.get("branch") && !searchParams.get("q"));
+      // Koleksi lama ayo_payment_events tidak pernah menjadi sumber dashboard.
+      // Hanya staging run aktif yang tervalidasi lengkap Juni+Juli yang boleh dipakai.
       const validatedPaymentEvents = canUsePaymentEvents
-        ? await readValidatedPaymentEvents(explicitStart!, explicitEnd!, { events: ayoPaymentEvents, periods: ayoPaymentPeriods })
+        ? await readActiveStagedPaymentEvents(explicitStart!, explicitEnd!, { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation })
         : null;
       // Payment events adalah sumber dashboard hanya bila period tervalidasi penuh;
       // MN tetap masuk dashboard, sedangkan rekonsiliasi memfilter BK di source adapter.

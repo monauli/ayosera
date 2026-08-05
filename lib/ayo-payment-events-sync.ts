@@ -48,18 +48,12 @@ export async function syncAyoPaymentEventsFromMongo(startDate: string, endDate: 
   }
 }
 
-export async function readValidatedPaymentEvents(startDate: string, endDate: string, context?: { events: PaymentEventReadCollection; periods: PaymentPeriodCollection }) {
-  try {
-    const source = context ?? await (async () => { const { collections } = await import("./mongodb.ts"); const c = await collections(); return { events: c.ayoPaymentEvents, periods: c.ayoPaymentPeriods }; })();
-    const metadata = await source.periods.findOne({ _id: periodId(startDate, endDate), validationStatus: "validated" });
-    if (!metadata) return null;
-    const events = await source.events.find({ date: { $gte: startDate, $lte: endDate } }).toArray();
-    return { metadata, events };
-  } catch {
-    // Payment-event storage is optional during rollout. A read failure must not
-    // take down the dashboard; callers fall back to the legacy bookings source.
-    return null;
-  }
+export async function readValidatedPaymentEvents(startDate: string, endDate: string, context?: { events: PaymentEventReadCollection; periods: PaymentPeriodCollection }): Promise<{ metadata: AyoPaymentPeriodMetadata; events: AyoPaymentEvent[] } | null> {
+  // Legacy collections may contain a partial historical backfill. They are
+  // deliberately inactive: consumers must fall back to bookings until a
+  // complete, atomically activated staging run is available.
+  void startDate; void endDate; void context;
+  return null;
 }
 
 export function paymentEventAsBooking(event: AyoPaymentEvent) {

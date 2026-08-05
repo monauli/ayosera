@@ -2,6 +2,7 @@ import "./mongodb-dns.ts";
 import { MongoClient, type Db } from "mongodb";
 import type { ReconciliationConfidence, ReconciliationDomain, ReconciliationImpact, ReconciliationStatus, ReconciliationType } from "./reconciliation-types.ts";
 import type { AyoPaymentEvent, AyoPaymentPeriodMetadata } from "./ayo-payment-events.ts";
+import type { AyoPaymentEventActivation, AyoPaymentEventStagingEvent, AyoPaymentEventStagingRun } from "./ayo-payment-event-staging.ts";
 
 declare global {
   var __mongoClient: MongoClient | undefined;
@@ -829,6 +830,12 @@ export async function collections() {
     bookings: db.collection<BookingDocument>("bookings"),
     ayoPaymentEvents: db.collection<AyoPaymentEventDocument>("ayo_payment_events"),
     ayoPaymentPeriods: db.collection<AyoPaymentPeriodDocument>("ayo_payment_periods"),
+    // Staging AYO sengaja terisolasi dari koleksi payment-event lama. Tidak ada
+    // index custom _id; MongoDB menyediakan _id unik secara native.
+    ayoPaymentEventStagingRuns: db.collection<AyoPaymentEventStagingRun>("ayo_payment_event_staging_runs"),
+    ayoPaymentEventStagingEvents: db.collection<AyoPaymentEventStagingEvent>("ayo_payment_event_staging_events"),
+    ayoPaymentEventActivation: db.collection<AyoPaymentEventActivation>("ayo_payment_event_activation"),
+    ayoPaymentEventStagingAuditLogs: db.collection("ayo_payment_event_staging_audit_logs"),
     syncLogs: db.collection<SyncLogDocument>("sync_logs"),
     fields: db.collection<FieldDocument>("fields"),
     webhookLogs: db.collection<WebhookLogDocument>("webhook_logs"),
