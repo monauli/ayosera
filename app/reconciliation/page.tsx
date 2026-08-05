@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronRight, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 
 type LedgerEntry = { transactionNo: string | null; transactionDate: string | null; description: string | null; debit: number; credit: number };
@@ -117,16 +117,29 @@ function AccountCard({ title, breakdown }: { title: string; breakdown: AccountBr
   );
 }
 
-function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, finalStatus }: { title: string; ayoLabel: string; olseraLabel: string; comparison: SportComparison; finalStatus?: OmzetStatus }) {
+function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, finalStatus, wide = false, locked = false }: { title: string; ayoLabel: string; olseraLabel: string; comparison: SportComparison; finalStatus?: OmzetStatus; wide?: boolean; locked?: boolean }) {
   return (
-    <section className="recon-sport-card">
+    <section className={`recon-sport-card${wide ? " recon-sport-card-wide" : ""}`}>
       <h3>{title}</h3>
       <div className="recon-detail-grid">
         <div><span>{ayoLabel}</span><b>{formatRupiah(comparison.ayo.revenue)}</b></div>
         <div><span>{olseraLabel}</span><b>{formatRupiah(comparison.olsera)}</b></div>
         <div><span>Selisih (Olsera - AYO)</span><b>{formatRupiah(comparison.difference)}</b></div>
-        <div><span>Status</span><StatusBadge status={finalStatus ?? comparison.status} /></div>
+        <div><span>Status</span><div className="recon-card-status"><StatusBadge status={finalStatus ?? comparison.status} /> {locked && <span className="recon-badge recon-badge-ok"><Lock size={12} /> Cocok â€” Terkunci</span>}</div></div>
       </div>
+    </section>
+  );
+}
+
+function CollapsibleSection({ title, children, defaultOpen = false, warning = false }: { title: string; children: ReactNode; defaultOpen?: boolean; warning?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const contentId = useId();
+  return (
+    <section className={`recon-disclosure${warning ? " recon-disclosure-warning" : ""}`}>
+      <button type="button" className="recon-disclosure-trigger" aria-expanded={open} aria-controls={contentId} onClick={() => setOpen((value) => !value)}>
+        <span>{title}</span><span aria-hidden="true">{open ? "−" : "+"}</span>
+      </button>
+      {open && <div id={contentId} className="recon-disclosure-content">{children}</div>}
     </section>
   );
 }
@@ -434,15 +447,20 @@ export default function ReconciliationPage() {
                   olseraLabel="Total Omzet Olsera (40001+40004)"
                   comparison={{ ayo: detail.sportReconciliation.total, olsera: detail.olseraTotal, difference: detail.differenceRevenue, status: detail.status === "COCOK" ? "COCOK" : "PERLU_DICEK" }}
                   finalStatus={detail.status}
+                  wide
+                  locked={detail.periodLock?.status === "locked"}
                 />
               </section>
 
               {detail.sportReconciliation.unmapped.count > 0 && (
+                <CollapsibleSection title={`AYO Belum Terpetakan (${detail.sportReconciliation.unmapped.count})`} warning>
                 <p className="recon-special">
                   <AlertTriangle /> <span><strong>AYO Belum Terpetakan.</strong> {detail.sportReconciliation.unmapped.count} event/booking senilai {formatRupiah(detail.sportReconciliation.unmapped.revenue)} tetap termasuk Total Gabungan.</span>
                 </p>
+                </CollapsibleSection>
               )}
 
+              <CollapsibleSection title="Verifikasi Reklasifikasi">
               <section className="recon-detail-grid">
                 <div>
                   <span>Jumlah booking AYO eligible</span>
@@ -471,10 +489,12 @@ export default function ReconciliationPage() {
                   </div>
                 </div>
               </section>
+              </CollapsibleSection>
 
+              {finalization?.status === "locked" && <p className="recon-lock-summary"><Lock size={14} /> Cocok â€” Terkunci · Detail Penyesuaian tersedia di Berita Acara dan Finalisasi.</p>}
               {supervisor && (
+                <CollapsibleSection title="Berita Acara dan Finalisasi">
                 <section className="recon-finalization">
-                  <h3>Berita Acara Rekonsiliasi</h3>
                   {finalization?.attachment ? (
                     <p className="recon-before"><Paperclip size={12} /> {finalization.attachment.fileName} ({Math.ceil(finalization.attachment.size / 1024)} KB) â€” diunggah {dateTimeLabel(finalization.attachment.uploadedAt)} oleh {finalization.attachment.uploadedBy} <a className="recon-link" href={finalization.attachment.url} target="_blank" rel="noreferrer">Lihat</a></p>
                   ) : <p className="recon-before">Unggah berita acara PDF/JPG/JPEG/PNG (maks. 10MB) sebelum preview dan lock.</p>}
@@ -508,6 +528,7 @@ export default function ReconciliationPage() {
                   {finalization?.history?.length ? <details className="recon-json"><summary>Riwayat audit ({finalization.history.length})</summary><ul className="recon-history">{finalization.history.slice().reverse().map((item, index) => <li key={`${item.timestamp}-${index}`}><span>{item.action} oleh {item.actor}</span><small>{dateTimeLabel(item.timestamp)}{item.reason ? ` â€” ${item.reason}` : ""}</small></li>)}</ul></details> : null}
                   {finalError && <p className="recon-error">{finalError}</p>}
                 </section>
+                </CollapsibleSection>
               )}
 
               {detail.explanation && detail.explanation.evidenceType === LOCK_WITHOUT_EXPLANATION_MARKER ? (
