@@ -9,6 +9,7 @@ import {
   isDisplayEligibleTransaction,
 } from "@/lib/revenue";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+import { paymentEventAsBooking, readValidatedPaymentEvents } from "@/lib/ayo-payment-events-sync";
 
 /**
  * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
@@ -60,7 +61,7 @@ export async function GET(request: Request) {
     const courtOptionFilter = buildBookingFilter(courtOptionParams);
 
     const data = await withMongo(async () => {
-      const { bookings, syncLogs, fields } = await collections();
+      const { bookings, syncLogs, fields, ayoPaymentEvents, ayoPaymentPeriods } = await collections();
       const [filteredBookings, courtNames, todayBookings, latestLogs, fieldCount] = await Promise.all([
         bookings.find(dashboardFilter).sort({ date: -1, start_time: -1 }).toArray(),
         // distinct jauh lebih ringan daripada menarik s.d. 5000 dokumen hanya untuk daftar lapangan.
@@ -70,8 +71,18 @@ export async function GET(request: Request) {
         fields.countDocuments({ status: "ACTIVE" }),
       ]);
 
-      // Analisis rule revenue sekali per booking, lalu dipakai ulang di semua widget.
-      const analyzedFiltered = filteredBookings.map(analyzeBooking);
+      const explicitStart = searchParams.get("date") || searchParams.get("start_date");
+      const explicitEnd = searchParams.get("date") || searchParams.get("end_date");
+      const canUsePaymentEvents = Boolean(explicitStart && explicitEnd && !searchParams.get("status") && !searchParams.get("branch") && !searchParams.get("q"));
+      const validatedPaymentEvents = canUsePaymentEvents
+        ? await readValidatedPaymentEvents(explicitStart!, explicitEnd!, { events: ayoPaymentEvents, periods: ayoPaymentPeriods })
+        : null;
+      // Payment events adalah sumber dashboard hanya bila period tervalidasi penuh;
+      // MN tetap masuk dashboard, sedangkan rekonsiliasi memfilter BK di source adapter.
+      const dashboardRows = validatedPaymentEvents?.events.map(paymentEventAsBooking) ?? filteredBookings;
+
+      // Analisis rule revenue sekali per booking/event, lalu dipakai ulang di semua widget.
+      const analyzedFiltered = dashboardRows.map(analyzeBooking);
       const displayFiltered = analyzedFiltered.filter((item) => item.display);
       const revenueEligible = displayFiltered.filter((item) => !item.cancelled);
       const revenueFiltered = displayFiltered.reduce((sum, item) => sum + item.revenue, 0);
@@ -174,7 +185,7 @@ export async function GET(request: Request) {
           .filter((name): name is string => Boolean(name))
           .sort((a, b) => a.localeCompare(b))
           .map((name) => ({ label: name, value: name })),
-        _meta: { processed: filteredBookings.length },
+        _meta: { processed: dashboardRows.length },
       };
     });
 

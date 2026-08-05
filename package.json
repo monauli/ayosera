@@ -34,6 +34,8 @@
     "test:login-identifier": "node --no-warnings --experimental-strip-types --test lib/login-identifier.test.ts",
     "test:users": "node --no-warnings --experimental-strip-types --test lib/users.test.ts",
     "test:password-generator": "node --no-warnings --experimental-strip-types --test lib/password-generator.test.ts",
+    "test:ayo-payment-events": "node --no-warnings --experimental-strip-types --test lib/ayo-payment-events.test.ts",
+    "dry-run:ayo-payment-events": "node --no-warnings --experimental-strip-types scripts/dry-run-ayo-payment-events.ts",
     "test:booking-session": "node --no-warnings --experimental-strip-types --test lib/booking-session.test.ts",
     "test:financial-reconciliation-integrity": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/financial-reconciliation-integrity.test.ts",
     "test:financial-integrity-fix": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/financial-integrity-fix.test.ts",
