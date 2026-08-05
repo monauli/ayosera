@@ -17,6 +17,7 @@ type ManagedUser = {
   id: string;
   email: string;
   name: string;
+  username: string | null;
   role: "supervisor" | "user";
   allowedModules: string[];
   disabled: boolean;
@@ -70,6 +71,7 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
   const [formOpen, setFormOpen] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
+  const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newModules, setNewModules] = useState<string[]>(["transaksi"]);
   const [saving, setSaving] = useState(false);
@@ -77,7 +79,11 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
   // Panel edit per user
   const [editId, setEditId] = useState<string | null>(null);
   const [editModules, setEditModules] = useState<string[]>([]);
-  const [editPassword, setEditPassword] = useState("");
+  const [editUsername, setEditUsername] = useState("");
+
+  // Reset password (acak) — hasil ditampilkan SEKALI di sini, tidak pernah disimpan di state lain.
+  const [resetBusyId, setResetBusyId] = useState<string | null>(null);
+  const [revealedPassword, setRevealedPassword] = useState<{ email: string; password: string } | null>(null);
 
   const [gapFrom, setGapFrom] = useState("");
   const [gapTo, setGapTo] = useState("");
@@ -129,6 +135,7 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
         body: JSON.stringify({
           email: newEmail.trim(),
           name: newName.trim() || undefined,
+          username: newUsername.trim() || undefined,
           password: newPassword,
           allowedModules: newModules,
         }),
@@ -141,6 +148,7 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
       setMessage(`Pengguna ${newEmail.trim()} berhasil dibuat.`);
       setNewEmail("");
       setNewName("");
+      setNewUsername("");
       setNewPassword("");
       setNewModules(["transaksi"]);
       setFormOpen(false);
@@ -203,7 +211,27 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
   function openEdit(user: ManagedUser) {
     setEditId(user.id);
     setEditModules(user.allowedModules);
-    setEditPassword("");
+    setEditUsername(user.username ?? "");
+  }
+
+  async function handleResetPassword(user: ManagedUser) {
+    if (!window.confirm(`Reset password untuk ${user.email}? Password lama akan diganti dan sesi aktif pengguna ini akan dicabut.`)) return;
+    setResetBusyId(user.id);
+    setMessage("");
+    setError("");
+    try {
+      const response = await fetch(`/api/users/${user.id}/reset-password`, { method: "POST" });
+      const payload = (await response.json().catch(() => null)) as { password?: string; error?: string } | null;
+      if (!response.ok || !payload?.password) {
+        setError(payload?.error || "Gagal mereset password.");
+        return;
+      }
+      setRevealedPassword({ email: user.email, password: payload.password });
+    } catch {
+      setError("Tidak dapat terhubung ke server.");
+    } finally {
+      setResetBusyId(null);
+    }
   }
 
   async function checkAndCloseDataGaps() {
@@ -280,6 +308,30 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
         <p role={error ? "alert" : "status"} aria-live="polite" className={`rounded-lg px-3 py-2 text-sm ${error ? "rd-alert-danger" : "rd-alert-success"}`}>{error || message}</p>
       )}
 
+      {revealedPassword && (
+        <div className="rd-card rd-enter rounded-2xl border border-amber-400/30 bg-amber-950/20 p-4">
+          <p className="text-sm font-medium text-amber-200">Password baru untuk {revealedPassword.email}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <code className="flex-1 rounded-md border border-white/10 bg-black/30 px-3 py-2 font-mono text-sm text-slate-100">
+              {revealedPassword.password}
+            </code>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigator.clipboard.writeText(revealedPassword.password)}
+            >
+              Salin
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setRevealedPassword(null)}>
+              Tutup
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-amber-300">
+            Salin sekarang — password ini tidak akan ditampilkan lagi setelah ditutup.
+          </p>
+        </div>
+      )}
+
       <div className="rd-card rd-enter relative rounded-2xl p-5">
         <div className="border-b border-white/10 pb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -330,7 +382,7 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
           {formOpen && (
             <div className="mb-6 rounded-xl border border-white/10 bg-white/[0.04] p-4">
               <p className="mb-3 text-sm font-medium text-slate-200">Pengguna Baru (role: user)</p>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <Input
                   type="email"
                   placeholder="Email"
@@ -343,6 +395,12 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
                   aria-label="Nama pengguna baru"
                   value={newName}
                   onChange={(event) => setNewName(event.target.value)}
+                />
+                <Input
+                  placeholder="Username (opsional, auto dari email)"
+                  aria-label="Username pengguna baru"
+                  value={newUsername}
+                  onChange={(event) => setNewUsername(event.target.value)}
                 />
                 <Input
                   type="password"
@@ -401,9 +459,10 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
                   users.map((user) => (
                     <tr key={user.id} className="align-top">
                       <td className="px-2 py-3">
-                        <p className="font-medium">{user.email}</p>
+                        <p className="font-medium text-slate-100">{user.email}</p>
                         <p className="text-xs text-slate-500">
                           {user.name}
+                          {user.username && ` · @${user.username}`}
                           {user.id === currentUserId && " · Anda"}
                         </p>
                       </td>
@@ -417,7 +476,7 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
                           <Badge>User</Badge>
                         )}
                       </td>
-                      <td className="px-2 py-3">
+                      <td className="px-2 py-3 text-slate-300">
                         {user.role === "supervisor"
                           ? "Semua modul"
                           : moduleLabels(user.allowedModules).join(", ") || "—"}
@@ -437,6 +496,15 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
                               onClick={() => (editId === user.id ? setEditId(null) : openEdit(user))}
                             >
                               <UserCog className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              aria-label={`Reset password ${user.email}`}
+                              disabled={saving || resetBusyId === user.id}
+                              onClick={() => handleResetPassword(user)}
+                            >
+                              <KeyRound className="h-4 w-4" />
                             </Button>
                             <Button
                               variant="outline"
@@ -480,13 +548,13 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
 
           {editId && (
             <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
-              <p className="mb-3 text-sm font-medium">
+              <p className="mb-3 text-sm font-medium text-slate-100">
                 Edit pengguna: {users.find((user) => user.id === editId)?.email}
               </p>
               <div className="flex flex-wrap items-center gap-4">
                 <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Modul diizinkan:</span>
                 {MODULE_OPTIONS.map((option) => (
-                  <label key={option.value} className="flex items-center gap-1.5 text-sm">
+                  <label key={option.value} className="flex items-center gap-1.5 text-sm text-slate-300">
                     <input
                       type="checkbox"
                       checked={editModules.includes(option.value)}
@@ -507,25 +575,26 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Input
-                  type="password"
-                  placeholder="Password baru (min. 8 karakter)"
-                  aria-label="Password baru"
+                  placeholder="Username (opsional)"
+                  aria-label="Username"
                   className="w-[260px]"
-                  value={editPassword}
-                  onChange={(event) => setEditPassword(event.target.value)}
+                  value={editUsername}
+                  onChange={(event) => setEditUsername(event.target.value)}
                 />
                 <Button
                   variant="outline"
-                  disabled={saving || editPassword.length < 8}
+                  disabled={saving || !editUsername.trim()}
                   onClick={async () => {
-                    const ok = await patchUser(editId, { password: editPassword }, "Password berhasil direset.");
-                    if (ok) setEditPassword("");
+                    const ok = await patchUser(editId, { username: editUsername.trim() }, "Username pengguna diperbarui.");
+                    if (ok) setEditUsername("");
                   }}
                 >
-                  <KeyRound className="h-4 w-4" />
-                  Reset Password
+                  Simpan Username
                 </Button>
               </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Untuk reset password, gunakan ikon <KeyRound className="inline h-3 w-3" /> pada kolom Aksi di tabel.
+              </p>
             </div>
           )}
         </div>

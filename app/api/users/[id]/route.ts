@@ -3,7 +3,7 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 import { APP_MODULES, auth, requireSupervisor } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
-import { toPublicUser, type UserDoc } from "@/lib/users";
+import { toPublicUser, USERNAME_REGEX, type UserDoc } from "@/lib/users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +12,12 @@ const updateSchema = z.object({
   allowedModules: z.array(z.enum(APP_MODULES)).optional(),
   password: z.string().min(8, "Password minimal 8 karakter").optional(),
   disabled: z.boolean().optional(),
+  username: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(USERNAME_REGEX, "Username harus 3-32 karakter (huruf, angka, titik, underscore, atau strip).")
+    .optional(),
 });
 
 function parseObjectId(id: string) {
@@ -60,6 +66,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       set.allowedModules = body.allowedModules;
     }
     if (body.disabled !== undefined) set.disabled = body.disabled;
+    if (body.username !== undefined) {
+      // Sama seperti saat create: username tidak boleh sama dengan username
+      // ATAU email user LAIN mana pun.
+      const collision = await users.findOne({
+        _id: { $ne: oid },
+        $or: [{ username: body.username }, { email: body.username }],
+      });
+      if (collision) {
+        return NextResponse.json({ error: "Username sudah dipakai." }, { status: 409 });
+      }
+      set.username = body.username;
+    }
 
     await users.updateOne({ _id: oid }, { $set: set });
 
