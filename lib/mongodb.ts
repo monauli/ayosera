@@ -286,6 +286,31 @@ export type OlseraOmzetReconciliationAuditLogDocument = {
   };
 };
 
+/** Finalisasi tampilan Rekonsiliasi Omzet; snapshot sumber tidak pernah diubah. */
+export type ReconciliationOmzetPeriodLockDocument = {
+  _id: string;
+  storeId: number;
+  year: number;
+  month: number;
+  periodKey: string;
+  status: "draft" | "locked" | "unlocked";
+  originalAyoAmount: number | null;
+  originalOlseraAmount: number | null;
+  originalDifference: number | null;
+  finalAgreedAmount: number | null;
+  adjustmentAmount: number | null;
+  adjustmentReason: string | null;
+  attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: Date; uploadedBy: string } | null;
+  lockedAt: Date | null;
+  lockedBy: string | null;
+  unlockedAt: Date | null;
+  unlockedBy: string | null;
+  history: Array<{ action: "upload" | "preview" | "lock" | "unlock" | "relock"; actor: string; timestamp: Date; reason: string | null; before: Record<string, unknown>; after: Record<string, unknown> }>;
+  createdAt: Date;
+  updatedAt: Date;
+  version: number;
+};
+
 export type OlseraSyncedDayDocument = {
   /** Tanggal (YYYY-MM-DD, WIB) yang sudah tuntas disync penuh. */
   _id: string;
@@ -869,6 +894,7 @@ export async function collections() {
     inventoryStockOpnameReconciliations: db.collection<InventoryStockOpnameDocument>("inventory_stock_opname_reconciliations"),
     olseraOmzetReconciliationNotes: db.collection<OlseraOmzetReconciliationNoteDocument>("olsera_omzet_reconciliation_notes"),
     olseraOmzetReconciliationAuditLog: db.collection<OlseraOmzetReconciliationAuditLogDocument>("olsera_omzet_reconciliation_audit_log"),
+    reconciliationOmzetPeriodLocks: db.collection<ReconciliationOmzetPeriodLockDocument>("reconciliation_omzet_period_locks"),
     rateLimits: db.collection<RateLimitDocument>("rate_limits"),
     historicalBackfillAuditLog: db.collection<HistoricalBackfillAuditLogDocument>("historical_backfill_audit_log"),
   };
@@ -924,6 +950,7 @@ async function createIndexes() {
     inventoryStockOpnameReconciliations,
     olseraOmzetReconciliationNotes,
     olseraOmzetReconciliationAuditLog,
+    reconciliationOmzetPeriodLocks,
     rateLimits,
     historicalBackfillAuditLog,
   } = await collections();
@@ -1039,6 +1066,8 @@ async function createIndexes() {
     olseraOmzetReconciliationNotes.createIndex({ locked: 1, storeId: 1 }),
     olseraOmzetReconciliationAuditLog.createIndex({ storeId: 1, period: 1, timestamp: -1 }),
     olseraOmzetReconciliationAuditLog.createIndex({ noteId: 1 }),
+    reconciliationOmzetPeriodLocks.createIndex({ storeId: 1, year: 1, month: 1 }, { unique: true }),
+    reconciliationOmzetPeriodLocks.createIndex({ storeId: 1, status: 1, updatedAt: -1 }),
     // Rate limiting (Task 4) — TTL: bucket kedaluwarsa dihapus otomatis, tidak
     // menumpuk dokumen selamanya.
     rateLimits.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),

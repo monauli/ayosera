@@ -28,3 +28,10 @@ export async function uploadOmzetAttachment(input: UploadOmzetAttachmentInput): 
   const result = await put(pathname, input.file, { access: "public", addRandomSuffix: true, contentType: input.file.type });
   return { url: result.url };
 }
+
+/** Persistent Vercel Blob upload for the separate, auditable period-finalization flow. */
+export async function uploadOmzetPeriodLockAttachment(input: UploadOmzetAttachmentInput): Promise<UploadOmzetAttachmentResult> {
+  const pathname = `reconciliation/omzet-period-lock/${input.storeId}/${input.period}/${Date.now()}-${sanitizePathnameSegment(input.file.name)}`;
+  const result = await put(pathname, input.file, { access: "public", addRandomSuffix: true, contentType: input.file.type });
+  return { url: result.url };
+}

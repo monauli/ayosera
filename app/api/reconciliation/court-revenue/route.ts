@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { loadOmzetLedgerRecentSummaries } from "@/lib/reconciliation-omzet-ledger";
+import { currentStoreId } from "@/lib/olsera-store-id";
+import { applyLockedOmzetPresentation, getOmzetPeriodLock } from "@/lib/reconciliation-omzet-period-lock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +25,11 @@ export async function GET(request: Request) {
     const requested = Number(params.get("months") ?? DEFAULT_MONTHS);
     const months = Number.isInteger(requested) && requested > 0 ? Math.min(requested, MAX_MONTHS) : DEFAULT_MONTHS;
 
-    const items = await loadOmzetLedgerRecentSummaries(months);
+    const rawItems = await loadOmzetLedgerRecentSummaries(months);
+    const items = await Promise.all(rawItems.map(async (item) => {
+      try { return applyLockedOmzetPresentation(item, await getOmzetPeriodLock(currentStoreId(), item.period)); }
+      catch { return item; }
+    }));
 
     return NextResponse.json({ items }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
