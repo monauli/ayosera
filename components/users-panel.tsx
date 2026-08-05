@@ -5,6 +5,7 @@ import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, Trash2, UserCog, X } f
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PrivateIntegrationMonitor } from "@/components/private-integration-monitor";
 
 const MODULE_OPTIONS = [
   { value: "dasbor", label: "Dasbor" },
@@ -378,6 +379,7 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
               )}
             </section>
           )}
+          <PrivateIntegrationMonitor />
 
           {formOpen && (
             <div className="mb-6 rounded-xl border border-white/10 bg-white/[0.04] p-4">
