@@ -4,11 +4,13 @@
 // sebelumnya). Dijalankan via `tsx --conditions=react-server --test` karena
 // modul ini memakai "server-only".
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 process.env.OLSERA_INTERNAL_STORE_ID = "324175";
 import {
   computeAyoPaymentEventSide,
+  computeAyoSide,
   computeOmzetOlseraLedger,
   hasOmzetActivity,
   loadOmzetLedgerMonthDetail,
@@ -51,11 +53,30 @@ function paymentEvent(identity: string, bookingId: string, amount: number): AyoP
   return { identity, bookingId, amount } as AyoPaymentEvent;
 }
 
-test("payment events aktif menjadi sumber omzet AYO Juni/Juli, dedupe identity bukan booking", () => {
-  const june = [paymentEvent("payment-a", "BK-1", 242_895_499), paymentEvent("payment-a", "BK-1", 242_895_499)];
-  const july = [paymentEvent("dp", "BK-1", 100_000_000), paymentEvent("settlement", "BK-1", 137_491_000)];
-  assert.deepEqual(computeAyoPaymentEventSide(june), { count: 1, revenue: 242_895_499 });
-  assert.deepEqual(computeAyoPaymentEventSide(july), { count: 2, revenue: 237_491_000 });
+test("payment events aktif menjadi sumber omzet AYO Juni/Juli: seluruh event unik dihitung, bukan filter booking lama", () => {
+  const makePeriod = (count: number, bkAmount: number, nonBkAmount: number) => [
+    ...Array.from({ length: count - 2 }, (_, index) => paymentEvent(`bk-${index}`, `BK-${index}`, 0)),
+    paymentEvent("bk-total", "BK-existing", bkAmount),
+    // Pembayaran baru pada booking lama/manual reference tetap merupakan event
+    // moneter yang sah; tidak boleh hilang oleh filter booking `BK`.
+    paymentEvent("payment-on-old-booking", "MN-existing", nonBkAmount),
+  ];
+  const june = makePeriod(1_421, 165_596_500, 77_298_999);
+  const july = makePeriod(1_359, 168_155_000, 69_336_000);
+
+  assert.deepEqual(computeAyoPaymentEventSide(june), { count: 1_421, revenue: 242_895_499 });
+  assert.deepEqual(computeAyoPaymentEventSide(july), { count: 1_359, revenue: 237_491_000 });
+  assert.deepEqual(computeAyoSide([{ date: "2026-06-10", total_price: 165_596_500, status: "paid" }]), { count: 1, revenue: 165_596_500 });
+  assert.deepEqual(computeAyoSide([{ date: "2026-07-10", total_price: 168_155_000, status: "paid" }]), { count: 1, revenue: 168_155_000 });
+});
+
+test("payment event dedupe memakai identity, bukan booking id", () => {
+  const events = [
+    paymentEvent("dp", "BK-1", 100_000_000),
+    paymentEvent("settlement", "BK-1", 137_491_000),
+    paymentEvent("settlement", "BK-1", 137_491_000),
+  ];
+  assert.deepEqual(computeAyoPaymentEventSide(events), { count: 2, revenue: 237_491_000 });
 });
 
 function entry(overrides: Partial<LedgerEntryInput> & { transactionNo: string }): LedgerEntryInput {
@@ -388,6 +409,93 @@ function context(overrides: Partial<OmzetLedgerSourceContext> = {}): OmzetLedger
     ...overrides,
   };
 }
+
+function activePaymentEventStaging(events: AyoPaymentEvent[], activeRunId: string | null = "run-a"): NonNullable<OmzetLedgerSourceContext["staging"]> {
+  return {
+    activation: { findOne: async () => activeRunId ? { _id: "ayo-payment-events-active", activeRunId, activatedAt: NOW, activatedBy: "supervisor" } : null },
+    runs: {
+      findOne: async () => ({
+        _id: "run-a",
+        periods: {
+          "2026-06": { rows: 1_421, total: 242_895_499, duplicate: 0, conflict: 0, validationStatus: "validated" },
+          "2026-07": { rows: 1_359, total: 237_491_000, duplicate: 0, conflict: 0, validationStatus: "validated" },
+        },
+        status: "active",
+        createdAt: NOW,
+        updatedAt: NOW,
+        createdBy: "supervisor",
+      }),
+    },
+    events: {
+      find: (filter) => ({
+        toArray: async () => filter.runId === "run-a" ? events.map((event) => ({ ...event, runId: "run-a", period: "2026-06", eventIdentity: event.identity, payload: event, fetchedAt: NOW })) : [],
+      }),
+    },
+  } as NonNullable<OmzetLedgerSourceContext["staging"]>;
+}
+
+test("loader produksi memakai active payment events untuk Juni/Juli; Olsera dan rumus selisih tetap", async () => {
+  const cases = [
+    { period: "2026-06", count: 1_421, ayoRevenue: 242_895_499, oldBookingRevenue: 165_596_500, olseraRevenue: 242_895_500, difference: 1 },
+    { period: "2026-07", count: 1_359, ayoRevenue: 237_491_000, oldBookingRevenue: 168_155_000, olseraRevenue: 247_356_000, difference: 9_865_000 },
+  ] as const;
+
+  for (const current of cases) {
+    const paymentEvents = [
+      ...Array.from({ length: current.count - 2 }, (_, index) => paymentEvent(`${current.period}-bk-${index}`, `BK-${index}`, 0)),
+      paymentEvent(`${current.period}-bk-total`, "BK-existing", current.oldBookingRevenue),
+      paymentEvent(`${current.period}-new-payment`, "MN-existing", current.ayoRevenue - current.oldBookingRevenue),
+    ];
+    const result = await loadOmzetLedgerMonthSummary(current.period, context({
+      bookings: fake([{ date: `${current.period}-10`, total_price: current.oldBookingRevenue, status: "paid" }]),
+      ledgerEntries: fake([
+        { storeId: 324175, accountCode: "40001", period: current.period, ...entry({ transactionNo: `JU-${current.period}`, transactionDate: `${current.period}-10`, credit: current.olseraRevenue }) },
+        { storeId: 324175, accountCode: "40001", period: current.period, ...entry({ transactionNo: `CL-${current.period}`, transactionDate: `${current.period}-28`, debit: current.olseraRevenue }) },
+      ]),
+      staging: activePaymentEventStaging(paymentEvents),
+    }), new Date("2026-08-05T00:00:00Z"));
+
+    assert.deepEqual(result.ayo, { count: current.count, revenue: current.ayoRevenue });
+    assert.equal(result.olseraTotal, current.olseraRevenue);
+    assert.equal(result.differenceRevenue, current.difference);
+  }
+});
+
+test("activeRunId null dan kegagalan Mongo payment events memakai fallback booking tanpa melempar ke route", async () => {
+  const fallbackBookings = fake([{ date: "2026-05-10", total_price: 500_000, status: "paid" }]);
+  const nullActive = await loadOmzetLedgerMonthSummary("2026-05", context({
+    bookings: fallbackBookings,
+    staging: activePaymentEventStaging([], null),
+  }), NOW);
+  assert.deepEqual(nullActive.ayo, { count: 1, revenue: 500_000 }, "Februari–Mei tetap memakai jalur booking existing bila tidak ada active run");
+
+  const juneWithoutActiveRun = await loadOmzetLedgerMonthSummary("2026-06", context({
+    bookings: fake([{ date: "2026-06-10", total_price: 550_000, status: "paid" }]),
+    staging: activePaymentEventStaging([], null),
+  }), new Date("2026-08-05T00:00:00Z"));
+  assert.deepEqual(juneWithoutActiveRun.ayo, { count: 1, revenue: 550_000 }, "activeRunId null memakai fallback existing");
+
+  const brokenStaging = activePaymentEventStaging([]);
+  brokenStaging.events = { find: () => ({ toArray: async () => { throw new Error("Mongo unavailable"); } }) };
+  const mongoFailure = await loadOmzetLedgerMonthSummary("2026-06", context({
+    bookings: fake([{ date: "2026-06-10", total_price: 600_000, status: "paid" }]),
+    staging: brokenStaging,
+  }), new Date("2026-08-05T00:00:00Z"));
+  assert.deepEqual(mongoFailure.ayo, { count: 1, revenue: 600_000 }, "kegagalan query event ditangani read helper dan tidak menghasilkan HTTP 500");
+});
+
+test("route /reconciliation memakai helper ledger yang menghitung active payment events", async () => {
+  const [page, route, ledger] = await Promise.all([
+    readFile(new URL("../app/reconciliation/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/reconciliation/court-revenue/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("./reconciliation-omzet-ledger.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /fetch\("\/api\/reconciliation\/court-revenue"/);
+  assert.match(route, /loadOmzetLedgerRecentSummaries/);
+  assert.match(ledger, /readActiveStagedPaymentEvents/);
+  assert.match(ledger, /computeAyoPaymentEventSide\(paymentEvents\)/);
+  assert.doesNotMatch(ledger, /events\.filter\(\(event\) => event\.bookingId\.startsWith\("BK"\)\)/);
+});
 
 test("loader: ringkasan dan detail bulan yang sama menghasilkan angka & status identik", async () => {
   const ctx = context({

@@ -240,9 +240,13 @@ export function computeAyoSide(bookings: Array<Pick<BookingDocument, "date" | "t
   return side;
 }
 
-/** Active payment events are monetary records, not bookings; dedupe by their deterministic identity. */
+/**
+ * Active payment events are monetary records, not bookings. Sum every unique
+ * event identity directly: a payment can belong to a pre-existing booking or
+ * use a non-BK reference, and must not be discarded by booking display rules.
+ */
 export function computeAyoPaymentEventSide(events: readonly AyoPaymentEvent[]): OmzetLedgerSide {
-  const unique = new Map(events.filter((event) => event.bookingId.startsWith("BK")).map((event) => [event.identity, event]));
+  const unique = new Map(events.map((event) => [event.identity, event]));
   return { count: unique.size, revenue: [...unique.values()].reduce((sum, event) => sum + event.amount, 0) };
 }
 
