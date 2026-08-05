@@ -3,7 +3,7 @@ import { z } from "zod";
 import { APP_MODULES, auth, requireSupervisor } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
-import { toPublicUser, type UserDoc } from "@/lib/users";
+import { toPublicUser, usernameFromEmail, USERNAME_REGEX, type UserDoc } from "@/lib/users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +26,12 @@ const createSchema = z.object({
   password: z.string().min(8, "Password minimal 8 karakter"),
   name: z.string().trim().min(1).optional(),
   allowedModules: z.array(z.enum(APP_MODULES)).default([]),
+  username: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(USERNAME_REGEX, "Username harus 3-32 karakter (huruf, angka, titik, underscore, atau strip).")
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -38,6 +44,22 @@ export async function POST(request: Request) {
     const users = db.collection<UserDoc>("user");
     if (await users.findOne({ email })) {
       return NextResponse.json({ error: "Email sudah terdaftar." }, { status: 409 });
+    }
+
+    // Username harus unik terhadap username MAUPUN email user lain (celah:
+    // username yang sama dengan email orang lain) — dicek eksplisit di sini,
+    // bukan hanya lewat unique index, supaya pesan errornya jelas.
+    let username = body.username ?? usernameFromEmail(email) ?? undefined;
+    if (username) {
+      const collision = await users.findOne({ $or: [{ username }, { email: username }] });
+      if (collision) {
+        if (body.username) {
+          return NextResponse.json({ error: "Username sudah dipakai." }, { status: 409 });
+        }
+        // Auto-generate dari email: jangan blokir pembuatan user karena tabrakan,
+        // cukup lewati (user tetap bisa login via email).
+        username = undefined;
+      }
     }
 
     await auth.api.signUpEmail({
@@ -57,6 +79,7 @@ export async function POST(request: Request) {
           disabled: false,
           emailVerified: true,
           updatedAt: new Date(),
+          ...(username ? { username } : {}),
         },
       },
     );

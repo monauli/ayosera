@@ -52,7 +52,7 @@ export default function LoginPage() {
       });
 
       if (!response.ok) {
-        setError("Email atau password tidak valid.");
+        setError("Email/Username atau password tidak valid.");
         return;
       }
 
@@ -88,7 +88,7 @@ export default function LoginPage() {
             <p className={`mt-3 text-sm leading-6 ${dark ? "text-slate-400" : "text-slate-500"}`}>Kelola transaksi AYO, penjualan Olsera, dan inventori dalam satu dashboard.</p>
 
             <form className="mt-8 space-y-5" method="post" onSubmit={handleSubmit}>
-              <div><label htmlFor="email" className={`mb-2 block text-sm font-medium ${dark ? "text-slate-200" : "text-slate-700"}`}>Email</label><Input id="email" name="email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} className={`h-12 ${dark ? "border-white/10 bg-white/5 text-white" : "border-slate-200 bg-white text-slate-900"}`} /></div>
+              <div><label htmlFor="email" className={`mb-2 block text-sm font-medium ${dark ? "text-slate-200" : "text-slate-700"}`}>Email atau Username</label><Input id="email" name="email" type="text" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} className={`h-12 ${dark ? "border-white/10 bg-white/5 text-white" : "border-slate-200 bg-white text-slate-900"}`} /></div>
               <div><label htmlFor="password" className={`mb-2 block text-sm font-medium ${dark ? "text-slate-200" : "text-slate-700"}`}>Password</label><div className="relative"><LockKeyhole className={`pointer-events-none absolute left-3 top-3.5 h-4 w-4 ${dark ? "text-slate-500" : "text-slate-400"}`} /><Input id="password" name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} className={`h-12 pl-10 pr-11 ${dark ? "border-white/10 bg-white/5 text-white" : "border-slate-200 bg-white text-slate-900"}`} /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"} className={`absolute right-3 top-3.5 ${dark ? "text-slate-400 hover:text-white" : "text-slate-500 hover:text-slate-900"}`}>{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div></div>
               {error && <p role="alert" aria-live="polite" className={`rounded-lg px-3 py-2.5 text-xs ${dark ? "bg-rose-500/10 text-rose-300" : "bg-rose-50 text-rose-700"}`}>{error}</p>}
               <Button type="submit" disabled={loading || !hydrated} className="h-12 w-full bg-rose-600 text-sm font-semibold text-white hover:bg-rose-700">{loading ? "Memproses..." : "Masuk"}<ArrowRight className="ml-2 h-4 w-4" /></Button>
