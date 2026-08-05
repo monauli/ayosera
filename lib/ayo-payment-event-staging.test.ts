@@ -110,6 +110,6 @@ test("aktivasi memakai satu pointer atomik, rollback tidak menghapus, dan Olsera
   assert.match(route, /if \(action === "rollback"\)/);
   assert.match(route, /activeRunId: rollbackToRunId/);
   assert.doesNotMatch(route, /deleteMany|deleteOne|drop\(|createIndex/);
-  assert.doesNotMatch(courtSource, /ayoPaymentEventStaging/);
+  assert.match(courtSource, /readActiveStagedPaymentEvents/);
   assert.doesNotMatch(ledger, /ayoPaymentEventStaging/);
 });

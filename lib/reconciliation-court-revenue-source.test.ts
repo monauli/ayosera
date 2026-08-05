@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { loadCourtRevenueFindings, type CourtRevenueSourceContext } from "./reconciliation-court-revenue-source.ts";
 import type { BookingDocument, OlseraOrderItemDocument } from "./mongodb.ts";
 import { PADEL_UNIDENTIFIED_BUCKET, PICKLEBALL_AGGREGATE_BUCKET } from "./court-mapping.ts";
+import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 function fakeCollection<T>(rows: T[]) {
   return { find: (filter: Record<string, unknown>) => ({ toArray: async () => rows }) };
@@ -55,6 +56,20 @@ function orderItem(overrides: Partial<OlseraOrderItemDocument>): OlseraOrderItem
 
 function context(bookings: BookingDocument[], items: OlseraOrderItemDocument[]): CourtRevenueSourceContext {
   return { bookings: fakeCollection(bookings), orderItems: fakeCollection(items) };
+}
+
+function paymentEvent(id: string, date: string, amount: number): AyoPaymentEvent {
+  return { _id: id, identity: id, bookingId: `BK-${id}`, sourceTable: "order_detail", reservationPaymentId: id, nativeId: id, sourceId: id, eventDate: new Date(`${date}T00:00:00Z`), eventDateSource: "payment_date", amount, amountSource: "final_fee_ayo", bookingPrefix: "BK", paymentStatus: "SUCCESS", bookingStatus: "SUCCESS", source: "ayo-report-transactions", rawPayload: {}, normalizedPayload: {}, createdAt: new Date(), updatedAt: new Date(), paymentType: null, paymentNote: null, detailStatus: "SUCCESS", finalStatus: "SUCCESS", fieldName: "Court No 1", date, startTime: null, endTime: null, total: amount, finalFeeAyo: amount, isCredit: false, raw: {}, syncedAt: new Date() };
+}
+
+function activeStaging(period: "2026-06" | "2026-07", rows: number, total: number): CourtRevenueSourceContext["staging"] {
+  const events = Array.from({ length: rows }, (_, index) => paymentEvent(`${period}-${index}`, `${period}-01`, index + 1 === rows ? total : 0));
+  const periods = { "2026-06": { rows: 1421, total: 242895499, duplicate: 0, conflict: 0, validationStatus: "validated" as const }, "2026-07": { rows: 1359, total: 237491000, duplicate: 0, conflict: 0, validationStatus: "validated" as const } };
+  return {
+    activation: { findOne: async () => ({ _id: "ayo-payment-events-active", activeRunId: "run", activatedAt: new Date(), activatedBy: "test" }) },
+    runs: { findOne: async () => ({ _id: "run", periods, status: "active", createdAt: new Date(), updatedAt: new Date(), createdBy: "test" }) },
+    events: { find: (filter) => ({ toArray: async () => filter.runId === "run" ? events.map((event) => ({ ...event, runId: "run", period, eventIdentity: event.identity, payload: event, fetchedAt: new Date() })) : [] }) },
+  };
 }
 
 test("loadCourtRevenueFindings: MATCH bila revenue AYO dan Olsera sama persis per (tanggal, court)", async () => {
@@ -170,4 +185,24 @@ test("loadCourtRevenueFindings: total gabungan per court == jumlah tiap booking/
   assert.equal(f?.ayoRevenue, 150000);
   assert.equal(f?.olseraRevenue, 150000);
   assert.equal(f?.status, "MATCH");
+});
+
+test("rekonsiliasi Juni/Juli memakai nominal payment-event aktif, bukan nominal booking lama", async () => {
+  for (const [period, rows, total] of [["2026-06", 1421, 242895499], ["2026-07", 1359, 237491000]] as const) {
+    const { findings } = await loadCourtRevenueFindings(`${period}-01`, `${period}-01`, {
+      ...context([booking({ date: `${period}-01`, total_price: total - 600000 })], [orderItem({ date: `${period}-01`, amount: total })]),
+      staging: activeStaging(period, rows, total),
+    });
+    const finding = findings.find((item) => item.courtKey === "Court No 1");
+    assert.equal(finding?.ayoRevenue, total);
+    assert.equal(finding?.olseraRevenue, total);
+  }
+});
+
+test("gagal membaca staging tetap fallback ke booking tanpa mengubah Olsera", async () => {
+  const broken = { ...context([booking({ total_price: 150000 })], [orderItem({ amount: 150000 })]), staging: { activation: { findOne: async () => { throw new Error("Mongo unavailable"); } }, runs: { findOne: async () => null }, events: { find: () => ({ toArray: async () => [] }) } } };
+  const { findings } = await loadCourtRevenueFindings("2026-07-01", "2026-07-01", broken);
+  const finding = findings.find((item) => item.courtKey === "Court No 1");
+  assert.equal(finding?.ayoRevenue, 150000);
+  assert.equal(finding?.olseraRevenue, 150000);
 });

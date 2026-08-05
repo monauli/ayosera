@@ -878,9 +878,10 @@ export async function buildOmzetPeriodWorkbook(input: OmzetExportInput): Promise
 }
 
 function displayEligibleInput(input: OmzetExportInput): OmzetExportInput {
+  const exportable = (booking: BookingDocument) => isDisplayEligibleTransaction(booking) && !isCancelledTransaction(booking);
   return {
     ...input,
-    dayBookings: input.dayBookings.filter(isDisplayEligibleTransaction),
-    monthBookings: input.monthBookings.filter(isDisplayEligibleTransaction),
+    dayBookings: input.dayBookings.filter(exportable),
+    monthBookings: input.monthBookings.filter(exportable),
   };
 }

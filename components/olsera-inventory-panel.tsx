@@ -217,6 +217,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const tabs = visibleInventoryTabs(isSupervisor);
 
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [showSummary, setShowSummary] = useState(true);
   const [periodStatus, setPeriodStatus] = useState("Snapshot Tidak Tersedia");
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -612,7 +613,6 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
         { label: "Stok Habis", value: String(summary.outOfStock), accent: "text-rose-400" },
         { label: "Stok Hampir Habis", value: String(summary.lowStock), accent: "text-amber-300" },
         { label: "Total Stok", value: String(summary.totalStock) },
-        { label: "Total Nilai Persediaan", value: summary.totalValue === null ? "Tidak tersedia" : formatRupiah(summary.totalValue) },
       ]
     : [];
 
@@ -766,11 +766,15 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
 
       {/* Ringkasan */}
       {summary && summary.hasData !== false && (
-        <section className="mb-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+        <section className="mb-4">
+          <Button type="button" variant="outline" className="mb-3" onClick={() => setShowSummary((visible) => !visible)} aria-expanded={showSummary}>
+            {showSummary ? "Sembunyikan Ringkasan" : "Tampilkan Ringkasan"}
+          </Button>
+          {showSummary && <div className="flex gap-4 overflow-x-auto pb-1">
           {summaryCards.map((card, index) => (
             <div
               key={card.label}
-              className="rd-card rd-enter relative rounded-2xl p-4"
+              className="rd-card rd-enter relative min-w-44 flex-1 rounded-2xl p-4"
               style={{ animationDelay: `${index * 60}ms` }}
             >
               <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{card.label}</p>
@@ -779,8 +783,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               </p>
             </div>
           ))}
-          {summary.usesDefaultThreshold && (
-            <p className="col-span-2 -mt-1 text-xs text-slate-500 md:col-span-4">
+          </div>}
+          {showSummary && summary.usesDefaultThreshold && (
+            <p className="mt-2 text-xs text-slate-500">
               Sebagian produk tidak punya minimum stock dari Olsera — threshold default {summary.defaultThreshold} digunakan.
             </p>
           )}

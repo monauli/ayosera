@@ -197,6 +197,17 @@ test("panel: satu periode YYYY-MM menjadi sumber data bulanan dan URL", () => {
   assert.ok(source.includes("stockEmptyStateMessage({"));
 });
 
+test("panel: ringkasan inventori hanya lima kartu dan dapat disembunyikan tanpa mengubah data", () => {
+  const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  for (const label of ["Total Produk", "Produk dengan Sisa Stok", "Stok Habis", "Stok Hampir Habis", "Total Stok"]) assert.ok(source.includes(`label: "${label}"`));
+  assert.equal(source.includes('label: "Total Nilai Persediaan"'), false);
+  assert.ok(source.includes('const [showSummary, setShowSummary] = useState(true);'));
+  assert.ok(source.includes('aria-expanded={showSummary}'));
+  assert.ok(source.includes('Sembunyikan Ringkasan'));
+  assert.ok(source.includes('Tampilkan Ringkasan'));
+  assert.ok(source.includes('showSummary && <div className="flex gap-4 overflow-x-auto pb-1">'));
+});
+
 // ---- 19. Regresi: status periode & tombol export tidak boleh basi saat user
 // pindah ke tab Riwayat Mutasi lalu mengganti periode (ditemukan saat audit
 // visual — kartu "Laporan Stock Opname Bulanan" & Ringkasan dirender di luar

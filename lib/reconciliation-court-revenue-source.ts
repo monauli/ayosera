@@ -9,8 +9,7 @@ import { evaluateCourtRevenue, type CourtRevenueComparisonInput, type CourtReven
 import { ayoCourtBucket, allCourtKeys, olseraCourtBucket, PADEL_UNIDENTIFIED_BUCKET, type CourtMappingConfidence } from "./court-mapping.ts";
 import { getRevenueAmount, isRevenueEligibleTransaction } from "./revenue.ts";
 import type { BookingDocument, OlseraOrderItemDocument } from "./mongodb.ts";
-import { readValidatedPaymentEvents } from "./ayo-payment-events-sync.ts";
-import { paymentEventRevenue } from "./ayo-payment-events.ts";
+import { readActiveStagedPaymentEvents, type StagingReadContext } from "./ayo-payment-event-staging.ts";
 
 const MAX_SAMPLE_REFS = 8;
 
@@ -38,15 +37,14 @@ export type MinimalReadCollection<T> = {
 export type CourtRevenueSourceContext = {
   bookings: MinimalReadCollection<BookingDocument>;
   orderItems: MinimalReadCollection<OlseraOrderItemDocument>;
-  paymentEvents?: import("./ayo-payment-events-sync.ts").PaymentEventReadCollection;
-  paymentPeriods?: import("./ayo-payment-events-sync.ts").PaymentPeriodCollection;
+  staging?: StagingReadContext;
 };
 
 export async function resolveCourtRevenueSourceContext(context?: CourtRevenueSourceContext): Promise<CourtRevenueSourceContext> {
   if (context) return context;
   const { collections } = await import("./mongodb.ts");
-  const { bookings, olseraOrderItems, ayoPaymentEvents, ayoPaymentPeriods } = await collections();
-  return { bookings, orderItems: olseraOrderItems, paymentEvents: ayoPaymentEvents, paymentPeriods: ayoPaymentPeriods };
+  const { bookings, olseraOrderItems, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
+  return { bookings, orderItems: olseraOrderItems, staging: { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation } };
 }
 
 type SideAccumulator = { revenue: number; count: number; refs: string[]; confidence: CourtMappingConfidence };
@@ -66,25 +64,30 @@ export async function loadCourtRevenueFindings(
   context?: CourtRevenueSourceContext,
   options: { minorToleranceIdr?: number } = {},
 ): Promise<{ findings: CourtRevenueFinding[]; docsRead: number }> {
-  const { bookings, orderItems } = await resolveCourtRevenueSourceContext(context);
+  const source = await resolveCourtRevenueSourceContext(context);
+  const { bookings, orderItems } = source;
   const [bookingRows, itemRows] = await Promise.all([
     bookings.find({ date: { $gte: startDate, $lte: endDate } }).toArray(),
     orderItems.find({ date: { $gte: startDate, $lte: endDate } }).toArray(),
   ]);
 
-  const validated = context?.paymentEvents && context.paymentPeriods
-    ? await readValidatedPaymentEvents(startDate, endDate, { events: context.paymentEvents, periods: context.paymentPeriods })
-    : null;
+  const validated = source.staging ? await readActiveStagedPaymentEvents(startDate, endDate, source.staging) : null;
 
   const ayoBySlot = new Map<string, SideAccumulator>();
-  const paymentRows = validated?.events.filter((event) => event.bookingId.startsWith("BK")).map((event) => ({
-    booking_id: event.bookingId,
-    field_name: event.fieldName,
-    date: event.date,
-    total_price: paymentEventRevenue(event),
-    status: event.finalStatus ?? event.detailStatus ?? "",
-  })) ?? null;
-  for (const booking of paymentRows ?? bookingRows) {
+  if (validated) {
+    // A payment event is idempotent by its business identity, never bookingId.
+    const events = new Map(validated.events.filter((event) => event.bookingId.startsWith("BK")).map((event) => [event.identity, event]));
+    for (const event of events.values()) {
+      const bucket = ayoCourtBucket(event.fieldName);
+      if (!bucket) continue;
+      const key = `${event.date}|${bucket.courtKey}`;
+      const acc = ayoBySlot.get(key) ?? { revenue: 0, count: 0, refs: [], confidence: bucket.confidence };
+      acc.revenue += event.amount;
+      acc.count += 1;
+      addRef(acc.refs, event.bookingId);
+      ayoBySlot.set(key, acc);
+    }
+  } else for (const booking of bookingRows) {
     const bucket = ayoCourtBucket(booking.field_name);
     if (!bucket) continue; // field_name di luar Padel/Pickleball yang dikenal -> di luar scope court-revenue (lihat docs §2).
     if (!isRevenueEligibleTransaction(booking)) continue;

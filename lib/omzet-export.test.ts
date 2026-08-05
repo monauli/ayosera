@@ -85,3 +85,27 @@ test("buildOmzetPeriodWorkbook: nama court berbahaya disimpan sebagai teks aman 
   const headerValue = ws.getCell(4, 2).value;
   assert.equal(headerValue, "'+CMD|'/C calc'");
 });
+
+test("export AYO mengeluarkan cancelled tanpa mengubah kolom, urutan, atau total baris yang tersisa", async () => {
+  const bookings = [
+    fakeBooking({ booking_id: "FINISHED", status: "FINISHED", total_price: 100000 }),
+    fakeBooking({ booking_id: "SUCCESS", status: " SUCCESS ", total_price: 200000 }),
+    fakeBooking({ booking_id: "CANCELLED", status: "CANCELLED", total_price: 300000 }),
+    fakeBooking({ booking_id: "cancelled", status: " cancelled ", total_price: 400000 }),
+    fakeBooking({ booking_id: "ZERO", status: "SUCCESS", total_price: 0 }),
+  ];
+  const bytes = await buildOmzetHarianWorkbook({ date: "2026-07-01", venueName: "BC Padel Club", dayBookings: bookings, monthBookings: bookings });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const controlBytes = await buildOmzetHarianWorkbook({ date: "2026-07-01", venueName: "BC Padel Club", dayBookings: bookings.filter((booking) => ["FINISHED", "SUCCESS"].includes(booking.booking_id)), monthBookings: bookings.filter((booking) => ["FINISHED", "SUCCESS"].includes(booking.booking_id)) });
+  const control = new ExcelJS.Workbook();
+  await control.xlsx.load(controlBytes as unknown as ExcelJS.Buffer);
+  const ayo = workbook.getWorksheet("AYO");
+  const controlAyo = control.getWorksheet("AYO");
+  assert.ok(ayo);
+  assert.ok(controlAyo);
+  const ids = [5, 6].map((row) => ayo.getRow(row).getCell(2).value);
+  assert.deepEqual(ids, ["FINISHED", "SUCCESS"]);
+  assert.equal(ayo.columnCount, controlAyo.columnCount);
+  assert.equal(ayo.getCell("Q7").value && typeof ayo.getCell("Q7").value === "object" ? (ayo.getCell("Q7").value as { formula: string }).formula : "", "SUM(Q5:Q6)");
+});
