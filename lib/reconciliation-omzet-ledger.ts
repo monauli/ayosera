@@ -22,6 +22,8 @@ import "server-only";
 import { isCurrentJakartaPeriod, jakartaCurrentPeriod } from "./olsera-financial-core.ts";
 import { getRevenueAmount, isRevenueEligibleTransaction } from "./revenue.ts";
 import type { BookingDocument } from "./mongodb.ts";
+import { readValidatedPaymentEvents } from "./ayo-payment-events-sync.ts";
+import { paymentEventRevenue, type AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 // ---------------------------------------------------------------------------
 // Konstanta akun (SATU-SATUNYA tempat kode akun ini dirujuk untuk omzet)
@@ -408,16 +410,20 @@ export type OmzetLedgerSourceContext = {
   bookings: MinimalReadCollection<Pick<BookingDocument, "date" | "total_price" | "status">>;
   ledgerEntries: MinimalReadCollection<LedgerEntryInput & { accountCode: string; period: string }>;
   loadExplanation: (period: string) => Promise<OmzetExplanation | null>;
+  paymentEvents?: { find(filter: Record<string, unknown>): { toArray(): Promise<AyoPaymentEvent[]> } };
+  paymentPeriods?: import("./ayo-payment-events-sync.ts").PaymentPeriodCollection;
 };
 
 async function resolveContext(context?: OmzetLedgerSourceContext): Promise<OmzetLedgerSourceContext> {
   if (context) return context;
   const { collections } = await import("./mongodb.ts");
   const { getCurrentOmzetNote } = await import("./reconciliation-omzet-note-store.ts");
-  const { bookings, olseraFinancialLedgerEntries } = await collections();
+  const { bookings, olseraFinancialLedgerEntries, ayoPaymentEvents, ayoPaymentPeriods } = await collections();
   return {
     bookings,
     ledgerEntries: olseraFinancialLedgerEntries,
+    paymentEvents: ayoPaymentEvents,
+    paymentPeriods: ayoPaymentPeriods,
     // Skema BARU append-only (OlseraOmzetReconciliationNoteV2Document, lihat
     // lib/reconciliation-omzet-note-store.ts) — menggantikan
     // getOmzetExplanation (skema lama, lib/reconciliation-omzet-explanation-store.ts,
@@ -467,7 +473,9 @@ async function loadPeriodData(period: string, context?: OmzetLedgerSourceContext
     ctx.ledgerEntries.find({ storeId: storeId(), period, accountCode: ACCOUNT_PICKLEBALL_PAYABLE }).toArray(),
     ctx.loadExplanation(period),
   ]);
-  return { bookingRows, entries40001, entries40004, entries21003, explanation };
+  const validated = ctx.paymentEvents && ctx.paymentPeriods ? await readValidatedPaymentEvents(start, end, { events: ctx.paymentEvents, periods: ctx.paymentPeriods }) : null;
+  const paymentRows = validated?.events.filter((event) => event.bookingId.startsWith("BK")).map((event) => ({ date: event.date, total_price: paymentEventRevenue(event), status: event.finalStatus ?? event.detailStatus ?? "" })) ?? null;
+  return { bookingRows: paymentRows ?? bookingRows, entries40001, entries40004, entries21003, explanation };
 }
 
 /** Ringkasan SATU bulan — dipakai daftar bulanan di /reconciliation. */

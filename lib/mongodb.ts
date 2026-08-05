@@ -1,6 +1,7 @@
 import "./mongodb-dns.ts";
 import { MongoClient, type Db } from "mongodb";
 import type { ReconciliationConfidence, ReconciliationDomain, ReconciliationImpact, ReconciliationStatus, ReconciliationType } from "./reconciliation-types.ts";
+import type { AyoPaymentEvent, AyoPaymentPeriodMetadata } from "./ayo-payment-events.ts";
 
 declare global {
   var __mongoClient: MongoClient | undefined;
@@ -49,6 +50,9 @@ export type BookingDocument = {
   /** Rincian field non-jadwal yang berubah saat changeType "updated" (nilai sudah human-readable). */
   fieldChanges?: { field: string; from: string; to: string }[];
 };
+
+export type AyoPaymentEventDocument = AyoPaymentEvent;
+export type AyoPaymentPeriodDocument = AyoPaymentPeriodMetadata;
 
 export type SyncLogDocument = {
   type: "manual" | "scheduled" | "webhook" | "fields";
@@ -823,6 +827,8 @@ export async function collections() {
   return {
     users: db.collection<UserDocument>("users"),
     bookings: db.collection<BookingDocument>("bookings"),
+    ayoPaymentEvents: db.collection<AyoPaymentEventDocument>("ayo_payment_events"),
+    ayoPaymentPeriods: db.collection<AyoPaymentPeriodDocument>("ayo_payment_periods"),
     syncLogs: db.collection<SyncLogDocument>("sync_logs"),
     fields: db.collection<FieldDocument>("fields"),
     webhookLogs: db.collection<WebhookLogDocument>("webhook_logs"),
@@ -879,6 +885,8 @@ async function createIndexes() {
   const {
     users,
     bookings,
+    ayoPaymentEvents,
+    ayoPaymentPeriods,
     syncLogs,
     fields,
     webhookLogs,
@@ -922,6 +930,9 @@ async function createIndexes() {
     bookings.createIndex({ booker_phone: 1 }),
     bookings.createIndex({ updatedAt: -1 }),
     bookings.createIndex({ syncedAt: -1 }),
+    ayoPaymentEvents.createIndex({ _id: 1 }, { unique: true }),
+    ayoPaymentEvents.createIndex({ bookingId: 1, date: 1 }),
+    ayoPaymentPeriods.createIndex({ _id: 1 }, { unique: true }),
     syncLogs.createIndex({ startedAt: -1 }),
     fields.createIndex({ id: 1 }, { unique: true }),
     olseraSalesByCategory.createIndex({ date: 1, category: 1 }, { unique: true }),
