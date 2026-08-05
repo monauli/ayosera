@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeAyoPaymentEvent, paymentEventIdentity, validatePaymentPeriod, fetchAyoPaymentEvents, type AyoPaymentEvent } from "./ayo-payment-events.ts";
+import { readValidatedPaymentEvents } from "./ayo-payment-events-sync.ts";
 
 const row = (extra: Record<string, unknown> = {}) => ({ source_table: "reservation_payments", id: 1, booking_id: "BK-1", reservation_payment_id: "RP-1", field_name: "Court No 1", date: "2026-06-01", total: 100, final_status: "paid", ...extra });
 
@@ -49,4 +50,20 @@ test("normalisasi tidak mengubah CANCELLED menjadi revenue eligible secara impli
   const event = normalizeAyoPaymentEvent(row({ final_status: "CANCELLED", total: 100 }));
   const result = validatePaymentPeriod({ startDate: "2026-06-01", endDate: "2026-06-30", events: [event], expectedTotalTransaction: 1, expectedTotal: 0, conflictCount: 0 });
   assert.equal(result.status, "validated");
+});
+
+test("metadata payment-event belum ada -> fallback null", async () => {
+  const result = await readValidatedPaymentEvents("2026-06-01", "2026-06-30", {
+    periods: { findOne: async () => null, updateOne: async () => undefined },
+    events: { find: () => ({ toArray: async () => [] }) },
+  });
+  assert.equal(result, null);
+});
+
+test("query payment-event gagal -> fallback null, bukan exception dashboard", async () => {
+  const result = await readValidatedPaymentEvents("2026-06-01", "2026-06-30", {
+    periods: { findOne: async () => { throw new Error("collection unavailable"); }, updateOne: async () => undefined },
+    events: { find: () => ({ toArray: async () => { throw new Error("query failed"); } }) },
+  });
+  assert.equal(result, null);
 });
