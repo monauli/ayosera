@@ -9,9 +9,9 @@ import {
   isDisplayEligibleTransaction,
 } from "@/lib/revenue";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
-import { paymentEventAsBooking } from "@/lib/ayo-payment-events-sync";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
+import { buildDashboardPaymentMetrics } from "@/lib/dashboard-payment-metrics";
 
 /**
  * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
@@ -89,13 +89,14 @@ export async function GET(request: Request) {
       const displayFiltered = analyzedFiltered.filter((item) => item.display);
       const revenueEligible = displayFiltered.filter((item) => !item.cancelled);
       const revenueFiltered = displayFiltered.reduce((sum, item) => sum + item.revenue, 0);
-      // report-transactions mencakup BK + MN; rule CANCELLED tetap sama karena
-      // event dipetakan ke bentuk booking lalu dianalisis oleh fungsi yang sama.
-      const paymentMetrics = validatedPaymentEvents
-        ? validatedPaymentEvents.events.map(paymentEventAsBooking).map(analyzeBooking).filter((item) => item.display)
-        : null;
-      const paymentTransactionCount = paymentMetrics?.length ?? displayFiltered.length;
-      const paymentRevenue = paymentMetrics?.reduce((sum, item) => sum + item.revenue, 0) ?? revenueFiltered;
+      // Payment metrics must stay independent from booking status/display rules.
+      // Booking rows remain the source for every booking widget below.
+      const paymentMetrics = buildDashboardPaymentMetrics({
+        bookingTotal: displayFiltered.length,
+        fallbackTransactions: displayFiltered.length,
+        fallbackRevenue: revenueFiltered,
+        paymentEvents: validatedPaymentEvents?.events ?? null,
+      });
 
       const analyzedToday = todayBookings.map(analyzeBooking);
       const displayToday = analyzedToday.filter((item) => item.display);
@@ -157,9 +158,10 @@ export async function GET(request: Request) {
 
       return {
         metrics: {
-          totalTransactions: paymentTransactionCount,
+          totalTransactions: paymentMetrics.totalTransactions,
           revenueToday: toIdrFull(revenueToday),
-          revenueMonth: toIdrFull(paymentRevenue),
+          revenueMonth: toIdrFull(paymentMetrics.revenueMonth),
+          bookingTotal: paymentMetrics.bookingTotal,
           activeCustomers: new Set(
             displayFiltered.map((item) => item.booking.booker_phone || item.booking.booker_email || item.booking.booker_name),
           ).size,

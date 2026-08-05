@@ -83,9 +83,10 @@ test("dashboard memakai staging aktif hanya untuk metrik, bukan mengganti widget
   assert.match(source, /isPaymentEventsReadEnabled\(\) && canUsePaymentEvents/);
   assert.doesNotMatch(source, /ayoPaymentEvents|ayoPaymentPeriods|readValidatedPaymentEvents/);
   assert.match(source, /const analyzedFiltered = filteredBookings\.map\(analyzeBooking\)/);
-  assert.match(source, /const paymentMetrics = validatedPaymentEvents/);
-  assert.match(source, /totalTransactions: paymentTransactionCount/);
-  assert.match(source, /revenueMonth: toIdrFull\(paymentRevenue\)/);
+  assert.match(source, /const paymentMetrics = buildDashboardPaymentMetrics/);
+  assert.doesNotMatch(source, /paymentEventAsBooking/);
+  assert.match(source, /totalTransactions: paymentMetrics\.totalTransactions/);
+  assert.match(source, /revenueMonth: toIdrFull\(paymentMetrics\.revenueMonth\)/);
   assert.doesNotMatch(source, /dashboardRows/);
 });
 
@@ -93,8 +94,8 @@ test("flag dashboard fail-safe: pointer aktif tidak dibaca tanpa opt-in; opt-in 
   const source = await readFile(new URL("../app/api/dashboard/route.ts", import.meta.url), "utf8");
   assert.match(source, /const validatedPaymentEvents = isPaymentEventsReadEnabled\(\) && canUsePaymentEvents/);
   assert.match(source, /const analyzedFiltered = filteredBookings\.map\(analyzeBooking\)/);
-  assert.match(source, /paymentTransactionCount = paymentMetrics\?\.length \?\? displayFiltered\.length/);
-  assert.match(source, /paymentRevenue = paymentMetrics\?\.reduce[\s\S]*\?\? revenueFiltered/);
+  assert.match(source, /bookingTotal: paymentMetrics\.bookingTotal/);
+  assert.match(source, /paymentEvents: validatedPaymentEvents\?\.events \?\? null/);
 });
 
 test("aktivasi memakai satu pointer atomik, rollback tidak menghapus, dan Olsera tidak memakai staging", async () => {

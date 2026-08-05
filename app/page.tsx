@@ -66,6 +66,7 @@ type DashboardPayload = {
     totalTransactions: number;
     revenueToday: string;
     revenueMonth: string;
+    bookingTotal: number;
     activeCustomers: number;
   };
   hourlyTransactions: HourlyPoint[];
@@ -1834,7 +1835,7 @@ export default function DashboardPage() {
   // pembulatan apa pun lagi di sini. Titik pembulatan HANYA ada satu di
   // seluruh alur: persentase tampilan (`safePercent`) di dalam
   // BookingStatusDonut, dihitung dari count eksak ini saat dirender.
-  const totalBookings = metrics?.totalTransactions ?? 0;
+  const totalBookings = metrics?.bookingTotal ?? 0;
   const reservationCount =
     (paymentRows.find((row) => row.name === "Reservation")?.value ?? 0) +
     (paymentRows.find((row) => row.name === "Pending")?.value ?? 0);
