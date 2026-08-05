@@ -24,7 +24,7 @@ function fake(options: { state?: Record<string, unknown>; existing?: ReturnType<
       find() { return { async toArray() { return rows as never; } }; },
       async bulkWrite(operations: unknown[]) { writes += 1; if (options.failUpsert) throw new Error("mongodb://secret-host/write failed AYO_MOBILE_TOKEN=secret"); for (const operation of operations as Array<{ updateOne: { update: { $set: Record<string, unknown> } } }>) { const next = operation.updateOne.update.$set; const index = rows.findIndex((row) => row._id === next._id); if (index < 0) rows.push(next as never); else rows[index] = next as never; } },
     },
-    runs: { async updateOne() {} },
+    runs: { async updateOne(_filter: Record<string, unknown>, _update: Record<string, unknown>) {} },
     fetch: async () => { fetches += 1; return options.fetch ? await options.fetch() as never : { events: [event(1)], expectedTotalTransaction: 1, expectedTotal: 100 }; },
     now: () => now,
     env: { AYO_PAYMENT_EVENTS_SYNC_START_DATE: "2026-09-01" },
@@ -67,4 +67,14 @@ test("fetch or upsert failure keeps checkpoint, sanitizes error, and releases lo
 test("flag false creates no state/lock and true is reserved for exactly one controlled subtask", async () => {
   assert.deepEqual(await maybeSyncAyoPaymentEvents({ env: {} }), { skipped: true, reason: "disabled" });
   assert.deepEqual(await maybeSyncAyoPaymentEvents({ env: { AYO_PAYMENT_EVENTS_SYNC_ENABLED: "false" } }), { skipped: true, reason: "disabled" });
+});
+
+test("rolling run upsert keeps createdAt only on insert and updatedAt only on update", async () => {
+  let update: Record<string, Record<string, unknown>> | undefined;
+  const sample = fake();
+  sample.context.runs = { async updateOne(_filter, value) { update = value as Record<string, Record<string, unknown>>; } };
+  await syncAyoPaymentEventsAutomatically(sample.context);
+  assert.ok(update?.$setOnInsert.createdAt);
+  assert.equal(update?.$setOnInsert.updatedAt, undefined);
+  assert.ok(update?.$set.updatedAt);
 });
