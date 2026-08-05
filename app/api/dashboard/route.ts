@@ -11,6 +11,7 @@ import {
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { paymentEventAsBooking } from "@/lib/ayo-payment-events-sync";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
+import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
 
 /**
  * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
@@ -77,18 +78,24 @@ export async function GET(request: Request) {
       const canUsePaymentEvents = Boolean(explicitStart && explicitEnd && !searchParams.get("status") && !searchParams.get("branch") && !searchParams.get("q"));
       // Koleksi lama ayo_payment_events tidak pernah menjadi sumber dashboard.
       // Hanya staging run aktif yang tervalidasi lengkap Juni+Juli yang boleh dipakai.
-      const validatedPaymentEvents = canUsePaymentEvents
+      // Fail closed during cleanup: a stale active pointer is never consulted
+      // unless the server-only flag is explicitly enabled after approval.
+      const validatedPaymentEvents = isPaymentEventsReadEnabled() && canUsePaymentEvents
         ? await readActiveStagedPaymentEvents(explicitStart!, explicitEnd!, { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation })
         : null;
-      // Payment events adalah sumber dashboard hanya bila period tervalidasi penuh;
-      // MN tetap masuk dashboard, sedangkan rekonsiliasi memfilter BK di source adapter.
-      const dashboardRows = validatedPaymentEvents?.events.map(paymentEventAsBooking) ?? filteredBookings;
-
-      // Analisis rule revenue sekali per booking/event, lalu dipakai ulang di semua widget.
-      const analyzedFiltered = dashboardRows.map(analyzeBooking);
+      // Booking lama tetap menjadi dataset semua widget status, lapangan, detail,
+      // dan sesi. Payment events hanya menimpa dua metrik pembayaran/omzet.
+      const analyzedFiltered = filteredBookings.map(analyzeBooking);
       const displayFiltered = analyzedFiltered.filter((item) => item.display);
       const revenueEligible = displayFiltered.filter((item) => !item.cancelled);
       const revenueFiltered = displayFiltered.reduce((sum, item) => sum + item.revenue, 0);
+      // report-transactions mencakup BK + MN; rule CANCELLED tetap sama karena
+      // event dipetakan ke bentuk booking lalu dianalisis oleh fungsi yang sama.
+      const paymentMetrics = validatedPaymentEvents
+        ? validatedPaymentEvents.events.map(paymentEventAsBooking).map(analyzeBooking).filter((item) => item.display)
+        : null;
+      const paymentTransactionCount = paymentMetrics?.length ?? displayFiltered.length;
+      const paymentRevenue = paymentMetrics?.reduce((sum, item) => sum + item.revenue, 0) ?? revenueFiltered;
 
       const analyzedToday = todayBookings.map(analyzeBooking);
       const displayToday = analyzedToday.filter((item) => item.display);
@@ -150,9 +157,9 @@ export async function GET(request: Request) {
 
       return {
         metrics: {
-          totalTransactions: displayFiltered.length,
+          totalTransactions: paymentTransactionCount,
           revenueToday: toIdrFull(revenueToday),
-          revenueMonth: toIdrFull(revenueFiltered),
+          revenueMonth: toIdrFull(paymentRevenue),
           activeCustomers: new Set(
             displayFiltered.map((item) => item.booking.booker_phone || item.booking.booker_email || item.booking.booker_name),
           ).size,
@@ -188,7 +195,7 @@ export async function GET(request: Request) {
           .filter((name): name is string => Boolean(name))
           .sort((a, b) => a.localeCompare(b))
           .map((name) => ({ label: name, value: name })),
-        _meta: { processed: dashboardRows.length },
+        _meta: { processed: filteredBookings.length },
       };
     });
 

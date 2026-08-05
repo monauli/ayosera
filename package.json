@@ -34,7 +34,7 @@
     "test:login-identifier": "node --no-warnings --experimental-strip-types --test lib/login-identifier.test.ts",
     "test:users": "node --no-warnings --experimental-strip-types --test lib/users.test.ts",
     "test:password-generator": "node --no-warnings --experimental-strip-types --test lib/password-generator.test.ts",
-    "test:ayo-payment-events": "tsx --conditions=react-server --test lib/ayo-payment-events.test.ts",
+    "test:ayo-payment-events": "tsx --conditions=react-server --test lib/ayo-payment-events.test.ts lib/ayo-payment-events-engine.test.ts",
     "test:mongodb-indexes": "node --no-warnings --experimental-strip-types --test lib/mongodb-indexes.test.ts",
     "test:ayo-payment-events-backfill": "tsx --conditions=react-server --test lib/ayo-payment-events-backfill.test.ts lib/ayo-payment-events-backfill-route.test.ts lib/ayo-payment-event-staging.test.ts",
     "dry-run:ayo-payment-events": "node --no-warnings --experimental-strip-types scripts/dry-run-ayo-payment-events.ts",

@@ -7,10 +7,27 @@ const REQUEST_TIMEOUT_MS = 20_000;
 
 export type AyoPaymentEvent = {
   _id: string;
+  /** Deterministic primary/fallback payment identity; never booking_id alone. */
+  identity: string;
   bookingId: string;
   sourceTable: string;
   reservationPaymentId: string | null;
   nativeId: string;
+  sourceId: string | null;
+  /** Payment transaction timestamp; `date` remains legacy booking-date compatibility. */
+  eventDate: Date;
+  eventDateSource: string;
+  /** Integer Rupiah selected from one source field, never a summed payment breakdown. */
+  amount: number;
+  amountSource: string;
+  bookingPrefix: "BK" | "MN" | "OTHER" | null;
+  paymentStatus: string | null;
+  bookingStatus: string | null;
+  source: "ayo-report-transactions";
+  rawPayload: Record<string, unknown>;
+  normalizedPayload: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
   paymentType: string | null;
   paymentNote: string | null;
   detailStatus: string | null;
@@ -78,12 +95,42 @@ export function normalizeAyoPaymentEvent(row: Record<string, unknown>, syncedAt 
     return Number.isFinite(result) ? result : 0;
   };
   const text = (value: unknown) => (value === null || value === undefined || value === "" ? null : String(value));
+  const integer = (value: unknown) => {
+    const result = number(value);
+    return Number.isSafeInteger(result) ? result : 0;
+  };
+  // `final_fee_ayo` is retained first for compatibility with the previously
+  // validated report totals. It is a single payment amount, not a component to
+  // add to total_price/total. The remaining fallbacks are audited API fields.
+  const amountCandidates: Array<[string, unknown]> = [["final_fee_ayo", row.final_fee_ayo], ["total_price", row.total_price], ["total", row.total]];
+  const [amountSource, amountValue] = amountCandidates.find(([, value]) => integer(value) !== 0) ?? ["total", row.total];
+  const eventDateCandidates: Array<[string, unknown]> = [["payment_date", row.payment_date], ["transaction_date", row.transaction_date], ["created_at", row.created_at], ["date", row.date]];
+  const eventDateMatch = eventDateCandidates.find(([, value]) => !Number.isNaN(Date.parse(String(value ?? ""))));
+  const eventDateSource = eventDateMatch?.[0] ?? "fallback-synced-at";
+  const eventDate = eventDateMatch ? new Date(String(eventDateMatch[1])) : syncedAt;
+  const bookingId = String(row.booking_id ?? "").trim();
+  const paymentStatus = text(row.final_status ?? row.payment_status ?? row.detail_status);
+  const bookingStatus = text(row.booking_status ?? row.status);
   return {
     _id: identity,
-    bookingId: String(row.booking_id ?? "").trim(),
+    identity,
+    bookingId,
     sourceTable: String(row.source_table).trim(),
     reservationPaymentId: text(row.reservation_payment_id),
     nativeId: String(row.id ?? "").trim(),
+    sourceId: text(row.id),
+    eventDate,
+    eventDateSource,
+    amount: integer(amountValue),
+    amountSource,
+    bookingPrefix: bookingId.startsWith("BK") ? "BK" : bookingId.startsWith("MN") ? "MN" : bookingId ? "OTHER" : null,
+    paymentStatus,
+    bookingStatus,
+    source: "ayo-report-transactions",
+    rawPayload: { ...row },
+    normalizedPayload: { identity, bookingId, sourceTable: String(row.source_table).trim(), reservationPaymentId: text(row.reservation_payment_id), sourceId: text(row.id), eventDate: eventDate.toISOString(), eventDateSource, amount: integer(amountValue), amountSource, paymentStatus, bookingStatus },
+    createdAt: syncedAt,
+    updatedAt: syncedAt,
     paymentType: text(row.payment_type),
     paymentNote: text(row.payment_note),
     detailStatus: text(row.detail_status),
@@ -100,8 +147,8 @@ export function normalizeAyoPaymentEvent(row: Record<string, unknown>, syncedAt 
   };
 }
 
-export function paymentEventRevenue(event: Pick<AyoPaymentEvent, "total" | "finalFeeAyo" | "finalStatus" | "detailStatus" | "isCredit">) {
-  const candidate = { total: event.finalFeeAyo || event.total, status: event.finalStatus, detail_status: event.detailStatus, is_credit: event.isCredit };
+export function paymentEventRevenue(event: Pick<AyoPaymentEvent, "total" | "finalFeeAyo" | "finalStatus" | "detailStatus" | "isCredit"> & Partial<Pick<AyoPaymentEvent, "amount">>) {
+  const candidate = { total: event.amount !== undefined ? event.amount : (event.finalFeeAyo || event.total), status: event.finalStatus, detail_status: event.detailStatus, is_credit: event.isCredit };
   return isRevenueEligibleTransaction(candidate) ? Number(candidate.total) : 0;
 }
 

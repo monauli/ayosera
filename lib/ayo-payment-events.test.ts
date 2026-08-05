@@ -9,6 +9,17 @@ test("payment event identity memakai source_table + reservation_payment_id, buka
   assert.equal(paymentEventIdentity(row()), "reservation_payments:BK-1:RP-1");
   assert.notEqual(paymentEventIdentity(row({ reservation_payment_id: "RP-2" })), paymentEventIdentity(row()));
   assert.equal(paymentEventIdentity(row({ reservation_payment_id: "", id: 9 })), "reservation_payments:BK-1:id:9");
+  assert.equal(paymentEventIdentity(row({ reservation_payment_id: "", id: "" })), null);
+});
+
+test("normalisasi menyimpan nominal rupiah integer, payload audit, dan tanggal payment", () => {
+  const event = normalizeAyoPaymentEvent(row({ payment_date: "2026-06-02T01:00:00.000Z", total: "150.5", final_fee_ayo: 125, init_payment: 25, full_payment: 100 }));
+  assert.equal(event.amount, 125);
+  assert.equal(event.amountSource, "final_fee_ayo");
+  assert.equal(event.eventDate.toISOString(), "2026-06-02T01:00:00.000Z");
+  assert.equal(event.eventDateSource, "payment_date");
+  assert.equal(event.rawPayload.reservation_payment_id, "RP-1");
+  assert.equal(event.normalizedPayload.identity, event.identity);
 });
 
 test("dua payment event pada booking sama tetap terpisah dan validasi menjumlahkan keduanya", () => {

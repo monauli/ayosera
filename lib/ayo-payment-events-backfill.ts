@@ -7,7 +7,7 @@ export function assertBackfillWriteAllowed(options: { write: boolean; confirm?: 
 }
 
 export function canonicalPaymentEvent(event: AyoPaymentEvent) {
-  return JSON.stringify({ _id: event._id, bookingId: event.bookingId, sourceTable: event.sourceTable, reservationPaymentId: event.reservationPaymentId, nativeId: event.nativeId, paymentType: event.paymentType, paymentNote: event.paymentNote, detailStatus: event.detailStatus, finalStatus: event.finalStatus, fieldName: event.fieldName, date: event.date, startTime: event.startTime, endTime: event.endTime, total: event.total, finalFeeAyo: event.finalFeeAyo, isCredit: event.isCredit });
+  return JSON.stringify({ _id: event._id, identity: event.identity, bookingId: event.bookingId, sourceTable: event.sourceTable, reservationPaymentId: event.reservationPaymentId, nativeId: event.nativeId, sourceId: event.sourceId, eventDate: event.eventDate.toISOString(), amount: event.amount, amountSource: event.amountSource, paymentStatus: event.paymentStatus, bookingStatus: event.bookingStatus, paymentType: event.paymentType, paymentNote: event.paymentNote, detailStatus: event.detailStatus, finalStatus: event.finalStatus, fieldName: event.fieldName, date: event.date, startTime: event.startTime, endTime: event.endTime, total: event.total, finalFeeAyo: event.finalFeeAyo, isCredit: event.isCredit });
 }
 
 export function planBackfill(apiEvents: readonly AyoPaymentEvent[], existingEvents: readonly AyoPaymentEvent[]) {

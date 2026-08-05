@@ -5,7 +5,8 @@ import { isActivatableRun, readActiveStagedPaymentEvents, validateStagingPeriod,
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 function event(id: string, amount: number): AyoPaymentEvent {
-  return { _id: id, bookingId: `BK${id}`, sourceTable: "order_detail", reservationPaymentId: id, nativeId: id, paymentType: null, paymentNote: null, detailStatus: "SUCCESS", finalStatus: "SUCCESS", fieldName: "Padel", date: "2026-06-01", startTime: null, endTime: null, total: amount, finalFeeAyo: 0, isCredit: false, raw: {}, syncedAt: new Date() };
+  const now = new Date();
+  return { _id: id, identity: id, bookingId: `BK${id}`, sourceTable: "order_detail", reservationPaymentId: id, nativeId: id, sourceId: id, eventDate: now, eventDateSource: "date", amount, amountSource: "total", bookingPrefix: "BK", paymentStatus: "SUCCESS", bookingStatus: null, source: "ayo-report-transactions", rawPayload: {}, normalizedPayload: {}, createdAt: now, updatedAt: now, paymentType: null, paymentNote: null, detailStatus: "SUCCESS", finalStatus: "SUCCESS", fieldName: "Padel", date: "2026-06-01", startTime: null, endTime: null, total: amount, finalFeeAyo: 0, isCredit: false, raw: {}, syncedAt: now };
 }
 function valid(period: "2026-06" | "2026-07", rows: number, total: number) {
   const events = Array.from({ length: rows }, (_, index) => event(`${period}-${index}`, index + 1 === rows ? total : 0));
@@ -37,10 +38,24 @@ test("hanya pointer run aktif tervalidasi dibaca; Mei, run lain, dan error Mongo
   assert.equal(await readActiveStagedPaymentEvents("2026-06-01", "2026-06-30", broken), null);
 });
 
-test("dashboard memakai staging aktif, bukan koleksi payment-event lama", async () => {
+test("dashboard memakai staging aktif hanya untuk metrik, bukan mengganti widget booking", async () => {
   const source = await readFile(new URL("../app/api/dashboard/route.ts", import.meta.url), "utf8");
   assert.match(source, /readActiveStagedPaymentEvents/);
+  assert.match(source, /isPaymentEventsReadEnabled\(\) && canUsePaymentEvents/);
   assert.doesNotMatch(source, /ayoPaymentEvents|ayoPaymentPeriods|readValidatedPaymentEvents/);
+  assert.match(source, /const analyzedFiltered = filteredBookings\.map\(analyzeBooking\)/);
+  assert.match(source, /const paymentMetrics = validatedPaymentEvents/);
+  assert.match(source, /totalTransactions: paymentTransactionCount/);
+  assert.match(source, /revenueMonth: toIdrFull\(paymentRevenue\)/);
+  assert.doesNotMatch(source, /dashboardRows/);
+});
+
+test("flag dashboard fail-safe: pointer aktif tidak dibaca tanpa opt-in; opt-in hanya untuk metrik", async () => {
+  const source = await readFile(new URL("../app/api/dashboard/route.ts", import.meta.url), "utf8");
+  assert.match(source, /const validatedPaymentEvents = isPaymentEventsReadEnabled\(\) && canUsePaymentEvents/);
+  assert.match(source, /const analyzedFiltered = filteredBookings\.map\(analyzeBooking\)/);
+  assert.match(source, /paymentTransactionCount = paymentMetrics\?\.length \?\? displayFiltered\.length/);
+  assert.match(source, /paymentRevenue = paymentMetrics\?\.reduce[\s\S]*\?\? revenueFiltered/);
 });
 
 test("aktivasi memakai satu pointer atomik, rollback tidak menghapus, dan Olsera tidak memakai staging", async () => {
@@ -50,6 +65,9 @@ test("aktivasi memakai satu pointer atomik, rollback tidak menghapus, dan Olsera
     readFile(new URL("./reconciliation-omzet-ledger.ts", import.meta.url), "utf8"),
   ]);
   assert.match(route, /findOneAndUpdate\(\{ _id: "ayo-payment-events-active" \}/);
+  assert.match(route, /PAYMENT_EVENT_RELEASE_GUARD/);
+  assert.match(route, /status: 423/);
+  assert.match(route, /if \(action === "rollback"\)/);
   assert.match(route, /activeRunId: rollbackToRunId/);
   assert.doesNotMatch(route, /deleteMany|deleteOne|drop\(|createIndex/);
   assert.doesNotMatch(courtSource, /ayoPaymentEventStaging/);
