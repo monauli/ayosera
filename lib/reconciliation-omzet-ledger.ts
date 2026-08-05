@@ -13,7 +13,7 @@
 //   tidak membedakan itu, dan itu memang benar (BK/MN sudah termasuk total AYO,
 //   POS hanya metode pencatatan transaksi di Olsera).
 //
-// TIDAK ADA tolerance otomatis. Status hanya salah satu dari 4 (lihat
+// Toleransi pembulatan otomatis hanya ±Rp1. Status hanya salah satu dari 4 (lihat
 // OmzetStatus): Cocok / Selisih Terjelaskan / Perlu Dicek / Bulan Berjalan.
 // "Selisih Terjelaskan" HANYA tercapai lewat bukti jurnal nyata yang disimpan
 // eksplisit (lib/reconciliation-omzet-explanation-store.ts) — TIDAK PERNAH
@@ -24,6 +24,7 @@ import { getRevenueAmount, isRevenueEligibleTransaction } from "./revenue.ts";
 import type { BookingDocument } from "./mongodb.ts";
 import { readActiveStagedPaymentEvents, type StagingReadContext } from "./ayo-payment-event-staging.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
+import { classifyAyoSport, type Sport } from "./court-mapping.ts";
 
 // ---------------------------------------------------------------------------
 // Konstanta akun (SATU-SATUNYA tempat kode akun ini dirujuk untuk omzet)
@@ -126,12 +127,30 @@ export type PickleballVerification = {
 
 export type OmzetLedgerSide = { count: number; revenue: number };
 
+export type SportReconciliationSide = {
+  ayo: OmzetLedgerSide;
+  olsera: number;
+  difference: number;
+  status: "COCOK" | "PERLU_DICEK";
+};
+
+export type AyoSportReconciliation = {
+  court: SportReconciliationSide;
+  pickleball: SportReconciliationSide;
+  /** Payment/booking yang tidak punya sport pasti; tetap termasuk total AYO. */
+  unmapped: OmzetLedgerSide;
+  total: OmzetLedgerSide;
+};
+
+export type OmzetLedgerBookingInput = Pick<BookingDocument, "date" | "total_price" | "status"> & Partial<Pick<BookingDocument, "booking_id" | "field_name">>;
+
 export type OmzetOlseraLedgerResult = {
   period: string;
   ayo: OmzetLedgerSide;
   courtFees: AccountLedgerBreakdown;
   pickleball: AccountLedgerBreakdown;
   pickleballVerification: PickleballVerification;
+  sportReconciliation: AyoSportReconciliation;
   olseraTotal: number;
   differenceRevenue: number;
   dataAvailable: boolean;
@@ -229,6 +248,65 @@ function emptySide(): OmzetLedgerSide {
   return { count: 0, revenue: 0 };
 }
 
+function addToSide(side: OmzetLedgerSide, amount: number) {
+  side.count += 1;
+  side.revenue += amount;
+}
+
+function sportFromBookings(bookings: readonly Pick<OmzetLedgerBookingInput, "booking_id" | "field_name">[]) {
+  const byBookingId = new Map<string, Sport | "CONFLICT">();
+  for (const booking of bookings) {
+    const bookingId = String(booking.booking_id ?? "").trim();
+    const sport = classifyAyoSport(String(booking.field_name ?? ""));
+    if (!bookingId || sport === "UNKNOWN") continue;
+    const existing = byBookingId.get(bookingId);
+    byBookingId.set(bookingId, existing && existing !== sport ? "CONFLICT" : sport);
+  }
+  return byBookingId;
+}
+
+function emptySportBreakdown(): { court: OmzetLedgerSide; pickleball: OmzetLedgerSide; unmapped: OmzetLedgerSide; total: OmzetLedgerSide } {
+  return { court: emptySide(), pickleball: emptySide(), unmapped: emptySide(), total: emptySide() };
+}
+
+function addSportAmount(target: ReturnType<typeof emptySportBreakdown>, sport: Sport | "UNKNOWN", amount: number) {
+  addToSide(target.total, amount);
+  if (sport === "PADEL") addToSide(target.court, amount);
+  else if (sport === "PICKLEBALL") addToSide(target.pickleball, amount);
+  else addToSide(target.unmapped, amount);
+}
+
+/**
+ * Payment events are first classified by their normalized fieldName. If it is
+ * absent/unknown, use the matching booking's field_name; conflicts stay
+ * unmapped rather than being guessed. Identity, amounts, and total are intact.
+ */
+export function computeAyoPaymentEventSportBreakdown(
+  events: readonly AyoPaymentEvent[],
+  bookings: readonly Pick<OmzetLedgerBookingInput, "booking_id" | "field_name">[],
+) {
+  const target = emptySportBreakdown();
+  const bookingSports = sportFromBookings(bookings);
+  const unique = new Map(events.map((event) => [event.identity, event]));
+  for (const event of unique.values()) {
+    const fromEvent = classifyAyoSport(String(event.fieldName ?? ""));
+    const fromBooking = bookingSports.get(event.bookingId);
+    const sport = fromEvent !== "UNKNOWN" ? fromEvent : fromBooking === "PADEL" || fromBooking === "PICKLEBALL" ? fromBooking : "UNKNOWN";
+    addSportAmount(target, sport, event.amount);
+  }
+  return target;
+}
+
+/** Legacy booking fallback for periods without an active payment-event run. */
+export function computeAyoBookingSportBreakdown(bookings: OmzetLedgerBookingInput[]) {
+  const target = emptySportBreakdown();
+  for (const booking of bookings) {
+    if (!isRevenueEligibleTransaction(booking)) continue;
+    addSportAmount(target, classifyAyoSport(String(booking.field_name ?? "")), getRevenueAmount(booking));
+  }
+  return target;
+}
+
 /**
  * Hitung omzet AYO — booking eligible (bukan cancelled/internal/nol), sama
  * persis lib/revenue.ts yang sudah dipakai seluruh dashboard AYO lain.
@@ -253,6 +331,14 @@ export function computeAyoPaymentEventSide(events: readonly AyoPaymentEvent[]): 
   return { count: unique.size, revenue: [...unique.values()].reduce((sum, event) => sum + event.amount, 0) };
 }
 
+function sportStatus(difference: number): "COCOK" | "PERLU_DICEK" {
+  return Math.abs(difference) <= OMZET_MATCH_TOLERANCE_IDR ? "COCOK" : "PERLU_DICEK";
+}
+
+function defaultSportBreakdown(total: OmzetLedgerSide) {
+  return { court: emptySide(), pickleball: emptySide(), unmapped: { ...total }, total: { ...total } };
+}
+
 /**
  * Engine murni (tanpa I/O) — SATU-SATUNYA fungsi yang menghitung status/omzet
  * Rekonsiliasi Omzet AYOSERA. Dipanggil oleh loader ringkasan DAN detail
@@ -267,6 +353,7 @@ export function computeOmzetOlseraLedger(
   rawEntries21003: LedgerEntryInput[],
   explanation: OmzetExplanation | null = null,
   now: Date = new Date(),
+  ayoSportBreakdown = defaultSportBreakdown(ayo),
 ): OmzetOlseraLedgerResult {
   const rawNonOpening40001Count = rawEntries40001.filter((e) => !e.isOpeningBalance).length;
   const rawNonOpening40004Count = rawEntries40004.filter((e) => !e.isOpeningBalance).length;
@@ -302,6 +389,14 @@ export function computeOmzetOlseraLedger(
 
   const olseraTotal = courtFees.net + pickleball.net;
   const differenceRevenue = olseraTotal - ayo.revenue;
+  const courtDifference = courtFees.net - ayoSportBreakdown.court.revenue;
+  const pickleballDifference = pickleball.net - ayoSportBreakdown.pickleball.revenue;
+  const sportReconciliation: AyoSportReconciliation = {
+    court: { ayo: ayoSportBreakdown.court, olsera: courtFees.net, difference: courtDifference, status: sportStatus(courtDifference) },
+    pickleball: { ayo: ayoSportBreakdown.pickleball, olsera: pickleball.net, difference: pickleballDifference, status: sportStatus(pickleballDifference) },
+    unmapped: ayoSportBreakdown.unmapped,
+    total: ayoSportBreakdown.total,
+  };
 
   const { status, statusReason } = classifyStatus({
     isCurrent,
@@ -314,7 +409,7 @@ export function computeOmzetOlseraLedger(
     explanation,
   });
 
-  return { period, ayo, courtFees, pickleball, pickleballVerification, olseraTotal, differenceRevenue, dataAvailable, status, statusReason, explanation };
+  return { period, ayo, courtFees, pickleball, pickleballVerification, sportReconciliation, olseraTotal, differenceRevenue, dataAvailable, status, statusReason, explanation };
 }
 
 function classifyStatus(input: {
@@ -425,7 +520,7 @@ export type MinimalReadCollection<T> = {
 };
 
 export type OmzetLedgerSourceContext = {
-  bookings: MinimalReadCollection<Pick<BookingDocument, "date" | "total_price" | "status">>;
+  bookings: MinimalReadCollection<OmzetLedgerBookingInput>;
   ledgerEntries: MinimalReadCollection<LedgerEntryInput & { accountCode: string; period: string }>;
   loadExplanation: (period: string) => Promise<OmzetExplanation | null>;
   staging?: StagingReadContext;
@@ -496,8 +591,10 @@ async function loadPeriodData(period: string, context?: OmzetLedgerSourceContext
 /** Ringkasan SATU bulan — dipakai daftar bulanan di /reconciliation. */
 export async function loadOmzetLedgerMonthSummary(period: string, context?: OmzetLedgerSourceContext, now: Date = new Date()): Promise<OmzetOlseraLedgerResult> {
   const { bookingRows, paymentEvents, entries40001, entries40004, entries21003, explanation } = await loadPeriodData(period, context);
-  const ayo = paymentEvents ? computeAyoPaymentEventSide(paymentEvents) : computeAyoSide(bookingRows);
-  return computeOmzetOlseraLedger(period, ayo, entries40001, entries40004, entries21003, explanation, now);
+  const ayoSportBreakdown = paymentEvents
+    ? computeAyoPaymentEventSportBreakdown(paymentEvents, bookingRows)
+    : computeAyoBookingSportBreakdown(bookingRows);
+  return computeOmzetOlseraLedger(period, ayoSportBreakdown.total, entries40001, entries40004, entries21003, explanation, now, ayoSportBreakdown);
 }
 
 /** Detail SATU bulan — SAMA PERSIS engine-nya dengan ringkasan (satu sumber, lihat computeOmzetOlseraLedger). */

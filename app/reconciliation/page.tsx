@@ -17,6 +17,10 @@ type AccountBreakdown = {
 };
 type PickleballVerification = { applicable: boolean; verified: boolean | null; matchedEntry: LedgerEntry | null; reason: string };
 type OmzetStatus = "COCOK" | "SELISIH_TERJELASKAN" | "PERLU_DICEK" | "BULAN_BERJALAN";
+type SportReconciliationStatus = "COCOK" | "PERLU_DICEK";
+type SportSide = { count: number; revenue: number };
+type SportComparison = { ayo: SportSide; olsera: number; difference: number; status: SportReconciliationStatus };
+type SportReconciliation = { court: SportComparison; pickleball: SportComparison; unmapped: SportSide; total: SportSide };
 type EvidenceType = "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
 /** Penanda note yang dikunci LANGSUNG dari status Cocok (selisih Rp0), TANPA penjelasan manual — lihat lib/reconciliation-omzet-ledger.ts OMZET_LOCK_WITHOUT_EXPLANATION_MARKER. TIDAK muncul di dropdown "Jenis bukti" (bukan kategori bukti sungguhan). */
 const LOCK_WITHOUT_EXPLANATION_MARKER = "matched-no-explanation" as const;
@@ -39,6 +43,7 @@ type OmzetResult = {
   courtFees: AccountBreakdown;
   pickleball: AccountBreakdown;
   pickleballVerification: PickleballVerification;
+  sportReconciliation: SportReconciliation;
   olseraTotal: number;
   differenceRevenue: number;
   dataAvailable: boolean;
@@ -107,6 +112,20 @@ function AccountCard({ title, breakdown }: { title: string; breakdown: AccountBr
       <span>{title} — bersih (sebelum reklasifikasi)</span>
       <b>{formatRupiah(breakdown.net)}</b>
     </div>
+  );
+}
+
+function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, finalStatus }: { title: string; ayoLabel: string; olseraLabel: string; comparison: SportComparison; finalStatus?: OmzetStatus }) {
+  return (
+    <section className="recon-sport-card">
+      <h3>{title}</h3>
+      <div className="recon-detail-grid">
+        <div><span>{ayoLabel}</span><b>{formatRupiah(comparison.ayo.revenue)}</b></div>
+        <div><span>{olseraLabel}</span><b>{formatRupiah(comparison.olsera)}</b></div>
+        <div><span>Selisih (Olsera - AYO)</span><b>{formatRupiah(comparison.difference)}</b></div>
+        <div><span>Status</span><StatusBadge status={finalStatus ?? comparison.status} /></div>
+      </div>
+    </section>
   );
 }
 
@@ -381,17 +400,25 @@ export default function ReconciliationPage() {
                 <strong>Penyebab status:</strong> {detail.statusReason}
               </p>
 
+              <section className="recon-sport-sections" aria-label="Rincian omzet per olahraga">
+                <SportReconciliationCard title="COURT" ayoLabel="Omzet AYO Court" olseraLabel="Olsera akun 40001" comparison={detail.sportReconciliation.court} />
+                <SportReconciliationCard title="PICKLEBALL" ayoLabel="Omzet AYO Pickleball" olseraLabel="Olsera akun 40004" comparison={detail.sportReconciliation.pickleball} />
+                <SportReconciliationCard
+                  title="TOTAL GABUNGAN"
+                  ayoLabel="Total Omzet AYO"
+                  olseraLabel="Total Omzet Olsera (40001+40004)"
+                  comparison={{ ayo: detail.sportReconciliation.total, olsera: detail.olseraTotal, difference: detail.differenceRevenue, status: detail.status === "COCOK" ? "COCOK" : "PERLU_DICEK" }}
+                  finalStatus={detail.status}
+                />
+              </section>
+
+              {detail.sportReconciliation.unmapped.count > 0 && (
+                <p className="recon-special">
+                  <AlertTriangle /> <span><strong>AYO Belum Terpetakan.</strong> {detail.sportReconciliation.unmapped.count} event/booking senilai {formatRupiah(detail.sportReconciliation.unmapped.revenue)} tetap termasuk Total Gabungan.</span>
+                </p>
+              )}
+
               <section className="recon-detail-grid">
-                <div>
-                  <span>Omzet AYO</span>
-                  <b>{formatRupiah(detail.ayo.revenue)}</b>
-                </div>
-                <div>
-                  <span>Jumlah booking AYO eligible</span>
-                  <b>{detail.ayo.count}</b>
-                </div>
-                <AccountCard title="Akun 40001 (Court Fees)" breakdown={detail.courtFees} />
-                <AccountCard title="Akun 40004 (Pickleball)" breakdown={detail.pickleball} />
                 <div>
                   <span>Verifikasi reklasifikasi 40004 → 21003</span>
                   <b>{detail.pickleballVerification.applicable ? (detail.pickleballVerification.verified ? "Terverifikasi" : detail.pickleballVerification.verified === false ? "Belum terverifikasi" : "Belum dapat dipastikan") : "Tidak berlaku (tidak ada aktivitas 40004)"}</b>

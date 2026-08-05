@@ -10,6 +10,8 @@ import test from "node:test";
 process.env.OLSERA_INTERNAL_STORE_ID = "324175";
 import {
   computeAyoPaymentEventSide,
+  computeAyoPaymentEventSportBreakdown,
+  computeAyoBookingSportBreakdown,
   computeAyoSide,
   computeOmzetOlseraLedger,
   hasOmzetActivity,
@@ -53,6 +55,10 @@ function paymentEvent(identity: string, bookingId: string, amount: number): AyoP
   return { identity, bookingId, amount } as AyoPaymentEvent;
 }
 
+function paymentEventWithSport(identity: string, bookingId: string, amount: number, fieldName = ""): AyoPaymentEvent {
+  return { ...paymentEvent(identity, bookingId, amount), fieldName } as AyoPaymentEvent;
+}
+
 test("payment events aktif menjadi sumber omzet AYO Juni/Juli: seluruh event unik dihitung, bukan filter booking lama", () => {
   const makePeriod = (count: number, bkAmount: number, nonBkAmount: number) => [
     ...Array.from({ length: count - 2 }, (_, index) => paymentEvent(`bk-${index}`, `BK-${index}`, 0)),
@@ -79,6 +85,50 @@ test("payment event dedupe memakai identity, bukan booking id", () => {
   assert.deepEqual(computeAyoPaymentEventSide(events), { count: 2, revenue: 237_491_000 });
 });
 
+test("breakdown sport memakai field payment event, lalu booking_id untuk DP dan pelunasan", () => {
+  const direct = computeAyoPaymentEventSportBreakdown([
+    paymentEventWithSport("court", "BK-court", 100_000, "Court No 2"),
+    paymentEventWithSport("pickleball", "BK-pickle", 200_000, "Pickleball"),
+  ], []);
+  assert.deepEqual(direct, {
+    court: { count: 1, revenue: 100_000 },
+    pickleball: { count: 1, revenue: 200_000 },
+    unmapped: { count: 0, revenue: 0 },
+    total: { count: 2, revenue: 300_000 },
+  });
+
+  const fromBooking = computeAyoPaymentEventSportBreakdown([
+    paymentEventWithSport("dp", "BK-legacy", 75_000),
+    paymentEventWithSport("settlement", "BK-legacy", 125_000),
+  ], [{ booking_id: "BK-legacy", field_name: "Pickleball" }]);
+  assert.deepEqual(fromBooking.pickleball, { count: 2, revenue: 200_000 });
+  assert.deepEqual(fromBooking.total, { count: 2, revenue: 200_000 });
+});
+
+test("breakdown sport mendedupe historical/rolling berdasarkan identity dan tidak membuang event unmapped", () => {
+  const result = computeAyoPaymentEventSportBreakdown([
+    paymentEventWithSport("shared", "BK-court", 100_000, "Court No 1"),
+    paymentEventWithSport("shared", "BK-court", 100_000, "Court No 1"),
+    paymentEventWithSport("unmapped", "BK-unknown", 50_000),
+  ], []);
+  assert.deepEqual(result.court, { count: 1, revenue: 100_000 });
+  assert.deepEqual(result.unmapped, { count: 1, revenue: 50_000 });
+  assert.deepEqual(result.total, { count: 2, revenue: 150_000 });
+  assert.equal(result.court.revenue + result.pickleball.revenue + result.unmapped.revenue, result.total.revenue);
+});
+
+test("booking fallback Februari-Mei memetakan sport tanpa mengubah total existing", () => {
+  const result = computeAyoBookingSportBreakdown([
+    { date: "2026-05-10", total_price: 100_000, status: "paid", field_name: "Court No 3" },
+    { date: "2026-05-11", total_price: 200_000, status: "paid", field_name: "Pickleball" },
+    { date: "2026-05-12", total_price: 50_000, status: "paid", field_name: "Unknown" },
+  ]);
+  assert.deepEqual(result.court, { count: 1, revenue: 100_000 });
+  assert.deepEqual(result.pickleball, { count: 1, revenue: 200_000 });
+  assert.deepEqual(result.unmapped, { count: 1, revenue: 50_000 });
+  assert.deepEqual(result.total, { count: 3, revenue: 350_000 });
+});
+
 function entry(overrides: Partial<LedgerEntryInput> & { transactionNo: string }): LedgerEntryInput {
   return { transactionDate: null, description: null, debit: 0, credit: 0, isOpeningBalance: false, ...overrides };
 }
@@ -88,6 +138,27 @@ const NOW = new Date("2026-06-15T00:00:00Z"); // Bulan berjalan (Asia/Jakarta) =
 function ayo(count: number, revenue: number) {
   return { count, revenue };
 }
+
+test("akun 40001 hanya dibandingkan Court, 40004 hanya Pickleball, dan toleransi berlaku per kategori", () => {
+  const breakdown = computeAyoPaymentEventSportBreakdown([
+    paymentEventWithSport("court", "BK-court", 100, "Court No 1"),
+    paymentEventWithSport("pickle", "BK-pickle", 201, "Pickleball"),
+  ], []);
+  const result = computeOmzetOlseraLedger(
+    "2026-05",
+    breakdown.total,
+    [entry({ transactionNo: "JU-COURT", transactionDate: "2026-05-10", credit: 101 }), entry({ transactionNo: "CL-COURT", transactionDate: "2026-05-31", debit: 101 })],
+    [entry({ transactionNo: "JU-PICKLE", transactionDate: "2026-05-10", credit: 200 }), entry({ transactionNo: "JU-REKLAS", transactionDate: "2026-05-31", debit: 200 })],
+    [entry({ transactionNo: "JU-REKLAS", transactionDate: "2026-05-31", credit: 200 })],
+    null,
+    NOW,
+    breakdown,
+  );
+  assert.deepEqual(result.sportReconciliation.court, { ayo: { count: 1, revenue: 100 }, olsera: 101, difference: 1, status: "COCOK" });
+  assert.deepEqual(result.sportReconciliation.pickleball, { ayo: { count: 1, revenue: 201 }, olsera: 200, difference: -1, status: "COCOK" });
+  assert.equal(result.differenceRevenue, 0);
+  assert.equal(result.status, "COCOK");
+});
 
 // ---------------------------------------------------------------------------
 // 1. Cocok persis
@@ -515,9 +586,13 @@ test("route /reconciliation memakai helper ledger yang menghitung active payment
     readFile(new URL("./reconciliation-omzet-ledger.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /fetch\("\/api\/reconciliation\/court-revenue"/);
+  assert.match(page, /COURT/);
+  assert.match(page, /PICKLEBALL/);
+  assert.match(page, /TOTAL GABUNGAN/);
+  assert.match(page, /AYO Belum Terpetakan/);
   assert.match(route, /loadOmzetLedgerRecentSummaries/);
   assert.match(ledger, /readActiveStagedPaymentEvents/);
-  assert.match(ledger, /computeAyoPaymentEventSide\(paymentEvents\)/);
+  assert.match(ledger, /computeAyoPaymentEventSportBreakdown\(paymentEvents, bookingRows\)/);
   assert.doesNotMatch(ledger, /events\.filter\(\(event\) => event\.bookingId\.startsWith\("BK"\)\)/);
 });
 
