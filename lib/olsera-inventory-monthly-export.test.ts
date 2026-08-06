@@ -4,6 +4,7 @@
 // eksternal yang bisa berubah/hilang. Tidak menyentuh MongoDB.
 // Jalankan: npm run test:olsera-inventory-monthly
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { aggregateDailySales, parseSummaryRows } from "./olsera-inventory-monthly-core.ts";
 import {
@@ -304,4 +305,44 @@ test("buildMonthlyInventoryWorkbook: includeDiagnosticsSheet=false -> HANYA shee
   assert.equal(workbook.worksheets.length, 1);
   assert.equal(workbook.getWorksheet("Diagnostik Import"), undefined);
   assert.equal(workbook.worksheets[0].name, "JUN'26");
+});
+
+// ---------------------------------------------------------------------------
+// Restorasi "Laporan Stock Opname Bulanan" (generateMonthlyInventoryExportAuto)
+// — dikembalikan dari commit f5bf8f0 (digantikan Export Inventori 2 Sheet),
+// dipulihkan kembali di commit berikutnya karena kedua laporan berbeda dan
+// sama-sama masih dipakai user. Reuse buildMonthlyInventoryWorkbook/
+// buildMonthlyRowsFromMonthlySnapshots yang sudah diuji di atas — TIDAK ada
+// formula/struktur kolom baru ditulis untuk restorasi ini.
+// ---------------------------------------------------------------------------
+
+test("generateMonthlyInventoryExportAuto: dikembalikan, memakai ensureMonthlySnapshotChain (self-healing, reuse) dan buildMonthlyInventoryWorkbook (format tanggal/per hari, bukan formula baru)", () => {
+  const source = readFileSync(new URL("./olsera-inventory-monthly-export.ts", import.meta.url), "utf8");
+  assert.ok(source.includes("export async function generateMonthlyInventoryExportAuto("));
+  assert.ok(source.includes("import { ensureMonthlySnapshotChain } from \"./olsera-inventory-monthly-snapshot-store.ts\";"));
+  assert.ok(source.includes("const chain = await ensureMonthlySnapshotChain({ year: input.year, month: input.month });"));
+  // Struktur/formula workbook (kolom per-hari, Selisih, dsb.) memakai builder
+  // yang SAMA dengan generateMonthlyInventoryExport (upload manual) — bukan
+  // fungsi/formula terpisah untuk jalur otomatis.
+  const autoFnBody = source.slice(source.indexOf("export async function generateMonthlyInventoryExportAuto("));
+  assert.ok(autoFnBody.includes("buildMonthlyInventoryWorkbook({"));
+  assert.ok(autoFnBody.includes("buildMonthlyRowsFromMonthlySnapshots({"));
+});
+
+test("route monthly-stock-opname memakai generateMonthlyInventoryExportAuto (format lama) dan nama file 'Laporan Stock Opname Bulanan-YYYY-MM.xlsx'", () => {
+  const source = readFileSync(
+    new URL("../app/api/olsera/inventory/export/monthly-stock-opname/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(source.includes("generateMonthlyInventoryExportAuto"));
+  assert.ok(source.includes("`Laporan Stock Opname Bulanan-${params.data.year}-${String(params.data.month).padStart(2, \"0\")}.xlsx`"));
+});
+
+test("route monthly-auto TETAP memakai generateTwoSheetInventoryExport (Export Inventori 2 Sheet TIDAK dihapus oleh restorasi laporan lama)", () => {
+  const source = readFileSync(
+    new URL("../app/api/olsera/inventory/export/monthly-auto/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(source.includes("generateTwoSheetInventoryExport"));
+  assert.equal(source.includes("generateMonthlyInventoryExportAuto"), false);
 });

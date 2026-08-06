@@ -30,7 +30,8 @@ import {
   type MonthlyMatchMethod,
   type SummaryRow,
 } from "./olsera-inventory-monthly-core.ts";
-import { stripDuplicateSuffix } from "./olsera-inventory-monthly-snapshot-core.ts";
+import { dominantStoreId, recoverNullProductIdSales, stripDuplicateSuffix } from "./olsera-inventory-monthly-snapshot-core.ts";
+import { ensureMonthlySnapshotChain } from "./olsera-inventory-monthly-snapshot-store.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
@@ -805,6 +806,124 @@ export async function generateMonthlyInventoryExport(input: {
     // sebagai sheet di file yang diunduh.
     includeDiagnosticsSheet: false,
     diagnostics: { headerErrors: [], skippedBlankRows: parsed.skippedBlankRows, rowsOutsidePeriod, duplicates, ...diagnostics },
+  });
+
+  return { ok: true, workbook };
+}
+
+// ---------------------------------------------------------------------------
+// Glue OTOMATIS ("Laporan Stock Opname Bulanan"): bulan+tahun → pastikan
+// rantai snapshot bulanan sampai bulan ini ada (ensureMonthlySnapshotChain —
+// backfill on-demand bila belum) → katalog + penjualan harian AYOSERA
+// existing (Mongo) → build workbook. TIDAK ada upload file. Struktur &
+// formula Excel sama persis dengan generateMonthlyInventoryExport di atas
+// (buildMonthlyInventoryWorkbook dipakai ulang tanpa perubahan) — hanya
+// sumber Stok Awal/Barang Masuk/Keluar/Sisa yang berbeda (snapshot bulanan
+// tersimpan, bukan file/stockQty katalog hari ini). Dikembalikan dari commit
+// f5bf8f0 (digantikan Export Inventori 2 Sheet) — lihat tmp/ai-handoff.md.
+// ---------------------------------------------------------------------------
+
+export async function generateMonthlyInventoryExportAuto(input: {
+  year: number;
+  month: number;
+}): Promise<GenerateMonthlyExportResult> {
+  const { startDate, endDate, days } = monthDateRange(input.year, input.month);
+  const today = todayJakarta();
+
+  const chain = await ensureMonthlySnapshotChain({ year: input.year, month: input.month });
+  if (!chain.ok) {
+    return { ok: false, errors: [`Gagal menyiapkan snapshot bulanan (${input.year}-${String(input.month).padStart(2, "0")}): ${chain.error}`] };
+  }
+
+  const { catalogProducts, salesMovements, unresolvedNullProductSales, syncedDayIds, syncState } = await withMongo(async () => {
+    const { olseraInventoryProducts, olseraInventoryMovements, olseraOrderItems, olseraSyncedDays, olseraSyncState } = await collections();
+    const storeScope = { storeId: { $in: [currentStoreId(), null] } };
+    const [products, movements, nullMovements, syncedDays, state] = await Promise.all([
+      olseraInventoryProducts.find(storeScope).toArray(),
+      olseraInventoryMovements.find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: { $ne: null }, ...storeScope }).toArray(),
+      // Movement penjualan yang productId-nya null saat sync — terverifikasi
+      // live 2026-07-21 (kasus YONEX SHORTS): olsera_order_items.resolvedProductId
+      // untuk item yang SAMA berhasil diresolusi via olsera_product_aliases,
+      // tapi dokumen olsera_inventory_movements-nya sendiri gagal ikut
+      // ter-resolve (resolver movement tidak konsisten dengan resolver order
+      // item). Dipulihkan HANYA saat baca di sini — TIDAK menulis apa pun ke
+      // olsera_inventory_movements (pipeline sync tidak disentuh).
+      olseraInventoryMovements.find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: null, ...storeScope }).toArray(),
+      olseraSyncedDays.find({ _id: { $gte: startDate, $lte: endDate } }, { projection: { _id: 1 } }).toArray(),
+      olseraSyncState.findOne({ _id: "olsera" }),
+    ]);
+
+    let recovered: typeof movements = [];
+    if (nullMovements.length) {
+      const orderItemIds = nullMovements.map((m) => Number(String(m._id).split(":")[1])).filter((id) => Number.isFinite(id));
+      const orderItems = orderItemIds.length
+        ? await olseraOrderItems.find({ _id: { $in: orderItemIds } }).project({ resolvedProductId: 1, variantId: 1 }).toArray()
+        : [];
+      const resolvedByOrderItemId = new Map(orderItems.map((o) => [o._id, { resolvedProductId: o.resolvedProductId ?? null, variantId: o.variantId ?? null }]));
+      recovered = recoverNullProductIdSales(nullMovements, resolvedByOrderItemId);
+    }
+
+    return {
+      catalogProducts: products as InventoryProductInput[],
+      salesMovements: [...movements, ...recovered],
+      unresolvedNullProductSales: nullMovements.length - recovered.length,
+      syncedDayIds: new Set(syncedDays.map((doc) => doc._id)),
+      syncState: state,
+    };
+  });
+
+  if (!catalogProducts.length) {
+    return {
+      ok: false,
+      errors: ["Katalog produk inventori (olsera_inventory_products) kosong — jalankan Sync Inventori terlebih dahulu."],
+    };
+  }
+
+  // storeId movement penjualan null utk kasus tepi yang SAMA dengan
+  // productId:null (terverifikasi live 2026-07-21, 2 dari 2534 movement Juni
+  // — YONEX SHORTS) — 0 BUKAN storeId nyata manapun di katalog, jadi
+  // fallback ke storeId dominan katalog (bukan 0) supaya key-nya cocok
+  // dengan key snapshot bulanan (storeId asli, 324175 pada data nyata).
+  const fallbackStoreId = dominantStoreId(catalogProducts);
+  const movementInputs = salesMovements.map((movement) => ({
+    key: `${movement.storeId ?? fallbackStoreId}:${movement.productId}:${movement.variantId ?? 0}`,
+    date: movement.date,
+    qtyChange: movement.qtyChange,
+  }));
+  const dailySalesByProductKey = aggregateDailySales(movementInputs, input.year, input.month);
+
+  const { rows, diagnostics } = buildMonthlyRowsFromMonthlySnapshots({
+    snapshotDocs: chain.docs,
+    catalogProducts,
+    dailySalesByProductKey,
+    days,
+  });
+
+  // Tanggal pada periode yang BELUM terkonfirmasi tuntas disync (olsera_synced_days)
+  // — penjelasan non-formula untuk selisih Total Penjualan AYOSERA vs Olsera
+  // Open API.
+  const unsyncedDates = computeUnsyncedDates(startDate, endDate, today, syncedDayIds);
+
+  const workbook = buildMonthlyInventoryWorkbook({
+    year: input.year,
+    month: input.month,
+    days,
+    rows,
+    sourceLabel: "Olsera Open API",
+    // File download user: hanya sheet laporan utama (JUN'26 dst.). Seluruh
+    // diagnostik tetap DIHITUNG di bawah (dan boleh dicatat ke Mongo/log untuk
+    // validasi internal), hanya tidak ikut sebagai sheet "Diagnostik Import".
+    includeDiagnosticsSheet: false,
+    diagnostics: {
+      headerErrors: [],
+      skippedBlankRows: unresolvedNullProductSales,
+      rowsOutsidePeriod: [],
+      duplicates: [],
+      unmatchedOrAmbiguous: [],
+      unsyncedDates,
+      lastFullySyncedDate: syncState?.lastFullySyncedDate ?? null,
+      ...diagnostics,
+    },
   });
 
   return { ok: true, workbook };

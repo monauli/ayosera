@@ -442,25 +442,37 @@ test("panel: kolom Stok Minimum/Status Stok/Harga Modal/Nilai Persediaan tidak l
   assert.ok(source.includes("9 + (showStockSku ? 1 : 0) + (showStockUom ? 1 : 0) + (showStockWarehouse ? 1 : 0);"));
 });
 
-// ---- 22-23. Dropdown Export hanya satu opsi (Export Inventori Bulanan) —
-// Export Stok Saat Ini/Export Riwayat Mutasi/Export Konsistensi Inventori
-// dihapus dari UI. Backend /api/olsera/inventory/export (type=stock/
-// movements/consistency) SENGAJA TIDAK dihapus — masih dipakai
-// scripts/e2e-audit.ts (lihat komentar route.ts terkait).
+// ---- 22-23. Dropdown Export "Export Inventori" berisi TEPAT DUA opsi —
+// Laporan Stock Opname Bulanan (format lama, dikembalikan dari commit
+// f5bf8f0) dan Export Inventori 2 Sheet (canonical baru dari commit
+// f5bf8f0/938d16f). Export Stok Saat Ini/Export Riwayat Mutasi/Export
+// Konsistensi Inventori TETAP dihapus dari UI (bukan dikembalikan). Backend
+// /api/olsera/inventory/export (type=stock/movements/consistency) SENGAJA
+// TIDAK dihapus — masih dipakai scripts/e2e-audit.ts (lihat komentar
+// route.ts terkait).
 
-test("panel: dropdown Export Inventori hanya berisi satu opsi, opsi lama dihapus dari UI", () => {
+test("panel: dropdown Export Inventori berisi TEPAT DUA opsi dalam SATU dropdown — Laporan Stock Opname Bulanan & Export Inventori 2 Sheet", () => {
   const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  // Opsi lama yang TIDAK dikembalikan (Stok Saat Ini/Riwayat Mutasi/Konsistensi).
   assert.equal(source.includes('label: "Export Stok Saat Ini"'), false);
   assert.equal(source.includes('label: "Export Riwayat Mutasi"'), false);
   assert.equal(source.includes('label: "Export Konsistensi Inventori"'), false);
-  assert.equal(source.includes('"Export Laporan Stock Opname Bulanan"'), false);
   assert.equal(source.includes("handleExportStock"), false);
   assert.equal(source.includes("handleExportMovements"), false);
   assert.equal(source.includes("handleExportConsistency"), false);
+  // Dropdown tunggal dengan label "Export Inventori", tepat dua item.
   assert.ok(source.includes('label="Export Inventori"'));
-  assert.ok(source.includes("Export Inventori Bulanan"));
-  // Hanya satu <InventoryExportMenu ...> dirender (satu tombol export, bukan dua).
-  assert.equal(source.split("<InventoryExportMenu").length - 1, 1);
+  assert.equal(source.split("<InventoryExportMenu").length - 1, 1, "hanya satu dropdown, bukan dua tombol terpisah");
+  // Opsi 1: Laporan Stock Opname Bulanan (format lama, route lama).
+  assert.ok(source.includes('label: "Laporan Stock Opname Bulanan"'));
+  assert.ok(source.includes('detail: "Laporan stok bulanan dengan rincian tanggal/per hari."'));
+  assert.ok(source.includes("handleExportMonthlyStockOpname"));
+  assert.ok(source.includes("/api/olsera/inventory/export/monthly-stock-opname?year=${year}&month=${month}"));
+  // Opsi 2: Export Inventori 2 Sheet (canonical, tetap dipertahankan).
+  assert.ok(source.includes('label: "Export Inventori 2 Sheet"'));
+  assert.ok(source.includes('detail: "Daftar produk terjual dan keseluruhan dalam dua sheet."'));
+  assert.ok(source.includes("handleExportInventory"));
+  assert.ok(source.includes("/api/olsera/inventory/export/monthly-auto?year=${year}&month=${month}"));
 });
 
 // ---- 24. Card Sync Inventori tidak lagi menampilkan "Terakhir sync" /

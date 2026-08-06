@@ -471,13 +471,28 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
     }
   }
 
-  // Export Inventori canonical — satu tombol, satu file dua sheet ("[Bulan]
-  // Terjual"/"[Bulan] Keseluruhan"), memakai periode yang sedang aktif dipilih
-  // di atas. Menggantikan Export Stok Saat Ini/Export Riwayat Mutasi/Export
-  // Konsistensi Inventori/Laporan Stock Opname Bulanan lama — endpoint ini
-  // (/api/olsera/inventory/export/monthly-auto) sudah self-healing: bila
-  // snapshot bulanan periode ini belum ada, dibangun dulu on-demand sebelum
-  // file diunduh (lihat lib/olsera-inventory-two-sheet-export.ts).
+  // Dropdown "Export Inventori" berisi dua laporan berbeda, bukan pengganti
+  // satu sama lain: Laporan Stock Opname Bulanan (format lama, kolom
+  // tanggal/per hari, dikembalikan dari commit f5bf8f0 — lihat
+  // tmp/ai-handoff.md) dan Export Inventori 2 Sheet (canonical baru, sheet
+  // "[Bulan] Terjual"/"[Bulan] Keseluruhan", aturan produk historis dari
+  // commit 938d16f). Keduanya memakai periode yang sedang aktif dipilih di
+  // atas dan self-healing lewat ensureMonthlySnapshotChain — snapshot bulanan
+  // periode ini dibangun dulu on-demand bila belum ada sebelum file diunduh.
+  function handleExportMonthlyStockOpname() {
+    const [yearStr, monthStr] = period.split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (!year || !month) {
+      setExportMessage("Pilih bulan terlebih dahulu.");
+      return;
+    }
+    void downloadExportFromPath(
+      `/api/olsera/inventory/export/monthly-stock-opname?year=${year}&month=${month}`,
+      `Laporan Stock Opname Bulanan-${period}.xlsx`,
+    );
+  }
+
   function handleExportInventory() {
     const [yearStr, monthStr] = period.split("-");
     const year = Number(yearStr);
@@ -687,8 +702,13 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               label="Export Inventori"
               items={[
                 {
-                  label: "Export Inventori Bulanan",
-                  detail: `Periode ${period} · 2 sheet: Terjual & Keseluruhan`,
+                  label: "Laporan Stock Opname Bulanan",
+                  detail: "Laporan stok bulanan dengan rincian tanggal/per hari.",
+                  onClick: handleExportMonthlyStockOpname,
+                },
+                {
+                  label: "Export Inventori 2 Sheet",
+                  detail: "Daftar produk terjual dan keseluruhan dalam dua sheet.",
                   onClick: handleExportInventory,
                 },
               ]}
