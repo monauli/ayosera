@@ -11,7 +11,8 @@ import {
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
-import { buildDashboardPaymentMetrics } from "@/lib/dashboard-payment-metrics";
+import { buildDashboardPaymentMetrics, dashboardPaymentAmountsByBooking } from "@/lib/dashboard-payment-metrics";
+import { withCanonicalPaymentAmounts } from "@/lib/omzet-export";
 
 /**
  * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
@@ -112,12 +113,20 @@ export async function GET(request: Request) {
         };
       });
 
+      // Court Performance harus memakai nominal yang sama dengan total utama Dashboard
+      // (payment-event AYO tervalidasi), bukan bookings.total_price, supaya keduanya
+      // tidak pernah berbeda lagi. Metadata (court, tanggal, status) tetap dari booking;
+      // reuse helper yang sama dipakai Export Omzet Bulanan/Kategori.
+      const courtEligibleBookings = validatedPaymentEvents
+        ? withCanonicalPaymentAmounts(revenueEligible.map((item) => item.booking), dashboardPaymentAmountsByBooking(validatedPaymentEvents.events))
+        : revenueEligible.map((item) => item.booking);
+
       const services = Object.values(
-        revenueEligible.reduce<Record<string, { name: string; branch: string; revenueValue: number; revenue: string; count: number; progress: number }>>(
-          (acc, item) => {
-            const name = item.booking.field_name;
+        courtEligibleBookings.reduce<Record<string, { name: string; branch: string; revenueValue: number; revenue: string; count: number; progress: number }>>(
+          (acc, booking) => {
+            const name = booking.field_name;
             acc[name] ||= { name, branch: name, revenueValue: 0, revenue: "Rp 0", count: 0, progress: 0 };
-            acc[name].revenueValue += item.revenue;
+            acc[name].revenueValue += booking.total_price;
             acc[name].count += 1;
             return acc;
           },
