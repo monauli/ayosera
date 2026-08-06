@@ -12,9 +12,9 @@ const MENU_WIDTH = 320;
 const MENU_EST_HEIGHT = 300;
 
 const ITEM_BTN =
-  "flex w-full items-start gap-3 rounded-md px-2 py-2 text-left text-[13px] text-slate-200 transition-colors hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50";
+  "flex w-full items-start gap-3 rounded-md px-2 py-2 text-left text-[13px] text-[rgb(var(--rd-text-secondary))] transition-colors hover:bg-[rgb(var(--rd-surface)/var(--rd-surface-alpha-strong))] focus-visible:bg-[rgb(var(--rd-surface)/var(--rd-surface-alpha-strong))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/80 disabled:pointer-events-none disabled:opacity-60 disabled:text-[rgb(var(--rd-text-tertiary))]";
 const ITEM_ICON =
-  "mt-0.5 shrink-0 rounded-md border border-white/10 bg-white/5 p-1.5 text-slate-300";
+  "mt-0.5 shrink-0 rounded-md border border-[rgb(var(--rd-border)/var(--rd-border-alpha))] bg-[rgb(var(--rd-surface)/var(--rd-surface-alpha))] p-1.5 text-[rgb(var(--rd-text-secondary))]";
 
 export function OlseraExportMenu({
   open,
@@ -118,7 +118,7 @@ export function OlseraExportMenu({
                 </span>
                 <span className="min-w-0">
                   <span className="block font-medium">Export Rincian Penjualan</span>
-                  <span className="block text-[11px] font-normal text-slate-500">
+                  <span className="block text-[11px] font-normal text-[rgb(var(--rd-text-tertiary))]">
                     Detail transaksi pada rentang tanggal aktif
                   </span>
                 </span>
@@ -129,7 +129,7 @@ export function OlseraExportMenu({
                 </span>
                 <span className="min-w-0">
                   <span className="block font-medium">Export Kategori Penjualan</span>
-                  <span className="block text-[11px] font-normal text-slate-500">
+                  <span className="block text-[11px] font-normal text-[rgb(var(--rd-text-tertiary))]">
                     Rincian item per kategori pada rentang tanggal aktif
                   </span>
                 </span>
@@ -145,7 +145,7 @@ export function OlseraExportMenu({
                 </span>
                 <span className="min-w-0">
                   <span className="block font-medium">Export Omset Kategori</span>
-                  <span className="block text-[11px] font-normal text-slate-500">
+                  <span className="block text-[11px] font-normal text-[rgb(var(--rd-text-tertiary))]">
                     Rekap omset kategori untuk bulan yang dipilih
                   </span>
                 </span>
@@ -162,7 +162,7 @@ export function OlseraExportMenu({
                 </span>
                 <span className="min-w-0">
                   <span className="block font-medium">Export Pembagian Hasil LABERS</span>
-                  <span className="block text-[11px] font-normal text-slate-500">
+                  <span className="block text-[11px] font-normal text-[rgb(var(--rd-text-tertiary))]">
                     {monthlyMode
                       ? `Rekap penjualan LABERS & pembagian Padel/Labers bulan ${monthLabel}`
                       : "Pilih mode Bulanan"}

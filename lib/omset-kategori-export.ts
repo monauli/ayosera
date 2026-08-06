@@ -16,9 +16,14 @@
 //   ("SEWA RAKET - RAKET STANDAR" / "SEWA RAKET - RAKET PREMIUM").
 import ExcelJS from "exceljs";
 import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
-import { collections, withMongo } from "./mongodb.ts";
+import { collections, withMongo, type BookingDocument } from "./mongodb.ts";
 import { getRevenueAmount, isDisplayEligibleTransaction } from "./revenue.ts";
 import { loadResolverContext, resolveStoredItemCategory } from "./olsera-resolver-context.ts";
+import { readActiveStagedPaymentEvents } from "./ayo-payment-event-staging.ts";
+import { isPaymentEventsReadEnabled } from "./ayo-payment-events-engine.ts";
+import { dashboardPaymentAmountsByBooking } from "./dashboard-payment-metrics.ts";
+import { withCanonicalPaymentAmounts } from "./omzet-export.ts";
+import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 const FONT = "Calibri";
 const BLACK = "FF000000";
@@ -126,6 +131,30 @@ function titleCaseId(value: string) {
     .replace(/(^|[\s/+&(])([a-z])/g, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
 }
 
+/** Uses the validated Dashboard payment source when it is active, while
+ * retaining the booking date and field metadata used by the category report. */
+export function canonicalOmsetCategoryBookings(bookings: BookingDocument[], paymentEvents: readonly AyoPaymentEvent[] | null): BookingDocument[] {
+  return paymentEvents ? withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(paymentEvents)) : bookings;
+}
+
+export function courtCategoryAmounts(bookings: readonly BookingDocument[], dayCount: number) {
+  const zeros = () => new Array<number>(dayCount).fill(0);
+  const dayIndex = (date: string) => Number(date.slice(8, 10)) - 1;
+  const padel = zeros();
+  const pickle = zeros();
+  let hasBooking = false;
+  for (const booking of bookings) {
+    if (!isDisplayEligibleTransaction(booking)) continue;
+    const index = dayIndex(booking.date ?? "");
+    if (index < 0 || index >= dayCount) continue;
+    const amount = getRevenueAmount(booking);
+    if (amount) hasBooking = true;
+    if (/pickle/i.test(booking.field_name ?? "")) pickle[index] += amount;
+    else padel[index] += amount;
+  }
+  return { padel, pickle, hasBooking };
+}
+
 /** Kumpulkan data bulanan dari MongoDB menjadi baris laporan siap tulis. */
 export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategoriInput> {
   const dayCount = daysInMonth(month);
@@ -133,8 +162,8 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
   const end = `${month}-${String(dayCount).padStart(2, "0")}`;
 
   const { items, monthBookings } = await withMongo(async () => {
-    const { olseraOrderItems, bookings } = await collections();
-    const [itemRows, bookingRows] = await Promise.all([
+    const { olseraOrderItems, bookings, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
+    const [itemRows, bookingRows, staged] = await Promise.all([
       olseraOrderItems
         .find({ date: { $gte: start, $lte: end } })
         .project<{
@@ -165,8 +194,15 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
         })
         .toArray(),
       bookings.find({ date: { $gte: start, $lte: end } }).toArray(),
+      isPaymentEventsReadEnabled()
+        ? readActiveStagedPaymentEvents(start, end, {
+          runs: ayoPaymentEventStagingRuns,
+          events: ayoPaymentEventStagingEvents,
+          activation: ayoPaymentEventActivation,
+        })
+        : Promise.resolve(null),
     ]);
-    return { items: itemRows, monthBookings: bookingRows };
+    return { items: itemRows, monthBookings: canonicalOmsetCategoryBookings(bookingRows, staged?.events ?? null) };
   });
 
   const zeros = () => new Array<number>(dayCount).fill(0);
@@ -174,18 +210,7 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
 
   // Booking lapangan → Padel / Pickleball per tanggal (pola sama dengan
   // Summary Omzet Harian: display-eligible + getRevenueAmount).
-  const padel = zeros();
-  const pickle = zeros();
-  let hasBooking = false;
-  for (const b of monthBookings) {
-    if (!isDisplayEligibleTransaction(b)) continue;
-    const idx = dayIndex(b.date ?? "");
-    if (idx < 0 || idx >= dayCount) continue;
-    const amount = getRevenueAmount(b);
-    if (amount) hasBooking = true;
-    if (/pickle/i.test(b.field_name ?? "")) pickle[idx] += amount;
-    else padel[idx] += amount;
-  }
+  const { padel, pickle, hasBooking } = courtCategoryAmounts(monthBookings, dayCount);
 
   // Item Olsera → per (kategori, tanggal); canonical resolver yang sama dengan
   // dashboard & Export Kategori Penjualan.
