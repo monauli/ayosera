@@ -1,21 +1,23 @@
 import "server-only";
-import { requireUser, type SessionUser } from "@/lib/auth";
+import type { SessionUser } from "@/lib/auth";
 
 export type TokenHealthStatus = "AKTIF" | "AKAN_KEDALUWARSA" | "KEDALUWARSA" | "UNAUTHORIZED" | "TIDAK_DIKONFIGURASI" | "TEMPORARY" | "MANUAL_IMPORT_REQUIRED";
 export type TokenHealth = { source: "ayo-mobile" | "olsera-bearer"; label: string; status: TokenHealthStatus; expiresAt: string | null; remainingDays: number | null; checkedAt: string; lastSuccessfulUse: string | null; lastError: string | null; lastValidSource: string | null };
 
+/**
+ * @deprecated Akses Monitoring Integritas Data sekarang memakai modul "audit"
+ * biasa (lihat requireModule("audit") di app/api/private/integration-monitor/route.ts
+ * dan APP_MODULES di lib/auth.ts), dicentang/dicabut lewat menu Pengguna —
+ * BUKAN lagi lewat env AYOSERA_PRIVATE_TOOLS_USER_IDS. Fungsi ini dipertahankan
+ * hanya untuk kompatibilitas mundur dan tidak lagi dipanggil oleh route manapun.
+ */
 export function privateToolsAllowlist(value = process.env.AYOSERA_PRIVATE_TOOLS_USER_IDS ?? "") {
   return new Set(value.split(",").map((id) => id.trim()).filter(Boolean));
 }
 
+/** @deprecated lihat catatan pada privateToolsAllowlist di atas. */
 export function isPrivateToolsUser(user: Pick<SessionUser, "id">, allowlist = privateToolsAllowlist()) {
   return allowlist.size > 0 && allowlist.has(user.id);
-}
-
-export async function requirePrivateToolsUser() {
-  const user = await requireUser();
-  if (!isPrivateToolsUser(user)) throw new Response(JSON.stringify({ error: "Private integration tools access required" }), { status: 403, headers: { "Content-Type": "application/json" } });
-  return user;
 }
 
 function jwtExpiry(value: string): Date | null {

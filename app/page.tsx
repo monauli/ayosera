@@ -196,6 +196,7 @@ const navItems = [
   },
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
   { label: "Rekonsiliasi", display: "Rekonsiliasi", icon: ShieldCheck, module: "rekonsiliasi" },
+  { label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "audit" },
 ];
 
 type SessionUserInfo = {
@@ -1790,7 +1791,7 @@ export default function DashboardPage() {
   // menyembunyikan menu tidak ikut menghapusnya dari registry izin —
   // Supervisor selalu boleh, user biasa hanya bila modul "transaksi" dimiliki.
   const activeNavAllowed =
-    activeNav === "Pengguna" || activeNav === "Audit"
+    activeNav === "Pengguna"
       ? isSupervisor
       : activeNav === "Transaksi"
         ? isSupervisor || Boolean(sessionUser?.allowedModules.includes("transaksi"))
@@ -2016,7 +2017,6 @@ export default function DashboardPage() {
 
   const sidebarItems = [
     ...visibleNavItems,
-    ...(isSupervisor ? [{ label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "" }] : []),
     ...(isSupervisor ? [{ label: "Pengguna", display: "Pengguna", icon: Users, module: "" }] : []),
   ];
 
@@ -2199,7 +2199,7 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {activeNavAllowed && activeNav === "Audit" && isSupervisor && (
+          {activeNavAllowed && activeNav === "Audit" && (
             <div className="rd-legacy p-4 sm:p-5">
               <p className="text-sm text-slate-400">
                 Membandingkan data AYO/Olsera dengan database internal untuk mendeteksi transaksi yang hilang

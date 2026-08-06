@@ -9,9 +9,8 @@ const sources = ["olsera", "ayo-booking", "ayo-payment-events"] as const;
 const label: Record<(typeof sources)[number], string> = { olsera: "Olsera Sales", "ayo-booking": "AYO Booking", "ayo-payment-events": "AYO Payment Events" };
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
 
-// Bedakan setiap kegagalan supaya panel tidak diam-diam menghilang — supervisor
-// yang belum masuk allowlist AYOSERA_PRIVATE_TOOLS_USER_IDS harus melihat alasannya,
-// bukan panel kosong yang terlihat seperti bug.
+// Bedakan setiap kegagalan supaya panel tidak diam-diam menghilang — akun tanpa
+// modul "audit" harus melihat alasannya, bukan panel kosong yang terlihat seperti bug.
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; health: Health[] }
@@ -58,8 +57,8 @@ export function PrivateIntegrationMonitor() {
       <section className="mt-6 flex items-start gap-3 rounded-xl border border-amber-300/20 bg-amber-950/10 p-4">
         <Lock className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
         <div className="text-sm text-amber-200">
-          <p>Akun supervisor ini belum diizinkan menggunakan Private Integration Tools.</p>
-          <p className="mt-1 text-amber-300/80">Hubungi pengelola sistem untuk menambahkan user ID ke AYOSERA_PRIVATE_TOOLS_USER_IDS.</p>
+          <p>Akun ini belum memiliki akses ke modul Audit &amp; Sinkronisasi.</p>
+          <p className="mt-1 text-amber-300/80">Hubungi supervisor untuk mengaktifkan modul ini lewat menu Pengguna.</p>
         </div>
       </section>
     );

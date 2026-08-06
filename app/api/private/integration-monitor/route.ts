@@ -7,7 +7,8 @@ import { fetchAyoPaymentEvents, paymentEventIdentity } from "@/lib/ayo-payment-e
 import { fetchOlseraSalesAuditSource, OlseraSalesAuditSourceError } from "@/lib/olsera-sync";
 import { compareOlseraSalesGap, type OlseraAuditItem, type OlseraAuditOrder } from "@/lib/olsera-sales-gap";
 import { collections, getDb } from "@/lib/mongodb";
-import { integrationTokenHealth, requirePrivateToolsUser } from "@/lib/private-integration-monitor";
+import { integrationTokenHealth } from "@/lib/private-integration-monitor";
+import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 
 export const runtime = "nodejs";
@@ -169,13 +170,13 @@ async function repairOlsera(startDate: string, endDate: string, actor: string): 
 }
 
 export async function GET() {
-  try { await requirePrivateToolsUser(); return NextResponse.json({ enabled: true, tokenHealth: integrationTokenHealth() }, { headers: NO_CACHE_HEADERS }); }
+  try { await requireModule("audit"); return NextResponse.json({ enabled: true, tokenHealth: integrationTokenHealth() }, { headers: NO_CACHE_HEADERS }); }
   catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Gagal memuat monitoring integritas." }, { status: 500 }); }
 }
 
 export async function POST(request: Request) {
   try {
-    const user = await requirePrivateToolsUser();
+    const user = await requireModule("audit");
     const body = schema.parse(await request.json());
     if (!rangeIsValid(body.startDate, body.endDate)) return NextResponse.json({ error: "Rentang tanggal harus valid dan maksimal 31 hari." }, { status: 400 });
     const result = body.source === "olsera" ? body.action === "repair" ? await repairOlsera(body.startDate, body.endDate, user.id) : await runOlseraGapAudit(body.startDate, body.endDate, user.id) : body.action === "repair" ? await repair(body.source, body.startDate, body.endDate, user.id) : await runAyoGapAudit(body.source, body.startDate, body.endDate, user.id);
