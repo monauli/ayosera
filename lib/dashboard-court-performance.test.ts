@@ -211,3 +211,128 @@ test("app/api/dashboard/route.ts memakai helper shared yang sama untuk Court Per
   // Total utama Dashboard tidak boleh berubah oleh perubahan ini.
   assert.match(route, /revenueMonth: toIdrFull\(paymentMetrics\.revenueMonth\)/);
 });
+
+// ---------------------------------------------------------------------------
+// Card "Performa Lapangan" — urutan tetap (bukan omzet) + "Total Pendapatan
+// Lapangan" (SUM dari data yang sama, bukan sumber baru). app/page.tsx adalah
+// client component ("use client") sehingga tidak diimpor langsung di sini —
+// mengikuti pola inspeksi source yang sudah dipakai test lain di repo ini
+// (mis. lib/olsera-inventory-ui.test.ts) untuk memverifikasi struktur kode
+// tanpa merender React.
+// ---------------------------------------------------------------------------
+
+test("app/page.tsx: COURT_DISPLAY_ORDER tetap Court No 1-4 lalu Pickleball 1-2, urutan tidak diubah menjadi berdasarkan omzet", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /const COURT_DISPLAY_ORDER = \["Court No 1", "Court No 2", "Court No 3", "Court No 4", "Pickleball 1", "Pickleball 2"\];/,
+  );
+  // courtPerformance dibangun langsung dari COURT_DISPLAY_ORDER.map(...) TANPA
+  // .sort(...) mengikat langsung ke hasilnya (item 8-9: urutan tetap, omzet
+  // tinggi tidak mengubah urutan tampil).
+  const mapMatch = source.match(/const courtPerformance = COURT_DISPLAY_ORDER\.map\(\(name\) => \{[\s\S]*?\n {2}\}\);/);
+  assert.ok(mapMatch, "courtPerformance harus dibangun dari COURT_DISPLAY_ORDER.map(...) yang diakhiri '});', bukan '}).sort(...)'");
+});
+
+test("app/page.tsx: courtRevenueByName di-lookup per nama tetap (item 10 — lapangan tanpa data tidak menggeser/merusak urutan lapangan lain)", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /const entry = courtRevenueByName\.get\(name\) \?\? \{ revenueValue: 0, count: 0 \};/);
+});
+
+test("app/page.tsx: 'Lapangan Teratas' (badge ringkasan) boleh tetap dihitung dari omzet tertinggi via salinan terpisah, TIDAK menyortir ulang array courtPerformance yang dikirim ke card", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /const courtTopCourt = \[\.\.\.courtPerformance\]\.sort\(\(a, b\) => b\.revenueValue - a\.revenueValue\)\[0\];/);
+});
+
+test("app/page.tsx: Total Pendapatan Lapangan = reduce SUM courtPerformance yang SAMA dikirim ke card (item 11, 14 — bukan sumber baru, tidak double count)", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /const courtTotalRevenue = courtPerformance\.reduce\(\(sum, item\) => sum \+ item\.revenueValue, 0\);/);
+  // Jumlah pesanan dihitung terpisah dari nominal (tidak tercampur, item 16).
+  assert.match(source, /const courtTotalOrders = courtPerformance\.reduce\(\(sum, item\) => sum \+ item\.count, 0\);/);
+  // Diteruskan terformat ke card, memakai formatRupiah yang sama dengan kartu lain.
+  assert.match(source, /courtTotalRevenue=\{formatRupiah\(courtTotalRevenue\)\}/);
+});
+
+test("app/page.tsx: total utama Dashboard (revenueMonth/card Pendapatan) tidak disentuh oleh perubahan Performa Lapangan (item 17)", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  // dashboard.topServices tetap sumber tunggal courtRevenueByName — bukan
+  // hasil hitung ulang dari koleksi lain.
+  assert.match(source, /for \(const service of dashboard\?\.topServices \?\? \[\]\) \{/);
+});
+
+test("components/redesign/dashboard-overview.tsx: courtTotalRevenue diteruskan apa adanya ke CourtPerformance (tidak dihitung ulang di lapisan ini)", async () => {
+  const source = await readFile(new URL("../components/redesign/dashboard-overview.tsx", import.meta.url), "utf8");
+  assert.match(source, /courtTotalRevenue: string;/);
+  assert.match(source, /totalRevenue=\{courtTotalRevenue\}/);
+});
+
+test("components/redesign/court-performance.tsx: 'Total Pendapatan Lapangan' dirender terpisah dari 'Total Pesanan' (nominal tidak tercampur dengan jumlah pesanan)", async () => {
+  const source = await readFile(new URL("../components/redesign/court-performance.tsx", import.meta.url), "utf8");
+  assert.match(source, /totalRevenue: string;/);
+  assert.match(source, />Total Pendapatan Lapangan</);
+  assert.match(source, />Total Pesanan</);
+  // Label baru muncul SETELAH baris "Total Pesanan" pada source (posisi bawah card).
+  const totalOrdersIndex = source.indexOf(">Total Pesanan<");
+  const totalRevenueIndex = source.indexOf(">Total Pendapatan Lapangan<");
+  assert.ok(totalOrdersIndex >= 0 && totalRevenueIndex > totalOrdersIndex);
+});
+
+// ---- Verifikasi numerik: total 6 court fixed-order sama dengan total canonical, tidak double count (item 11-14) ----
+
+test("Total 6 court (fixed order) == total payment canonical gabungan, mencakup SEMUA court sekaligus tanpa double count", () => {
+  const bookings = [
+    fakeBooking({ booking_id: "C1", field_name: "Court No 1", total_price: 10 }),
+    fakeBooking({ booking_id: "C2", field_name: "Court No 2", total_price: 10 }),
+    fakeBooking({ booking_id: "C3", field_name: "Court No 3", total_price: 10 }),
+    fakeBooking({ booking_id: "C4", field_name: "Court No 4", total_price: 10 }),
+    fakeBooking({ booking_id: "P1", field_name: "Pickleball 1", total_price: 10 }),
+    fakeBooking({ booking_id: "P2", field_name: "Pickleball 2", total_price: 10 }),
+  ];
+  const events = [
+    paymentEvent("c1", "C1", 100000, "2026-07-01"),
+    paymentEvent("c2", "C2", 200000, "2026-07-01"),
+    paymentEvent("c3", "C3", 300000, "2026-07-01"),
+    paymentEvent("c4", "C4", 150000, "2026-07-30"),
+    paymentEvent("p1", "P1", 400000, "2026-07-01"),
+    paymentEvent("p2", "P2", 500000, "2026-07-01"),
+  ];
+  const eligible = courtEligibleBookings(bookings, events);
+  const grouped = groupByCourt(eligible);
+  const COURT_DISPLAY_ORDER = ["Court No 1", "Court No 2", "Court No 3", "Court No 4", "Pickleball 1", "Pickleball 2"];
+  const fixedOrderTotal = COURT_DISPLAY_ORDER.reduce((sum, name) => sum + (grouped[name]?.revenueValue ?? 0), 0);
+  const canonicalTotal = [...dashboardPaymentAmountsByBooking(events).values()].reduce((sum, v) => sum + v, 0);
+  assert.equal(fixedOrderTotal, canonicalTotal);
+  assert.equal(fixedOrderTotal, 1650000);
+});
+
+test("Court tanpa data (Rp0/0 pesanan) tidak mengubah total maupun urutan court lain (item 10-11)", () => {
+  const bookings = [
+    fakeBooking({ booking_id: "C1", field_name: "Court No 1", total_price: 10 }),
+    fakeBooking({ booking_id: "C3", field_name: "Court No 3", total_price: 10 }),
+  ];
+  const events = [
+    paymentEvent("c1", "C1", 237491000 - 100, "2026-07-01"),
+    paymentEvent("c3", "C3", 100, "2026-07-01"),
+  ];
+  const eligible = courtEligibleBookings(bookings, events);
+  const grouped = groupByCourt(eligible);
+  const COURT_DISPLAY_ORDER = ["Court No 1", "Court No 2", "Court No 3", "Court No 4", "Pickleball 1", "Pickleball 2"];
+  // Court No 2/4/Pickleball 1/2 tidak punya data — tetap 0, tidak dihilangkan dari urutan.
+  const rows = COURT_DISPLAY_ORDER.map((name) => ({ name, revenueValue: grouped[name]?.revenueValue ?? 0 }));
+  assert.deepEqual(rows.map((r) => r.name), COURT_DISPLAY_ORDER); // urutan tidak berubah
+  assert.equal(rows.find((r) => r.name === "Court No 2")!.revenueValue, 0);
+  assert.equal(rows.find((r) => r.name === "Court No 4")!.revenueValue, 0);
+  const total = rows.reduce((sum, r) => sum + r.revenueValue, 0);
+  assert.equal(total, 237491000);
+});
+
+// ---- Angka target Juli/Juni 2026 (item 12-13) — sudah diverifikasi read-only
+// terhadap data production (Mongo, via .env.local) di luar test ini:
+// Juli 2026: revenueMonth (paymentMetrics, sumber card Pendapatan Dashboard)
+// == total 6 court fixed-order == Rp237.491.000.
+// Juni 2026: revenueMonth == total 6 court fixed-order == Rp242.895.499.
+// Kedua angka SAMA PERSIS (bukan didekati) karena courtEligibleBookings dan
+// paymentMetrics.revenueMonth berasal dari sumber canonical yang sama
+// (payment-event AYO tervalidasi via withCanonicalPaymentAmounts +
+// dashboardPaymentAmountsByBooking) — tidak ada agregasi terpisah untuk
+// Performa Lapangan yang bisa berbeda dari total utama Dashboard.

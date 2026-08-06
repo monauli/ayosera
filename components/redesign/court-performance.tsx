@@ -17,11 +17,13 @@ export function CourtPerformance({
   items,
   topLabel,
   totalOrders,
+  totalRevenue,
   topContributionPercent,
 }: {
   items: CourtPerformanceItem[];
   topLabel: string;
   totalOrders: number;
+  totalRevenue: string;
   topContributionPercent: number;
 }) {
   return (
@@ -63,6 +65,14 @@ export function CourtPerformance({
             <span className="block truncate font-medium tabular-nums text-slate-200">{totalOrders}</span>
           </span>
         </div>
+      </div>
+
+      {/* Total Pendapatan Lapangan — SUM item di atas (Court No 1-4 + Pickleball
+          1-2), bukan angka terpisah. Dipisah dari "Total Pesanan" (jumlah,
+          bukan nominal) supaya kedua satuan tidak tercampur. */}
+      <div className="mt-3 flex items-baseline justify-between border-t border-white/10 pt-3">
+        <span className="text-[13px] font-medium text-slate-400">Total Pendapatan Lapangan</span>
+        <span className="text-base font-semibold tabular-nums text-slate-100">{totalRevenue}</span>
       </div>
     </div>
   );

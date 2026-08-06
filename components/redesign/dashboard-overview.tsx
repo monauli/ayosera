@@ -83,6 +83,7 @@ export function DashboardOverview({
   courtPerformance,
   courtTopLabel,
   courtTotalOrders,
+  courtTotalRevenue,
   courtTopContributionPercent,
   syncStatusLabel,
   latestEventText,
@@ -116,6 +117,7 @@ export function DashboardOverview({
   courtPerformance: CourtPerformanceItem[];
   courtTopLabel: string;
   courtTotalOrders: number;
+  courtTotalRevenue: string;
   courtTopContributionPercent: number;
   syncStatusLabel: string;
   latestEventText: string;
@@ -250,6 +252,7 @@ export function DashboardOverview({
             items={courtPerformance}
             topLabel={courtTopLabel}
             totalOrders={courtTotalOrders}
+            totalRevenue={courtTotalRevenue}
             topContributionPercent={courtTopContributionPercent}
           />
         </div>

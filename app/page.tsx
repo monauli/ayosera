@@ -1872,6 +1872,9 @@ export default function DashboardPage() {
     courtRevenueByName.set(canonical, entry);
   }
   const courtMaxRevenue = Math.max(1, ...COURT_DISPLAY_ORDER.map((name) => courtRevenueByName.get(name)?.revenueValue ?? 0));
+  // Urutan tetap COURT_DISPLAY_ORDER (Court No 1-4, lalu Pickleball 1-2) —
+  // BUKAN diurutkan berdasarkan omzet. Lapangan tanpa data (Rp0/0 pesanan)
+  // tetap tampil di posisinya sendiri, tidak menggeser lapangan lain.
   const courtPerformance = COURT_DISPLAY_ORDER.map((name) => {
     const entry = courtRevenueByName.get(name) ?? { revenueValue: 0, count: 0 };
     return {
@@ -1882,10 +1885,17 @@ export default function DashboardPage() {
       count: entry.count,
       progress: entry.revenueValue > 0 ? Math.max(4, Math.round((entry.revenueValue / courtMaxRevenue) * 100)) : 0,
     };
-  }).sort((a, b) => b.revenueValue - a.revenueValue);
+  });
+  // "Lapangan Teratas" tetap dihitung dari omzet tertinggi (bukan urutan
+  // tampil) — murni untuk badge ringkasan, TIDAK memengaruhi urutan `items`.
+  const courtTopCourt = [...courtPerformance].sort((a, b) => b.revenueValue - a.revenueValue)[0];
+  // Total Pendapatan Lapangan: SUM langsung dari data yang sudah dikirim
+  // Dashboard (courtPerformance di atas) — bukan dihitung ulang dari sumber
+  // lain. Harus sama dengan card Pendapatan Dashboard karena courtPerformance
+  // sendiri dibangun dari dashboard.topServices (payment-event AYO
+  // tervalidasi yang sama, lihat app/api/dashboard/route.ts).
   const courtTotalRevenue = courtPerformance.reduce((sum, item) => sum + item.revenueValue, 0);
   const courtTotalOrders = courtPerformance.reduce((sum, item) => sum + item.count, 0);
-  const courtTopCourt = courtPerformance[0];
   const courtTopLabel = courtTopCourt && courtTopCourt.revenueValue > 0 ? courtTopCourt.label : "-";
   const courtTopContributionPercent =
     courtTotalRevenue > 0 && courtTopCourt ? Math.round((courtTopCourt.revenueValue / courtTotalRevenue) * 100) : 0;
@@ -2280,6 +2290,7 @@ export default function DashboardPage() {
               courtPerformance={courtPerformance}
               courtTopLabel={courtTopLabel}
               courtTotalOrders={courtTotalOrders}
+              courtTotalRevenue={formatRupiah(courtTotalRevenue)}
               courtTopContributionPercent={courtTopContributionPercent}
               syncStatusLabel={syncStatusLabel}
               latestEventText={

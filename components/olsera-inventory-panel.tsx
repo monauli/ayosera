@@ -474,11 +474,13 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   // Dropdown "Export Inventori" berisi dua laporan berbeda, bukan pengganti
   // satu sama lain: Laporan Stock Opname Bulanan (format lama, kolom
   // tanggal/per hari, dikembalikan dari commit f5bf8f0 — lihat
-  // tmp/ai-handoff.md) dan Export Inventori 2 Sheet (canonical baru, sheet
+  // tmp/ai-handoff.md) dan Export Pergerakan Stok (canonical, sheet
   // "[Bulan] Terjual"/"[Bulan] Keseluruhan", aturan produk historis dari
-  // commit 938d16f). Keduanya memakai periode yang sedang aktif dipilih di
-  // atas dan self-healing lewat ensureMonthlySnapshotChain — snapshot bulanan
-  // periode ini dibangun dulu on-demand bila belum ada sebelum file diunduh.
+  // commit 938d16f — label diganti dari "Export Inventori 2 Sheet" di commit
+  // ed6eec9, hanya teks UI, route/generator/nama sheet TIDAK berubah).
+  // Keduanya memakai periode yang sedang aktif dipilih di atas dan
+  // self-healing lewat ensureMonthlySnapshotChain — snapshot bulanan periode
+  // ini dibangun dulu on-demand bila belum ada sebelum file diunduh.
   function handleExportMonthlyStockOpname() {
     const [yearStr, monthStr] = period.split("-");
     const year = Number(yearStr);
@@ -707,8 +709,8 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                   onClick: handleExportMonthlyStockOpname,
                 },
                 {
-                  label: "Export Inventori 2 Sheet",
-                  detail: "Daftar produk terjual dan keseluruhan dalam dua sheet.",
+                  label: "Export Pergerakan Stok",
+                  detail: "Laporan produk terjual dan keseluruhan dalam dua sheet.",
                   onClick: handleExportInventory,
                 },
               ]}
