@@ -84,37 +84,67 @@ export type TwoSheetInventoryRow = {
 };
 
 /**
- * Gabungkan katalog produk aktif (dikurangi kategori dikecualikan) dengan
- * dokumen snapshot bulanan bulan target. Produk katalog yang TIDAK punya
- * dokumen snapshot bulan ini (baik karena benar-benar tidak pernah bermutasi,
- * maupun produk baru) tetap dimasukkan sebagai baris dengan angka 0 (lihat
- * `hasSnapshot`) — supaya Sheet Keseluruhan TIDAK PERNAH kehilangan produk
- * hanya karena tidak muncul di Pergerakan Stok Olsera bulan itu.
+ * Gabungkan katalog produk dengan dokumen snapshot bulanan bulan target.
+ *
+ * Status `active` katalog produk mencerminkan kondisi SAAT INI, bukan kondisi
+ * pada bulan historis yang diekspor — karena itu status itu TIDAK PERNAH
+ * dipakai untuk membuang produk yang terbukti punya data stok (`hasSnapshot`)
+ * pada bulan tersebut:
+ * - Produk dengan dokumen snapshot bulan ini SELALU masuk, baik aktif maupun
+ *   sudah `active:false` sekarang (produk historis yang belakangan dihentikan).
+ * - Produk TANPA dokumen snapshot bulan ini hanya masuk (dengan angka 0) bila
+ *   `isCurrentMonth` true DAN produk masih aktif saat ini — untuk bulan
+ *   berjalan, katalog aktif saat ini adalah bukti yang sah bahwa produk itu
+ *   ada. Untuk bulan lampau, "aktif saat ini" bukan bukti keberadaan produk
+ *   pada bulan itu, jadi produk seperti itu TIDAK dimasukkan.
  */
 export function buildTwoSheetInventoryRows(input: {
   catalogProducts: InventoryProductInput[];
   snapshotDocs: OlseraInventoryMonthlySnapshotDocument[];
   storeId: number;
+  /** true = bulan yang diekspor adalah bulan berjalan (memengaruhi apakah produk aktif tanpa snapshot tetap dimasukkan). Default false (bulan lampau). */
+  isCurrentMonth?: boolean;
 }): TwoSheetInventoryRow[] {
+  const isCurrentMonth = input.isCurrentMonth ?? false;
+  const productByKey = new Map(
+    input.catalogProducts.map((product) => [`${input.storeId}:${product.productId}:${product.variantId ?? 0}`, product]),
+  );
   const docByKey = new Map(input.snapshotDocs.map((doc) => [`${doc.storeId}:${doc.productId}:${doc.variantId ?? 0}`, doc]));
-  const rows: TwoSheetInventoryRow[] = [];
+
+  const keys: string[] = [];
   const seenKeys = new Set<string>();
 
-  for (const product of input.catalogProducts) {
-    if (!product.active) continue;
-    if (isExcludedTwoSheetCategory(product.category)) continue;
-    const key = `${input.storeId}:${product.productId}:${product.variantId ?? 0}`;
-    if (seenKeys.has(key)) continue; // safety: satu produk/varian tidak pernah dobel meski katalog mentah punya duplikat _id lintas storeId.
+  for (const doc of input.snapshotDocs) {
+    const key = `${doc.storeId}:${doc.productId}:${doc.variantId ?? 0}`;
+    const product = productByKey.get(key);
+    const category = product?.category || doc.groupName || "";
+    if (isExcludedTwoSheetCategory(category)) continue;
+    if (seenKeys.has(key)) continue;
     seenKeys.add(key);
+    keys.push(key);
+  }
 
+  if (isCurrentMonth) {
+    for (const product of input.catalogProducts) {
+      if (!product.active) continue;
+      if (isExcludedTwoSheetCategory(product.category)) continue;
+      const key = `${input.storeId}:${product.productId}:${product.variantId ?? 0}`;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      keys.push(key);
+    }
+  }
+
+  return keys.map((key) => {
+    const product = productByKey.get(key);
     const doc = docByKey.get(key);
-    const catalogName = product.variantName ? `${product.name} - ${product.variantName}` : product.name;
-    rows.push({
+    const catalogName = product ? (product.variantName ? `${product.name} - ${product.variantName}` : product.name) : null;
+    return {
       key,
-      name: doc ? stripDuplicateSuffix(doc.productName) : catalogName,
-      sku: product.sku ?? doc?.productSku ?? null,
-      category: product.category || doc?.groupName || "",
-      uom: product.uom ?? null,
+      name: doc ? stripDuplicateSuffix(doc.productName) : (catalogName ?? ""),
+      sku: product?.sku ?? doc?.productSku ?? null,
+      category: product?.category || doc?.groupName || "",
+      uom: product?.uom ?? null,
       openingQty: doc ? doc.openingQty : 0,
       incomingQty: doc ? doc.incomingQty : 0,
       returnQty: doc ? doc.returnQty : 0,
@@ -122,9 +152,8 @@ export function buildTwoSheetInventoryRows(input: {
       outgoingQty: doc ? doc.outgoingQty : 0,
       closingQty: doc ? doc.closingQty : 0,
       hasSnapshot: Boolean(doc),
-    });
-  }
-  return rows;
+    };
+  });
 }
 
 /** A-Z case-insensitive (locale id), tie-break by key supaya hasil selalu deterministik walau ada nama identik. */
@@ -251,6 +280,14 @@ export type GenerateTwoSheetExportResult =
   | { ok: true; workbook: ExcelJS.Workbook }
   | { ok: false; errors: string[] };
 
+/** Bulan berjalan ditentukan dari tanggal saat ini di zona waktu WIB (Asia/Jakarta), konsisten dengan konvensi tanggal lain di codebase ini. */
+export function isCurrentYearMonth(year: number, month: number, now: Date = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "numeric" }).formatToParts(now);
+  const nowYear = Number(parts.find((p) => p.type === "year")?.value);
+  const nowMonth = Number(parts.find((p) => p.type === "month")?.value);
+  return year === nowYear && month === nowMonth;
+}
+
 export async function generateTwoSheetInventoryExport(input: { year: number; month: number }): Promise<GenerateTwoSheetExportResult> {
   const chain = await ensureMonthlySnapshotChain({ year: input.year, month: input.month });
   if (!chain.ok) {
@@ -267,7 +304,12 @@ export async function generateTwoSheetInventoryExport(input: { year: number; mon
     return { ok: false, errors: ["Katalog produk inventori (olsera_inventory_products) kosong — jalankan Sync Inventori terlebih dahulu."] };
   }
 
-  const rows = buildTwoSheetInventoryRows({ catalogProducts, snapshotDocs: chain.docs, storeId: chain.storeId });
+  const rows = buildTwoSheetInventoryRows({
+    catalogProducts,
+    snapshotDocs: chain.docs,
+    storeId: chain.storeId,
+    isCurrentMonth: isCurrentYearMonth(input.year, input.month),
+  });
   const workbook = buildTwoSheetInventoryWorkbook({ year: input.year, month: input.month, rows });
   return { ok: true, workbook };
 }

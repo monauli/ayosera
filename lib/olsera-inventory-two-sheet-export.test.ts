@@ -13,6 +13,7 @@ import {
   buildTwoSheetInventoryRows,
   buildTwoSheetInventoryWorkbook,
   filterTerjualRows,
+  isCurrentYearMonth,
   isExcludedTwoSheetCategory,
   sortTwoSheetRows,
   type TwoSheetInventoryRow,
@@ -121,13 +122,13 @@ test("buildTwoSheetInventoryRows: produk aktif dengan snapshot memakai angka sna
   );
 });
 
-test("buildTwoSheetInventoryRows: produk tanpa mutasi (tidak ada dokumen snapshot) TETAP muncul dengan 0, bukan hilang", () => {
+test("buildTwoSheetInventoryRows: bulan berjalan — produk aktif tanpa mutasi (tidak ada dokumen snapshot) TETAP muncul dengan 0, bukan hilang", () => {
   const catalog = [
     product({ productId: 1, name: "PRODUK BERMUTASI" }),
     product({ productId: 2, name: "PRODUK TANPA MUTASI" }),
   ];
   const docs = [snapshotDoc({ productId: 1, productName: "PRODUK BERMUTASI", salesQty: 5, closingQty: 10 })];
-  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: docs, storeId: STORE_ID });
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: docs, storeId: STORE_ID, isCurrentMonth: true });
   assert.equal(rows.length, 2);
   const noMutation = rows.find((r) => r.name === "PRODUK TANPA MUTASI");
   assert.ok(noMutation);
@@ -136,6 +137,52 @@ test("buildTwoSheetInventoryRows: produk tanpa mutasi (tidak ada dokumen snapsho
     { opening: noMutation!.openingQty, incoming: noMutation!.incomingQty, sales: noMutation!.salesQty, closing: noMutation!.closingQty },
     { opening: 0, incoming: 0, sales: 0, closing: 0 },
   );
+});
+
+test("buildTwoSheetInventoryRows: bulan lampau (default) — produk aktif SEKARANG tapi TANPA data stok bulan historis TIDAK otomatis dimasukkan", () => {
+  const catalog = [
+    product({ productId: 1, name: "PRODUK BERMUTASI" }),
+    product({ productId: 2, name: "PRODUK AKTIF TANPA DATA HISTORIS" }),
+  ];
+  const docs = [snapshotDoc({ productId: 1, productName: "PRODUK BERMUTASI", salesQty: 5, closingQty: 10 })];
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: docs, storeId: STORE_ID });
+  assert.deepEqual(rows.map((r) => r.name), ["PRODUK BERMUTASI"]);
+});
+
+test("buildTwoSheetInventoryRows: bulan lampau — produk historis dengan data stok TETAP muncul walau sekarang active:false", () => {
+  const catalog = [product({ productId: 1, name: "PRODUK NONAKTIF SEKARANG", active: false })];
+  const docs = [snapshotDoc({ productId: 1, productName: "PRODUK NONAKTIF SEKARANG", salesQty: 5, closingQty: 10 })];
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: docs, storeId: STORE_ID });
+  assert.deepEqual(rows.map((r) => r.name), ["PRODUK NONAKTIF SEKARANG"]);
+  assert.equal(rows[0].hasSnapshot, true);
+});
+
+test("buildTwoSheetInventoryRows: bulan lampau — produk historis dengan salesQty>0 dan active:false TETAP masuk Sheet Terjual", () => {
+  const catalog = [product({ productId: 1, name: "PRODUK TERJUAL NONAKTIF", active: false })];
+  const docs = [snapshotDoc({ productId: 1, productName: "PRODUK TERJUAL NONAKTIF", salesQty: 7, closingQty: 2 })];
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: docs, storeId: STORE_ID });
+  assert.deepEqual(filterTerjualRows(rows).map((r) => r.name), ["PRODUK TERJUAL NONAKTIF"]);
+});
+
+test("buildTwoSheetInventoryRows: bulan berjalan — produk nonaktif dengan data stok bulan ini tetap masuk (bersama produk aktif), tanpa duplikat", () => {
+  const catalog = [
+    product({ productId: 1, name: "PRODUK AKTIF" }),
+    product({ productId: 2, name: "PRODUK NONAKTIF BERDATA", active: false }),
+  ];
+  const docs = [
+    snapshotDoc({ productId: 1, productName: "PRODUK AKTIF", salesQty: 1 }),
+    snapshotDoc({ productId: 2, productName: "PRODUK NONAKTIF BERDATA", salesQty: 2 }),
+  ];
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: docs, storeId: STORE_ID, isCurrentMonth: true });
+  assert.deepEqual(rows.map((r) => r.name).sort(), ["PRODUK AKTIF", "PRODUK NONAKTIF BERDATA"]);
+  assert.equal(new Set(rows.map((r) => r.key)).size, rows.length);
+});
+
+test("isCurrentYearMonth: cocok dengan bulan/tahun WIB saat ini, bulan lain tidak", () => {
+  const now = new Date("2026-08-15T10:00:00.000Z"); // WIB = UTC+7, masih 15 Agustus
+  assert.equal(isCurrentYearMonth(2026, 8, now), true);
+  assert.equal(isCurrentYearMonth(2026, 6, now), false);
+  assert.equal(isCurrentYearMonth(2025, 8, now), false);
 });
 
 test("buildTwoSheetInventoryRows: nilai snapshot null (belum diketahui) TIDAK diubah jadi 0 — beda dari 'tidak ada dokumen sama sekali'", () => {
@@ -148,10 +195,10 @@ test("buildTwoSheetInventoryRows: nilai snapshot null (belum diketahui) TIDAK di
   assert.equal(rows[0].closingQty, null);
 });
 
-test("buildTwoSheetInventoryRows: produk nonaktif tidak dimasukkan", () => {
+test("buildTwoSheetInventoryRows: produk nonaktif TANPA data stok bulan ini tidak dimasukkan (baik bulan lampau maupun bulan berjalan)", () => {
   const catalog = [product({ productId: 1, name: "PRODUK NONAKTIF", active: false })];
-  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID });
-  assert.equal(rows.length, 0);
+  assert.equal(buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID }).length, 0);
+  assert.equal(buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID, isCurrentMonth: true }).length, 0);
 });
 
 test("buildTwoSheetInventoryRows: kategori LABERS dan LAPANGAN dikecualikan", () => {
@@ -160,7 +207,7 @@ test("buildTwoSheetInventoryRows: kategori LABERS dan LAPANGAN dikecualikan", ()
     product({ productId: 2, name: "PRODUK LAPANGAN", category: "LAPANGAN PADEL" }),
     product({ productId: 3, name: "PRODUK NORMAL", category: "GRIP" }),
   ];
-  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID });
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID, isCurrentMonth: true });
   assert.deepEqual(rows.map((r) => r.name), ["PRODUK NORMAL"]);
 });
 
@@ -169,14 +216,14 @@ test("buildTwoSheetInventoryRows: varian berbeda dari produk sama tidak tergabun
     product({ productId: 1, variantId: 1, name: "KAOS", variantName: "M", _id: `${STORE_ID}:1:1` }),
     product({ productId: 1, variantId: 2, name: "KAOS", variantName: "L", _id: `${STORE_ID}:1:2` }),
   ];
-  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID });
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID, isCurrentMonth: true });
   assert.equal(rows.length, 2);
   assert.deepEqual(new Set(rows.map((r) => r.key)), new Set([`${STORE_ID}:1:1`, `${STORE_ID}:1:2`]));
 });
 
 test("buildTwoSheetInventoryRows: tidak ada produk duplikat walau katalog mentah punya key sama", () => {
   const catalog = [product({ productId: 1, name: "A" }), product({ productId: 1, name: "A DUPLIKAT" })];
-  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID });
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: [], storeId: STORE_ID, isCurrentMonth: true });
   assert.equal(rows.length, 1);
 });
 
