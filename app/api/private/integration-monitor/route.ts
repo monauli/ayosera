@@ -7,7 +7,7 @@ import { fetchAyoPaymentEvents, paymentEventIdentity } from "@/lib/ayo-payment-e
 import { fetchOlseraSalesAuditSource, OlseraSalesAuditSourceError } from "@/lib/olsera-sync";
 import { compareOlseraSalesGap, type OlseraAuditItem, type OlseraAuditOrder } from "@/lib/olsera-sales-gap";
 import { collections, getDb } from "@/lib/mongodb";
-import { integrationTokenHealth } from "@/lib/private-integration-monitor";
+import { integrationTokenHealth, classifyAyoMobileToken } from "@/lib/private-integration-monitor";
 import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 
@@ -170,8 +170,22 @@ async function repairOlsera(startDate: string, endDate: string, actor: string): 
 }
 
 export async function GET() {
-  try { await requireModule("audit"); return NextResponse.json({ enabled: true, tokenHealth: integrationTokenHealth() }, { headers: NO_CACHE_HEADERS }); }
-  catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Gagal memuat monitoring integritas." }, { status: 500 }); }
+  try {
+    await requireModule("audit");
+    // Status AYO Mobile Token dibaca dari checkpoint sync existing (ayo_payment_event_sync_state),
+    // BUKAN dari panggilan baru ke API AYO — tidak menambah beban ke AYO sama sekali.
+    const checkpoint = await (await collections()).ayoPaymentEventSyncState.findOne({ _id: "ayo-payment-events-auto-sync" });
+    const ayoMobileToken = classifyAyoMobileToken({
+      token: process.env.AYO_MOBILE_TOKEN,
+      lastAttemptAt: checkpoint?.lastAttemptAt ?? null,
+      lastSuccessfulSyncAt: checkpoint?.lastSuccessfulSyncAt ?? null,
+      lastError: checkpoint?.lastError ?? null,
+    });
+    return NextResponse.json({ enabled: true, tokenHealth: integrationTokenHealth(), ayoMobileToken }, { headers: NO_CACHE_HEADERS });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    return NextResponse.json({ error: "Gagal memuat monitoring integritas." }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {

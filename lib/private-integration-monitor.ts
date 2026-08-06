@@ -45,3 +45,110 @@ export function classifyTokenHealth(source: TokenHealth["source"], token: string
 export function integrationTokenHealth(now = new Date()): TokenHealth[] {
   return [classifyTokenHealth("ayo-mobile", process.env.AYO_MOBILE_TOKEN, now), classifyTokenHealth("olsera-bearer", process.env.OLSERA_INTERNAL_TOKEN, now)];
 }
+
+// --- Status AYO Mobile Token (dedicated) ---------------------------------
+//
+// AYO_MOBILE_TOKEN diaudit (lib/ayo-payment-events.ts: mobileToken()) dan
+// hasilnya BUKAN JWT — token opaque hasil ekstraksi manual dari sesi AYO
+// Mobile (tidak ada flow refresh/import otomatis di codebase ini; tidak ada
+// endpoint AYO yang mengeluarkan token ini secara resmi dengan expiry). Tidak
+// ada klaim `exp`/`iat`, tidak ada metadata masa berlaku resmi, dan tidak ada
+// `importedAt` yang disimpan di mana pun — classifyTokenHealth lama SALAH
+// mengklasifikasikannya sebagai MANUAL_IMPORT_REQUIRED hanya karena gagal
+// didekode sebagai JWT, padahal token BISA saja masih aktif & terpakai.
+// Model di bawah ini TIDAK PERNAH menebak tanggal expiry untuk token opaque —
+// EXPIRY_UNKNOWN adalah representasi jujur dari "tidak ada bukti", bukan error.
+export type AyoTokenStatus = "ACTIVE" | "EXPIRING_SOON" | "EXPIRED" | "EXPIRY_UNKNOWN" | "MANUAL_IMPORT_REQUIRED" | "INVALID" | "UNAVAILABLE";
+
+export const AYO_TOKEN_STATUS_LABEL: Record<AyoTokenStatus, string> = {
+  ACTIVE: "Aktif",
+  EXPIRING_SOON: "Akan Kedaluwarsa",
+  EXPIRED: "Kedaluwarsa",
+  EXPIRY_UNKNOWN: "Expiry Tidak Diketahui",
+  MANUAL_IMPORT_REQUIRED: "Perlu Import Manual",
+  INVALID: "Token Tidak Valid",
+  UNAVAILABLE: "Tidak Tersedia",
+};
+
+const AYO_TOKEN_RECOMMENDATION: Record<AyoTokenStatus, string> = {
+  ACTIVE: "Token aktif, tidak ada tindakan diperlukan.",
+  EXPIRING_SOON: "Segera perbarui token sebelum kedaluwarsa.",
+  EXPIRED: "Token sudah kedaluwarsa — perbarui segera untuk memulihkan sinkronisasi.",
+  EXPIRY_UNKNOWN: "Token tersedia, tetapi sumber AYO tidak menyediakan metadata kedaluwarsa yang dapat diverifikasi.",
+  MANUAL_IMPORT_REQUIRED: "Token AYO belum tersedia atau perlu diperbarui secara manual.",
+  INVALID: "Token ditolak AYO atau formatnya rusak — perbarui token.",
+  UNAVAILABLE: "Pemeriksaan gagal karena jaringan/backend, bukan karena token. Coba lagi nanti.",
+};
+
+/** Threshold terpusat untuk EXPIRING_SOON — satu tempat, tidak tersebar/hardcode di banyak lokasi. */
+export const AYO_TOKEN_EXPIRING_SOON_DAYS = 7;
+
+export type AyoMobileTokenHealth = {
+  status: AyoTokenStatus;
+  label: string;
+  expiresAt: string | null;
+  expirySource: "jwt" | "unknown";
+  remainingDays: number | null;
+  /** Tidak ada sumber yang melacak ini untuk token opaque — selalu null, tidak pernah ditebak. */
+  importedAt: string | null;
+  lastSuccessfulCheck: string | null;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  checkedAt: string;
+  recommendation: string;
+};
+
+/**
+ * Klasifikasi AYO Mobile Token berdasarkan bukti nyata saja:
+ * 1. Tidak ada token → MANUAL_IMPORT_REQUIRED.
+ * 2. Berbentuk JWT (3 segmen) tapi tidak bisa didekode/tanpa `exp` → INVALID (format rusak, bukan expired).
+ * 3. `exp` JWT sudah lewat → EXPIRED (bukti kalender, prioritas tertinggi).
+ * 4. Checkpoint terakhir menunjukkan penolakan resmi (401/unauthorized) → INVALID.
+ * 5. Checkpoint terakhir menunjukkan kegagalan jaringan/infra → UNAVAILABLE (bukan token).
+ * 6. `exp` JWT tersedia dan belum lewat → EXPIRING_SOON/ACTIVE sesuai threshold.
+ * 7. Token ada, opaque, tidak ada bukti negatif → EXPIRY_UNKNOWN (tidak pernah ditebak jadi ACTIVE/EXPIRED).
+ */
+export function classifyAyoMobileToken(params: {
+  token: string | undefined;
+  now?: Date;
+  lastAttemptAt?: Date | null;
+  lastSuccessfulSyncAt?: Date | null;
+  lastError?: string | null;
+}): AyoMobileTokenHealth {
+  const { token, now = new Date(), lastAttemptAt = null, lastSuccessfulSyncAt = null, lastError = null } = params;
+  const build = (status: AyoTokenStatus, extra: Partial<Pick<AyoMobileTokenHealth, "expiresAt" | "expirySource" | "remainingDays">> = {}): AyoMobileTokenHealth => ({
+    status,
+    label: AYO_TOKEN_STATUS_LABEL[status],
+    expiresAt: extra.expiresAt ?? null,
+    expirySource: extra.expirySource ?? "unknown",
+    remainingDays: extra.remainingDays ?? null,
+    importedAt: null,
+    lastSuccessfulCheck: lastSuccessfulSyncAt?.toISOString() ?? null,
+    lastAttemptAt: lastAttemptAt?.toISOString() ?? null,
+    lastError,
+    checkedAt: now.toISOString(),
+    recommendation: AYO_TOKEN_RECOMMENDATION[status],
+  });
+
+  const configured = token?.trim();
+  if (!configured) return build("MANUAL_IMPORT_REQUIRED");
+
+  const looksLikeJwt = configured.split(".").length === 3;
+  const decodedExpiry = looksLikeJwt ? jwtExpiry(configured) : null;
+  if (looksLikeJwt && !decodedExpiry) return build("INVALID");
+
+  if (decodedExpiry) {
+    const remainingDays = Math.ceil((decodedExpiry.getTime() - now.getTime()) / 86_400_000);
+    if (remainingDays <= 0) return build("EXPIRED", { expiresAt: decodedExpiry.toISOString(), expirySource: "jwt", remainingDays });
+    const errorText = lastError ?? "";
+    if (/unauthorized|invalid.?token|401|403/i.test(errorText)) return build("INVALID");
+    if (/timeout|network|ECONNREFUSED|ETIMEDOUT|fetch failed|ENOTFOUND|EAI_AGAIN/i.test(errorText)) return build("UNAVAILABLE");
+    const status: AyoTokenStatus = remainingDays <= AYO_TOKEN_EXPIRING_SOON_DAYS ? "EXPIRING_SOON" : "ACTIVE";
+    return build(status, { expiresAt: decodedExpiry.toISOString(), expirySource: "jwt", remainingDays });
+  }
+
+  const errorText = lastError ?? "";
+  if (/unauthorized|invalid.?token|401|403/i.test(errorText)) return build("INVALID");
+  if (/timeout|network|ECONNREFUSED|ETIMEDOUT|fetch failed|ENOTFOUND|EAI_AGAIN/i.test(errorText)) return build("UNAVAILABLE");
+  return build("EXPIRY_UNKNOWN");
+}

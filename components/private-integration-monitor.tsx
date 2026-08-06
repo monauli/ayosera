@@ -5,15 +5,37 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 type Health = { source: string; label: string; status: string; expiresAt: string | null; remainingDays: number | null; checkedAt: string; lastError: string | null; lastValidSource: string | null };
+type AyoTokenHealth = {
+  status: "ACTIVE" | "EXPIRING_SOON" | "EXPIRED" | "EXPIRY_UNKNOWN" | "MANUAL_IMPORT_REQUIRED" | "INVALID" | "UNAVAILABLE";
+  label: string;
+  expiresAt: string | null;
+  expirySource: "jwt" | "unknown";
+  remainingDays: number | null;
+  importedAt: string | null;
+  lastSuccessfulCheck: string | null;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  recommendation: string;
+};
 const sources = ["olsera", "ayo-booking", "ayo-payment-events"] as const;
 const label: Record<(typeof sources)[number], string> = { olsera: "Olsera Sales", "ayo-booking": "AYO Booking", "ayo-payment-events": "AYO Payment Events" };
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
+const jakartaDateTime = (value: string) => new Date(value).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" });
+const AYO_TOKEN_STATUS_COLOR: Record<AyoTokenHealth["status"], string> = {
+  ACTIVE: "text-emerald-300",
+  EXPIRING_SOON: "text-amber-300",
+  EXPIRED: "text-rose-300",
+  EXPIRY_UNKNOWN: "text-slate-300",
+  MANUAL_IMPORT_REQUIRED: "text-amber-300",
+  INVALID: "text-rose-300",
+  UNAVAILABLE: "text-slate-400",
+};
 
 // Bedakan setiap kegagalan supaya panel tidak diam-diam menghilang — akun tanpa
 // modul "audit" harus melihat alasannya, bukan panel kosong yang terlihat seperti bug.
 type LoadState =
   | { kind: "loading" }
-  | { kind: "ready"; health: Health[] }
+  | { kind: "ready"; health: Health[]; ayoMobileToken: AyoTokenHealth | null }
   | { kind: "unauthenticated" }
   | { kind: "forbidden" }
   | { kind: "error" };
@@ -29,7 +51,7 @@ export function PrivateIntegrationMonitor() {
       if (res.status === 403) { setState({ kind: "forbidden" }); return; }
       if (!res.ok) { setState({ kind: "error" }); return; }
       const data = await res.json();
-      setState({ kind: "ready", health: Array.isArray(data.tokenHealth) ? data.tokenHealth : [] });
+      setState({ kind: "ready", health: Array.isArray(data.tokenHealth) ? data.tokenHealth : [], ayoMobileToken: data.ayoMobileToken ?? null });
     } catch { setState({ kind: "error" }); }
   };
   useEffect(() => { const end = today(); const date = new Date(`${end}T00:00:00Z`); date.setUTCDate(date.getUTCDate() - 29); setFrom(date.toISOString().slice(0, 10)); setTo(end); void load(); }, []);
@@ -78,6 +100,94 @@ export function PrivateIntegrationMonitor() {
     );
   }
 
-  const { health } = state;
-  return <section className="mt-6 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4"><div className="flex items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-100">Monitoring Integritas Data</h2><p className="mt-1 text-sm text-slate-400">Hanya metadata aman; token dan credential tidak pernah ditampilkan.</p></div><Button type="button" variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className="h-4 w-4" /> Periksa Sekarang</Button></div>{health.length === 0 ? <p className="mt-4 text-sm text-slate-400">Belum ada data status integrasi.</p> : <div className="mt-4 grid gap-3 sm:grid-cols-2">{health.map((item) => <div key={item.source} className="rounded-lg border border-white/10 bg-black/10 p-3"><div className="flex items-center justify-between gap-2"><b className="text-sm text-slate-100">{item.label}</b><span className="text-xs font-semibold text-cyan-200">{item.status}</span></div><p className="mt-2 text-xs text-slate-400">{item.expiresAt ? `Kedaluwarsa: ${new Date(item.expiresAt).toLocaleDateString("id-ID")} (${item.remainingDays} hari)` : "Expiry tidak diketahui"}</p><p className="text-xs text-slate-500">Sumber valid: {item.lastValidSource ?? "Belum ada"}</p>{item.lastError && <p className="text-xs text-rose-300">{item.lastError}</p>}</div>)}</div>}<div className="mt-4 border-t border-white/10 pt-4"><h3 className="text-sm font-semibold text-slate-100">Cek &amp; Tutup Gap Data</h3><div className="mt-3 grid gap-3 sm:grid-cols-4"><select aria-label="Sumber audit" value={source} onChange={(e) => setSource(e.target.value as typeof source)} className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-100">{sources.map((value) => <option key={value} value={value}>{label[value]}</option>)}</select><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} disabled={busy}/><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} disabled={busy}/><div className="flex gap-2"><Button type="button" onClick={() => void audit("check")} disabled={busy || !from || !to}>{busy && <Loader2 className="h-4 w-4 animate-spin"/>}Cek Gap</Button><Button type="button" variant="outline" onClick={() => void audit("repair")} disabled={busy || (result as { status?: string } | null)?.status !== "GAP_FOUND"}>Tutup Gap</Button></div></div>{result && <pre className="mt-3 overflow-auto rounded-md bg-black/20 p-3 text-xs text-slate-300">{JSON.stringify(result, null, 2)}</pre>}</div></section>;
+  const { health, ayoMobileToken } = state;
+  // AYO Mobile Token punya kartu khusus di bawah (lebih detail); jangan tampilkan dua kali di grid generik.
+  const otherHealth = health.filter((item) => item.source !== "ayo-mobile");
+
+  return (
+    <section className="mt-6 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-slate-100">Monitoring Integritas Data</h2>
+          <p className="mt-1 text-sm text-slate-400">Hanya metadata aman; token dan credential tidak pernah ditampilkan.</p>
+        </div>
+        <Button type="button" variant="outline" onClick={() => void load()} disabled={busy}>
+          <RefreshCw className="h-4 w-4" /> Periksa Sekarang
+        </Button>
+      </div>
+
+      {ayoMobileToken && (
+        <div className="mt-4 rounded-lg border border-white/10 bg-black/10 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <b className="text-sm text-slate-100">AYO Mobile Token</b>
+            <span className={`text-xs font-semibold ${AYO_TOKEN_STATUS_COLOR[ayoMobileToken.status]}`}>{ayoMobileToken.label}</span>
+          </div>
+          <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-slate-400 sm:grid-cols-2">
+            <div>
+              <dt className="inline text-slate-500">Sumber validasi: </dt>
+              <dd className="inline">{ayoMobileToken.expirySource === "jwt" ? "Klaim exp JWT" : "Tidak ada metadata resmi (token opaque)"}</dd>
+            </div>
+            <div>
+              <dt className="inline text-slate-500">Expiry: </dt>
+              <dd className="inline">{ayoMobileToken.expiresAt ? `${new Date(ayoMobileToken.expiresAt).toLocaleDateString("id-ID")} (${ayoMobileToken.remainingDays} hari)` : "Tidak diketahui"}</dd>
+            </div>
+            {ayoMobileToken.importedAt && (
+              <div>
+                <dt className="inline text-slate-500">Imported at: </dt>
+                <dd className="inline">{jakartaDateTime(ayoMobileToken.importedAt)}</dd>
+              </div>
+            )}
+            <div>
+              <dt className="inline text-slate-500">Last successful check: </dt>
+              <dd className="inline">{ayoMobileToken.lastSuccessfulCheck ? jakartaDateTime(ayoMobileToken.lastSuccessfulCheck) : "Belum ada"}</dd>
+            </div>
+          </dl>
+          {ayoMobileToken.lastError && <p className="mt-2 text-xs text-rose-300">Last error: {ayoMobileToken.lastError}</p>}
+          <p className="mt-2 text-xs text-slate-400">{ayoMobileToken.recommendation}</p>
+        </div>
+      )}
+
+      {otherHealth.length === 0 ? (
+        <p className="mt-4 text-sm text-slate-400">Belum ada data status integrasi lainnya.</p>
+      ) : (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {otherHealth.map((item) => (
+            <div key={item.source} className="rounded-lg border border-white/10 bg-black/10 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <b className="text-sm text-slate-100">{item.label}</b>
+                <span className="text-xs font-semibold text-cyan-200">{item.status}</span>
+              </div>
+              <p className="mt-2 text-xs text-slate-400">
+                {item.expiresAt ? `Kedaluwarsa: ${new Date(item.expiresAt).toLocaleDateString("id-ID")} (${item.remainingDays} hari)` : "Expiry tidak diketahui"}
+              </p>
+              <p className="text-xs text-slate-500">Sumber valid: {item.lastValidSource ?? "Belum ada"}</p>
+              {item.lastError && <p className="text-xs text-rose-300">{item.lastError}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4 border-t border-white/10 pt-4">
+        <h3 className="text-sm font-semibold text-slate-100">Cek &amp; Tutup Gap Data</h3>
+        <div className="mt-3 grid gap-3 sm:grid-cols-4">
+          <select aria-label="Sumber audit" value={source} onChange={(e) => setSource(e.target.value as typeof source)} className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-100">
+            {sources.map((value) => (
+              <option key={value} value={value}>{label[value]}</option>
+            ))}
+          </select>
+          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} disabled={busy} />
+          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} disabled={busy} />
+          <div className="flex gap-2">
+            <Button type="button" onClick={() => void audit("check")} disabled={busy || !from || !to}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}Cek Gap
+            </Button>
+            <Button type="button" variant="outline" onClick={() => void audit("repair")} disabled={busy || (result as { status?: string } | null)?.status !== "GAP_FOUND"}>
+              Tutup Gap
+            </Button>
+          </div>
+        </div>
+        {result && <pre className="mt-3 overflow-auto rounded-md bg-black/20 p-3 text-xs text-slate-300">{JSON.stringify(result, null, 2)}</pre>}
+      </div>
+    </section>
+  );
 }

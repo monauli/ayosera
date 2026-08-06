@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, Trash2, UserCog, X } from "lucide-react";
+import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, UserCog, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,39 +24,6 @@ type ManagedUser = {
   disabled: boolean;
   createdAt: string | null;
 };
-
-type OlseraDaySyncPayload = {
-  action?: "match" | "resynced" | "failed";
-  expectedOrderCount?: number;
-  processedOrderCount?: number;
-  error?: string;
-  errorMessage?: string | null;
-};
-
-const MAX_GAP_RANGE_DAYS = 31;
-
-function jakartaDateValue(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Jakarta",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
-function datesInRange(start: string, end: string) {
-  const first = new Date(`${start}T00:00:00Z`);
-  const last = new Date(`${end}T00:00:00Z`);
-  if (Number.isNaN(first.getTime()) || Number.isNaN(last.getTime())) return [];
-
-  const dates: string[] = [];
-  for (const cursor = new Date(first); cursor <= last; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-    dates.push(cursor.toISOString().slice(0, 10));
-  }
-  return dates;
-}
 
 function moduleLabels(modules: string[]) {
   return MODULE_OPTIONS.filter((option) => modules.includes(option.value)).map((option) => option.label);
@@ -86,13 +53,6 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
   const [resetBusyId, setResetBusyId] = useState<string | null>(null);
   const [revealedPassword, setRevealedPassword] = useState<{ email: string; password: string } | null>(null);
 
-  const [gapFrom, setGapFrom] = useState("");
-  const [gapTo, setGapTo] = useState("");
-  const [gapBusy, setGapBusy] = useState(false);
-  const [gapProgress, setGapProgress] = useState("");
-  const [gapMessage, setGapMessage] = useState("");
-  const [gapError, setGapError] = useState("");
-
   const loadUsers = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -114,12 +74,6 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
   useEffect(() => {
     loadUsers().catch(() => undefined);
   }, [loadUsers]);
-
-  useEffect(() => {
-    const today = jakartaDateValue();
-    setGapFrom(`${today.slice(0, 7)}-01`);
-    setGapTo(today);
-  }, []);
 
   function toggleModule(list: string[], value: string) {
     return list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
@@ -235,74 +189,6 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
     }
   }
 
-  async function checkAndCloseDataGaps() {
-    setGapMessage("");
-    setGapError("");
-    setGapProgress("");
-
-    const today = jakartaDateValue();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(gapFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(gapTo)) {
-      setGapError("Tanggal dari dan sampai wajib diisi.");
-      return;
-    }
-    if (gapFrom > gapTo) {
-      setGapError("Tanggal mulai tidak boleh melewati tanggal akhir.");
-      return;
-    }
-    if (gapTo > today) {
-      setGapError(`Tanggal akhir tidak boleh melewati hari ini (${today}).`);
-      return;
-    }
-
-    const dates = datesInRange(gapFrom, gapTo);
-    if (dates.length === 0) {
-      setGapError("Rentang tanggal tidak valid.");
-      return;
-    }
-    if (dates.length > MAX_GAP_RANGE_DAYS) {
-      setGapError(`Rentang maksimal ${MAX_GAP_RANGE_DAYS} hari agar proses tetap aman.`);
-      return;
-    }
-
-    setGapBusy(true);
-    let checked = 0;
-    let closedGaps = 0;
-    let addedOrders = 0;
-    let failed = 0;
-
-    try {
-      for (let index = 0; index < dates.length; index += 1) {
-        const date = dates[index];
-        setGapProgress(`Memeriksa ${date}... (${index + 1}/${dates.length})`);
-        try {
-          const response = await fetch("/api/olsera/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ date }),
-          });
-          const payload = (await response.json().catch(() => null)) as OlseraDaySyncPayload | null;
-          checked += 1;
-          if (!response.ok || !payload || payload.action === "failed" || !payload.action) {
-            failed += 1;
-            continue;
-          }
-          if (payload.action === "resynced") {
-            closedGaps += 1;
-            addedOrders += Math.max(0, (payload.processedOrderCount ?? 0) - (payload.expectedOrderCount ?? 0));
-          }
-        } catch {
-          checked += 1;
-          failed += 1;
-        }
-      }
-
-      setGapProgress("");
-      setGapMessage(`${checked} hari diperiksa, ${closedGaps} hari ada gap dan sudah ditutup, ${addedOrders} order ditambahkan${failed ? `, ${failed} hari gagal diperiksa.` : "."}`);
-    } finally {
-      setGapBusy(false);
-    }
-  }
-
   return (
     <div className="space-y-4">
       {(message || error) && (
@@ -352,34 +238,6 @@ export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: str
           </div>
         </div>
         <div className="pt-4">
-          {isSupervisor && (
-            <section className="mb-6 rounded-xl border border-indigo-300/20 bg-indigo-950/20 p-4">
-              <div>
-                <h2 className="text-base font-semibold text-slate-100">Cek &amp; Tutup Gap Data</h2>
-                <p className="mt-1 text-sm text-slate-400">Periksa ulang data penjualan Olsera untuk rentang tanggal tertentu.</p>
-              </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-                <label className="text-xs text-slate-400">
-                  Dari
-                  <Input type="date" value={gapFrom} onChange={(event) => setGapFrom(event.target.value)} disabled={gapBusy} className="mt-1" />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Sampai
-                  <Input type="date" value={gapTo} onChange={(event) => setGapTo(event.target.value)} disabled={gapBusy} className="mt-1" />
-                </label>
-                <Button type="button" onClick={() => void checkAndCloseDataGaps()} disabled={gapBusy || !gapFrom || !gapTo}>
-                  {gapBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {gapBusy ? "Memeriksa..." : "Cek & Tutup Gap Data"}
-                </Button>
-              </div>
-              {(gapProgress || gapMessage || gapError) && (
-                <p role={gapError ? "alert" : "status"} aria-live="polite" className={`mt-3 rounded-lg px-3 py-2 text-sm ${gapError ? "rd-alert-danger" : "rd-alert-success"}`}>
-                  {gapError || gapProgress || gapMessage}
-                </p>
-              )}
-            </section>
-          )}
-
           {formOpen && (
             <div className="mb-6 rounded-xl border border-white/10 bg-white/[0.04] p-4">
               <p className="mb-3 text-sm font-medium text-slate-200">Pengguna Baru (role: user)</p>

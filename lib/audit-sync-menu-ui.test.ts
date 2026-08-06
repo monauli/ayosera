@@ -71,13 +71,13 @@ test("perubahan allowedModules mencabut sesi aktif user tsb (permission berlaku 
 
 test("GET dan POST /api/private/integration-monitor memakai requireModule(\"audit\") — bukan lagi allowlist env", () => {
   assert.match(route, /import \{ requireModule \} from "@\/lib\/auth";/);
-  assert.match(route, /export async function GET\(\) \{\s*try \{ await requireModule\("audit"\);/);
+  assert.match(route, /export async function GET\(\) \{\s*try \{\s*await requireModule\("audit"\);/);
   assert.match(route, /export async function POST\(request: Request\) \{\s*try \{\s*const user = await requireModule\("audit"\);/);
   assert.doesNotMatch(route, /requirePrivateToolsUser/);
 });
 
 test("route tetap meneruskan Response 401\\/403 apa adanya dan fallback generik tanpa stack trace", () => {
-  assert.match(route, /catch \(error\) \{ if \(error instanceof Response\) return error;/);
+  assert.match(route, /if \(error instanceof Response\) return error;/);
   assert.doesNotMatch(route, /error\.stack/);
   assert.match(route, /"Gagal memuat monitoring integritas\."/);
 });
@@ -116,4 +116,49 @@ test("pengaman aksi sensitif dipertahankan: repair butuh audit GAP_FOUND segar, 
 test("audit (\"check\") tidak menulis apapun — hanya repair yang menyentuh koleksi produksi", () => {
   const checkBody = route.slice(route.indexOf("async function runAyoGapAudit"), route.indexOf("async function repair("));
   assert.doesNotMatch(checkBody, /bulkWrite|insertOne\(.*(bookings|ayoPaymentEvents|olseraOrderItems)/);
+});
+
+// --- Konsolidasi panel gap: hanya di Audit & Sinkronisasi, tidak lagi di Pengguna ------
+
+test("panel gap 'Cek & Tutup Gap Data' tidak lagi ada di halaman Pengguna", () => {
+  assert.doesNotMatch(usersPanel, /Cek & Tutup Gap Data/);
+  assert.doesNotMatch(usersPanel, /checkAndCloseDataGaps/);
+  assert.doesNotMatch(usersPanel, /\/api\/olsera\/sync/);
+});
+
+test("halaman Pengguna hanya berisi user management (tabel, role, modul, status, aksi) — tidak ada state gap tersisa", () => {
+  assert.doesNotMatch(usersPanel, /gapFrom|gapTo|gapBusy|gapProgress|gapMessage|gapError/);
+  assert.match(usersPanel, /Manajemen Pengguna/);
+  assert.match(usersPanel, /Modul Diizinkan/);
+});
+
+test("fungsi Cek/Tutup Gap tetap lengkap di panel Audit & Sinkronisasi", () => {
+  assert.match(panel, /Cek &amp; Tutup Gap Data/);
+  assert.match(panel, /Cek Gap/);
+  assert.match(panel, /Tutup Gap/);
+  assert.match(panel, /const audit = async \(action: "check" \| "repair"\)/);
+});
+
+test("menu Audit hanya tampil bila permission modul 'audit' dimiliki (atau supervisor) — bukan hardcode role", () => {
+  assert.match(
+    page,
+    /: Boolean\(sessionUser\) &&\s*\n\s*visibleNavItems\.some\(/,
+  );
+  assert.match(page, /sessionUser\.allowedModules\.includes\(item\.module\)/);
+});
+
+// --- Status AYO Mobile Token: raw token tidak pernah diserialisasi ke response --------
+
+test("route tidak pernah menaruh AYO_MOBILE_TOKEN mentah langsung di body response JSON", () => {
+  assert.doesNotMatch(route, /NextResponse\.json\(\{[^}]*AYO_MOBILE_TOKEN/);
+  assert.match(route, /classifyAyoMobileToken\(\{/);
+  assert.match(route, /token: process\.env\.AYO_MOBILE_TOKEN/);
+});
+
+test("GET memakai checkpoint sync existing (ayo_payment_event_sync_state) untuk status token, bukan panggilan baru ke API AYO", () => {
+  assert.match(route, /ayoPaymentEventSyncState\.findOne/);
+  assert.doesNotMatch(
+    route.slice(route.indexOf("export async function GET")),
+    /fetchAyoPaymentEvents|fetchAyoBookingsByDateRange|fetchOlseraSalesAuditSource/,
+  );
 });
