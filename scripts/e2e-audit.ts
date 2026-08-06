@@ -476,7 +476,7 @@ async function main() {
     // ------------------------------------------------- 3b. Booking Session
     currentArea = "booking-session";
     const rupiahToNumber = (text: string) => Number(text.replace(/[^0-9]/g, "")) || 0;
-    const sessionButtons = () => page.getByRole("button", { name: /detail \d+ slot untuk/ });
+    const sessionButtons = () => page.getByRole("button", { name: /detail \d+ sesi untuk/ });
     const sessionButton = sessionButtons().first();
 
     await check(`filter ke ${SESSION_DATE} menampilkan Booking Session (default tertutup)`, async () => {
@@ -494,7 +494,7 @@ async function main() {
       await sessionButton.waitFor({ state: "visible", timeout: 30_000 });
       assert((await sessionButton.getAttribute("aria-expanded")) === "false", "session tidak tertutup secara default");
       const label = ((await sessionButton.textContent()) ?? "").trim();
-      assert(/^\d+ slot$/.test(label), `label tidak sesuai: "${label}"`);
+      assert(/^\d+ sesi$/.test(label), `label tidak sesuai: "${label}"`);
       const detailId = await sessionButton.getAttribute("aria-controls");
       assert(detailId, "aria-controls tidak diset");
       assert(!(await page.locator(`#${detailId}`).count()), "detail seharusnya belum dirender saat tertutup");
@@ -595,7 +595,7 @@ async function main() {
       let slotTotal = 0;
       for (let index = 0; index < (await buttons.count()); index += 1) {
         const label = (await buttons.nth(index).textContent()) ?? "";
-        slotTotal += Number(/(\d+) slot/.exec(label)?.[1] ?? 0);
+        slotTotal += Number(/(\d+) sesi/.exec(label)?.[1] ?? 0);
       }
       // Baris tunggal = baris tabel yang bukan baris ringkas session (baris detail punya id).
       const singleRows = (await page.locator("tbody tr:not([id])").count()) - (await buttons.count());
@@ -837,7 +837,7 @@ async function main() {
         { timeout: 30_000 },
       );
       const before = await horizontalOverflow(mobilePage);
-      const button = mobilePage.getByRole("button", { name: /detail \d+ slot untuk/ }).first();
+      const button = mobilePage.getByRole("button", { name: /detail \d+ sesi untuk/ }).first();
       await button.waitFor({ state: "visible", timeout: 30_000 });
       const box = await button.boundingBox();
       assert((box?.height ?? 0) >= 32, `target sentuh terlalu kecil: ${box?.height ?? 0}px`);

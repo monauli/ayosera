@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildBookingSessionKey,
@@ -321,4 +322,85 @@ test("26. session id stabil, DOM-safe, dan tidak memakai indeks array", () => {
   const [session] = sessions(entries);
   assert.equal(session.id, "booking-session-MN-2428-260729-0002759");
   assert.match(session.id, /^[A-Za-z0-9-]+$/);
+});
+
+// ---------------------------------------------------------------------------
+// UI text & audit decision (components/booking-session-row.tsx) — diverifikasi
+// lewat inspeksi source (pola yang sama dipakai test UI lain di repo ini,
+// mis. lib/olsera-inventory-ui.test.ts), karena tidak ada harness React
+// render di repo ini.
+// ---------------------------------------------------------------------------
+
+function rowComponentSource() {
+  return readFileSync(new URL("../components/booking-session-row.tsx", import.meta.url), "utf8");
+}
+
+test("27. label ringkas 'X slot' sudah tidak tampil, diganti 'X sesi' (1 sesi maupun 2+ sesi memakai kata yang sama)", () => {
+  const source = rowComponentSource();
+  assert.equal(source.includes("slotCount} slot"), false, "teks 'X slot' seharusnya sudah tidak ada");
+  assert.ok(source.includes("{session.slotCount} sesi"), "label ringkas harus memakai 'sesi'");
+  assert.ok(source.includes("${session.slotCount} sesi untuk"), "aria-label harus memakai 'sesi'");
+  assert.equal(source.includes("slot untuk"), false, "aria-label lama 'slot untuk' seharusnya sudah tidak ada");
+});
+
+test("28. grouping/jumlah booking tidak disentuh oleh perubahan label — component tetap memakai slotCount dari lib/booking-session.ts apa adanya", () => {
+  const source = rowComponentSource();
+  // slotCount tetap field data yang sama (angka sesi sebenarnya dari grouping), hanya teksnya yang berubah.
+  assert.ok(source.includes("session.slotCount"));
+  assert.equal(source.includes("groupBookingsIntoSessions"), false, "component presentasi tidak boleh memanggil grouping sendiri");
+});
+
+test("29. badge Reschedule tetap ada, badge Harga Diubah tidak berubah (belum diganti 'Nominal Berubah')", () => {
+  const source = rowComponentSource();
+  assert.ok(source.includes('{hasValidReschedule(booking) && ('));
+  assert.ok(source.includes('<Badge variant="warning">Reschedule</Badge>'));
+  assert.ok(source.includes('{hasValidPriceChange(booking) && <Badge variant="warning">Harga Diubah</Badge>}'));
+  assert.equal(source.includes("Nominal Berubah"), false, "label Harga Diubah belum boleh diganti pada task ini");
+});
+
+test("30. Jadwal awal/sekarang HANYA dirender bila hasValidReschedule DAN previousSchedule benar-benar ada (tidak ada jadwal palsu)", () => {
+  const source = rowComponentSource();
+  assert.ok(source.includes("Jadwal awal:"));
+  assert.ok(source.includes("Jadwal sekarang:"));
+  // Guard ganda: badge Reschedule dan blok jadwal berada di dalam kondisi hasValidReschedule yang sama,
+  // dan blok jadwal itu sendiri masih digerbang oleh keberadaan booking.previousSchedule.
+  const rescheduleBlock = source.slice(source.indexOf("{hasValidReschedule(booking) && ("), source.indexOf("{hasValidPriceChange(booking)"));
+  assert.ok(rescheduleBlock.includes("booking.previousSchedule &&"), "blok jadwal awal/sekarang harus digerbang oleh booking.previousSchedule");
+  assert.ok(rescheduleBlock.includes("Jadwal awal:"));
+  assert.ok(rescheduleBlock.includes("Jadwal sekarang:"));
+});
+
+test("31. jadwal awal/sekarang memakai field previousSchedule/date/time yang SUDAH ADA (diff snapshot sync sendiri) — bukan field baru/tebakan", () => {
+  const source = rowComponentSource();
+  assert.ok(source.includes("booking.previousSchedule.date"));
+  assert.ok(source.includes("booking.previousSchedule.start_time.slice(0, 5)"));
+  assert.ok(source.includes("booking.previousSchedule.end_time.slice(0, 5)"));
+  assert.ok(source.includes("{booking.date} {booking.time}-{booking.endTime"));
+});
+
+test("32. detail pembayaran (nominal per payment/waktu dibuat/status asli AYO/metode) SENGAJA TIDAK ditampilkan — keputusan audit C, bukan lupa", () => {
+  const source = rowComponentSource();
+  // Tidak ada field payment-event yang diperkenalkan ke komponen presentasi ini
+  // (nama field tidak akan pernah muncul di sini kecuali sungguh-sungguh dipakai/di-import).
+  for (const forbidden of ["paymentNote", "paymentType", "reservationPaymentId", "booking.eventDate", "import.*ayo-payment-events"]) {
+    assert.equal(new RegExp(forbidden).test(source), false, `komponen tidak boleh memakai field payment-event "${forbidden}" (data payment-event belum terbukti cukup)`);
+  }
+  // Keputusan diaudit didokumentasikan di komentar file, bukan diam-diam dihilangkan.
+  assert.ok(source.includes("Karena itu"));
+  assert.ok(source.includes("detail pembayaran per booking SENGAJA TIDAK ditampilkan"));
+});
+
+test("33. tidak ada total/nominal baru dihitung oleh perubahan ini — totalRevenue tetap dari getRevenueAmount() existing, tidak ada rumus baru", () => {
+  const source = rowComponentSource();
+  assert.ok(source.includes('import { getRevenueAmount } from "@/lib/revenue";'));
+  assert.equal(source.includes("totalRevenue +"), false);
+  assert.equal(source.includes("reduce("), false, "komponen presentasi tidak boleh menjumlahkan ulang — total sudah dihitung di lib/booking-session.ts");
+});
+
+test("34. e2e audit script (scripts/e2e-audit.ts) diperbarui mengikuti label 'sesi' baru — tidak ada assertion basi ke 'slot' pada label tombol/aria-label", () => {
+  const source = readFileSync(new URL("../scripts/e2e-audit.ts", import.meta.url), "utf8");
+  assert.equal(source.includes("/detail \\d+ slot untuk/"), false);
+  assert.ok(source.includes("/detail \\d+ sesi untuk/"));
+  assert.equal(source.includes("/^\\d+ slot$/"), false);
+  assert.ok(source.includes("/^\\d+ sesi$/"));
 });
