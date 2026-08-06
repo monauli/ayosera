@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { buildDashboardPaymentMetrics } from "./dashboard-payment-metrics.ts";
+import { buildDashboardPaymentMetrics, dashboardPaymentAmountsByBooking } from "./dashboard-payment-metrics.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 import { paymentEventAsBooking } from "./ayo-payment-events-sync.ts";
 import { isDisplayEligibleTransaction } from "./revenue.ts";
@@ -39,11 +39,33 @@ test("Agustus dedupe identity dan fallback booking tetap terpisah", () => {
 });
 
 test("route dan donut memakai kontrak payment-versus-booking yang terpisah", async () => {
-  const [route, page] = await Promise.all([readFile(new URL("../app/api/dashboard/route.ts", import.meta.url), "utf8"), readFile(new URL("../app/page.tsx", import.meta.url), "utf8")]);
+  const [route, exportRoute, page] = await Promise.all([
+    readFile(new URL("../app/api/dashboard/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/transactions/export/bulanan/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  ]);
   assert.match(route, /buildDashboardPaymentMetrics/);
   assert.doesNotMatch(route, /paymentEventAsBooking/);
   assert.match(route, /bookingTotal: paymentMetrics\.bookingTotal/);
+  assert.match(exportRoute, /readActiveStagedPaymentEvents/);
+  assert.match(exportRoute, /dashboardPaymentAmountsByBooking/);
+  assert.match(exportRoute, /withCanonicalPaymentAmounts/);
   assert.match(page, /const totalBookings = metrics\?\.bookingTotal \?\? 0/);
+});
+
+test("agregasi export memakai identity Dashboard: payment berbeda dijumlahkan, duplicate identity tidak", () => {
+  const first = event("first", 150000);
+  first.bookingId = "MN/2428/260729/0002761";
+  const second = event("second", 50000);
+  second.bookingId = "MN/2428/260729/0002761";
+  const duplicateLatest = { ...first, amount: 150000 };
+  const amounts = dashboardPaymentAmountsByBooking([first, second, duplicateLatest]);
+  assert.equal(amounts.get("MN/2428/260729/0002761"), 200000);
+  assert.equal(amounts.size, 1);
+  assert.deepEqual(
+    buildDashboardPaymentMetrics({ bookingTotal: 1, fallbackTransactions: 1, fallbackRevenue: 50000, paymentEvents: [first, second, duplicateLatest] }),
+    { totalTransactions: 2, revenueMonth: 200000, bookingTotal: 1 },
+  );
 });
 
 test("chart Pendapatan Bulanan menyediakan ruang penuh untuk label sumbu-Y tanpa mengubah konfigurasi data", async () => {

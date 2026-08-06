@@ -9,8 +9,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import ExcelJS from "exceljs";
-import { buildOmzetHarianWorkbook, buildOmzetPeriodWorkbook, type OmzetExportInput } from "./omzet-export.ts";
+import { buildOmzetHarianWorkbook, buildOmzetPeriodWorkbook, type OmzetExportInput, withCanonicalPaymentAmounts } from "./omzet-export.ts";
 import type { BookingDocument } from "./mongodb.ts";
+import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
+import { dashboardPaymentAmountsByBooking } from "./dashboard-payment-metrics.ts";
 
 function fakeBooking(overrides: Partial<BookingDocument>): BookingDocument {
   return {
@@ -40,6 +42,58 @@ async function loadFirstSheet(bytes: Uint8Array) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
   return wb.worksheets[0]; // sheet Summary selalu ditambahkan pertama
+}
+
+function paymentEvent(id: string, bookingId: string, amount: number, date: string): AyoPaymentEvent {
+  const now = new Date(`${date}T00:00:00.000Z`);
+  return {
+    _id: id,
+    identity: `internal_reservation:${bookingId}:${id}`,
+    bookingId,
+    sourceTable: "internal_reservation",
+    reservationPaymentId: id,
+    nativeId: id,
+    sourceId: id,
+    eventDate: now,
+    eventDateSource: "payment_date",
+    amount,
+    amountSource: "total",
+    bookingPrefix: "MN",
+    paymentStatus: "SUCCESS",
+    bookingStatus: null,
+    source: "ayo-report-transactions",
+    rawPayload: {},
+    normalizedPayload: {},
+    createdAt: now,
+    updatedAt: now,
+    paymentType: "MANUAL",
+    paymentNote: null,
+    detailStatus: "SUCCESS",
+    finalStatus: "SUCCESS",
+    fieldName: "Court No 4",
+    date,
+    startTime: "16:00:00",
+    endTime: "17:00:00",
+    total: amount,
+    finalFeeAyo: 0,
+    isCredit: false,
+    raw: {},
+    syncedAt: now,
+  };
+}
+
+function headerColumn(ws: ExcelJS.Worksheet, header: string, row = 4) {
+  for (let col = 1; col <= ws.columnCount; col++) if (ws.getCell(row, col).value === header) return col;
+  throw new Error(`Header ${header} tidak ditemukan`);
+}
+
+function revenueForBooking(ws: ExcelJS.Worksheet, bookingId: string) {
+  const bookingColumn = headerColumn(ws, "Booking ID");
+  const revenueColumn = headerColumn(ws, "Revenue \nVenue");
+  for (let row = 5; row <= ws.rowCount; row++) {
+    if (ws.getCell(row, bookingColumn).value === bookingId) return ws.getCell(row, revenueColumn).value;
+  }
+  throw new Error(`Booking ${bookingId} tidak ditemukan`);
 }
 
 test("buildOmzetHarianWorkbook: nama court berbahaya (field_name diawali karakter formula) disimpan sebagai teks aman di header Summary", async () => {
@@ -108,4 +162,54 @@ test("export AYO mengeluarkan cancelled tanpa mengubah kolom, urutan, atau total
   assert.deepEqual(ids, ["FINISHED", "SUCCESS"]);
   assert.equal(ayo.columnCount, controlAyo.columnCount);
   assert.equal(ayo.getCell("Q7").value && typeof ayo.getCell("Q7").value === "object" ? (ayo.getCell("Q7").value as { formula: string }).formula : "", "SUM(Q5:Q6)");
+});
+
+test("Export Bulanan memakai total payment Dashboard untuk Juli tanpa mengubah metadata atau worksheet", async () => {
+  const targetId = "MN/2428/260729/0002761";
+  const baseId = "JULY-BASE";
+  const bookings = [
+    fakeBooking({ booking_id: baseId, date: "2026-07-01", field_name: "Court No 1", booking_source: "order", total_price: 237291000 }),
+    fakeBooking({ booking_id: targetId, date: "2026-07-30", field_name: "Court No 4", booking_source: "reservation", total_price: 50000, start_time: "16:00:00", end_time: "17:00:00" }),
+  ];
+  const events = [
+    paymentEvent("base", baseId, 237291000, "2026-07-01"),
+    paymentEvent("first", targetId, 150000, "2026-07-30"),
+    paymentEvent("second", targetId, 50000, "2026-07-30"),
+  ];
+  const canonical = withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(events));
+  assert.equal(canonical.find((booking) => booking.booking_id === targetId)?.total_price, 200000);
+  assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0), 237491000);
+  assert.equal(canonical.find((booking) => booking.booking_id === targetId)?.field_name, "Court No 4");
+  assert.equal(canonical.find((booking) => booking.booking_id === targetId)?.date, "2026-07-30");
+
+  const bytes = await buildOmzetPeriodWorkbook({ date: "2026-07-01", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical, periodLabel: "Laporan Bulan Juli 2026", dateList: Array.from({ length: 31 }, (_, index) => `2026-07-${String(index + 1).padStart(2, "0")}`) });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const summary = wb.getWorksheet("Summary")!;
+  const walkIn = wb.getWorksheet("Walk In")!;
+  const ayo = wb.getWorksheet("AYO")!;
+  const all = wb.getWorksheet("ALL")!;
+  const court4 = headerColumn(summary, "Court 4");
+  assert.equal(summary.getCell(35, court4 + 1).value, 200000, "Summary Walk In 30 Juli");
+  assert.equal(revenueForBooking(walkIn, targetId), 200000);
+  assert.equal(revenueForBooking(ayo, baseId), 237291000);
+  assert.equal(revenueForBooking(all, targetId), 200000);
+  assert.equal(revenueForBooking(all, baseId), 237291000);
+});
+
+test("Export Bulanan Juni menambah tepat Rp600.000 dan tidak membuat booking tanpa payment", () => {
+  const ids = ["MN/2428/260525/0001581", "MN/2428/260525/0001582", "MN/2428/260606/0001835", "MN/2428/260611/0001951"];
+  const bookings = [
+    fakeBooking({ booking_id: "JUNE-BASE", date: "2026-06-01", total_price: 241945499 }),
+    ...ids.map((booking_id, index) => fakeBooking({ booking_id, date: `2026-06-${String(index + 4).padStart(2, "0")}`, booking_source: "reservation", total_price: index < 2 ? 125000 : 50000 })),
+    fakeBooking({ booking_id: "NO-PAYMENT", total_price: 999999 }),
+  ];
+  const events = [
+    paymentEvent("june-base", "JUNE-BASE", 241945499, "2026-06-01"),
+    ...ids.flatMap((bookingId, index) => [paymentEvent(`${index}-a`, bookingId, 150000, `2026-06-${String(index + 4).padStart(2, "0")}`), paymentEvent(`${index}-b`, bookingId, index < 2 ? 125000 : 50000, `2026-06-${String(index + 4).padStart(2, "0")}`)]),
+  ];
+  const canonical = withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(events));
+  assert.equal(canonical.some((booking) => booking.booking_id === "NO-PAYMENT"), false);
+  assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0), 242895499);
+  assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0) - bookings.filter((booking) => booking.booking_id !== "NO-PAYMENT").reduce((sum, booking) => sum + booking.total_price, 0), 600000);
 });

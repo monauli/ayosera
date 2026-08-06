@@ -39,6 +39,19 @@ export type OmzetExportInput = {
   dateList?: string[];
 };
 
+/**
+ * Retains booking metadata for the workbook while replacing its revenue amount
+ * with the canonical Dashboard payment total. A booking absent from the
+ * validated payment source is omitted: Dashboard does not add a booking
+ * fallback while that source is active.
+ */
+export function withCanonicalPaymentAmounts(bookings: BookingDocument[], paymentAmounts: ReadonlyMap<string, number>) {
+  return bookings.flatMap((booking) => {
+    const amount = paymentAmounts.get(booking.booking_id);
+    return amount === undefined ? [] : [{ ...booking, total_price: amount }];
+  });
+}
+
 /** Subtitle "Laporan Periode ..." — harian pakai 1 tanggal, periode pakai label kustom. */
 function periodText(input: OmzetExportInput) {
   return input.periodLabel ?? periodTextDay(input.date);
