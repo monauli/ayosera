@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Search,
   RotateCcw,
+  ShieldAlert,
   ShieldCheck,
   Store,
   Users,
@@ -38,6 +39,7 @@ import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-sync-lock";
 import { runOlseraSyncAll, type StageId, type StageStatus } from "@/lib/olsera-sync-orchestrator";
 import { UsersPanel } from "@/components/users-panel";
+import { PrivateIntegrationMonitor } from "@/components/private-integration-monitor";
 import { AyoseraHeader } from "@/components/redesign/ayosera-header";
 import { AyoseraShell } from "@/components/redesign/ayosera-shell";
 import { AyoseraSidebar } from "@/components/redesign/ayosera-sidebar";
@@ -1788,7 +1790,7 @@ export default function DashboardPage() {
   // menyembunyikan menu tidak ikut menghapusnya dari registry izin —
   // Supervisor selalu boleh, user biasa hanya bila modul "transaksi" dimiliki.
   const activeNavAllowed =
-    activeNav === "Pengguna"
+    activeNav === "Pengguna" || activeNav === "Audit"
       ? isSupervisor
       : activeNav === "Transaksi"
         ? isSupervisor || Boolean(sessionUser?.allowedModules.includes("transaksi"))
@@ -1998,25 +2000,30 @@ export default function DashboardPage() {
               ? "Monitoring Webhook AYO"
             : activeNav === "Pengguna"
                 ? "Manajemen Pengguna"
-                : "Dashboard AYO";
+                : activeNav === "Audit"
+                  ? "Audit & Sinkronisasi"
+                  : "Dashboard AYO";
   const headerDescription =
     activeNav === "OlseraInventori"
       ? "Monitoring stok, mutasi, harga modal, dan nilai persediaan Olsera."
       : activeNav === "OlseraKeuangan"
         ? "Neraca, Laba Rugi, Arus Kas, dan Buku Besar dari snapshot sinkronisasi Olsera."
-        : activeNav === "Dasbor"
+        : activeNav === "Audit"
+          ? "Memeriksa integritas data AYO/Olsera terhadap database internal dan menutup gap yang terdeteksi."
+          : activeNav === "Dasbor"
           ? "Pusat monitoring operasional dan transaksi AYO."
           : undefined;
 
   const sidebarItems = [
     ...visibleNavItems,
+    ...(isSupervisor ? [{ label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "" }] : []),
     ...(isSupervisor ? [{ label: "Pengguna", display: "Pengguna", icon: Users, module: "" }] : []),
   ];
 
   // Dropdown Sync AYO lama — handler & endpoint tidak berubah, hanya dipindah
   // ke variabel agar bisa disuntikkan sebagai slot `actions` di header baru.
   const ayoSyncControl =
-    canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "OlseraKeuangan" && activeNav !== "Pengguna" ? (
+    canSyncAyo && activeNav !== "Olsera" && activeNav !== "OlseraInventori" && activeNav !== "OlseraKeuangan" && activeNav !== "Pengguna" && activeNav !== "Audit" ? (
             <div className="relative">
               <Button
                 className={OLSERA_PRIMARY_BTN}
@@ -2189,6 +2196,17 @@ export default function DashboardPage() {
           {activeNavAllowed && activeNav === "Pengguna" && isSupervisor && (
             <div className="rd-legacy p-4 sm:p-5">
               <UsersPanel currentUserId={sessionUser!.id} isSupervisor={isSupervisor} />
+            </div>
+          )}
+
+          {activeNavAllowed && activeNav === "Audit" && isSupervisor && (
+            <div className="rd-legacy p-4 sm:p-5">
+              <p className="text-sm text-slate-400">
+                Membandingkan data AYO/Olsera dengan database internal untuk mendeteksi transaksi yang hilang
+                atau tidak sinkron. Sebagian aksi di sini (mis. &quot;Tutup Gap&quot;) dapat memperbaiki data dan
+                hanya tersedia untuk akun yang diizinkan mengakses Private Integration Tools.
+              </p>
+              <PrivateIntegrationMonitor />
             </div>
           )}
 
