@@ -41,6 +41,7 @@ import {
   shouldApplyPeriodResponse,
   writePeriodToSearch,
 } from "@/lib/olsera-financial-period-state";
+import { visibleFinancialSourceDiagnostics } from "@/lib/olsera-financial-diagnostics-ui";
 
 const TITLE = "text-[16px] font-semibold tracking-tight text-slate-50";
 const DESC = "mt-1 text-[13.5px] leading-relaxed text-slate-400";
@@ -609,7 +610,7 @@ export function OlseraFinancialPanel() {
   const pl = snapshot?.reports.profitLoss ?? null;
   const cf = snapshot?.reports.cashFlow ?? null;
   const ls = snapshot?.reports.ledgerSummary ?? null;
-  const summaryWarnings = snapshot?.summaryDiagnostics?.filter((row) => !["Data Lengkap", "Tidak Ada Transaksi"].includes(row.status)) ?? [];
+  const summaryWarnings = visibleFinancialSourceDiagnostics(snapshot?.summaryDiagnostics ?? []);
   const subtotalWarning = hasSubtotalMismatch(bs) || hasSubtotalMismatch(pl) || hasSubtotalMismatch(cf);
 
   return (

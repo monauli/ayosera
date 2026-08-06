@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronRight, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
+import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
 
 type LedgerEntry = { transactionNo: string | null; transactionDate: string | null; description: string | null; debit: number; credit: number };
 type AccountBreakdown = {
@@ -373,7 +374,10 @@ export default function ReconciliationPage() {
                   <td>{row.dataAvailable ? formatRupiah(row.olseraTotal) : "Data belum tersedia"}</td>
                   <td>{row.dataAvailable ? formatRupiah(row.differenceRevenue) : "-"}</td>
                   <td>
+                    {/*
                     <StatusBadge status={row.status} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok â€” Terkunci · Detail Penyesuaian</span> : row.explanation?.locked && <LockBadge />}
+                    */}
+                    <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci · Detail Penyesuaian</span> : row.explanation?.locked && <LockBadge />}
                   </td>
                   <td>
                     <button className="recon-link" onClick={() => void openDetail(row.period)}>
@@ -394,7 +398,10 @@ export default function ReconciliationPage() {
                   </span>
                 </div>
                 <div>
+                  {/*
                   <StatusBadge status={row.status} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok â€” Terkunci</span> : row.explanation?.locked && <LockBadge />}
+                  */}
+                  <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci</span> : row.explanation?.locked && <LockBadge />}
                 </div>
               </button>
             ))}
@@ -445,8 +452,8 @@ export default function ReconciliationPage() {
                   title="TOTAL GABUNGAN"
                   ayoLabel="Total Omzet AYO"
                   olseraLabel="Total Omzet Olsera (40001+40004)"
-                  comparison={{ ayo: detail.sportReconciliation.total, olsera: detail.olseraTotal, difference: detail.differenceRevenue, status: detail.status === "COCOK" ? "COCOK" : "PERLU_DICEK" }}
-                  finalStatus={detail.status}
+                  comparison={{ ayo: detail.sportReconciliation.total, olsera: detail.olseraTotal, difference: detail.differenceRevenue, status: reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue) === "COCOK" ? "COCOK" : "PERLU_DICEK" }}
+                  finalStatus={reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue)}
                   wide
                   locked={detail.periodLock?.status === "locked"}
                 />
@@ -485,7 +492,10 @@ export default function ReconciliationPage() {
                 <div>
                   <span>Status</span>
                   <div style={{ display: "flex", gap: ".35rem", flexWrap: "wrap" }}>
+                    {/*
                     <StatusBadge status={detail.status} /> {detail.explanation?.locked && <LockBadge />}
+                    */}
+                    <StatusBadge status={reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue)} /> {detail.explanation?.locked && <LockBadge />}
                   </div>
                 </div>
               </section>
