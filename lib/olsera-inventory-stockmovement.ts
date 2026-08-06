@@ -1,6 +1,7 @@
 // Client read-only untuk GET /api/open-api/v1/en/inventory/stockmovement
 // (Open API Olsera) — sumber data OTOMATIS untuk Export Inventori Bulanan
-// (lihat lib/olsera-inventory-monthly-export.ts:generateMonthlyInventoryExportAuto).
+// (lihat lib/olsera-inventory-monthly-snapshot-store.ts:ensureMonthlySnapshotChain,
+// dipakai lib/olsera-inventory-two-sheet-export.ts).
 // Memakai flow autentikasi existing (lib/olsera.ts:getAccessToken) — TIDAK
 // membuat autentikasi baru, TIDAK memakai token/cookie Backoffice, TIDAK
 // hard-code credential. Murni baca: tidak pernah menulis apa pun ke Olsera.

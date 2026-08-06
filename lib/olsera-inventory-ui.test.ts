@@ -100,7 +100,7 @@ test("Hidden Item tidak mengubah endpoint atau jalur export Inventori", () => {
   const panel = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
   const exportModule = readFileSync(new URL("./olsera-inventory-export.ts", import.meta.url), "utf8");
   assert.ok(panel.includes("/api/olsera/inventory/monthly?${params.toString()}"));
-  assert.ok(panel.includes("/api/olsera/inventory/export?${query}"));
+  assert.ok(panel.includes("/api/olsera/inventory/export/monthly-auto?year=${year}&month=${month}"));
   assert.equal(exportModule.includes("HIDDEN_INVENTORY_CATEGORIES"), false);
   assert.equal(exportModule.includes("visibleInventoryRows"), false);
 });
@@ -197,11 +197,12 @@ test("panel: satu periode YYYY-MM menjadi sumber data bulanan dan URL", () => {
   assert.ok(source.includes("stockEmptyStateMessage({"));
 });
 
-test("panel: ringkasan inventori hanya lima kartu dan dapat disembunyikan tanpa mengubah data", () => {
+test("panel: ringkasan inventori hanya lima kartu, default tersembunyi, dan dapat dibuka tanpa mengubah data", () => {
   const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
   for (const label of ["Total Produk", "Produk dengan Sisa Stok", "Stok Habis", "Stok Hampir Habis", "Total Stok"]) assert.ok(source.includes(`label: "${label}"`));
   assert.equal(source.includes('label: "Total Nilai Persediaan"'), false);
-  assert.ok(source.includes('const [showSummary, setShowSummary] = useState(true);'));
+  // Keputusan UX: Ringkasan default hidden saat halaman pertama dibuka.
+  assert.ok(source.includes('const [showSummary, setShowSummary] = useState(false);'));
   assert.ok(source.includes('aria-expanded={showSummary}'));
   assert.ok(source.includes('Sembunyikan Ringkasan'));
   assert.ok(source.includes('Tampilkan Ringkasan'));
@@ -367,12 +368,17 @@ test("panel: error fetch Stok dan Mutasi menampilkan pesan dan tombol Coba Lagi 
   assert.ok(source.includes("setMovementError(true)"));
 });
 
-// ---- 16. Export bulanan disabled saat data periode belum tersedia --------
+// ---- 16. Export inventori TIDAK LAGI disabled saat data periode belum
+// tersedia — perbaikan catch-22 lama: dulu tombol yang memicu penyiapan
+// snapshot bulanan justru dinonaktifkan tepat saat snapshot belum ada
+// (stockHasData === false). Endpoint export sekarang self-healing
+// (ensureMonthlySnapshotChain di dalam generateTwoSheetInventoryExport), jadi
+// tombol/menu-nya tidak boleh lagi digerbang oleh stockHasData.
 
-test("panel: Export Laporan Stock Opname Bulanan disabled saat data periode belum tersedia, dengan penjelasan singkat (bukan popup error)", () => {
+test("panel: Export Inventori TIDAK digerbang oleh stockHasData (memicu penyiapan snapshot, bukan diblokir olehnya)", () => {
   const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
-  assert.ok(source.includes("disabled={monthlyReportExporting || !period || stockHasData === false}"));
-  assert.ok(source.includes("Data periode ini belum tersedia."));
+  assert.equal(source.includes("stockHasData === false"), false, "tombol export tidak boleh lagi disabled karena data periode kosong — endpoint sudah self-healing");
+  assert.ok(source.includes("handleExportInventory"));
 });
 
 // ---- 17. Hidden Item: penjelasan tidak diulang, fungsi tidak berubah ------
@@ -410,4 +416,64 @@ test("panel: istilah dan penjelasan teknis (snapshot/baseline) dihapus dari tamp
   for (const key of ["stale", "running", "success", "partial", "failed", "idle"]) {
     assert.ok(source.includes(`syncStatusLabel("${key}")`), `chip sync "${key}" harus memakai syncStatusLabel`);
   }
+});
+
+// ---- 20-23. Kolom Stok Minimum/Status Stok/Harga Modal/Nilai Persediaan
+// tidak lagi dirender di tabel Stok Bulanan (field/formula backend TIDAK
+// dihapus — hanya tidak dirender, lihat ProductRow type & app/api/olsera/
+// inventory/monthly/route.ts yang tidak disentuh).
+
+test("panel: kolom Stok Minimum/Status Stok/Harga Modal/Nilai Persediaan tidak lagi dirender di tabel Stok Bulanan", () => {
+  const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  for (const header of [">Stok Minimum<", ">Status Stok<"]) {
+    assert.equal(source.includes(header), false, `header ${header} seharusnya sudah tidak dirender`);
+  }
+  // "Harga Modal" TETAP ada di tabel Riwayat Mutasi (kolom berbeda, tidak diminta dihapus) —
+  // yang harus hilang HANYA header itu di tabel Stok Bulanan, jadi dihitung persis satu kemunculan.
+  assert.equal(source.split(">Harga Modal<").length - 1, 1, "header 'Harga Modal' seharusnya hanya tersisa di tabel Riwayat Mutasi");
+  assert.equal(source.includes("Nilai Persediaan {stockSort.key"), false, "header sort Nilai Persediaan seharusnya sudah tidak dirender");
+  assert.equal(source.includes("renderProductStatusBadges"), false, "helper render badge status stok sudah tidak dipakai (dead code dihapus)");
+  // Field backend tetap ada di tipe ProductRow (data tidak dihapus, hanya UI).
+  assert.ok(source.includes("lowStockAlert: number | null;"));
+  assert.ok(source.includes("buyPrice: number;"));
+  assert.ok(source.includes("value: number | null;"));
+  // colSpan disesuaikan (9 kolom tetap, turun dari 13 setelah 4 kolom dihapus).
+  assert.ok(source.includes("const stockColSpan ="));
+  assert.ok(source.includes("9 + (showStockSku ? 1 : 0) + (showStockUom ? 1 : 0) + (showStockWarehouse ? 1 : 0);"));
+});
+
+// ---- 22-23. Dropdown Export hanya satu opsi (Export Inventori Bulanan) —
+// Export Stok Saat Ini/Export Riwayat Mutasi/Export Konsistensi Inventori
+// dihapus dari UI. Backend /api/olsera/inventory/export (type=stock/
+// movements/consistency) SENGAJA TIDAK dihapus — masih dipakai
+// scripts/e2e-audit.ts (lihat komentar route.ts terkait).
+
+test("panel: dropdown Export Inventori hanya berisi satu opsi, opsi lama dihapus dari UI", () => {
+  const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  assert.equal(source.includes('label: "Export Stok Saat Ini"'), false);
+  assert.equal(source.includes('label: "Export Riwayat Mutasi"'), false);
+  assert.equal(source.includes('label: "Export Konsistensi Inventori"'), false);
+  assert.equal(source.includes('"Export Laporan Stock Opname Bulanan"'), false);
+  assert.equal(source.includes("handleExportStock"), false);
+  assert.equal(source.includes("handleExportMovements"), false);
+  assert.equal(source.includes("handleExportConsistency"), false);
+  assert.ok(source.includes('label="Export Inventori"'));
+  assert.ok(source.includes("Export Inventori Bulanan"));
+  // Hanya satu <InventoryExportMenu ...> dirender (satu tombol export, bukan dua).
+  assert.equal(source.split("<InventoryExportMenu").length - 1, 1);
+});
+
+// ---- 24. Card Sync Inventori tidak lagi menampilkan "Terakhir sync" /
+// "Histori mutasi stok lengkap" / "Tidak tersedia dari API Olsera" — data
+// backend/checkpoint sync TIDAK dihapus, hanya tidak ditampilkan di card.
+
+test("panel: card Sync Inventori tidak lagi menampilkan info Terakhir Sync dan Histori Mutasi", () => {
+  const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  assert.equal(source.includes("Terakhir sync"), false);
+  assert.equal(source.includes("Histori mutasi stok lengkap"), false);
+  assert.equal(source.includes("Tidak tersedia dari API Olsera"), false);
+  assert.equal(source.includes("coverageRows"), false);
+  // Checkpoint sync backend (state.lastSuccessfulSyncAt) tetap dipakai secara internal
+  // (mis. status chip/loading), hanya teks "Terakhir sync ..." yang dihapus dari card.
+  assert.ok(source.includes("state?.lastSuccessfulSyncAt"));
 });

@@ -36,11 +36,20 @@ test("lib/olsera-inventory-export.ts: export Stok Saat Ini dan Riwayat Mutasi di
   assert.match(source, /storeId: \{ \$in: \[currentStoreId\(\), null\] \}/);
 });
 
-test("lib/olsera-inventory-monthly-export.ts: kedua jalur (manual & auto) di-scope storeId lewat storeScope", () => {
+// Jalur "auto" (tanpa upload file) dipindah ke lib/olsera-inventory-two-sheet-export.ts
+// (export canonical dua sheet Terjual/Keseluruhan) — jalur "manual" (upload
+// file summary Olsera) tetap di lib/olsera-inventory-monthly-export.ts.
+// Keduanya harus tetap di-scope storeId, hanya lokasinya kini di dua file.
+test("lib/olsera-inventory-monthly-export.ts: jalur manual (upload file) di-scope storeId lewat storeScope", () => {
   const source = read("./olsera-inventory-monthly-export.ts");
   assert.ok(source.includes('import { currentStoreId } from "./olsera-store-id.ts";'));
-  const storeScopeDeclarations = source.match(/const storeScope = \{ storeId: \{ \$in: \[currentStoreId\(\), null\] \} \};/g) ?? [];
-  assert.ok(storeScopeDeclarations.length >= 2, "kedua fungsi export (manual & auto) harus mendeklarasikan storeScope sendiri");
+  assert.match(source, /const storeScope = \{ storeId: \{ \$in: \[currentStoreId\(\), null\] \} \};/);
+});
+
+test("lib/olsera-inventory-two-sheet-export.ts: jalur auto (canonical dua sheet) di-scope storeId", () => {
+  const source = read("./olsera-inventory-two-sheet-export.ts");
+  assert.ok(source.includes('import { currentStoreId } from "./olsera-store-id.ts";'));
+  assert.match(source, /olseraInventoryProducts\.find\(\{ storeId: \{ \$in: \[currentStoreId\(\), null\] \} \}\)/);
 });
 
 test("lib/olsera-inventory-monthly-snapshot-store.ts: fetchMatchingContext (katalog) di-scope storeId", () => {

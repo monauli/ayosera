@@ -892,8 +892,8 @@ async function main() {
         assertXlsx(await fetchFile(api, `/api/olsera/inventory/export?type=movements&start_date=${SAMPLE_DATE}&end_date=${SAMPLE_DATE}`), { filename: /Mutasi Inventori-.*\.xlsx/ }));
       await check("Export Konsistensi Inventori", async () =>
         assertXlsx(await fetchFile(api, `/api/olsera/inventory/export?type=consistency&start_date=${SAMPLE_DATE}`), { filename: /Konsistensi Inventori-.*\.xlsx/ }));
-      await check("Export Inventori Bulanan otomatis", async () =>
-        assertXlsx(await fetchFile(api, `/api/olsera/inventory/export/monthly-auto?year=${SAMPLE_MONTH.slice(0, 4)}&month=${Number(SAMPLE_MONTH.slice(5, 7))}`), { filename: new RegExp(`Laporan Stock Opname Bulanan-${SAMPLE_MONTH}\\.xlsx`) }));
+      await check("Export Inventori Bulanan canonical (2 sheet: Terjual & Keseluruhan)", async () =>
+        assertXlsx(await fetchFile(api, `/api/olsera/inventory/export/monthly-auto?year=${SAMPLE_MONTH.slice(0, 4)}&month=${Number(SAMPLE_MONTH.slice(5, 7))}`), { filename: new RegExp(`Inventori-${SAMPLE_MONTH}\\.xlsx`) }));
 
       currentArea = "export-keuangan";
       for (const report of ["neraca", "laba-rugi", "arus-kas", "ringkasan-buku-besar"]) {

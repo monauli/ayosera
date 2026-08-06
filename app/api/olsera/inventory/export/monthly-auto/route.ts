@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireModule } from "@/lib/auth";
-import { generateMonthlyInventoryExportAuto } from "@/lib/olsera-inventory-monthly-export";
+import { generateTwoSheetInventoryExport } from "@/lib/olsera-inventory-two-sheet-export";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,16 +13,14 @@ const paramsSchema = z.object({
 });
 
 /**
- * Export Inventori Bulanan OTOMATIS ("Laporan Stock Opname Bulanan") — TIDAK
- * ada upload file. Pengguna hanya memilih bulan+tahun; Stok Awal/Barang
- * Masuk/Keluar/Sisa ditarik langsung dari Open API Olsera
- * (GET .../en/inventory/stockmovement, lihat lib/olsera-inventory-stockmovement.ts),
- * penjualan harian tetap dari data AYOSERA existing (olsera_inventory_movements),
- * kategori/harga dari katalog existing (olsera_inventory_products). Tidak
- * menulis apa pun ke MongoDB. Endpoint upload manual (app/api/olsera/inventory/
- * export/monthly/route.ts) TETAP ADA sebagai fallback — belum dihapus karena
- * jalur otomatis ini belum diuji end-to-end terhadap MongoDB produksi
- * (lingkungan implementasi tidak punya akses jaringan ke cluster Mongo Atlas).
+ * Export Inventori canonical — SATU tombol, SATU file, DUA sheet ("[Bulan]
+ * Terjual"/"[Bulan] Keseluruhan"). Pengguna hanya memilih bulan+tahun; bila
+ * snapshot bulanan bulan itu belum ada, `ensureMonthlySnapshotChain` (dipanggil
+ * di dalam `generateTwoSheetInventoryExport`) membangunnya on-demand dari Open
+ * API Olsera terlebih dahulu — idempotent (upsert by _id, aman dijalankan
+ * ulang, tidak menyentuh bulan lain), TIDAK PERNAH menulis data ganda. Ini
+ * menggantikan endpoint "Laporan Stock Opname Bulanan" lama (format satu
+ * sheet + kolom harian) — lihat tmp/ai-handoff.md untuk audit sumber data.
  */
 export async function GET(request: Request) {
   try {
@@ -34,13 +32,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Parameter year/month tidak valid." }, { status: 400 });
     }
 
-    const result = await generateMonthlyInventoryExportAuto({ year: params.data.year, month: params.data.month });
+    const result = await generateTwoSheetInventoryExport({ year: params.data.year, month: params.data.month });
     if (!result.ok) {
-      return NextResponse.json({ error: "Gagal membuat Laporan Stock Opname Bulanan.", details: result.errors }, { status: 400 });
+      return NextResponse.json({ error: "Gagal membuat export inventori.", details: result.errors }, { status: 400 });
     }
 
     const buffer = await result.workbook.xlsx.writeBuffer();
-    const filename = `Laporan Stock Opname Bulanan-${params.data.year}-${String(params.data.month).padStart(2, "0")}.xlsx`;
+    const filename = `Inventori-${params.data.year}-${String(params.data.month).padStart(2, "0")}.xlsx`;
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -50,6 +48,6 @@ export async function GET(request: Request) {
   } catch (error) {
     if (error instanceof Response) return error;
     console.error(error);
-    return NextResponse.json({ error: "Gagal membuat Laporan Stock Opname Bulanan." }, { status: 500 });
+    return NextResponse.json({ error: "Gagal membuat export inventori." }, { status: 500 });
   }
 }
