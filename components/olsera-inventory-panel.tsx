@@ -28,8 +28,8 @@ import {
   periodStatusLabel,
   stockEmptyStateMessage,
   syncStatusLabel,
-  visibleInventoryRows,
   visibleInventoryTabs,
+  visibleMonthlyInventoryRows,
 } from "@/lib/olsera-inventory-ui";
 
 const TITLE = "text-[16px] font-semibold tracking-tight text-slate-50";
@@ -517,7 +517,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   // valid. Dihitung per-tabel. Field-nya tetap ada di database & export
   // internal — ini murni tampilan.
   const hiddenStockRowCount = hiddenInventoryRowCount(stockRows);
-  const visibleStockRows = visibleInventoryRows(stockRows, showHiddenItems);
+  const visibleStockRows = visibleMonthlyInventoryRows(stockRows, showHiddenItems);
   const showStockSku = hasAnyMeaningfulValue(stockRows.map((row) => row.sku));
   const showStockUom = hasAnyMeaningfulValue(stockRows.map((row) => row.uom));
   const showStockWarehouse = hasAnyMeaningfulValue(stockRows.map((row) => row.warehouseName));

@@ -14,6 +14,7 @@ import {
   formatQty,
   hasAnyMeaningfulSku,
   hasAnyMeaningfulValue,
+  hasInventoryActivity,
   hiddenInventoryRowCount,
   isHiddenInventoryCategory,
   isMeaningfulSku,
@@ -26,6 +27,7 @@ import {
   syncStatusLabel,
   visibleInventoryRows,
   visibleInventoryTabs,
+  visibleMonthlyInventoryRows,
 } from "./olsera-inventory-ui.ts";
 
 // ---- 1. Nilai kosong TIDAK ditampilkan sebagai "-" ------------------------
@@ -86,7 +88,7 @@ test("Hidden Item: toggle menampilkan kembali item tersembunyi tanpa mengubah da
 
 test("panel: Hidden Item hanya memengaruhi render, reset pagination, dan tetap responsif", () => {
   const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
-  assert.ok(source.includes("const visibleStockRows = visibleInventoryRows(stockRows, showHiddenItems);"));
+  assert.ok(source.includes("const visibleStockRows = visibleMonthlyInventoryRows(stockRows, showHiddenItems);"));
   assert.ok(source.includes("setStockPage(1);"));
   assert.ok(source.includes("aria-pressed={showHiddenItems}"));
   assert.ok(source.includes("Item tersembunyi tetap ikut dihitung di laporan dan export."));
@@ -103,6 +105,54 @@ test("Hidden Item tidak mengubah endpoint atau jalur export Inventori", () => {
   assert.ok(panel.includes("/api/olsera/inventory/export/monthly-auto?year=${year}&month=${month}"));
   assert.equal(exportModule.includes("HIDDEN_INVENTORY_CATEGORIES"), false);
   assert.equal(exportModule.includes("visibleInventoryRows"), false);
+});
+
+// ---- Aturan Kedua Inventori — sembunyikan produk tanpa aktivitas sama sekali ----
+
+function activityRow(overrides: Partial<Parameters<typeof hasInventoryActivity>[0]> = {}) {
+  return { openingQty: 0, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 0, snapshotStatus: "complete" as const, ...overrides };
+}
+
+test("hasInventoryActivity: opening 0 + seluruh arus 0 + closing 0 (status complete) -> TIDAK ada aktivitas (false)", () => {
+  assert.equal(hasInventoryActivity(activityRow()), false);
+});
+
+test("hasInventoryActivity: ada sales pada periode -> tetap tampil (true), walau closing jadi 0", () => {
+  // Skenario PRD: Raket A Juli opening 5, sales 5, closing 0 -> tetap tampil Juli.
+  assert.equal(hasInventoryActivity(activityRow({ openingQty: 5, salesQty: 5, closingQty: 0 })), true);
+});
+
+test("hasInventoryActivity: ada incoming pada periode -> tampil kembali (restock)", () => {
+  // Skenario PRD: September incoming 10 -> tampil kembali setelah 'hilang' di Agustus.
+  assert.equal(hasInventoryActivity(activityRow({ incomingQty: 10, closingQty: 10 })), true);
+});
+
+test("hasInventoryActivity: ada return atau outgoing saja -> tetap tampil", () => {
+  assert.equal(hasInventoryActivity(activityRow({ returnQty: 1, closingQty: 1 })), true);
+  assert.equal(hasInventoryActivity(activityRow({ openingQty: 1, outgoingQty: 1, closingQty: 0 })), true);
+});
+
+test("hasInventoryActivity: data TIDAK LENGKAP (boundary-only/incomplete) SELALU dianggap ada aktivitas, walau angkanya kebetulan nol/null", () => {
+  assert.equal(hasInventoryActivity(activityRow({ snapshotStatus: "boundary-only", openingQty: null, incomingQty: null })), true);
+  assert.equal(hasInventoryActivity(activityRow({ snapshotStatus: "incomplete" })), true);
+});
+
+test("hasInventoryActivity: null diperlakukan sama seperti nol untuk baris berstatus complete", () => {
+  assert.equal(hasInventoryActivity(activityRow({ openingQty: null, closingQty: null })), false);
+});
+
+test("visibleMonthlyInventoryRows: menggabungkan kategori tersembunyi DAN Aturan Kedua tanpa saling menimpa", () => {
+  const rows = [
+    { category: "GRIP", ...activityRow({ openingQty: 5, salesQty: 1, closingQty: 4 }) }, // aktif, kategori biasa -> tampil
+    { category: "GRIP", ...activityRow() }, // tanpa aktivitas -> selalu sembunyi (tidak togglable)
+    { category: "LABERS", ...activityRow({ openingQty: 5, salesQty: 1, closingQty: 4 }) }, // aktif tapi kategori tersembunyi -> sembunyi kecuali showHiddenItems
+  ];
+  const defaultView = visibleMonthlyInventoryRows(rows, false);
+  assert.equal(defaultView.length, 1);
+  assert.equal(defaultView[0].category, "GRIP");
+
+  const withHiddenShown = visibleMonthlyInventoryRows(rows, true);
+  assert.deepEqual(withHiddenShown.map((r) => r.category).sort(), ["GRIP", "LABERS"], "kategori tersembunyi muncul lagi saat toggle aktif, TAPI produk tanpa aktivitas TETAP tidak tampil (bukan togglable)");
 });
 
 // ---- 2. Kolom SKU / Satuan / Gudang kondisional ---------------------------
@@ -388,7 +438,7 @@ test("panel: Hidden Item — penjelasan tidak lagi diulang (tooltip duplikat dih
   assert.equal(source.includes('title="Item tersembunyi'), false);
   const explanationOccurrences = source.split("Item tersembunyi tetap ikut dihitung di laporan dan export.").length - 1;
   assert.equal(explanationOccurrences, 1, "penjelasan Hidden Item hanya boleh muncul sekali");
-  assert.ok(source.includes("const visibleStockRows = visibleInventoryRows(stockRows, showHiddenItems);"));
+  assert.ok(source.includes("const visibleStockRows = visibleMonthlyInventoryRows(stockRows, showHiddenItems);"));
   assert.ok(source.includes("aria-pressed={showHiddenItems}"));
   assert.ok(source.includes("hiddenInventoryRowCount(stockRows)"));
 });

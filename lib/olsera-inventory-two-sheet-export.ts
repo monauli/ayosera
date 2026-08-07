@@ -25,6 +25,7 @@
 import ExcelJS from "exceljs";
 import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
 import type { InventoryProductInput } from "./olsera-inventory-core.ts";
+import { hasInventoryActivity } from "./olsera-inventory-ui.ts";
 import { stripDuplicateSuffix } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { ensureMonthlySnapshotChain } from "./olsera-inventory-monthly-snapshot-store.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
@@ -260,8 +261,13 @@ export function buildTwoSheetInventoryWorkbook(input: {
   workbook.created = new Date();
 
   const monthName = MONTH_NAMES[input.month - 1] ?? String(input.month);
-  const terjual = sortTwoSheetRows(filterTerjualRows(input.rows));
-  const keseluruhan = sortTwoSheetRows(input.rows);
+  // Aturan Kedua Inventori: baris tanpa aktivitas SAMA SEKALI bulan ini
+  // (opening 0, tanpa incoming/return/sales/outgoing, closing 0) tidak perlu
+  // masuk export — helper SAMA dipakai dashboard Stok Bulanan (murni
+  // tampilan, histori/produk master TIDAK dihapus dari database).
+  const activeRows = input.rows.filter(hasInventoryActivity);
+  const terjual = sortTwoSheetRows(filterTerjualRows(activeRows));
+  const keseluruhan = sortTwoSheetRows(activeRows);
 
   writeSheet(workbook, `${monthName} Terjual`, `Laporan Inventori Terjual — ${monthName} ${input.year}`, terjual);
   writeSheet(workbook, `${monthName} Keseluruhan`, `Laporan Inventori Keseluruhan — ${monthName} ${input.year}`, keseluruhan);

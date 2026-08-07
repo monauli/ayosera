@@ -589,6 +589,18 @@ export type OlseraInventoryMonthlySnapshotDocument = {
   source: "baseline-file" | "stockmovement-backward" | "stockmovement-forward" | "carry-forward";
   status: "complete" | "boundary-only" | "incomplete";
   diagnostics: string[];
+  /**
+   * Lifecycle bulanan (lihat lib/olsera-inventory-monthly-snapshot-core.ts
+   * getInventoryPeriodState + lib/olsera-inventory-monthly-snapshot-store.ts
+   * ensureMonthlySnapshotChain): `null` = ditulis saat bulan ini masih
+   * "current" (belum final, akan dihitung ulang di panggilan berikutnya);
+   * `Date` = ditulis saat bulan ini sudah "historical" (dipercaya final,
+   * tidak dihitung ulang lagi). ABSEN (dokumen lama sebelum field ini ada,
+   * mis. Feb-Jul 2026) diperlakukan SAMA seperti sebuah Date (dipercaya
+   * final) — backward compatible, TIDAK memicu hitung ulang otomatis massal
+   * hanya karena field ini tidak ada (lihat docs/inventory.md).
+   */
+  finalizedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };

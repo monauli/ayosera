@@ -340,7 +340,9 @@ test("ensureMonthlySnapshotChain: tidak ada anchor sama sekali -> error, bukan f
   mockFetchStockmovementByMonth(t, {});
   const repo = createFakeRepo([]); // katalog kosong dari dokumen manapun
   const matchingContext = matchingContextForOneProduct();
-  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 9, repo, matchingContext });
+  // now dipin ke masa depan supaya September 2026 pasti "historical" (bukan
+  // "future") terlepas kapan test ini benar-benar dijalankan — deterministik.
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 9, repo, matchingContext, now: new Date("2027-01-01T00:00:00Z") });
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /anchor|bootstrap/i);
 });
@@ -466,4 +468,224 @@ test("runForwardBackfillMonth: baris stockmovement yang tidak cocok ke katalog m
     assert.equal(result.unmatchedOrAmbiguous.length, 1);
     assert.match(result.unmatchedOrAmbiguous[0].product, /TIDAK DIKENAL/);
   }
+});
+
+// ---- Lifecycle bulanan baru: current selalu dinamis, historical dipercaya
+// setelah finalisasi sekali, future ditolak — regresi bug Juli->Agustus
+// (lihat tmp/ai-handoff.md "Inventory July-August Product Timing Audit").
+// Fixture di bawah MURNI FIKTIF (bukan productId/nama produksi asli), hanya
+// merepresentasikan bentuk kasus: opening 0, incoming 60, sales 1, closing 59.
+// ----
+
+test("current month SELALU dihitung ulang — produk baru yang dibuat di tengah bulan ikut masuk bulan yang sama (bukan bulan berikutnya)", async (t) => {
+  const stockmovementByStartDate: Record<string, unknown[]> = {
+    "2026-07-01": [
+      { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 21, sum_incoming_qty: 0, sum_return_qty: 0, sum_sales_qty: 0, sum_outgoing_qty: 0, sisa: 21 },
+    ],
+  };
+  mockFetchStockmovementByMonth(t, stockmovementByStartDate);
+  const repo = createFakeRepo([seedJuneDoc()]);
+  const catalogBefore = [product({ _id: "1:100:0", productId: 100, storeId: 1, name: "PRODUK A", category: "GROUP" })];
+  const matchingContextBefore = buildMatchingContext(catalogBefore, []);
+
+  // 21 Juli: dihitung pertama kali, produk baru belum ada di Olsera.
+  const step1 = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext: matchingContextBefore, now: new Date("2026-07-21T00:00:00Z") });
+  assert.equal(step1.ok, true);
+  if (step1.ok) {
+    assert.equal(step1.docs.length, 1);
+    assert.equal(step1.docs[0].finalizedAt, null, "masih current — belum boleh dianggap final");
+  }
+
+  // 29 Juli: produk baru dibuat di Olsera + stok masuk 60 + 1 penjualan (bentuk kasus OVERGRIP ALPHA - ECO SOFT).
+  stockmovementByStartDate["2026-07-01"] = [
+    { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 21, sum_incoming_qty: 0, sum_return_qty: 0, sum_sales_qty: 0, sum_outgoing_qty: 0, sisa: 21 },
+    { product_id: 900001, product_variant_id: 5001, product_name: "GRIP CONTOH", product_variant_name: "VARIAN A", product_group_name: "GRIP", beginning_qty: 0, sum_incoming_qty: 60, sum_return_qty: 0, sum_sales_qty: 1, sum_outgoing_qty: 0, sisa: 59 },
+  ];
+  const catalogAfter = [...catalogBefore, product({ _id: "1:900001:5001", productId: 900001, variantId: 5001, storeId: 1, name: "GRIP CONTOH", variantName: "VARIAN A", category: "GRIP" })];
+  const matchingContextAfter = buildMatchingContext(catalogAfter, []);
+
+  // 30 Juli: diminta lagi (masih current) — HARUS refresh, bukan return dokumen 21 Juli apa adanya.
+  const step2 = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext: matchingContextAfter, now: new Date("2026-07-30T00:00:00Z") });
+  assert.equal(step2.ok, true);
+  if (step2.ok) {
+    assert.equal(step2.docs.length, 2, "PRODUK A tetap ada, produk baru bertambah — bukan diganti/dihapus");
+    const newProduct = step2.docs.find((d) => d.productId === 900001);
+    assert.ok(newProduct, "produk baru yang dibuat di tengah bulan HARUS muncul di bulan yang sama (Juli)");
+    assert.equal(newProduct!.openingQty, 0);
+    assert.equal(newProduct!.incomingQty, 60);
+    assert.equal(newProduct!.salesQty, 1);
+    assert.equal(newProduct!.closingQty, 59);
+  }
+  const julyDocsFinal = await repo.findMonth(1, 2026, 7);
+  assert.equal(julyDocsFinal.length, 2, "tidak boleh ada dokumen duplikat/menumpuk dari panggilan berulang");
+});
+
+test("current month berulang (CURRENT -> CURRENT -> CURRENT) idempoten — tidak duplicate, hasil konsisten", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-07-01": [
+      { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 21, sum_incoming_qty: 5, sum_return_qty: 0, sum_sales_qty: 3, sum_outgoing_qty: 1, sisa: 22 },
+    ],
+  });
+  const repo = createFakeRepo([seedJuneDoc()]);
+  const matchingContext = matchingContextForOneProduct();
+  const now = new Date("2026-07-15T00:00:00Z");
+
+  const r1 = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now });
+  const r2 = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now });
+  const r3 = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now });
+  assert.ok(r1.ok && r2.ok && r3.ok);
+  const all = repo.all().filter((d) => d.year === 2026 && d.month === 7);
+  assert.equal(all.length, 1, "tidak boleh ada dokumen duplikat untuk productId+variantId yang sama");
+  if (r1.ok && r3.ok) assert.deepEqual(r1.docs.map((d) => d.closingQty), r3.docs.map((d) => d.closingQty));
+});
+
+test("movement yang masuk terlambat pada bulan berjalan (purchase/return/sale/outgoing baru) ikut pada refresh berikutnya, tanpa rebuild manual", async (t) => {
+  const stockmovementByStartDate: Record<string, unknown[]> = {
+    "2026-07-01": [
+      { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 21, sum_incoming_qty: 0, sum_return_qty: 0, sum_sales_qty: 0, sum_outgoing_qty: 0, sisa: 21 },
+    ],
+  };
+  mockFetchStockmovementByMonth(t, stockmovementByStartDate);
+  const repo = createFakeRepo([seedJuneDoc()]);
+  const matchingContext = matchingContextForOneProduct();
+
+  await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now: new Date("2026-07-10T00:00:00Z") });
+  // Purchase (incoming) + sale baru masuk pertengahan bulan, terdeteksi Olsera belakangan.
+  stockmovementByStartDate["2026-07-01"] = [
+    { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 21, sum_incoming_qty: 10, sum_return_qty: 1, sum_sales_qty: 4, sum_outgoing_qty: 0, sisa: 28 },
+  ];
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now: new Date("2026-07-25T00:00:00Z") });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.docs[0].incomingQty, 10);
+    assert.equal(result.docs[0].returnQty, 1);
+    assert.equal(result.docs[0].salesQty, 4);
+    assert.equal(result.docs[0].closingQty, 28);
+  }
+});
+
+test("bulan baru jadi historical & belum pernah difinalisasi -> dihitung ulang SATU KALI, lalu dipercaya (tidak fetch lagi)", async (t) => {
+  let fetchCount = 0;
+  process.env.OLSERA_APP_ID = "test-app-id";
+  process.env.OLSERA_SECRET_KEY = "test-secret";
+  t.mock.method(globalThis, "fetch", async (input: string | URL) => {
+    const url = String(input);
+    if (url.includes("/token")) return new Response(JSON.stringify({ access_token: "fake-token", expires_in: 3600 }), { status: 200 });
+    fetchCount++;
+    return new Response(JSON.stringify({ data: [], meta: { current_page: 1, last_page: 1 } }), { status: 200 });
+  });
+  // Dokumen Juli ditulis SAAT masih current (finalizedAt: null) — belum pernah difinalisasi.
+  const staleJuly: OlseraInventoryMonthlySnapshotDocument = { ...seedJuneDoc(), _id: "1:2026:07:100:0", year: 2026, month: 7, finalizedAt: null };
+  const repo = createFakeRepo([seedJuneDoc(), staleJuly]);
+  const matchingContext = matchingContextForOneProduct();
+  const now = new Date("2026-08-05T00:00:00Z"); // Juli sudah lewat, Agustus sekarang current.
+
+  const r1 = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now });
+  assert.equal(r1.ok, true);
+  assert.equal(fetchCount, 1, "harus fetch sekali untuk finalisasi Juli yang belum pernah final");
+  if (r1.ok) assert.notEqual(r1.docs[0].finalizedAt, null, "setelah finalisasi, finalizedAt harus terisi");
+
+  const r2 = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now });
+  assert.equal(r2.ok, true);
+  assert.equal(fetchCount, 1, "panggilan kedua untuk bulan yang SUDAH final tidak boleh fetch lagi");
+});
+
+test("bulan historical yang SUDAH difinalisasi (finalizedAt Date) -> dipercaya langsung, tidak fetch API", async (t) => {
+  let fetchCalled = false;
+  process.env.OLSERA_APP_ID = "test-app-id";
+  process.env.OLSERA_SECRET_KEY = "test-secret";
+  t.mock.method(globalThis, "fetch", async () => {
+    fetchCalled = true;
+    return new Response("{}", { status: 200 });
+  });
+  const finalizedJuly: OlseraInventoryMonthlySnapshotDocument = { ...seedJuneDoc(), _id: "1:2026:07:100:0", year: 2026, month: 7, finalizedAt: new Date("2026-08-01T00:00:00Z") };
+  const repo = createFakeRepo([seedJuneDoc(), finalizedJuly]);
+  const matchingContext = matchingContextForOneProduct();
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now: new Date("2026-08-05T00:00:00Z") });
+  assert.equal(result.ok, true);
+  assert.equal(fetchCalled, false);
+});
+
+test("dokumen historical LEGACY tanpa field finalizedAt sama sekali -> dipercaya (backward compatible), tidak memicu hitung ulang massal", async (t) => {
+  let fetchCalled = false;
+  process.env.OLSERA_APP_ID = "test-app-id";
+  process.env.OLSERA_SECRET_KEY = "test-secret";
+  t.mock.method(globalThis, "fetch", async () => {
+    fetchCalled = true;
+    return new Response("{}", { status: 200 });
+  });
+  const legacyJuly = seedJuneDoc(); // helper generik dipakai ulang sbg dokumen legacy (tanpa finalizedAt sama sekali)
+  const repo = createFakeRepo([{ ...legacyJuly, _id: "1:2026:07:100:0", year: 2026, month: 7 }]);
+  const matchingContext = matchingContextForOneProduct();
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now: new Date("2026-08-05T00:00:00Z") });
+  assert.equal(result.ok, true);
+  assert.equal(fetchCalled, false, "dokumen legacy TIDAK memicu fetch — hanya rebuild eksplisit (script terpisah) yang boleh membetulkannya");
+});
+
+test("finalisasi bulan sebelumnya terjadi SEBELUM dipakai sebagai opening bulan berjalan (cascade Juli stale -> Agustus current)", async (t) => {
+  const stockmovementByStartDate: Record<string, unknown[]> = {
+    "2026-07-01": [
+      { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 21, sum_incoming_qty: 10, sum_return_qty: 0, sum_sales_qty: 4, sum_outgoing_qty: 0, sisa: 27 },
+    ],
+    "2026-08-01": [
+      { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 27, sum_incoming_qty: 0, sum_return_qty: 0, sum_sales_qty: 2, sum_outgoing_qty: 0, sisa: 25 },
+    ],
+  };
+  mockFetchStockmovementByMonth(t, stockmovementByStartDate);
+  // Juli belum pernah difinalisasi (mis. bug lama — dokumen lama closingQty=21, TIDAK mencerminkan incoming 10/sales 4 yang baru terbukti).
+  const staleJuly: OlseraInventoryMonthlySnapshotDocument = { ...seedJuneDoc(), _id: "1:2026:07:100:0", year: 2026, month: 7, closingQty: 21, finalizedAt: null };
+  const repo = createFakeRepo([seedJuneDoc(), staleJuly]);
+  const matchingContext = matchingContextForOneProduct();
+
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 8, repo, matchingContext, now: new Date("2026-08-10T00:00:00Z") });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.docs[0].openingQty, 27, "opening Agustus HARUS memakai closing Juli yang SUDAH difinalisasi ulang (27), bukan closing lama yang stale (21)");
+
+  const julyAfter = await repo.findMonth(1, 2026, 7);
+  assert.equal(julyAfter[0].closingQty, 27);
+  assert.notEqual(julyAfter[0].finalizedAt, null, "Juli sekarang sudah final");
+});
+
+test("future period ditolak — tidak pernah digenerate seolah sudah berjalan", async (t) => {
+  const repo = createFakeRepo([seedJuneDoc()]);
+  const matchingContext = matchingContextForOneProduct();
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 12, repo, matchingContext, now: new Date("2026-08-05T00:00:00Z") });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /belum dimulai/i);
+});
+
+test("source API gagal (401) saat refresh current -> TIDAK menimpa dokumen lama yang valid, error dikembalikan apa adanya", async (t) => {
+  process.env.OLSERA_APP_ID = "test-app-id";
+  process.env.OLSERA_SECRET_KEY = "test-secret";
+  t.mock.method(globalThis, "fetch", async (input: string | URL) => {
+    const url = String(input);
+    if (url.includes("/token")) return new Response(JSON.stringify({ access_token: "fake-token", expires_in: 3600 }), { status: 200 });
+    return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+  });
+  const existingJuly: OlseraInventoryMonthlySnapshotDocument = { ...seedJuneDoc(), _id: "1:2026:07:100:0", year: 2026, month: 7, closingQty: 21, finalizedAt: null };
+  const repo = createFakeRepo([seedJuneDoc(), existingJuly]);
+  const matchingContext = matchingContextForOneProduct();
+
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 7, repo, matchingContext, now: new Date("2026-07-20T00:00:00Z") });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /token|401/i);
+
+  const julyAfterFailure = await repo.findMonth(1, 2026, 7);
+  assert.equal(julyAfterFailure.length, 1);
+  assert.equal(julyAfterFailure[0].closingQty, 21, "dokumen lama yang valid TIDAK BOLEH ditimpa/kosong akibat kegagalan fetch");
+});
+
+test("backward zone (<= Juni 2026) TIDAK terpengaruh — bulan historis lama tetap dipercaya langsung seperti sebelumnya", async (t) => {
+  let fetchCalled = false;
+  process.env.OLSERA_APP_ID = "test-app-id";
+  process.env.OLSERA_SECRET_KEY = "test-secret";
+  t.mock.method(globalThis, "fetch", async () => {
+    fetchCalled = true;
+    return new Response("{}", { status: 200 });
+  });
+  const repo = createFakeRepo([seedMayDoc()]);
+  const matchingContext = matchingContextForOneProduct();
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 5, repo, matchingContext, now: new Date("2026-08-05T00:00:00Z") });
+  assert.equal(result.ok, true);
+  assert.equal(fetchCalled, false);
 });

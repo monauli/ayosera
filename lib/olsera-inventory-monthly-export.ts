@@ -32,6 +32,7 @@ import {
 } from "./olsera-inventory-monthly-core.ts";
 import { dominantStoreId, recoverNullProductIdSales, stripDuplicateSuffix } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { ensureMonthlySnapshotChain } from "./olsera-inventory-monthly-snapshot-store.ts";
+import { hasInventoryActivity } from "./olsera-inventory-ui.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
@@ -322,8 +323,30 @@ export function buildMonthlyRowsFromMonthlySnapshots(input: {
   const reconstructedStockData: NonNullable<MonthlyImportDiagnostics["reconstructedStockData"]> = [];
   const unexplainedAyoseraSales: NonNullable<MonthlyImportDiagnostics["unexplainedAyoseraSales"]> = [];
 
+  // Aturan Kedua Inventori (sembunyikan produk tanpa aktivitas sama sekali —
+  // opening/incoming/return/sales/outgoing/closing semuanya 0) SEKARANG JUGA
+  // berlaku di Laporan Stock Opname Bulanan (keputusan bisnis final: produk
+  // yang stoknya sudah habis sejak bulan sebelumnya dan tidak ada mutasi apa
+  // pun bulan ini tidak perlu tampil di checklist opname). Baris dengan
+  // status "boundary-only"/"incomplete" (data belum lengkap) TIDAK PERNAH
+  // disembunyikan oleh hasInventoryActivity — hanya produk yang TERBUKTI nol
+  // total yang disaring. Histori/dokumen snapshot TIDAK dihapus, hanya
+  // dikeluarkan dari baris yang dirender — lihat docs/inventory.md "Aturan
+  // Kedua Inventori".
+  const activeDocs = input.snapshotDocs.filter((doc) =>
+    hasInventoryActivity({
+      openingQty: doc.openingQty,
+      incomingQty: doc.incomingQty,
+      returnQty: doc.returnQty,
+      salesQty: doc.salesQty,
+      outgoingQty: doc.outgoingQty,
+      closingQty: doc.closingQty,
+      snapshotStatus: doc.status,
+    }),
+  );
+
   const rows: MonthlyRowModel[] = [];
-  for (const doc of input.snapshotDocs) {
+  for (const doc of activeDocs) {
     const key = `${doc.storeId}:${doc.productId}:${doc.variantId ?? 0}`;
     const agg = input.dailySalesByProductKey.get(key);
     const dailySales = agg?.daily ?? new Array(input.days).fill(0);

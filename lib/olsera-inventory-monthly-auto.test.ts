@@ -401,6 +401,29 @@ test("buildMonthlyRowsFromMonthlySnapshots: produk TANPA dokumen snapshot sama s
   assert.equal(rows.some((r) => r.name.includes("RED")), false);
 });
 
+test("buildMonthlyRowsFromMonthlySnapshots: Aturan Kedua Inventori — produk stok 0 TANPA aktivitas sama sekali (opening/incoming/return/sales/outgoing/closing semua 0) TIDAK masuk baris Laporan Stock Opname Bulanan", () => {
+  const habis = snapshotDoc({ _id: "1:2026:08:900001:0", productId: 900001, productName: "PRODUK HABIS TANPA MUTASI", openingQty: 0, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 0 });
+  const aktif = snapshotDoc({ _id: "1:2026:08:900002:0", productId: 900002, productName: "PRODUK AKTIF", openingQty: 5, closingQty: 5 });
+  const { rows } = buildMonthlyRowsFromMonthlySnapshots({ snapshotDocs: [habis, aktif], catalogProducts: [], dailySalesByProductKey: new Map(), days: 30 });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "PRODUK AKTIF");
+});
+
+test("buildMonthlyRowsFromMonthlySnapshots: produk stok 0 tanpa aktivitas TAPI status boundary-only/incomplete tetap tampil (data belum lengkap, bukan bukti nol)", () => {
+  const boundary = snapshotDoc({ _id: "1:2026:08:900003:0", productId: 900003, productName: "PRODUK BATAS DATA", openingQty: 0, closingQty: 0, status: "boundary-only" });
+  const { rows } = buildMonthlyRowsFromMonthlySnapshots({ snapshotDocs: [boundary], catalogProducts: [], dailySalesByProductKey: new Map(), days: 30 });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "PRODUK BATAS DATA");
+});
+
+test("buildMonthlyRowsFromMonthlySnapshots: Aturan Kedua hanya menyaring baris DITAMPILKAN, dokumen snapshot input tidak diubah/dihapus (histori & produk master tetap utuh)", () => {
+  const habis = snapshotDoc({ _id: "1:2026:08:900001:0", productId: 900001, productName: "PRODUK HABIS TANPA MUTASI", openingQty: 0, closingQty: 0 });
+  const docs = [habis];
+  buildMonthlyRowsFromMonthlySnapshots({ snapshotDocs: docs, catalogProducts: [], dailySalesByProductKey: new Map(), days: 30 });
+  assert.equal(docs.length, 1);
+  assert.deepEqual(docs[0], habis);
+});
+
 for (const days of [28, 29, 30, 31]) {
   test(`buildMonthlyRowsFromMonthlySnapshots: bulan ${days} hari -> dailySales.length sama`, () => {
     const doc = snapshotDoc({});
@@ -679,12 +702,16 @@ function buildJuneDailySales(docs: OlseraInventoryMonthlySnapshotDocument[]) {
   return aggregateDailySales(movements, 2026, 6);
 }
 
-test("Rekonsiliasi Juni 2026 PENUH: 60 produk, 12 grup — cocok dengan doc export/INVENTORI.xlsx JUNI'26 (via dokumen snapshot bulanan)", () => {
+test("Rekonsiliasi Juni 2026 PENUH: 53 produk aktif (7 dari 60 produk fixture tanpa aktivitas sama sekali disembunyikan oleh Aturan Kedua), total tetap cocok dengan doc export/INVENTORI.xlsx JUNI'26 (via dokumen snapshot bulanan)", () => {
   const docs = buildJuneSnapshotFixture();
   const dailySalesByProductKey = buildJuneDailySales(docs);
   const { rows } = buildMonthlyRowsFromMonthlySnapshots({ snapshotDocs: docs, catalogProducts: [], dailySalesByProductKey, days: 30 });
 
-  assert.equal(rows.length, 60, `jumlah produk: ${rows.length} != 60`);
+  // Aturan Kedua Inventori (docs/inventory.md) sekarang JUGA berlaku di
+  // Laporan Stock Opname Bulanan: produk fixture yang opening/incoming/
+  // return/sales/outgoing/closing-nya semua 0 tidak ikut baris — tapi karena
+  // nilainya nol, total (di bawah) tidak berubah dari total 60-produk semula.
+  assert.equal(rows.length, 53, `jumlah produk: ${rows.length} != 53`);
   const groups = new Set(rows.map((r) => r.group));
   assert.equal(groups.size, 12, `jumlah grup: ${groups.size} != 12`);
 

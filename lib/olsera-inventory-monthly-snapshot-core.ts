@@ -21,6 +21,7 @@ import {
   type InventoryProductInput,
   type MatchedMovement,
 } from "./olsera-inventory-monthly-core.ts";
+import { jakartaCurrentPeriod } from "./olsera-financial-core.ts";
 
 // ---------------------------------------------------------------------------
 // Aritmetika bulan (murni)
@@ -68,6 +69,32 @@ export function lastDayOfMonth(year: number, month: number): string {
 
 export function firstDayOfMonth(year: number, month: number): string {
   return monthDateRange(year, month).startDate;
+}
+
+// ---------------------------------------------------------------------------
+// Status periode (current/historical/future) — SATU sumber kebenaran dipakai
+// ensureMonthlySnapshotChain untuk memutuskan boleh dipercaya-final atau
+// harus dihitung ulang. Reuse jakartaCurrentPeriod (lib/olsera-financial-core.ts)
+// — timezone bisnis "Asia/Jakarta" yang sama dipakai modul Laporan Keuangan &
+// Rekonsiliasi, TIDAK membuat konsep timezone kedua.
+// ---------------------------------------------------------------------------
+
+export type InventoryPeriodState = "future" | "current" | "historical";
+
+/**
+ * `future`: bulan belum dimulai — jangan pernah generate data seolah-olah
+ * sudah berjalan. `current`: bulan kalender Asia/Jakarta yang sedang
+ * berjalan — dinamis, TIDAK boleh dipercaya final walau sudah pernah
+ * dihitung sebelumnya. `historical`: bulan sudah lewat — boleh dipercaya
+ * final SETELAH mendapat satu kali finalisasi (lihat `finalizedAt` di
+ * OlseraInventoryMonthlySnapshotDocument).
+ */
+export function getInventoryPeriodState(year: number, month: number, now: Date = new Date()): InventoryPeriodState {
+  const period = `${year}-${String(month).padStart(2, "0")}`;
+  const current = jakartaCurrentPeriod(now);
+  if (period > current) return "future";
+  if (period === current) return "current";
+  return "historical";
 }
 
 // ---------------------------------------------------------------------------

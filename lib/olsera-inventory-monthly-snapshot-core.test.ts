@@ -16,6 +16,7 @@ import {
   dominantStoreId,
   extendIdentityIndexWithAliases,
   firstDayOfMonth,
+  getInventoryPeriodState,
   lastDayOfMonth,
   monthlySnapshotDocId,
   monthsAscending,
@@ -398,4 +399,25 @@ test("buildMatchingContext: index identity/sku/nama terbentuk dari katalog", () 
   assert.equal(context.identityIndex.get(productKey(1, 100, null))?._id, "1:100:0");
   assert.equal(context.skuIndex.get("SKU-A")?.[0]._id, "1:100:0");
   assert.equal(context.catalogById.get("1:100:0")?._id, "1:100:0");
+});
+
+// ---- getInventoryPeriodState — reuse jakartaCurrentPeriod (lib/olsera-financial-core.ts), tidak membuat timezone kedua ----
+
+test("getInventoryPeriodState: bulan sebelum bulan berjalan -> historical", () => {
+  const now = new Date("2026-08-15T00:00:00Z");
+  assert.equal(getInventoryPeriodState(2026, 7, now), "historical");
+  assert.equal(getInventoryPeriodState(2026, 2, now), "historical");
+  assert.equal(getInventoryPeriodState(2025, 12, now), "historical");
+});
+
+test("getInventoryPeriodState: bulan yang sama dengan bulan berjalan (Asia/Jakarta) -> current", () => {
+  // 2026-08-15T20:00:00Z = 2026-08-16 03:00 WIB, TETAP bulan Agustus di kedua zona (aman dari boundary UTC vs WIB).
+  const now = new Date("2026-08-15T20:00:00Z");
+  assert.equal(getInventoryPeriodState(2026, 8, now), "current");
+});
+
+test("getInventoryPeriodState: bulan setelah bulan berjalan -> future, TIDAK PERNAH dianggap current/historical", () => {
+  const now = new Date("2026-08-15T00:00:00Z");
+  assert.equal(getInventoryPeriodState(2026, 9, now), "future");
+  assert.equal(getInventoryPeriodState(2027, 1, now), "future");
 });

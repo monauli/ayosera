@@ -78,6 +78,62 @@ export function hiddenInventoryRowCount<T extends InventoryCategoryRow>(rows: re
 }
 
 // ---------------------------------------------------------------------------
+// Aturan Kedua Inventori — sembunyikan produk yang TIDAK punya aktivitas SAMA
+// SEKALI pada periode ini (opening 0, tanpa incoming/return/sales/outgoing,
+// closing 0). Ini murni aturan TAMPILAN (dashboard + export) — TIDAK PERNAH
+// menghapus histori/produk master, TIDAK mengubah perhitungan qty. Berbeda
+// dari isHiddenInventoryCategory (kategori LABERS/JASA HOST, manual) — kedua
+// aturan independen dan bisa berlaku bersamaan atau sendiri-sendiri.
+// ---------------------------------------------------------------------------
+
+export type InventoryActivityRow = {
+  openingQty: number | null;
+  incomingQty: number | null;
+  returnQty: number | null;
+  salesQty: number | null;
+  outgoingQty: number | null;
+  closingQty: number | null;
+  /** Status ledger baris ini (lib/olsera-inventory-monthly-snapshot-core.ts). Absen/undefined diperlakukan sama seperti "complete". */
+  snapshotStatus?: "complete" | "boundary-only" | "incomplete";
+};
+
+/**
+ * true bila baris ini punya aktivitas apa pun (harus tetap tampil), false
+ * HANYA bila status ledger "complete" DAN seluruh opening/incoming/return/
+ * sales/outgoing/closing benar-benar nol. Baris dengan data TIDAK LENGKAP
+ * ("boundary-only"/"incomplete") SELALU dianggap punya aktivitas (jangan
+ * pernah menyembunyikan produk hanya karena datanya belum lengkap — beda
+ * dari "terbukti tidak ada aktivitas").
+ */
+export function hasInventoryActivity(row: InventoryActivityRow): boolean {
+  if (row.snapshotStatus && row.snapshotStatus !== "complete") return true;
+  const isZero = (value: number | null) => value === null || value === 0;
+  return !(
+    isZero(row.openingQty) &&
+    isZero(row.incomingQty) &&
+    isZero(row.returnQty) &&
+    isZero(row.salesQty) &&
+    isZero(row.outgoingQty) &&
+    isZero(row.closingQty)
+  );
+}
+
+type InventoryMonthlyRow = InventoryCategoryRow & InventoryActivityRow;
+
+/**
+ * Helper inclusion TUNGGAL dipakai BERSAMA oleh dashboard Stok Bulanan dan
+ * export bulanan (lib/olsera-inventory-monthly-export.ts) — supaya keduanya
+ * SELALU konsisten, tidak ada filter berbeda-beda. Menggabungkan dua aturan
+ * independen: kategori tersembunyi (togglable lewat `showHiddenItems`, sama
+ * seperti visibleInventoryRows) dan Aturan Kedua Inventori (SELALU berlaku,
+ * tidak togglable — produk dengan aktivitas apa pun sekecil apa pun tetap
+ * tampil).
+ */
+export function visibleMonthlyInventoryRows<T extends InventoryMonthlyRow>(rows: readonly T[], showHiddenItems: boolean): T[] {
+  return rows.filter((row) => hasInventoryActivity(row) && (showHiddenItems || !isHiddenInventoryCategory(row.category)));
+}
+
+// ---------------------------------------------------------------------------
 // Status stok
 // ---------------------------------------------------------------------------
 

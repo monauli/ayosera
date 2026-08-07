@@ -295,21 +295,31 @@ test("buildTwoSheetInventoryWorkbook: nama sheet mengikuti bulan lain (Agustus)"
   assert.deepEqual(wb.worksheets.map((s) => s.name), ["Agustus Terjual", "Agustus Keseluruhan"]);
 });
 
-test("buildTwoSheetInventoryWorkbook: Sheet Terjual hanya salesQty>0, Sheet Keseluruhan seluruh produk (termasuk salesQty=0)", async () => {
+test("buildTwoSheetInventoryWorkbook: Sheet Terjual hanya salesQty>0, Sheet Keseluruhan seluruh produk BERAKTIVITAS (termasuk salesQty=0 tapi opening/closing bukan nol)", async () => {
   const rows: TwoSheetInventoryRow[] = [
     { key: "1", name: "TERJUAL", sku: null, category: "GRIP", uom: null, openingQty: 10, incomingQty: 0, returnQty: 0, salesQty: 3, outgoingQty: 0, closingQty: 7, hasSnapshot: true },
-    { key: "2", name: "TANPA MUTASI", sku: null, category: "GRIP", uom: null, openingQty: 0, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 0, hasSnapshot: false },
+    { key: "2", name: "ADA STOK TANPA MUTASI BULAN INI", sku: null, category: "GRIP", uom: null, openingQty: 5, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 5, hasSnapshot: true },
   ];
   const wb = await loadWorkbook(rows);
   const terjual = sheetDataRows(wb.getWorksheet("Juni Terjual")!);
   const keseluruhan = sheetDataRows(wb.getWorksheet("Juni Keseluruhan")!);
   assert.deepEqual(terjual.map((r) => r.name), ["TERJUAL"]);
-  assert.deepEqual(keseluruhan.map((r) => r.name).sort(), ["TANPA MUTASI", "TERJUAL"]);
-  // Angka 0 tetap tampil sebagai 0 (bukan blank/dash).
-  const tanpaMutasi = keseluruhan.find((r) => r.name === "TANPA MUTASI")!;
-  assert.equal(tanpaMutasi.opening, 0);
+  assert.deepEqual(keseluruhan.map((r) => r.name).sort(), ["ADA STOK TANPA MUTASI BULAN INI", "TERJUAL"]);
+  // Angka 0 tetap tampil sebagai 0 (bukan blank/dash) untuk kolom yang memang nol.
+  const tanpaMutasi = keseluruhan.find((r) => r.name === "ADA STOK TANPA MUTASI BULAN INI")!;
+  assert.equal(tanpaMutasi.opening, 5);
   assert.equal(tanpaMutasi.sales, 0);
-  assert.equal(tanpaMutasi.closing, 0);
+  assert.equal(tanpaMutasi.closing, 5);
+});
+
+test("buildTwoSheetInventoryWorkbook: Aturan Kedua Inventori — produk TANPA aktivitas sama sekali (opening 0, semua arus 0, closing 0) disembunyikan dari KEDUA sheet", async () => {
+  const rows: TwoSheetInventoryRow[] = [
+    { key: "1", name: "AKTIF", sku: null, category: "GRIP", uom: null, openingQty: 5, incomingQty: 0, returnQty: 0, salesQty: 1, outgoingQty: 0, closingQty: 4, hasSnapshot: true },
+    { key: "2", name: "TANPA MUTASI", sku: null, category: "GRIP", uom: null, openingQty: 0, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 0, hasSnapshot: false },
+  ];
+  const wb = await loadWorkbook(rows);
+  const keseluruhan = sheetDataRows(wb.getWorksheet("Juni Keseluruhan")!);
+  assert.deepEqual(keseluruhan.map((r) => r.name), ["AKTIF"], "produk tanpa aktivitas sama sekali tidak boleh masuk export — histori TETAP tersimpan di database, ini murni tampilan export");
 });
 
 test("buildTwoSheetInventoryWorkbook: produk yang tampil di kedua sheet punya angka identik (beda hanya karena filter salesQty>0)", async () => {

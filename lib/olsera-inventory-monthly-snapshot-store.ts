@@ -19,11 +19,13 @@ import {
   computeMonthlyStepBackward,
   computeMonthlyStepForward,
   dominantStoreId,
+  getInventoryPeriodState,
   lastDayOfMonth,
   monthlySnapshotDocId,
   monthsAscending,
   monthsDescending,
   nextMonth,
+  previousMonth,
   type BackwardAnchor,
   type ForwardAnchor,
   type MatchingContext,
@@ -163,6 +165,10 @@ export async function fetchRawSalesActivityByMonth(
 // ---------------------------------------------------------------------------
 
 function entryToDocument(entry: MonthlyLedgerEntry, storeId: number, month: MonthKey, now: Date): OlseraInventoryMonthlySnapshotDocument {
+  // finalizedAt: null bila bulan ini MASIH "current" saat ditulis (belum final,
+  // ensureMonthlySnapshotChain akan menghitung ulang di panggilan berikutnya);
+  // Date `now` bila bulan ini SUDAH "historical" saat ditulis (dipercaya final).
+  const periodState = getInventoryPeriodState(month.year, month.month, now);
   return {
     _id: monthlySnapshotDocId(storeId, month.year, month.month, entry.productId, entry.variantId),
     storeId,
@@ -184,6 +190,7 @@ function entryToDocument(entry: MonthlyLedgerEntry, storeId: number, month: Mont
     source: entry.source,
     status: entry.status,
     diagnostics: entry.diagnostics,
+    finalizedAt: periodState === "historical" ? now : null,
     createdAt: now,
     updatedAt: now,
   };
@@ -209,6 +216,8 @@ export async function runBackwardBackfillMonth(input: {
   repo: MonthlySnapshotRepo;
   /** Opsional (additive) — bila diisi, mengaktifkan deteksi carry-forward kontradiktif (lihat fetchRawSalesActivityByMonth). Default: tidak fetch apa pun, perilaku sebelumnya tidak berubah. */
   rawSalesActivityFetcher?: RawSalesActivityFetcher;
+  /** Opsional — waktu "sekarang" dipakai utk menentukan finalizedAt (lihat entryToDocument). Default: new Date(). Injeksi utk tes deterministik. */
+  now?: Date;
 }): Promise<BackfillMonthResult<BackwardAnchor>> {
   const startDate = `${input.month.year}-${String(input.month.month).padStart(2, "0")}-01`;
   const endDate = lastDayOfMonth(input.month.year, input.month.month);
@@ -229,7 +238,7 @@ export async function runBackwardBackfillMonth(input: {
   const rawSalesActivityByKey = input.rawSalesActivityFetcher ? await input.rawSalesActivityFetcher(startDate, endDate) : undefined;
   const step = computeMonthlyStepBackward({ anchors: input.anchors, matched, hasEvidenceBeforeOrDuring: hasEvidence, rawSalesActivityByKey });
 
-  const now = new Date();
+  const now = input.now ?? new Date();
   const docs = [...step.entries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
   await input.repo.upsertMany(docs);
 
@@ -244,6 +253,8 @@ export async function runForwardBackfillMonth(input: {
   repo: MonthlySnapshotRepo;
   /** Opsional (additive) — lihat runBackwardBackfillMonth. */
   rawSalesActivityFetcher?: RawSalesActivityFetcher;
+  /** Opsional — lihat runBackwardBackfillMonth. */
+  now?: Date;
 }): Promise<BackfillMonthResult<ForwardAnchor>> {
   const startDate = `${input.month.year}-${String(input.month.month).padStart(2, "0")}-01`;
   const endDate = lastDayOfMonth(input.month.year, input.month.month);
@@ -263,7 +274,7 @@ export async function runForwardBackfillMonth(input: {
   const rawSalesActivityByKey = input.rawSalesActivityFetcher ? await input.rawSalesActivityFetcher(startDate, endDate) : undefined;
   const step = computeMonthlyStepForward({ anchors: input.anchors, matched, catalogById: input.matchingContext.catalogById, rawSalesActivityByKey });
 
-  const now = new Date();
+  const now = input.now ?? new Date();
   const docs = [...step.entries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
   await input.repo.upsertMany(docs);
 
@@ -318,6 +329,8 @@ export async function backfillBackwardRange(input: {
   earliestByProductId?: Map<number, string>;
   /** Opsional (additive) — lihat runBackwardBackfillMonth/fetchRawSalesActivityByMonth. Default: tidak fetch apa pun (perilaku lama tidak berubah). */
   rawSalesActivityFetcher?: RawSalesActivityFetcher;
+  /** Opsional — lihat runBackwardBackfillMonth. */
+  now?: Date;
 }): Promise<BackfillRangeSummary[]> {
   const earliestByProductId = input.earliestByProductId ?? (await fetchEarliestEvidenceByProductId());
   const existing = await input.repo.findMonth(input.storeId, input.fromInclusive.year, input.fromInclusive.month);
@@ -333,6 +346,7 @@ export async function backfillBackwardRange(input: {
       earliestByProductId,
       repo: input.repo,
       rawSalesActivityFetcher: input.rawSalesActivityFetcher,
+      now: input.now,
     });
     if (!result.ok) {
       summaries.push({ month, ok: false, docsWritten: 0, stopped: [], error: result.error });
@@ -352,6 +366,8 @@ export async function backfillForwardRange(input: {
   repo: MonthlySnapshotRepo;
   /** Opsional (additive) — lihat runBackwardBackfillMonth/fetchRawSalesActivityByMonth. Default: tidak fetch apa pun (perilaku lama tidak berubah). */
   rawSalesActivityFetcher?: RawSalesActivityFetcher;
+  /** Opsional — lihat runBackwardBackfillMonth. */
+  now?: Date;
 }): Promise<BackfillRangeSummary[]> {
   const existing = await input.repo.findMonth(input.storeId, input.fromInclusive.year, input.fromInclusive.month);
   let anchors = docsToForwardAnchors(existing);
@@ -365,6 +381,7 @@ export async function backfillForwardRange(input: {
       matchingContext: input.matchingContext,
       repo: input.repo,
       rawSalesActivityFetcher: input.rawSalesActivityFetcher,
+      now: input.now,
     });
     if (!result.ok) {
       summaries.push({ month, ok: false, docsWritten: 0, stopped: [], error: result.error });
@@ -383,12 +400,48 @@ export async function backfillForwardRange(input: {
 // (anchor terdekat pun tidak ada), kembalikan error, bukan angka kosong.
 // ---------------------------------------------------------------------------
 
+const JUNE_2026: MonthKey = { year: 2026, month: 6 };
+
+/**
+ * `already` boleh dipercaya langsung (tidak perlu dihitung ulang) HANYA bila
+ * bulan itu benar-benar "historical" (sudah lewat) DAN tidak ada satu pun
+ * dokumen yang masih `finalizedAt === null` (ditulis saat bulan itu masih
+ * "current" dan belum pernah difinalisasi). Dokumen LEGACY tanpa field
+ * `finalizedAt` sama sekali (`undefined`, bukan `null`) dianggap SUDAH final
+ * (backward compatible — lihat lib/mongodb.ts) supaya deploy fix ini TIDAK
+ * memicu hitung ulang massal untuk seluruh histori lama; rebuild retroaktif
+ * untuk bulan lama yang terbukti stale (mis. Juli 2026) dilakukan lewat
+ * scripts/audit-inventory-monthly-periods.ts + scripts/backfill-monthly-snapshot.ts
+ * --write, bukan otomatis di sini.
+ */
+function isTrustedHistorical(docs: OlseraInventoryMonthlySnapshotDocument[], state: ReturnType<typeof getInventoryPeriodState>): boolean {
+  return docs.length > 0 && state === "historical" && !docs.some((d) => d.finalizedAt === null);
+}
+
+/**
+ * Pastikan snapshot bulan yang diminta tersedia DAN — untuk bulan "current"
+ * (bulan kalender Asia/Jakarta yang sedang berjalan) — SELALU dihitung ulang
+ * dari sumber Olsera terbaru (produk baru di tengah bulan, movement yang
+ * baru masuk, dst.), TIDAK PERNAH dipercaya sebagai final hanya karena
+ * dokumennya sudah pernah ada (root cause bug lama — lihat
+ * tmp/ai-handoff.md "Inventory July-August Product Timing Audit"). Bulan
+ * "historical" yang sudah pernah mendapat SATU KALI finalisasi (finalizedAt
+ * bukan null) dipercaya langsung tanpa panggilan API (item C - jangan
+ * memanggil Olsera setiap page load). Bulan "future" ditolak — tidak pernah
+ * digenerate seolah sudah berjalan. TIDAK PERNAH fabrikasi angka: bila
+ * rantai tidak bisa disambung (anchor terdekat pun tidak ada) atau fetch
+ * sumber gagal, kembalikan error — data valid yang sudah ada TIDAK ditimpa.
+ */
 export async function ensureMonthlySnapshotChain(input: {
   year: number;
   month: number;
   repo?: MonthlySnapshotRepo;
   matchingContext?: MatchingContext;
+  /** Opsional — waktu "sekarang" dipakai utk menentukan current/historical/future. Default: new Date(). Injeksi utk tes deterministik. */
+  now?: Date;
+  rawSalesActivityFetcher?: RawSalesActivityFetcher;
 }): Promise<{ ok: true; storeId: number; docs: OlseraInventoryMonthlySnapshotDocument[] } | { ok: false; error: string }> {
+  const now = input.now ?? new Date();
   const repo = input.repo ?? (await getMongoMonthlySnapshotRepo());
   const matchingContext = input.matchingContext ?? (await fetchMatchingContext());
   if (!matchingContext.catalogProducts.length) {
@@ -397,13 +450,22 @@ export async function ensureMonthlySnapshotChain(input: {
   const storeId = dominantStoreId(matchingContext.catalogProducts);
   const target: MonthKey = { year: input.year, month: input.month };
 
-  const already = await repo.findMonth(storeId, target.year, target.month);
-  if (already.length) return { ok: true, storeId, docs: already };
+  const state = getInventoryPeriodState(target.year, target.month, now);
+  if (state === "future") {
+    return { ok: false, error: `Periode ${target.year}-${String(target.month).padStart(2, "0")} belum dimulai — tidak bisa dihitung.` };
+  }
 
-  const JUNE_2026: MonthKey = { year: 2026, month: 6 };
+  const already = await repo.findMonth(storeId, target.year, target.month);
+  if (isTrustedHistorical(already, state)) return { ok: true, storeId, docs: already };
+
   const isBackwardZone = target.year < JUNE_2026.year || (target.year === JUNE_2026.year && target.month <= JUNE_2026.month);
 
   if (isBackwardZone) {
+    // Zona mundur (<= Juni 2026): tidak ada konsep "current" — bulan sejauh
+    // ini di masa lalu selalu historical. Bila sudah ada dokumen (termasuk
+    // legacy tanpa finalizedAt), percaya langsung; perilaku TIDAK berubah
+    // dari sebelumnya untuk zona ini.
+    if (already.length) return { ok: true, storeId, docs: already };
     // Cari anchor ter-DEKAT (bulan lebih baru, s/d Juni) yang sudah punya dokumen.
     let anchorMonth: MonthKey | null = null;
     for (const month of monthsAscending(target, JUNE_2026)) {
@@ -416,26 +478,29 @@ export async function ensureMonthlySnapshotChain(input: {
     if (!anchorMonth) {
       return { ok: false, error: `Tidak ada snapshot bulanan ter-anchor s/d Juni 2026 untuk memulai rantai mundur ke ${target.year}-${String(target.month).padStart(2, "0")} — jalankan bootstrap baseline terlebih dahulu.` };
     }
-    const summaries = await backfillBackwardRange({ fromInclusive: anchorMonth, toInclusive: target, storeId, matchingContext, repo });
+    const summaries = await backfillBackwardRange({ fromInclusive: anchorMonth, toInclusive: target, storeId, matchingContext, repo, rawSalesActivityFetcher: input.rawSalesActivityFetcher, now });
     const failed = summaries.find((s) => !s.ok);
     if (failed) return { ok: false, error: failed.error ?? "Backfill mundur gagal." };
-  } else {
-    // Cari anchor ter-DEKAT (bulan lebih lama, mulai Juni) yang sudah punya dokumen.
-    let anchorMonth: MonthKey | null = null;
-    for (const month of monthsDescending(target, JUNE_2026)) {
-      const docs = await repo.findMonth(storeId, month.year, month.month);
-      if (docs.length) {
-        anchorMonth = month;
-        break;
-      }
-    }
-    if (!anchorMonth) {
-      return { ok: false, error: `Tidak ada snapshot bulanan ter-anchor dari Juni 2026 untuk memulai rantai maju ke ${target.year}-${String(target.month).padStart(2, "0")} — jalankan bootstrap baseline terlebih dahulu.` };
-    }
-    const summaries = await backfillForwardRange({ fromInclusive: anchorMonth, toInclusive: target, storeId, matchingContext, repo });
-    const failed = summaries.find((s) => !s.ok);
-    if (failed) return { ok: false, error: failed.error ?? "Backfill maju gagal." };
+    const docs = await repo.findMonth(storeId, target.year, target.month);
+    if (!docs.length) return { ok: false, error: `Rantai snapshot sampai ke ${target.year}-${String(target.month).padStart(2, "0")}, tapi tidak ada produk tersisa (semua dihentikan/tidak ada bukti eksistensi) — periksa manual.` };
+    return { ok: true, storeId, docs };
   }
+
+  // Zona maju (>= Juli 2026) — Juni sendiri (baseline tetap) selalu tertangkap
+  // oleh isBackwardZone di atas, tidak pernah sampai ke sini. Bulan ini perlu (di)hitung ulang — baik karena belum pernah ada, karena
+  // "current" (selalu dinamis), atau karena "historical" tapi belum pernah
+  // difinalisasi. SELALU anchor dari hasil TERBARU bulan sebelumnya —
+  // rekursif, supaya bulan sebelumnya yang JUGA belum difinalisasi otomatis
+  // dibetulkan dulu (item 4/5 PRD: "pastikan Juli sudah dihitung sampai 31
+  // Juli SEBELUM dipakai sebagai opening Agustus"). Rekursi dibatasi jumlah
+  // bulan kalender nyata sejak baseline Juni 2026 — tidak tak terbatas.
+  const prev = previousMonth(target);
+  const prevResult = await ensureMonthlySnapshotChain({ year: prev.year, month: prev.month, repo, matchingContext, now, rawSalesActivityFetcher: input.rawSalesActivityFetcher });
+  if (!prevResult.ok) return prevResult;
+  const anchors = docsToForwardAnchors(prevResult.docs);
+
+  const result = await runForwardBackfillMonth({ month: target, storeId, anchors, matchingContext, repo, rawSalesActivityFetcher: input.rawSalesActivityFetcher, now });
+  if (!result.ok) return { ok: false, error: result.error };
 
   const docs = await repo.findMonth(storeId, target.year, target.month);
   if (!docs.length) return { ok: false, error: `Rantai snapshot sampai ke ${target.year}-${String(target.month).padStart(2, "0")}, tapi tidak ada produk tersisa (semua dihentikan/tidak ada bukti eksistensi) — periksa manual.` };

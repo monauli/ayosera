@@ -67,6 +67,7 @@
     "test:reconciliation-period-lock-ui": "node --no-warnings --experimental-strip-types --test lib/reconciliation-omzet-period-lock-ui.test.ts",
     "test:private-integration-monitor": "tsx --conditions=react-server --test lib/private-integration-monitor.test.ts lib/ayo-data-gap.test.ts lib/olsera-sales-gap.test.ts",
     "test:audit-sync-menu-ui": "node --no-warnings --experimental-strip-types --test lib/audit-sync-menu-ui.test.ts",
+    "inventory:audit-periods": "node --no-warnings --experimental-strip-types scripts/audit-inventory-monthly-periods.ts",
     "test:coretax": "node --no-warnings --experimental-strip-types --test lib/coretax/paste-parser.test.ts lib/coretax/xml-generator.test.ts lib/coretax/validation.test.ts lib/coretax/draft-store.test.ts lib/coretax/grid-selection.test.ts && npm run test:coretax-drafts-patch-guard",
     "test:coretax-drafts-patch-guard": "cd \"app/api/coretax/drafts/[id]\" && tsx --conditions=react-server --experimental-test-module-mocks --test",
     "test:reconciliation-omzet-endpoints": "cd \"app/api/reconciliation/court-revenue/[period]\" && tsx --conditions=react-server --experimental-test-module-mocks --test",

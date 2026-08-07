@@ -3,7 +3,7 @@
 // Jalankan: node --no-warnings --experimental-strip-types --test lib/inventory-snapshot-pipeline-audit-core.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifySnapshotEntity } from "./inventory-snapshot-pipeline-audit-core.ts";
+import { classifySnapshotEntity, classifySnapshotPeriod } from "./inventory-snapshot-pipeline-audit-core.ts";
 
 test("classifySnapshotEntity: tidak ada dokumen, trackInventory:false (mis. LABERS/SEWA RAKET/COURT FEE) -> EXPECTED_NO_ACTION (bukan STALE_SNAPSHOT)", () => {
   const result = classifySnapshotEntity({ existingDoc: null, rawSalesActivity: 40, rawSalesActivityIncludesLegacyNullStore: false, isDraftPeriod: false, isTrackedInventory: false });
@@ -112,4 +112,32 @@ test("classifySnapshotEntity: source matched, beda TANPA sebab lain -> SOURCE_DA
     isTrackedInventory: true,
   });
   assert.equal(result.classification, "SOURCE_DATA_INCOMPLETE");
+});
+
+// ---- classifySnapshotPeriod (audit per-periode, scripts/audit-inventory-monthly-periods.ts) ----
+
+test("classifySnapshotPeriod: periode future -> MANUAL_REVIEW (tidak seharusnya diaudit)", () => {
+  const result = classifySnapshotPeriod({ periodState: "future", localEntityCount: 0, sourceEntityCount: 0, missingLocalCount: 0, qtyMismatchCount: 0 });
+  assert.equal(result.classification, "MANUAL_REVIEW");
+});
+
+test("classifySnapshotPeriod: bulan berjalan -> CURRENT_REFRESHABLE, terlepas dari selisih apa pun", () => {
+  const result = classifySnapshotPeriod({ periodState: "current", localEntityCount: 5, sourceEntityCount: 8, missingLocalCount: 3, qtyMismatchCount: 1 });
+  assert.equal(result.classification, "CURRENT_REFRESHABLE");
+});
+
+test("classifySnapshotPeriod: historical, missingLocalCount > 0 -> STALE_NEEDS_REBUILD (bukti langsung, kasus Juli 2026)", () => {
+  const result = classifySnapshotPeriod({ periodState: "historical", localEntityCount: 90, sourceEntityCount: 96, missingLocalCount: 6, qtyMismatchCount: 0 });
+  assert.equal(result.classification, "STALE_NEEDS_REBUILD");
+  assert.match(result.reason, /6 entity/);
+});
+
+test("classifySnapshotPeriod: historical, tidak ada missing TAPI ada qty mismatch -> MANUAL_REVIEW (bukan otomatis rebuild)", () => {
+  const result = classifySnapshotPeriod({ periodState: "historical", localEntityCount: 90, sourceEntityCount: 90, missingLocalCount: 0, qtyMismatchCount: 2 });
+  assert.equal(result.classification, "MANUAL_REVIEW");
+});
+
+test("classifySnapshotPeriod: historical, cocok penuh -> OK, tidak perlu tindakan", () => {
+  const result = classifySnapshotPeriod({ periodState: "historical", localEntityCount: 90, sourceEntityCount: 90, missingLocalCount: 0, qtyMismatchCount: 0 });
+  assert.equal(result.classification, "OK");
 });

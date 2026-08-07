@@ -136,3 +136,56 @@ export function classifySnapshotEntity(input: ClassifyEntityInput): ClassifyEnti
     proposedAction: "Investigasi terpisah pada pipeline upstream (mis. lib/olsera-inventory-monthly-snapshot-store.ts sumber stockmovement API) — TIDAK mengubah expectedQty untuk memaksa cocok.",
   };
 }
+
+// ---------------------------------------------------------------------------
+// Klasifikasi PER PERIODE (bulan) — dipakai scripts/audit-inventory-monthly-periods.ts
+// (npm run inventory:audit-periods). Beda dari classifySnapshotEntity di atas
+// (per entity/produk): ini rekap satu baris per bulan, dibangun dari
+// perbandingan LANGSUNG dokumen lokal vs tarikan LIVE stockmovement API
+// Olsera untuk rentang tanggal bulan yang sama — bukti data, BUKAN tebakan
+// dari timestamp createdAt (lihat tmp/ai-handoff.md "Inventory July-August
+// Product Timing Audit": createdAt lokal terbukti TIDAK cukup untuk
+// membuktikan staleness, sengaja tidak dipakai di sini).
+// ---------------------------------------------------------------------------
+
+export type InventoryPeriodClassification = "OK" | "CURRENT_REFRESHABLE" | "STALE_NEEDS_REBUILD" | "MANUAL_REVIEW";
+
+export type ClassifyPeriodInput = {
+  periodState: "future" | "current" | "historical";
+  /** Jumlah entity (productId:variantId) yang PUNYA dokumen snapshot lokal bulan ini. */
+  localEntityCount: number;
+  /** Jumlah entity yang muncul di tarikan LIVE stockmovement API Olsera bulan ini. */
+  sourceEntityCount: number;
+  /** Entity yang ADA di sumber Olsera TAPI TIDAK ADA dokumen lokalnya sama sekali — bukti langsung staleness (kasus Juli 2026). */
+  missingLocalCount: number;
+  /** Entity yang qty-nya (mis. closingQty) berbeda antara dokumen lokal vs tarikan sumber — butuh tinjauan manual (bisa productId rename/alias, bukan sekadar stale). */
+  qtyMismatchCount: number;
+};
+
+export type ClassifyPeriodResult = { classification: InventoryPeriodClassification; reason: string };
+
+export function classifySnapshotPeriod(input: ClassifyPeriodInput): ClassifyPeriodResult {
+  if (input.periodState === "future") {
+    return { classification: "MANUAL_REVIEW", reason: "Periode masa depan tidak seharusnya diaudit/digenerate — periksa argumen rentang audit." };
+  }
+  if (input.periodState === "current") {
+    return {
+      classification: "CURRENT_REFRESHABLE",
+      reason: "Bulan berjalan — ensureMonthlySnapshotChain SELALU menghitung ulang setiap diakses (lihat lib/olsera-inventory-monthly-snapshot-store.ts), tidak perlu rebuild manual.",
+    };
+  }
+  // historical
+  if (input.missingLocalCount > 0) {
+    return {
+      classification: "STALE_NEEDS_REBUILD",
+      reason: `${input.missingLocalCount} entity ADA di sumber Olsera (tarikan live) tapi TIDAK ADA dokumen lokal sama sekali — snapshot bulan ini kemungkinan dikunci SEBELUM entity tsb muncul di Olsera (pola sama root cause Juli 2026).`,
+    };
+  }
+  if (input.qtyMismatchCount > 0) {
+    return {
+      classification: "MANUAL_REVIEW",
+      reason: `${input.qtyMismatchCount} entity qty-nya berbeda antara dokumen lokal vs tarikan sumber — perlu tinjauan manual (mungkin productId rename/alias tanpa jembatan, bukan sekadar stale) sebelum rebuild.`,
+    };
+  }
+  return { classification: "OK", reason: "Dokumen lokal cocok dengan tarikan live sumber Olsera untuk periode ini — tidak perlu tindakan." };
+}
