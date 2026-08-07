@@ -55,14 +55,67 @@ Struktur Excel Converter yang relevan:
 9. Klik **Unduh XML** — file `.xml` diunduh ke komputer.
 10. **Unggah file XML tersebut secara manual ke aplikasi Coretax DJP** (di luar AYOSERA).
 
-## Cara Copy-Paste
+## Cara Pakai Seperti Spreadsheet
 
-- Klik sel pertama tujuan (kolom & baris), lalu tekan Ctrl+V setelah menyalin dari Excel.
-- Tombol **Tempel dari Excel** di toolbar juga tersedia (memakai Clipboard API browser; sebagian browser meminta izin akses clipboard).
+Grid Coretax berperilaku seperti Excel: klik sel hanya **memilih** sel itu (bukan langsung mode edit). Sel yang sedang dipilih (**active cell**) ditandai kotak merah tebal; kalau kamu memilih beberapa sel sekaligus (**range**), seluruh range ditandai latar merah muda.
+
+**Memilih sel/range:**
+- Klik sekali = pilih satu sel.
+- Klik lalu tahan **Shift** dan klik sel lain = pilih range dari sel pertama sampai sel itu.
+- **Shift + panah** = perluas pilihan satu sel ke arah panah.
+- **Ctrl+Shift+↓ / ↑ / → / ←** = perluas pilihan sampai baris/kolom data terakhir yang berdekatan (kalau kolom kosong, langsung ke ujung grid).
+- Drag mouse dari satu sel ke sel lain juga memilih range.
+- **Ctrl+A** ditekan pertama kali = pilih semua sel yang ada datanya; ditekan lagi = pilih seluruh grid. Tidak berlaku kalau kamu sedang mengetik di field header (Nama Draft, TIN, dll).
+
+**Berpindah sel:**
+- Panah (↑↓←→), **Tab** (kanan), **Shift+Tab** (kiri), **Enter** (bawah), **Shift+Enter** (atas), **Home** (kolom pertama baris itu), **End** (kolom terakhir).
+
+**Mengedit sel:**
+- Double-click sel, atau tekan **Enter**/**F2** saat sel terpilih, atau langsung mengetik karakter apa pun saat sel terpilih (mengganti isi lama).
+- **Escape** membatalkan edit tanpa menyimpan perubahan.
+- **Enter** menyimpan lalu pindah ke bawah; **Tab** menyimpan lalu pindah ke kanan.
+- Kolom dropdown (referensi resmi) tetap bisa dipilih dengan keyboard setelah masuk mode edit.
+
+**Copy-paste:**
+- **Ctrl+C** menyalin sel/range yang dipilih (satu sel, satu kolom, atau banyak kolom/baris) sebagai teks tab-separated — bisa ditempel langsung ke Excel/Google Sheets, atau ke area lain di grid Coretax.
+- **Ctrl+V** menempel mulai dari sel yang sedang aktif. Tombol **Tempel Data** di toolbar juga tersedia sebagai alternatif (memakai Clipboard API browser; sebagian browser meminta izin akses clipboard).
 - **Mode A — posisi kolom** (default): kolom pertama data yang ditempel diisi ke kolom yang sedang dipilih, kolom berikutnya mengikuti urutan field modul.
 - **Mode B — nama header**: bila baris pertama teks yang ditempel dikenali sebagai nama header (lihat daftar `headerAliases` per field di `lib/coretax/modules.ts`, mis. "Masa Pajak", "NPWP/NIK", "Kode Objek Pajak"), baris itu otomatis **tidak** ikut jadi data, dan kolom dipetakan berdasarkan nama header, bukan posisi — jadi urutan kolom di Excel sumber boleh berbeda dari urutan field XML.
 - Baris baru otomatis ditambahkan bila jumlah baris yang ditempel melebihi baris yang tersedia.
-- NPWP/NIK/NITKU/nomor dokumen selalu diperlakukan sebagai teks — angka nol di depan tidak pernah hilang.
+- NPWP/NIK/NITKU/nomor dokumen selalu diperlakukan sebagai teks — angka nol di depan tidak pernah hilang, dan tidak pernah berubah jadi notasi ilmiah.
+
+**Menghapus & mengisi cepat:**
+- **Delete**/**Backspace** mengosongkan seluruh sel dalam range yang dipilih (baris tidak dihapus). Bila memilih lebih dari 500 sel sekaligus, akan ada konfirmasi dulu.
+- **Ctrl+D** (fill down) menyalin nilai baris paling atas dalam range yang dipilih ke seluruh baris di bawahnya — cocok satu kolom maupun beberapa kolom sekaligus. Alur cepat: isi nilai di sel atas → pilih ke bawah dengan **Ctrl+Shift+↓** → tekan **Ctrl+D**.
+- **Ctrl+R** (fill right) menyalin nilai kolom paling kiri dalam range ke kolom-kolom di kanannya.
+
+**Undo/Redo:**
+- **Ctrl+Z** membatalkan perubahan terakhir (edit sel, paste, hapus, fill down/right, tambah/hapus/duplikat baris, kosongkan). **Ctrl+Y** atau **Ctrl+Shift+Z** mengulangi. Riwayat menyimpan maksimal 50 langkah terakhir per sesi (sengaja dibatasi, bukan riwayat penuh).
+
+**Resize kolom:** tarik garis di sisi kanan judul kolom untuk mengubah lebar; lebar kolom tersimpan selama sesi browser (hilang setelah tutup tab).
+
+### Daftar Shortcut Keyboard
+
+| Tombol | Fungsi |
+| --- | --- |
+| ↑ ↓ ← → | Pindah satu sel |
+| Tab / Shift+Tab | Pindah kanan / kiri |
+| Enter / Shift+Enter | Pindah bawah / atas |
+| Home / End | Kolom pertama / terakhir pada baris aktif |
+| Shift + panah | Perluas pilihan satu sel |
+| Ctrl+Shift + panah | Perluas pilihan sampai ujung data/grid |
+| Ctrl+A / Ctrl+A lagi | Pilih area data aktif / seluruh grid |
+| Ctrl+C | Salin sel/range terpilih (TSV) |
+| Ctrl+V | Tempel mulai dari sel aktif |
+| Delete / Backspace | Kosongkan isi sel/range terpilih |
+| Ctrl+D | Salin nilai baris atas ke bawah (fill down) |
+| Ctrl+R | Salin nilai kolom kiri ke kanan (fill right) |
+| Enter / F2 | Mulai edit sel aktif |
+| Escape | Batalkan edit |
+| Ctrl+Z | Undo |
+| Ctrl+Y / Ctrl+Shift+Z | Redo |
+
+**Batasan clipboard browser:** akses `navigator.clipboard` (dipakai tombol **Tempel Data** dan sebagai penyempurna Ctrl+C) butuh konteks aman (HTTPS/localhost) dan kadang minta izin eksplisit dari user — bila ditolak, Ctrl+C/Ctrl+V lewat event `copy`/`paste` browser bawaan tetap jadi jalur utama yang jalan tanpa izin tambahan.
 
 ## Cara Validasi
 
@@ -101,7 +154,7 @@ Setiap modul punya "golden XML" test yang membuktikan: root benar, TIN tepat set
 
 - Tidak ada integrasi login Coretax, tidak ada submit otomatis, tidak ada browser automation.
 - Tidak ada penyimpanan token/kredensial/cookie/MFA Coretax di mana pun.
-- Undo hanya menyimpan hingga 20 langkah terakhir (paste/hapus/duplikat/kosongkan), dipicu Ctrl+Z — sengaja sederhana, bukan riwayat penuh.
+- Undo/Redo hanya menyimpan hingga 50 langkah terakhir (edit sel/paste/hapus/fill down-right/tambah-hapus-duplikat baris/kosongkan), dipicu Ctrl+Z/Ctrl+Y — sengaja sederhana, bukan riwayat penuh. Lihat "Cara Pakai Seperti Spreadsheet" untuk daftar shortcut lengkap.
 - Grid tidak mendukung format Excel lanjutan (formula, warna sel, dsb.) — hanya nilai teks per sel.
 
 ## Aturan yang Belum Terverifikasi (BLOCKED — jangan ditegakkan sebagai validasi keras sampai dikonfirmasi ulang dari Converter resmi)

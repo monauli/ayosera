@@ -44,7 +44,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     await requireModule("coretax");
     const { id } = await params;
-    const body = updateSchema.parse(await request.json());
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Data permintaan tidak valid." }, { status: 400 });
+    }
+    const body = updateSchema.parse(payload);
     const draft = await withMongo(async () => {
       const { coretaxDrafts } = await collections();
       return updateCoretaxDraft(coretaxDrafts, id, body);
