@@ -197,6 +197,7 @@ const navItems = [
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
   { label: "Rekonsiliasi", display: "Rekonsiliasi", icon: ShieldCheck, module: "rekonsiliasi" },
   { label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "audit" },
+  { label: "Coretax", display: "Coretax", icon: FileSpreadsheet, module: "coretax" },
 ];
 
 type SessionUserInfo = {
@@ -2153,6 +2154,7 @@ export default function DashboardPage() {
           activeNav={activeNav}
           onSelect={(nav) => {
             if (nav === "Rekonsiliasi") { window.location.assign("/reconciliation"); return; }
+            if (nav === "Coretax") { window.location.assign("/coretax"); return; }
             setActiveNav(nav);
             if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
           }}

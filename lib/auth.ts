@@ -23,7 +23,7 @@ export type AppRole = "supervisor" | "user";
 // AYOSERA_PRIVATE_TOOLS_USER_IDS lama: aksesnya sekarang murni modul biasa,
 // dicentang/dicabut lewat menu Pengguna seperti modul lain, TIDAK auto-granted
 // via modul lain (beda dari "rekonsiliasi") — default tetap tidak memiliki akses.
-export const APP_MODULES = ["dasbor", "transaksi", "olsera", "webhook", "rekonsiliasi", "audit"] as const;
+export const APP_MODULES = ["dasbor", "transaksi", "olsera", "webhook", "rekonsiliasi", "audit", "coretax"] as const;
 export type AppModule = (typeof APP_MODULES)[number];
 
 type AuthUserDocument = {

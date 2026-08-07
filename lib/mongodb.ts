@@ -164,6 +164,34 @@ export type HistoricalBackfillAuditLogDocument = {
 };
 
 /**
+ * Draft data entri Coretax (modul BPU/BPMP/BP21/BPA1, Fase 1) — hanya
+ * penyimpanan draft LOKAL AYOSERA (input Excel-like + status validasi).
+ * TIDAK PERNAH terhubung ke akun/API Coretax DJP: tidak ada token/kredensial
+ * Coretax yang disimpan di sini atau di mana pun (lihat lib/coretax/).
+ */
+export type CoretaxDraftRow = {
+  rowId: string;
+  values: Record<string, string>;
+  status: "belum-diperiksa" | "benar" | "perlu-diperbaiki";
+  errors: { field: string; message: string }[];
+};
+export type CoretaxDraftDocument = {
+  _id: string; // randomUUID()
+  moduleId: "bpu" | "bpmp" | "bp21" | "bpa1";
+  name: string;
+  tin: string;
+  taxPeriodMonth: string | null;
+  taxPeriodYear: string | null;
+  rows: CoretaxDraftRow[];
+  rowCount: number;
+  validRowCount: number;
+  invalidRowCount: number;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/**
  * Bukti jurnal nyata yang menjelaskan selisih Rekonsiliasi Omzet AYOSERA pada
  * SATU periode — SATU-SATUNYA jalur status "Selisih Terjelaskan" (lihat
  * lib/reconciliation-omzet-ledger.ts classifyStatus). TIDAK PERNAH dibuat
@@ -897,6 +925,7 @@ export async function collections() {
     reconciliationOmzetPeriodLocks: db.collection<ReconciliationOmzetPeriodLockDocument>("reconciliation_omzet_period_locks"),
     rateLimits: db.collection<RateLimitDocument>("rate_limits"),
     historicalBackfillAuditLog: db.collection<HistoricalBackfillAuditLogDocument>("historical_backfill_audit_log"),
+    coretaxDrafts: db.collection<CoretaxDraftDocument>("coretax_drafts"),
   };
 }
 
@@ -953,8 +982,10 @@ async function createIndexes() {
     reconciliationOmzetPeriodLocks,
     rateLimits,
     historicalBackfillAuditLog,
+    coretaxDrafts,
   } = await collections();
   await Promise.all([
+    coretaxDrafts.createIndex({ moduleId: 1, updatedAt: -1 }),
     webhookLogs.createIndex({ receivedAt: -1 }),
     users.createIndex({ email: 1 }, { unique: true }),
     bookings.createIndex({ booking_id: 1 }, { unique: true }),
