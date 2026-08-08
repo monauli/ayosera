@@ -79,6 +79,21 @@ export function collectSubtotalDiagnostics(value: unknown, path = ""): string[] 
   return [...own, ...Object.entries(row).flatMap(([key, item]) => collectSubtotalDiagnostics(item, path ? `${path}.${key}` : key))];
 }
 function rootFrom(raw: unknown): Record<string, unknown> { const object = asObject(raw); return asObject(object.data ?? object.result ?? object.payload ?? raw); }
+/**
+ * true bila `raw` benar-benar kosong/tidak punya struktur apa pun (null,
+ * undefined, `{}`, atau `[]`) — dipakai SEBELUM normalisasi untuk membedakan
+ * "response API kosong/rusak secara tidak wajar" (harus GAGAL, JANGAN
+ * menimpa laporan lama yang valid) dari "response lengkap tapi nilainya
+ * gagal validasi bisnis" (BOLEH tersimpan dengan status "Menunggu
+ * Validasi" — lihat lib/olsera-financial-sync.ts `validation()`). Ini
+ * BUKAN pengecekan validasi akuntansi, murni pengecekan struktur minimum.
+ */
+function isRawPayloadEmpty(raw: unknown): boolean {
+  if (raw == null) return true;
+  if (Array.isArray(raw)) return raw.length === 0;
+  if (typeof raw === "object") return Object.keys(raw as Record<string, unknown>).length === 0;
+  return false;
+}
 function findSection(root: Record<string, unknown>, keys: string[]): unknown { return first(root, keys); }
 function normalizeKey(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]/g, ""); }
 function findDeepByKey(value: unknown, keys: string[]): unknown {
@@ -115,11 +130,13 @@ export function normalizeBalanceSheetPayload(rawPayload: unknown) {
 }
 function sectionByKeys(root: Record<string, unknown>, keys: string[]): FinancialSection { const raw = findSection(root, keys); return raw == null ? emptySection() : sectionFrom(raw); }
 export function normalizeProfitLossPayload(rawPayload: unknown) {
+  if (isRawPayloadEmpty(rawPayload)) throw new Error("Struktur Laba Rugi kosong/tidak lengkap.");
   const root = rootFrom(rawPayload); const operational = asObject(root.operasional ?? root.operating); const source = { ...root, ...operational }; const grossRaw = findDeepByKey(source, ["laba_kotor", "gross_profit"]) ?? findDeepByLabel(source, ["laba kotor", "gross profit"]); const nonOperatingRaw = findDeepByKey(source, ["non_operasional", "nonOperating", "non_operating"]); const revenue = sectionFrom(childByLabel(grossRaw, ["pendapatan"]) ?? operational.pendapatan ?? findDeepByKey(grossRaw, ["revenue", "pendapatan", "total_pendapatan"]) ?? findDeepByKey(source, ["revenue", "total_pendapatan"]) ?? { }); const costOfGoodsSold = sectionFrom(childByLabel(grossRaw, ["biaya pokok", "hpp", "harga pokok"]) ?? operational.hpp ?? findDeepByKey(grossRaw, ["costOfGoodsSold", "cost_of_goods_sold", "hpp"]) ?? findDeepByKey(source, ["costOfGoodsSold", "cost_of_goods_sold", "hpp"]) ?? { }); const grossProfit = sectionFrom(grossRaw ?? { }); const operatingExpenses = semanticSection(source, ["operatingExpenses", "operating_expenses", "biaya_operasional"], ["biaya operasional", "operating expense"]); const operatingIncome = source.operatingIncome == null ? null : sectionFrom(source.operatingIncome); const nonOperatingIncome = sectionFrom(childByLabel(nonOperatingRaw, ["pendapatan non operasional", "pendapatan non-operasional"]) ?? findDeepByKey(nonOperatingRaw, ["pendapatan_non_operasional", "nonOperatingIncome"]) ?? findDeepByKey(source, ["nonOperatingIncome", "non_operating_income", "pendapatan_non_operasional"]) ?? { }); const nonOperatingExpenses = sectionFrom(childByLabel(nonOperatingRaw, ["biaya non operasional", "biaya non-operasional"]) ?? findDeepByKey(nonOperatingRaw, ["biaya_non_operasional", "nonOperatingExpenses"]) ?? findDeepByKey(source, ["nonOperatingExpenses", "non_operating_expenses", "biaya_non_operasional"]) ?? { }); const netNonOperating = nonOperatingRaw == null ? null : sectionFrom(nonOperatingRaw); const netProfit = semanticSection(source, ["netProfit", "net_profit", "laba_bersih"], ["laba bersih", "net profit"]);
   const grossExpected = revenue.amount - costOfGoodsSold.amount; const netExpected = grossExpected - operatingExpenses.amount + nonOperatingIncome.amount - nonOperatingExpenses.amount;
   return { revenue, costOfGoodsSold, grossProfit, operatingExpenses, operatingIncome, nonOperatingIncome, nonOperatingExpenses, netNonOperating, netProfit, totals: { revenue: revenue.amount, costOfGoodsSold: costOfGoodsSold.amount, grossProfit: grossProfit.amount, operatingExpenses: operatingExpenses.amount, nonOperatingIncome: nonOperatingIncome.amount, nonOperatingExpenses: nonOperatingExpenses.amount, netProfit: netProfit.amount, grossProfitValid: Math.abs(grossExpected - grossProfit.amount) <= 0.01, netProfitValid: Math.abs(netExpected - netProfit.amount) <= 0.01 } };
 }
 export function normalizeCashFlowPayload(rawPayload: unknown) {
+  if (isRawPayloadEmpty(rawPayload)) throw new Error("Struktur Arus Kas kosong/tidak lengkap.");
   const root = rootFrom(rawPayload);
   const operational = sectionByKeys(root, ["operational", "operasional"]);
   const investing = sectionByKeys(root, ["investing", "investasi"]);
@@ -132,6 +149,7 @@ export function normalizeCashFlowPayload(rawPayload: unknown) {
   return { operational, investing, funding, cashIncrease, openingCash, endingCash, totals: { operational: operational.amount, investing: investing.amount, funding: funding.amount, cashIncrease: cashIncrease.amount, openingCash: openingCash.amount, endingCash: endingCash.amount, activityTotalValid: Math.abs(activity - cashIncrease.amount) <= 0.01, endingCashValid: Math.abs(ending - endingCash.amount) <= 0.01 } };
 }
 export function normalizeLedgerSummaryPayload(rawPayload: unknown) {
+  if (isRawPayloadEmpty(rawPayload)) throw new Error("Struktur Ringkasan Buku Besar kosong/tidak lengkap.");
   const root = asObject(rawPayload);
   const rows = Object.keys(root).filter((key) => /^\d+$/.test(key)).sort((a, b) => Number(a) - Number(b)).map((key) => {
     const row = asObject(root[key]);
@@ -240,6 +258,26 @@ export function isCurrentJakartaPeriod(period: string, now: Date = new Date()): 
   return period === jakartaCurrentPeriod(now);
 }
 
-export function validatePeriod(yearValue: unknown, monthValue: unknown, now = new Date()): string { if (typeof yearValue !== "string" || !/^\d{4}$/.test(yearValue) || typeof monthValue !== "string" || !/^\d{1,2}$/.test(monthValue)) throw new Error("Periode tidak valid."); const year = Number(yearValue), month = Number(monthValue); if (month < 1 || month > 12) throw new Error("Periode tidak valid."); const period = `${year}-${String(month).padStart(2, "0")}`; const jakarta = jakartaCurrentPeriod(now); if (period < "2026-02" || period > jakarta) throw new Error("Periode tidak valid."); return period; }
+/** Bulan pertama yang punya data Laporan Keuangan di AYOSERA — tidak ada periode valid sebelum ini. */
+export const FINANCIAL_BASELINE_PERIOD = "2026-02";
+
+export function validatePeriod(yearValue: unknown, monthValue: unknown, now = new Date()): string { if (typeof yearValue !== "string" || !/^\d{4}$/.test(yearValue) || typeof monthValue !== "string" || !/^\d{1,2}$/.test(monthValue)) throw new Error("Periode tidak valid."); const year = Number(yearValue), month = Number(monthValue); if (month < 1 || month > 12) throw new Error("Periode tidak valid."); const period = `${year}-${String(month).padStart(2, "0")}`; const jakarta = jakartaCurrentPeriod(now); if (period < FINANCIAL_BASELINE_PERIOD || period > jakarta) throw new Error("Periode tidak valid."); return period; }
+
+/**
+ * Periode "YYYY-MM" satu bulan sebelum `period` — dipakai cron financial
+ * untuk ikut memelihara bulan yang baru saja lewat (lihat
+ * lib/cron-olsera-financial.ts), supaya jurnal Olsera yang dimasukkan
+ * terlambat dengan tanggal bulan sebelumnya tetap tertangkap otomatis.
+ * Mengembalikan `null` bila `period` sudah di titik/sebelum
+ * FINANCIAL_BASELINE_PERIOD — tidak ada bulan valid sebelumnya untuk disync.
+ */
+export function previousFinancialPeriod(period: string): string | null {
+  if (period <= FINANCIAL_BASELINE_PERIOD) return null;
+  const year = Number(period.slice(0, 4));
+  const month = Number(period.slice(5, 7));
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  return `${prevYear}-${String(prevMonth).padStart(2, "0")}`;
+}
 export type FinancialStatus = "connection-expired" | "no-data" | "upstream-error" | "unreachable" | "not-configured";
 export function mapFinancialError(status: number): { status: FinancialStatus; message: string } { if (status === 401 || status === 403) return { status: "connection-expired", message: "Koneksi Olsera kedaluwarsa. Hubungi administrator untuk memperbarui." }; if (status === 404) return { status: "no-data", message: "Tidak ada data untuk periode ini." }; return { status: "upstream-error", message: "Server Olsera sedang bermasalah. Coba lagi." }; }

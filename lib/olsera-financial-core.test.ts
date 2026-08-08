@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deduplicateFinancialAccounts, isCurrentJakartaPeriod, jakartaCurrentPeriod, mapFinancialError, normalizeBalanceSheetPayload, normalizeCashFlowPayload, normalizeLedgerDetailPayload, normalizeLedgerSummaryPayload, normalizeProfitLossPayload, parseFinancialAmount, reconcileLedgerSummaryWithDetails, validatePeriod } from "./olsera-financial-core.ts";
+import { deduplicateFinancialAccounts, FINANCIAL_BASELINE_PERIOD, isCurrentJakartaPeriod, jakartaCurrentPeriod, mapFinancialError, normalizeBalanceSheetPayload, normalizeCashFlowPayload, normalizeLedgerDetailPayload, normalizeLedgerSummaryPayload, normalizeProfitLossPayload, parseFinancialAmount, previousFinancialPeriod, reconcileLedgerSummaryWithDetails, validatePeriod } from "./olsera-financial-core.ts";
 
 test("financial parser handles Indonesian formats and nullish values", () => {
   assert.equal(parseFinancialAmount("IDR 15.000"), 15000);
@@ -189,4 +189,53 @@ test("ledger detail normalizer: normal account without reversal is unchanged by 
   assert.equal(normalized.totalDebit, 370361513.75);
   assert.equal(normalized.totalCredit, 120030000);
   assert.equal(normalized.calculatedClosingBalance, 250331513.75);
+});
+
+// ---- Phase 3B: previousFinancialPeriod (jendela cron current+previous) ----
+
+test("previousFinancialPeriod: bulan biasa mundur satu bulan", () => {
+  assert.equal(previousFinancialPeriod("2026-08"), "2026-07");
+  assert.equal(previousFinancialPeriod("2026-03"), "2026-02");
+});
+
+test("previousFinancialPeriod: lintas tahun (Januari -> Desember tahun sebelumnya)", () => {
+  assert.equal(previousFinancialPeriod("2027-01"), "2026-12");
+});
+
+test("previousFinancialPeriod: pada/​sebelum FINANCIAL_BASELINE_PERIOD -> null (tidak ada bulan valid sebelumnya)", () => {
+  assert.equal(previousFinancialPeriod(FINANCIAL_BASELINE_PERIOD), null);
+  assert.equal(previousFinancialPeriod("2026-02"), null);
+});
+
+// ---- Phase 3B: response kosong/tidak lengkap HARUS gagal (bukan disimpan sebagai laporan 0) ----
+
+test("normalizeProfitLossPayload: raw payload null/undefined/{}/[] -> throw (bukan laporan kosong senyap)", () => {
+  assert.throws(() => normalizeProfitLossPayload(null));
+  assert.throws(() => normalizeProfitLossPayload(undefined));
+  assert.throws(() => normalizeProfitLossPayload({}));
+  assert.throws(() => normalizeProfitLossPayload([]));
+});
+
+test("normalizeCashFlowPayload: raw payload kosong -> throw", () => {
+  assert.throws(() => normalizeCashFlowPayload(null));
+  assert.throws(() => normalizeCashFlowPayload({}));
+});
+
+test("normalizeLedgerSummaryPayload: raw payload kosong -> throw", () => {
+  assert.throws(() => normalizeLedgerSummaryPayload(null));
+  assert.throws(() => normalizeLedgerSummaryPayload({}));
+});
+
+test("normalizeBalanceSheetPayload: raw payload kosong -> tetap throw (perilaku existing, sudah benar sebelum Phase 3B)", () => {
+  assert.throws(() => normalizeBalanceSheetPayload({}));
+  assert.throws(() => normalizeBalanceSheetPayload(null));
+});
+
+test("normalizeProfitLossPayload: response LENGKAP tapi gagal validasi bisnis (laba kotor tidak cocok) TETAP dinormalisasi, TIDAK throw — beda dari struktur kosong", () => {
+  const normalized = normalizeProfitLossPayload({
+    operasional: { pendapatan: { famount: "100.000" }, hpp: { famount: "20.000" }, laba_kotor: { famount: "999.000" }, biaya_operasional: { famount: "0" } },
+    laba_bersih: { famount: "0" },
+  });
+  assert.equal(normalized.totals.grossProfitValid, false); // gagal validasi bisnis, BUKAN struktur kosong
+  assert.equal(normalized.totals.revenue, 100000); // tetap dinormalisasi, angka source apa adanya
 });
