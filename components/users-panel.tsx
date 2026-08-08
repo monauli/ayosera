@@ -12,7 +12,6 @@ const MODULE_OPTIONS = [
   { value: "olsera", label: "Olsera" },
   { value: "webhook", label: "Webhook" },
   { value: "audit", label: "Audit & Sinkronisasi" },
-  { value: "coretax", label: "Coretax" },
 ] as const;
 
 type ManagedUser = {

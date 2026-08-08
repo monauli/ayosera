@@ -568,7 +568,6 @@ Version 2.0
 * Real-time WebSocket Updates
 * Multi-company Support
 * AI Revenue Prediction
-* Tax Integration (Coretax)
 * WhatsApp Notifications
 * Power BI Connector
 * Data Warehouse Integration

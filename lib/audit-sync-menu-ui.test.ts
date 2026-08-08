@@ -15,7 +15,7 @@ const usersCreateRoute = here("../app/api/users/route.ts");
 const usersUpdateRoute = here("../app/api/users/[id]/route.ts");
 
 test("modul 'audit' terdaftar di APP_MODULES (satu sistem permission, bukan permission kedua)", () => {
-  assert.match(authLib, /export const APP_MODULES = \["dasbor", "transaksi", "olsera", "webhook", "rekonsiliasi", "audit", "coretax"\] as const;/);
+  assert.match(authLib, /export const APP_MODULES = \["dasbor", "transaksi", "olsera", "webhook", "rekonsiliasi", "audit"\] as const;/);
 });
 
 test("supervisor tetap otomatis mendapat SEMUA modul (termasuk 'audit') lewat normalizeModules yang sama, tanpa kode baru", () => {
@@ -27,7 +27,7 @@ test("user tanpa field allowedModules (data lama) tetap default TIDAK punya modu
 });
 
 test("menu Audit & Sinkronisasi menjadi item navItems biasa (module: \"audit\"), bukan lagi tail khusus supervisor", () => {
-  assert.match(page, /\{ label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "audit" \},\s*\n\s*\{ label: "Coretax", display: "Coretax", icon: FileSpreadsheet, module: "coretax" \},\s*\n\];/);
+  assert.match(page, /\{ label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "audit" \},\s*\n\];/);
   assert.doesNotMatch(page, /isSupervisor \? \[\{ label: "Audit"/);
 });
 
