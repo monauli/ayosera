@@ -10,8 +10,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ExcelJS from "exceljs";
 import {
+  buildBarangHabisWorkbook,
   buildTwoSheetInventoryRows,
   buildTwoSheetInventoryWorkbook,
+  filterBarangHabisRows,
   filterTerjualRows,
   isCurrentYearMonth,
   isExcludedTwoSheetCategory,
@@ -269,14 +271,12 @@ function sheetDataRows(ws: ExcelJS.Worksheet) {
     out.push({
       category,
       name,
-      sku: ws.getCell(r, 3).value,
-      uom: ws.getCell(r, 4).value,
-      opening: ws.getCell(r, 5).value,
-      incoming: ws.getCell(r, 6).value,
-      ret: ws.getCell(r, 7).value,
-      sales: ws.getCell(r, 8).value,
-      outgoing: ws.getCell(r, 9).value,
-      closing: ws.getCell(r, 10).value,
+      opening: ws.getCell(r, 3).value,
+      incoming: ws.getCell(r, 4).value,
+      ret: ws.getCell(r, 5).value,
+      sales: ws.getCell(r, 6).value,
+      outgoing: ws.getCell(r, 7).value,
+      closing: ws.getCell(r, 8).value,
     });
   }
   return out;
@@ -351,15 +351,15 @@ test("buildTwoSheetInventoryWorkbook: header, freeze pane, autofilter, dan total
   const wb = await loadWorkbook(rows);
   const ws = wb.getWorksheet("Juni Keseluruhan")!;
   assert.deepEqual(
-    ["Kategori", "Produk", "SKU", "Satuan", "Stok Awal", "Barang Masuk", "Retur", "Penjualan", "Barang Keluar", "Sisa Stok"],
-    Array.from({ length: 10 }, (_, i) => String(ws.getCell(3, i + 1).value)),
+    ["Kategori", "Produk", "Stok Awal", "Barang Masuk", "Retur", "Penjualan", "Barang Keluar", "Sisa Stok"],
+    Array.from({ length: 8 }, (_, i) => String(ws.getCell(3, i + 1).value)),
   );
   assert.ok(ws.getCell(3, 1).font?.bold);
   assert.equal(ws.views[0]?.state, "frozen");
   assert.ok(ws.autoFilter);
   // Total kolom "Stok Awal" ditulis sebagai angka statis (10+4=14), bukan formula.
   const totalRow = ws.rowCount;
-  const totalCell = ws.getCell(totalRow, 5);
+  const totalCell = ws.getCell(totalRow, 3);
   assert.equal(totalCell.value, 14);
   assert.equal(typeof totalCell.value, "number"); // bukan {formula: "SUM(...)"}
 });
@@ -371,6 +371,163 @@ test("buildTwoSheetInventoryWorkbook: TIDAK ada kolom Opname/created_by/created_
   for (const banned of ["Opname", "Penyesuaian", "created_by", "created_time", "Dibuat Oleh", "Waktu Dibuat"]) {
     assert.equal(headers.some((h) => h.toLowerCase().includes(banned.toLowerCase())), false, `header "${banned}" seharusnya tidak ada`);
   }
+});
+
+// ---- Phase 2F: kolom SKU/Satuan dihapus dari export (kedua sheet) ----
+
+test("buildTwoSheetInventoryWorkbook: kolom SKU TIDAK ada di sheet Terjual maupun Keseluruhan", async () => {
+  const rows: TwoSheetInventoryRow[] = [
+    { key: "1", name: "A", sku: "SKU-123", category: "GRIP", uom: "PCS", openingQty: 1, incomingQty: 0, returnQty: 0, salesQty: 1, outgoingQty: 0, closingQty: 0, hasSnapshot: true },
+  ];
+  const wb = await loadWorkbook(rows);
+  for (const sheetName of ["Juni Terjual", "Juni Keseluruhan"]) {
+    const ws = wb.getWorksheet(sheetName)!;
+    const headers = Array.from({ length: ws.columnCount }, (_, i) => String(ws.getCell(3, i + 1).value ?? ""));
+    assert.equal(headers.includes("SKU"), false, `sheet ${sheetName} seharusnya tidak punya kolom SKU`);
+  }
+});
+
+test("buildTwoSheetInventoryWorkbook: kolom Satuan TIDAK ada di sheet Terjual maupun Keseluruhan", async () => {
+  const rows: TwoSheetInventoryRow[] = [
+    { key: "1", name: "A", sku: null, category: "GRIP", uom: "PCS", openingQty: 1, incomingQty: 0, returnQty: 0, salesQty: 1, outgoingQty: 0, closingQty: 0, hasSnapshot: true },
+  ];
+  const wb = await loadWorkbook(rows);
+  for (const sheetName of ["Juni Terjual", "Juni Keseluruhan"]) {
+    const ws = wb.getWorksheet(sheetName)!;
+    const headers = Array.from({ length: ws.columnCount }, (_, i) => String(ws.getCell(3, i + 1).value ?? ""));
+    assert.equal(headers.includes("Satuan"), false, `sheet ${sheetName} seharusnya tidak punya kolom Satuan`);
+  }
+});
+
+test("buildTwoSheetInventoryWorkbook: menghapus SKU/Satuan tidak menggeser data — 8 kolom, urutan Kategori..Sisa Stok", async () => {
+  const rows: TwoSheetInventoryRow[] = [
+    { key: "1", name: "A", sku: "SKU-1", category: "GRIP", uom: "PCS", openingQty: 10, incomingQty: 5, returnQty: 1, salesQty: 3, outgoingQty: 2, closingQty: 11, hasSnapshot: true },
+  ];
+  const wb = await loadWorkbook(rows);
+  const ws = wb.getWorksheet("Juni Keseluruhan")!;
+  assert.equal(ws.columnCount, 8);
+  const row = sheetDataRows(ws)[0];
+  assert.deepEqual(row, { category: "GRIP", name: "A", opening: 10, incoming: 5, ret: 1, sales: 3, outgoing: 2, closing: 11 });
+});
+
+// ---- Phase 2F/2G: Barang Habis (export baru) ----
+
+test("filterBarangHabisRows: closing=0 DENGAN aktivitas (mis. sales>0) -> masuk", () => {
+  const rows = [
+    { key: "1", closingQty: 0, openingQty: 0, incomingQty: 0, returnQty: 0, salesQty: 1, outgoingQty: 0 },
+  ] as TwoSheetInventoryRow[];
+  assert.deepEqual(filterBarangHabisRows(rows).map((r) => r.key), ["1"]);
+});
+
+test("filterBarangHabisRows: closing=0 karena outgoing>0 (tanpa sales) -> tetap masuk (rule closing=0 + aktivitas apa pun, bukan hanya sales)", () => {
+  const rows = [
+    { key: "1", closingQty: 0, openingQty: 1, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 1 },
+  ] as TwoSheetInventoryRow[];
+  assert.deepEqual(filterBarangHabisRows(rows).map((r) => r.key), ["1"]);
+});
+
+test("filterBarangHabisRows: zero-activity murni (semua field 0 termasuk closing) -> TIDAK masuk", () => {
+  const rows = [
+    { key: "1", closingQty: 0, openingQty: 0, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0 },
+  ] as TwoSheetInventoryRow[];
+  assert.deepEqual(filterBarangHabisRows(rows), []);
+});
+
+test("filterBarangHabisRows: closing > 0 -> TIDAK masuk walau ada aktivitas lain", () => {
+  const rows = [
+    { key: "1", closingQty: 5, openingQty: 10, incomingQty: 0, returnQty: 0, salesQty: 5, outgoingQty: 0 },
+  ] as TwoSheetInventoryRow[];
+  assert.deepEqual(filterBarangHabisRows(rows), []);
+});
+
+test("filterBarangHabisRows: closingQty null (belum diketahui) -> TIDAK masuk (bukan closing PERSIS 0)", () => {
+  const rows = [
+    { key: "1", closingQty: null, openingQty: 5, incomingQty: 0, returnQty: 0, salesQty: 5, outgoingQty: 0 },
+  ] as TwoSheetInventoryRow[];
+  assert.deepEqual(filterBarangHabisRows(rows), []);
+});
+
+test("buildBarangHabisWorkbook: satu sheet '[Bulan] Barang Habis', kolom sama seperti Pergerakan Stok minus SKU/Satuan", async () => {
+  const rows: TwoSheetInventoryRow[] = [
+    { key: "1", name: "HABIS", sku: "SKU-1", category: "GRIP", uom: "PCS", openingQty: 5, incomingQty: 0, returnQty: 0, salesQty: 5, outgoingQty: 0, closingQty: 0, hasSnapshot: true },
+    { key: "2", name: "ADA STOK", sku: null, category: "GRIP", uom: null, openingQty: 5, incomingQty: 0, returnQty: 0, salesQty: 1, outgoingQty: 0, closingQty: 4, hasSnapshot: true },
+  ];
+  const workbook = buildBarangHabisWorkbook({ year: 2026, month: 7, rows });
+  const bytes = await workbook.xlsx.writeBuffer();
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  assert.deepEqual(loaded.worksheets.map((s) => s.name), ["Juli Barang Habis"]);
+  const ws = loaded.getWorksheet("Juli Barang Habis")!;
+  const headers = Array.from({ length: ws.columnCount }, (_, i) => String(ws.getCell(3, i + 1).value ?? ""));
+  assert.deepEqual(headers, ["Kategori", "Produk", "Stok Awal", "Barang Masuk", "Retur", "Penjualan", "Barang Keluar", "Sisa Stok"]);
+  const dataRows = sheetDataRows(ws);
+  assert.deepEqual(dataRows.map((r) => r.name), ["HABIS"]); // "ADA STOK" (closing 4) tidak masuk
+});
+
+test("buildBarangHabisWorkbook: Aturan Kedua Inventori tetap berlaku (zero-activity dibuang) sebelum filter Barang Habis diterapkan", async () => {
+  const rows: TwoSheetInventoryRow[] = [
+    { key: "1", name: "ZERO ACTIVITY", sku: null, category: "GRIP", uom: null, openingQty: 0, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 0, hasSnapshot: false },
+    { key: "2", name: "HABIS TERJUAL", sku: null, category: "GRIP", uom: null, openingQty: 3, incomingQty: 0, returnQty: 0, salesQty: 3, outgoingQty: 0, closingQty: 0, hasSnapshot: true },
+  ];
+  const workbook = buildBarangHabisWorkbook({ year: 2026, month: 7, rows });
+  const bytes = await workbook.xlsx.writeBuffer();
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const dataRows = sheetDataRows(loaded.getWorksheet("Juli Barang Habis")!);
+  assert.deepEqual(dataRows.map((r) => r.name), ["HABIS TERJUAL"]);
+});
+
+test("buildBarangHabisWorkbook: kategori tersembunyi (LABERS/LAPANGAN) tetap dikecualikan, konsisten dengan Export Pergerakan Stok (dikecualikan sebelum sampai ke builder, lewat buildTwoSheetInventoryRows)", async () => {
+  const catalog = [
+    product({ productId: 1, name: "PRODUK LABERS HABIS", category: "LABERS" }),
+    product({ productId: 2, name: "PRODUK NORMAL HABIS", category: "GRIP" }),
+  ];
+  const docs = [
+    snapshotDoc({ productId: 1, productName: "PRODUK LABERS HABIS", groupName: "LABERS", openingQty: 2, salesQty: 2, closingQty: 0 }),
+    snapshotDoc({ productId: 2, productName: "PRODUK NORMAL HABIS", groupName: "GRIP", openingQty: 2, salesQty: 2, closingQty: 0 }),
+  ];
+  const rows = buildTwoSheetInventoryRows({ catalogProducts: catalog, snapshotDocs: docs, storeId: STORE_ID });
+  const workbook = buildBarangHabisWorkbook({ year: 2026, month: 7, rows });
+  const bytes = await workbook.xlsx.writeBuffer();
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const dataRows = sheetDataRows(loaded.getWorksheet("Juli Barang Habis")!);
+  assert.deepEqual(dataRows.map((r) => r.name), ["PRODUK NORMAL HABIS"]);
+});
+
+test("buildBarangHabisWorkbook: urutan A-Z (case-insensitive)", async () => {
+  const rows: TwoSheetInventoryRow[] = [
+    { key: "1", name: "zebra habis", sku: null, category: "GRIP", uom: null, openingQty: 1, incomingQty: 0, returnQty: 0, salesQty: 1, outgoingQty: 0, closingQty: 0, hasSnapshot: true },
+    { key: "2", name: "Apel Habis", sku: null, category: "GRIP", uom: null, openingQty: 1, incomingQty: 0, returnQty: 0, salesQty: 1, outgoingQty: 0, closingQty: 0, hasSnapshot: true },
+    { key: "3", name: "mangga habis", sku: null, category: "GRIP", uom: null, openingQty: 1, incomingQty: 0, returnQty: 0, salesQty: 1, outgoingQty: 0, closingQty: 0, hasSnapshot: true },
+  ];
+  const workbook = buildBarangHabisWorkbook({ year: 2026, month: 7, rows });
+  const bytes = await workbook.xlsx.writeBuffer();
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const dataRows = sheetDataRows(loaded.getWorksheet("Juli Barang Habis")!);
+  assert.deepEqual(dataRows.map((r) => r.name), ["Apel Habis", "mangga habis", "zebra habis"]);
+});
+
+test("buildBarangHabisWorkbook: nama sheet mengikuti bulan yang dipilih", async () => {
+  const workbook = buildBarangHabisWorkbook({ year: 2026, month: 2, rows: [] });
+  const bytes = await workbook.xlsx.writeBuffer();
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  assert.deepEqual(loaded.worksheets.map((s) => s.name), ["Februari Barang Habis"]);
+});
+
+test("generateBarangHabisExport memakai ensureMonthlySnapshotChain (reuse, bukan formula/query baru) dan buildBarangHabisWorkbook", () => {
+  const source = readFileSync(new URL("./olsera-inventory-two-sheet-export.ts", import.meta.url), "utf8");
+  assert.ok(source.includes("export async function generateBarangHabisExport"));
+  assert.ok(source.includes("buildBarangHabisWorkbook({ year: input.year, month: input.month, rows: loaded.rows })"));
+});
+
+test("route export/barang-habis memakai generateBarangHabisExport dan nama file Barang-Habis-YYYY-MM.xlsx (BUKAN 'Terjual' — closing 0 bisa terjadi tanpa penjualan)", () => {
+  const source = readFileSync(new URL("../app/api/olsera/inventory/export/barang-habis/route.ts", import.meta.url), "utf8");
+  assert.ok(source.includes("generateBarangHabisExport"));
+  assert.ok(source.includes("`Barang-Habis-${params.data.year}-${String(params.data.month).padStart(2, \"0\")}.xlsx`"));
+  assert.equal(source.includes("Terjual"), false);
 });
 
 // ---- Reuse: route & glue memakai ensureMonthlySnapshotChain (self-healing,

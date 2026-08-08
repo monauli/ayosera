@@ -509,6 +509,20 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
     );
   }
 
+  function handleExportBarangHabis() {
+    const [yearStr, monthStr] = period.split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (!year || !month) {
+      setExportMessage("Pilih bulan terlebih dahulu.");
+      return;
+    }
+    void downloadExportFromPath(
+      `/api/olsera/inventory/export/barang-habis?year=${year}&month=${month}`,
+      `Barang-Habis-${period}.xlsx`,
+    );
+  }
+
   const state = syncStatus?.state;
   const run = syncStatus?.run;
 
@@ -712,6 +726,11 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                   label: "Export Pergerakan Stok",
                   detail: "Laporan produk terjual dan keseluruhan dalam dua sheet.",
                   onClick: handleExportInventory,
+                },
+                {
+                  label: "Barang Habis",
+                  detail: "Laporan produk yang stoknya habis pada bulan yang dipilih.",
+                  onClick: handleExportBarangHabis,
                 },
               ]}
             />

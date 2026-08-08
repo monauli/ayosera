@@ -167,6 +167,22 @@ export function filterTerjualRows(rows: readonly TwoSheetInventoryRow[]): TwoShe
   return rows.filter((row) => (row.salesQty ?? 0) > 0);
 }
 
+/**
+ * Barang Habis: closingQty PERSIS 0 (bukan null/belum diketahui) DAN produk
+ * memang punya bukti aktivitas bulan ini (opening/incoming/return/sales/
+ * outgoing > 0) — beda dari baris zero-activity murni (yang sudah dibuang
+ * lebih dulu oleh hasInventoryActivity/Aturan Kedua Inventori sebelum fungsi
+ * ini dipanggil). Produk closing 0 TANPA aktivitas apa pun (mis. belum pernah
+ * ada data bulan ini) TIDAK masuk sini — itu bukan "kejadian barang habis"
+ * bulan ini, hanya baris kosong.
+ */
+export function filterBarangHabisRows(rows: readonly TwoSheetInventoryRow[]): TwoSheetInventoryRow[] {
+  return rows.filter((row) => {
+    if (row.closingQty !== 0) return false;
+    return (row.openingQty ?? 0) > 0 || (row.incomingQty ?? 0) > 0 || (row.returnQty ?? 0) > 0 || (row.salesQty ?? 0) > 0 || (row.outgoingQty ?? 0) > 0;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Workbook builder (ExcelJS) — pure, given rows yang sudah difilter+sorted.
 // Tidak ada formula Excel yang bisa berubah setelah dibuka — total ditulis
@@ -175,11 +191,12 @@ export function filterTerjualRows(rows: readonly TwoSheetInventoryRow[]): TwoShe
 
 type ColumnDef = { header: string; key: keyof TwoSheetInventoryRow; width: number; numeric?: boolean };
 
+// SKU/Satuan sengaja TIDAK dirender (Phase 2F — dihapus dari export atas
+// permintaan; field sku/uom TETAP ada di TwoSheetInventoryRow/database, hanya
+// tidak dijadikan kolom Excel di sini).
 const COLUMNS: readonly ColumnDef[] = [
   { header: "Kategori", key: "category", width: 18 },
   { header: "Produk", key: "name", width: 42 },
-  { header: "SKU", key: "sku", width: 16 },
-  { header: "Satuan", key: "uom", width: 10 },
   { header: "Stok Awal", key: "openingQty", width: 12, numeric: true },
   { header: "Barang Masuk", key: "incomingQty", width: 13, numeric: true },
   { header: "Retur", key: "returnQty", width: 10, numeric: true },
@@ -275,6 +292,34 @@ export function buildTwoSheetInventoryWorkbook(input: {
   return workbook;
 }
 
+/**
+ * Barang Habis — SATU sheet ("[Bulan] Barang Habis"), export terpisah dari
+ * Export Pergerakan Stok. Kolom & sumber angka SAMA (reuse writeSheet, tidak
+ * ada formula baru) — hanya baris yang difilter beda (lihat
+ * filterBarangHabisRows). Nama SENGAJA "Barang Habis" (BUKAN "Barang Habis
+ * Terjual") — audit data nyata Phase 2F/2G membuktikan closing 0 bisa terjadi
+ * murni lewat outgoing (transfer/adjustment) tanpa penjualan sama sekali
+ * (kasus nyata: BOLA HEAD PRO ISI 3, Agustus 2026 — opening 1, outgoing 1,
+ * sales 0, closing 0), jadi istilah "Terjual" akan menyiratkan penjualan yang
+ * sebenarnya tidak terjadi untuk sebagian baris.
+ */
+export function buildBarangHabisWorkbook(input: {
+  year: number;
+  month: number;
+  rows: readonly TwoSheetInventoryRow[];
+}): ExcelJS.Workbook {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "AYOSERA";
+  workbook.created = new Date();
+
+  const monthName = MONTH_NAMES[input.month - 1] ?? String(input.month);
+  const activeRows = input.rows.filter(hasInventoryActivity);
+  const habis = sortTwoSheetRows(filterBarangHabisRows(activeRows));
+
+  writeSheet(workbook, `${monthName} Barang Habis`, `Laporan Barang Habis — ${monthName} ${input.year}`, habis);
+  return workbook;
+}
+
 // ---------------------------------------------------------------------------
 // Glue OTOMATIS: bulan+tahun -> pastikan rantai snapshot bulanan sampai bulan
 // ini ada (ensureMonthlySnapshotChain — self-healing, idempotent, TIDAK
@@ -294,7 +339,12 @@ export function isCurrentYearMonth(year: number, month: number, now: Date = new 
   return year === nowYear && month === nowMonth;
 }
 
-export async function generateTwoSheetInventoryExport(input: { year: number; month: number }): Promise<GenerateTwoSheetExportResult> {
+type LoadInventoryRowsResult =
+  | { ok: true; rows: TwoSheetInventoryRow[] }
+  | { ok: false; errors: string[] };
+
+/** Reuse bersama antara generateTwoSheetInventoryExport dan generateBarangHabisExport — SATU jalur ambil data, dua workbook builder beda di atasnya. */
+async function loadInventoryRowsForExport(input: { year: number; month: number }): Promise<LoadInventoryRowsResult> {
   const chain = await ensureMonthlySnapshotChain({ year: input.year, month: input.month });
   if (!chain.ok) {
     return { ok: false, errors: [`Gagal menyiapkan snapshot bulanan (${input.year}-${String(input.month).padStart(2, "0")}): ${chain.error}`] };
@@ -316,6 +366,19 @@ export async function generateTwoSheetInventoryExport(input: { year: number; mon
     storeId: chain.storeId,
     isCurrentMonth: isCurrentYearMonth(input.year, input.month),
   });
-  const workbook = buildTwoSheetInventoryWorkbook({ year: input.year, month: input.month, rows });
+  return { ok: true, rows };
+}
+
+export async function generateTwoSheetInventoryExport(input: { year: number; month: number }): Promise<GenerateTwoSheetExportResult> {
+  const loaded = await loadInventoryRowsForExport(input);
+  if (!loaded.ok) return loaded;
+  const workbook = buildTwoSheetInventoryWorkbook({ year: input.year, month: input.month, rows: loaded.rows });
+  return { ok: true, workbook };
+}
+
+export async function generateBarangHabisExport(input: { year: number; month: number }): Promise<GenerateTwoSheetExportResult> {
+  const loaded = await loadInventoryRowsForExport(input);
+  if (!loaded.ok) return loaded;
+  const workbook = buildBarangHabisWorkbook({ year: input.year, month: input.month, rows: loaded.rows });
   return { ok: true, workbook };
 }
