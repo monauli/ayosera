@@ -187,7 +187,7 @@ test("computeMonthlyStepBackward: ada movement bulan ini -> opening dihitung, ja
   const anchors = new Map<string, BackwardAnchor>([["1:100:0", { closingQty: 21, productName: "PRODUK A", productSku: null, groupName: "GROUP" }]]);
   const row = movementRow({ productId: 100, incomingQty: 24, returnQty: 0, salesQty: 46, outgoingQty: 2 });
   const matchedMap = new Map([["1:100:0", matched(row)]]);
-  const result = computeMonthlyStepBackward({ anchors, matched: matchedMap, hasEvidenceBeforeOrDuring: () => false });
+  const result = computeMonthlyStepBackward({ anchors, matched: matchedMap, catalogById: new Map(), hasEvidenceBeforeOrDuring: () => false });
   const entry = result.entries.get("1:100:0")!;
   assert.equal(entry.openingQty, 45);
   assert.equal(entry.closingQty, 21);
@@ -199,7 +199,7 @@ test("computeMonthlyStepBackward: ada movement bulan ini -> opening dihitung, ja
 
 test("computeMonthlyStepBackward: tanpa movement TAPI ada bukti eksistensi -> carry-forward, tetap dilanjutkan", () => {
   const anchors = new Map<string, BackwardAnchor>([["1:100:0", { closingQty: 28, productName: "THERMOFLASK", productSku: null, groupName: "THERMOFLASK" }]]);
-  const result = computeMonthlyStepBackward({ anchors, matched: new Map(), hasEvidenceBeforeOrDuring: () => true });
+  const result = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => true });
   const entry = result.entries.get("1:100:0")!;
   assert.equal(entry.source, "carry-forward");
   assert.equal(entry.openingQty, 28);
@@ -210,10 +210,60 @@ test("computeMonthlyStepBackward: tanpa movement TAPI ada bukti eksistensi -> ca
 
 test("computeMonthlyStepBackward: tanpa movement DAN tanpa bukti eksistensi -> DIHENTIKAN (produk belum eksis bulan ini, tidak dipaksa)", () => {
   const anchors = new Map<string, BackwardAnchor>([["1:119043265:0", { closingQty: 47, productName: "BOLA PADEL ODEA RED", productSku: null, groupName: "BOLA PADEL" }]]);
-  const result = computeMonthlyStepBackward({ anchors, matched: new Map(), hasEvidenceBeforeOrDuring: () => false });
+  const result = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => false });
   assert.equal(result.entries.size, 0);
   assert.deepEqual(result.stopped, ["1:119043265:0"]);
   assert.equal(result.nextAnchors.size, 0);
+});
+
+// ---- computeMonthlyStepBackward: produk BARU tanpa anchor bulan berikutnya (kasus RAKET PADEL ADIDAS 2026 MATCH / BULLPADEL Feb-Mar 2026) ----
+
+test("computeMonthlyStepBackward: produk BARU (di 'matched' tapi TIDAK ada anchor) -> HANYA masuk karena ada baris API nyata bulan ini (bukti eksistensi, order-item TIDAK diperlukan)", () => {
+  const newProduct = product({ _id: "1:111246035:0", productId: 111246035, name: "RAKET PADEL ADIDAS 2026 MATCH", category: "RAKET PADEL" });
+  const row = movementRow({ productId: 111246035, productName: "RAKET PADEL ADIDAS 2026 MATCH", productGroupName: "RAKET PADEL", beginningQty: 0, incomingQty: 4, returnQty: 0, salesQty: 0, outgoingQty: 0, sisa: 4 });
+  const matchedMap = new Map([["1:111246035:0", matched(row)]]);
+  // hasEvidenceBeforeOrDuring sengaja SELALU false — membuktikan jalur baru ini TIDAK bergantung pada olsera_order_items.
+  const result = computeMonthlyStepBackward({ anchors: new Map(), matched: matchedMap, catalogById: new Map([["1:111246035:0", newProduct]]), hasEvidenceBeforeOrDuring: () => false });
+  const entry = result.entries.get("1:111246035:0")!;
+  assert.equal(entry.closingQty, 4); // dipercaya langsung dari sisa API (satu-satunya bukti)
+  assert.equal(entry.openingQty, 0); // 4 - 4 - 0 + 0 + 0
+  assert.equal(entry.source, "stockmovement-backward");
+  assert.equal(entry.status, "complete");
+  assert.equal(result.nextAnchors.get("1:111246035:0")?.closingQty, 0);
+  assert.deepEqual(result.stopped, []);
+});
+
+test("computeMonthlyStepBackward: produk BARU dengan outgoing (kasus BULLPADEL VERTEX 05 COMFORT Maret 2026) -> opening dihitung mundur benar, equation balance", () => {
+  const newProduct = product({ _id: "1:106778998:0", productId: 106778998, name: "BULLPADEL VERTEX 05 COMFORT 2026-360-370 BLACK/BLUE", category: "RAKET PADEL" });
+  const row = movementRow({ productId: 106778998, productName: "BULLPADEL VERTEX 05 COMFORT 2026-360-370 BLACK/BLUE", productGroupName: "RAKET PADEL", beginningQty: 1, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 1, sisa: 0 });
+  const matchedMap = new Map([["1:106778998:0", matched(row)]]);
+  const result = computeMonthlyStepBackward({ anchors: new Map(), matched: matchedMap, catalogById: new Map([["1:106778998:0", newProduct]]), hasEvidenceBeforeOrDuring: () => false });
+  const entry = result.entries.get("1:106778998:0")!;
+  assert.equal(entry.closingQty, 0);
+  assert.equal(entry.openingQty, 1); // 0 - 0 - 0 + 0 + 1
+  // Equation forward harus balance: opening + incoming + return - sales - outgoing = closing
+  assert.equal(entry.openingQty! + entry.incomingQty! + entry.returnQty! - entry.salesQty! - entry.outgoingQty!, entry.closingQty);
+});
+
+test("computeMonthlyStepBackward: 'matched' TAPI catalogById tidak punya entri (identity tidak dapat diresolusi tunggal) -> TIDAK dipaksa masuk (ambiguous tetap manual review)", () => {
+  const row = movementRow({ productId: 118420650, productName: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", beginningQty: 1, incomingQty: 1, returnQty: 0, salesQty: 1, outgoingQty: 0, sisa: 1 });
+  const matchedMap = new Map([["1:118420650:0", matched(row)]]);
+  // catalogById KOSONG -> mensimulasikan produk ambiguous/duplicate yang tidak lolos resolusi identity tunggal.
+  const result = computeMonthlyStepBackward({ anchors: new Map(), matched: matchedMap, catalogById: new Map(), hasEvidenceBeforeOrDuring: () => false });
+  assert.equal(result.entries.size, 0);
+  assert.deepEqual(result.stopped, []); // bukan "stopped" (itu utk anchor yg gagal) — sekadar tidak pernah dibuat
+});
+
+test("computeMonthlyStepBackward: rerun idempoten utk produk BARU tanpa anchor — dijalankan dua kali menghasilkan entries identik (tidak duplicate)", () => {
+  const newProduct = product({ _id: "1:111246035:0", productId: 111246035, name: "RAKET PADEL ADIDAS 2026 MATCH", category: "RAKET PADEL" });
+  const row = movementRow({ productId: 111246035, beginningQty: 0, incomingQty: 4, returnQty: 0, salesQty: 0, outgoingQty: 0, sisa: 4 });
+  const matchedMap = new Map([["1:111246035:0", matched(row)]]);
+  const catalogById = new Map([["1:111246035:0", newProduct]]);
+  const run1 = computeMonthlyStepBackward({ anchors: new Map(), matched: matchedMap, catalogById, hasEvidenceBeforeOrDuring: () => false });
+  const run2 = computeMonthlyStepBackward({ anchors: new Map(), matched: matchedMap, catalogById, hasEvidenceBeforeOrDuring: () => false });
+  assert.deepEqual(run1.entries.get("1:111246035:0"), run2.entries.get("1:111246035:0"));
+  assert.equal(run1.entries.size, 1);
+  assert.equal(run2.entries.size, 1);
 });
 
 // ---- carry-forward kontradiktif (rawSalesActivityByKey) — kasus movement-qty:116138490:0 ----
@@ -223,6 +273,7 @@ test("computeMonthlyStepBackward: carry-forward TAPI ada bukti penjualan mentah 
   const result = computeMonthlyStepBackward({
     anchors,
     matched: new Map(),
+    catalogById: new Map(),
     hasEvidenceBeforeOrDuring: () => true,
     rawSalesActivityByKey: new Map([["1:116138490:0", 30]]),
   });
@@ -238,7 +289,7 @@ test("computeMonthlyStepBackward: carry-forward TAPI ada bukti penjualan mentah 
 
 test("computeMonthlyStepBackward: carry-forward TANPA rawSalesActivityByKey (default, tidak diisi) -> status tetap 'complete' (regresi tidak berubah)", () => {
   const anchors = new Map<string, BackwardAnchor>([["1:100:0", { closingQty: 28, productName: "THERMOFLASK", productSku: null, groupName: "THERMOFLASK" }]]);
-  const result = computeMonthlyStepBackward({ anchors, matched: new Map(), hasEvidenceBeforeOrDuring: () => true });
+  const result = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => true });
   const entry = result.entries.get("1:100:0")!;
   assert.equal(entry.status, "complete");
 });
@@ -248,6 +299,7 @@ test("computeMonthlyStepBackward: carry-forward DENGAN rawSalesActivityByKey TAP
   const result = computeMonthlyStepBackward({
     anchors,
     matched: new Map(),
+    catalogById: new Map(),
     hasEvidenceBeforeOrDuring: () => true,
     rawSalesActivityByKey: new Map([["1:999:0", 10]]), // key BERBEDA, tidak menyentuh produk ini
   });
@@ -258,8 +310,8 @@ test("computeMonthlyStepBackward: carry-forward DENGAN rawSalesActivityByKey TAP
 test("computeMonthlyStepBackward: rerun idempoten — dijalankan dua kali dengan input sama menghasilkan entries identik", () => {
   const anchors = new Map<string, BackwardAnchor>([["1:116138490:0", { closingQty: 45, productName: "PRODUK RENAME", productSku: null, groupName: "GROUP" }]]);
   const rawSalesActivityByKey = new Map([["1:116138490:0", 30]]);
-  const run1 = computeMonthlyStepBackward({ anchors, matched: new Map(), hasEvidenceBeforeOrDuring: () => true, rawSalesActivityByKey });
-  const run2 = computeMonthlyStepBackward({ anchors, matched: new Map(), hasEvidenceBeforeOrDuring: () => true, rawSalesActivityByKey });
+  const run1 = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => true, rawSalesActivityByKey });
+  const run2 = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => true, rawSalesActivityByKey });
   assert.deepEqual(run1.entries.get("1:116138490:0"), run2.entries.get("1:116138490:0"));
 });
 
@@ -268,6 +320,7 @@ test("computeMonthlyStepBackward: variantId literal 0 pada anchor key tetap terd
   const result = computeMonthlyStepBackward({
     anchors,
     matched: new Map(),
+    catalogById: new Map(),
     hasEvidenceBeforeOrDuring: () => true,
     rawSalesActivityByKey: new Map([["1:200:0", 7]]),
   });
@@ -278,7 +331,7 @@ test("computeMonthlyStepBackward: productId hasil match berbeda dari identitas s
   const anchors = new Map<string, BackwardAnchor>([["1:118420650:0", { closingQty: 1, productName: "YONEX SHORTS", productSku: null, groupName: "CELANA PRIA" }]]);
   const row = movementRow({ productId: 106743815, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0 }); // productId LAMA (alias)
   const matchedMap = new Map([["1:118420650:0", matched(row, "identity")]]);
-  const result = computeMonthlyStepBackward({ anchors, matched: matchedMap, hasEvidenceBeforeOrDuring: () => false });
+  const result = computeMonthlyStepBackward({ anchors, matched: matchedMap, catalogById: new Map(), hasEvidenceBeforeOrDuring: () => false });
   const entry = result.entries.get("1:118420650:0")!;
   assert.equal(entry.productId, 118420650); // identitas stabil (katalog), BUKAN 106743815
   assert.equal(entry.canonicalProductId, 106743815); // tercatat productId mentah API bulan itu berbeda

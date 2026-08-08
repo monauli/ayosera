@@ -289,6 +289,82 @@ test("backfillBackwardRange: TANPA bukti eksistensi apa pun -> produk DIHENTIKAN
   assert.equal(april.length, 0);
 });
 
+test("backfillBackwardRange: produk BARU tanpa anchor bulan berikutnya TAPI ada baris stockmovement bulan ini -> direcover TANPA butuh order-item evidence (kasus nyata RAKET PADEL ADIDAS 2026 MATCH Februari 2026)", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-02-01": [
+      { product_id: 111246035, product_name: "RAKET PADEL ADIDAS 2026 MATCH", product_group_name: "RAKET PADEL", beginning_qty: 0, sum_incoming_qty: 4, sum_return_qty: 0, sum_sales_qty: 0, sum_outgoing_qty: 0, sisa: 4 },
+    ],
+  });
+  const catalog = [
+    product({ _id: "1:100:0", productId: 100, storeId: 1, name: "PRODUK A", category: "GROUP" }),
+    product({ _id: "1:111246035:0", productId: 111246035, storeId: 1, name: "RAKET PADEL ADIDAS 2026 MATCH", category: "RAKET PADEL" }),
+  ];
+  const matchingContext = buildMatchingContext(catalog, []);
+  // Tidak ada dokumen Maret utk 111246035 (belum eksis sbg anchor), dan earliestByProductId KOSONG utk productId ini
+  // (mensimulasikan: tidak pernah ada olsera_order_items) — membuktikan recovery TIDAK bergantung pada bukti order-item.
+  const repo = createFakeRepo([seedMayDoc()]);
+  const summaries = await backfillBackwardRange({
+    fromInclusive: { year: 2026, month: 2 },
+    toInclusive: { year: 2026, month: 2 },
+    storeId: 1,
+    matchingContext,
+    repo,
+    earliestByProductId: new Map(), // KOSONG utk 111246035 — tidak ada bukti order-item apa pun
+  });
+  assert.ok(summaries.every((s) => s.ok));
+  const feb = await repo.findMonth(1, 2026, 2);
+  const adidas = feb.find((d) => d.productId === 111246035)!;
+  assert.ok(adidas, "produk baru harus direcover walau tidak ada bukti order-item");
+  assert.equal(adidas.openingQty, 0);
+  assert.equal(adidas.incomingQty, 4);
+  assert.equal(adidas.closingQty, 4);
+  assert.equal(adidas.source, "stockmovement-backward");
+});
+
+test("backfillBackwardRange: produk yang TIDAK ada di catalogById (identity tidak dapat diresolusi/ambiguous) -> tidak pernah muncul di 'matched' sehingga tidak direcover otomatis (tetap manual review)", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-03-01": [
+      // Baris ini merujuk productId yang TIDAK ada di catalog manapun -> attachMovementsToProducts akan menandainya unmatched/ambiguous, bukan masuk ke 'matched'.
+      { product_id: 999999999, product_name: "PRODUK TIDAK DIKENAL", product_group_name: "LAINNYA", beginning_qty: 1, sum_incoming_qty: 1, sum_return_qty: 0, sum_sales_qty: 1, sum_outgoing_qty: 0, sisa: 1 },
+    ],
+  });
+  const matchingContext = matchingContextForOneProduct(); // hanya mengenal productId 100
+  const repo = createFakeRepo([seedMayDoc()]);
+  await backfillBackwardRange({
+    fromInclusive: { year: 2026, month: 3 },
+    toInclusive: { year: 2026, month: 3 },
+    storeId: 1,
+    matchingContext,
+    repo,
+    earliestByProductId: new Map(),
+  });
+  const march = await repo.findMonth(1, 2026, 3);
+  assert.equal(march.some((d) => d.productId === 999999999), false); // tidak pernah dipaksakan masuk
+});
+
+test("backfillBackwardRange: fetch stockmovement API GAGAL -> tidak ada dokumen ditulis sama sekali utk bulan itu (fail-safe, bukan 0 ditebak)", async (t) => {
+  process.env.OLSERA_APP_ID = "test-app-id";
+  process.env.OLSERA_SECRET_KEY = "test-secret";
+  t.mock.method(globalThis, "fetch", async (input: string | URL) => {
+    const url = String(input);
+    if (url.includes("/token")) return new Response(JSON.stringify({ access_token: "fake-token", expires_in: 3600 }), { status: 200 });
+    return new Response("Internal Server Error", { status: 500 });
+  });
+  const matchingContext = matchingContextForOneProduct();
+  const repo = createFakeRepo([seedMayDoc()]);
+  const summaries = await backfillBackwardRange({
+    fromInclusive: { year: 2026, month: 4 },
+    toInclusive: { year: 2026, month: 4 },
+    storeId: 1,
+    matchingContext,
+    repo,
+    earliestByProductId: new Map([[100, "2026-01-01"]]),
+  });
+  assert.ok(summaries.every((s) => !s.ok)); // gagal, ditandai eksplisit, bukan diam-diam sukses dgn 0 entity
+  const april = await repo.findMonth(1, 2026, 4);
+  assert.equal(april.length, 0);
+});
+
 // ---- docsToForwardAnchors ----
 
 test("docsToForwardAnchors: dokumen dengan closingQty null dilewati (tidak jadi anchor palsu)", () => {

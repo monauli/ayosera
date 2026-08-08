@@ -283,18 +283,34 @@ function carryForwardStatusAndDiagnostic(key: string, rawSalesActivityByKey: Raw
  * carry-forward yang KONTRADIKTIF dengan bukti penjualan independen sebagai
  * status "incomplete" (lihat carryForwardStatusAndDiagnostic) — TIDAK PERNAH
  * mengubah angka openingQty/salesQty/closingQty itu sendiri.
+ *
+ * Produk TANPA anchor (tidak ada dokumen bulan berikutnya) tapi MUNCUL di
+ * `matched` bulan ini: dimasukkan HANYA karena `matched` sudah berarti ada
+ * baris stockmovement API sungguhan bulan ini (bukti eksistensi nyata sama
+ * seperti mekanisme forward, lihat computeMonthlyStepForward) — closingQty-nya
+ * dipercaya langsung dari `sisa` API, openingQty dihitung mundur dari situ.
+ * `hasEvidenceBeforeOrDuring`/olsera_order_items TIDAK dipakai di jalur ini —
+ * identity sudah terbukti unambiguous lewat resolusi `matched` itu sendiri
+ * (identity/SKU/nama via matching context yang sama dipakai di semua bulan),
+ * jadi bukti order-item tambahan tidak diperlukan (terbukti live 2026-08:
+ * RAKET PADEL ADIDAS 2026 MATCH productId 111246035 di Feb 2026 & 3 produk
+ * Bullpadel di Mar 2026 — semua punya baris stockmovement lengkap tapi tidak
+ * pernah terjual, sehingga tidak pernah punya olsera_order_items).
  */
 export function computeMonthlyStepBackward(input: {
   anchors: Map<string, BackwardAnchor>;
   matched: Map<string, MatchedMovement>;
+  catalogById: Map<string, InventoryProductInput>;
   hasEvidenceBeforeOrDuring: (productKeyId: string) => boolean;
   rawSalesActivityByKey?: RawSalesActivityByKey;
 }): MonthlyStepBackwardResult {
   const entries = new Map<string, MonthlyLedgerEntry>();
   const nextAnchors = new Map<string, BackwardAnchor>();
   const stopped: string[] = [];
+  const seen = new Set<string>();
 
   for (const [key, anchor] of input.anchors) {
+    seen.add(key);
     const stable = parseProductKey(key);
     const movement = input.matched.get(key);
     if (movement) {
@@ -346,6 +362,46 @@ export function computeMonthlyStepBackward(input: {
     } else {
       stopped.push(key);
     }
+  }
+
+  for (const [key, movement] of input.matched) {
+    if (seen.has(key)) continue;
+    const product = input.catalogById.get(key);
+    if (!product) continue;
+    const productName = product.variantName ? `${product.name} - ${product.variantName}` : product.name;
+    const closing = movement.row.sisa;
+    const opening = computeOpeningFromClosingBackward({
+      closingQty: closing,
+      incomingQty: movement.row.incomingQty,
+      returnQty: movement.row.returnQty,
+      salesQty: movement.row.salesQty,
+      outgoingQty: movement.row.outgoingQty,
+    });
+    entries.set(key, {
+      productId: product.productId,
+      variantId: product.variantId,
+      canonicalProductId: movement.row.productId !== product.productId ? movement.row.productId : null,
+      productName,
+      productSku: product.sku,
+      groupName: movement.row.productGroupName ?? product.category,
+      openingQty: opening,
+      incomingQty: movement.row.incomingQty,
+      returnQty: movement.row.returnQty,
+      salesQty: movement.row.salesQty,
+      outgoingQty: movement.row.outgoingQty,
+      closingQty: closing,
+      source: "stockmovement-backward",
+      status: "complete",
+      diagnostics: [
+        "Produk baru terdeteksi bulan ini (tidak ada anchor/riwayat bulan berikutnya di rantai) — closing dipercaya langsung dari sisa Open API Olsera untuk bulan ini (bukti nyata, bukan tebakan), opening dihitung mundur dari situ.",
+      ],
+    });
+    nextAnchors.set(key, {
+      closingQty: opening,
+      productName,
+      productSku: product.sku,
+      groupName: movement.row.productGroupName ?? product.category,
+    });
   }
 
   return { entries, nextAnchors, stopped };

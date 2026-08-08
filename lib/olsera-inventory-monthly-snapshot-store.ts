@@ -236,7 +236,7 @@ export async function runBackwardBackfillMonth(input: {
 
   const hasEvidence = hasEvidenceFactory(input.matchingContext.catalogById, input.earliestByProductId, endDate);
   const rawSalesActivityByKey = input.rawSalesActivityFetcher ? await input.rawSalesActivityFetcher(startDate, endDate) : undefined;
-  const step = computeMonthlyStepBackward({ anchors: input.anchors, matched, hasEvidenceBeforeOrDuring: hasEvidence, rawSalesActivityByKey });
+  const step = computeMonthlyStepBackward({ anchors: input.anchors, matched, catalogById: input.matchingContext.catalogById, hasEvidenceBeforeOrDuring: hasEvidence, rawSalesActivityByKey });
 
   const now = input.now ?? new Date();
   const docs = [...step.entries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
