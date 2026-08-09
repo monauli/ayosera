@@ -17,6 +17,50 @@ type AyoTokenHealth = {
   lastError: string | null;
   recommendation: string;
 };
+type ModuleHealth = {
+  module: string;
+  label: string;
+  status: "TERHUBUNG" | "BERMASALAH" | "BELUM_ADA_DATA";
+  issue: "AKSES_API_BERMASALAH" | "TIMEOUT" | "TIDAK_BISA_TERHUBUNG" | "SERVER_SUMBER_BERMASALAH" | "DATA_TIDAK_VALID" | null;
+  lastSuccessfulSyncAt: string | null;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+};
+type ConnectionHealth = {
+  ayo: { booking: ModuleHealth; paymentEvents: ModuleHealth };
+  olsera: { sales: ModuleHealth; inventory: ModuleHealth; financial: ModuleHealth; overall: { status: "TERHUBUNG" | "PERLU_DICEK"; problemModules: string[] } };
+};
+const CONNECTION_STATUS_LABEL: Record<ModuleHealth["status"], string> = { TERHUBUNG: "Terhubung", BERMASALAH: "Bermasalah", BELUM_ADA_DATA: "Belum Ada Data" };
+const CONNECTION_ISSUE_LABEL: Record<NonNullable<ModuleHealth["issue"]>, string> = {
+  AKSES_API_BERMASALAH: "Akses API Bermasalah",
+  TIMEOUT: "Timeout",
+  TIDAK_BISA_TERHUBUNG: "Tidak Bisa Terhubung",
+  SERVER_SUMBER_BERMASALAH: "Server Sumber Bermasalah",
+  DATA_TIDAK_VALID: "Data Tidak Valid",
+};
+const CONNECTION_STATUS_COLOR: Record<ModuleHealth["status"], string> = {
+  TERHUBUNG: "text-emerald-300",
+  BERMASALAH: "text-rose-300",
+  BELUM_ADA_DATA: "text-slate-400",
+};
+function ConnectionHealthCard({ item }: { item: ModuleHealth }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <b className="text-sm text-slate-100">{item.label}</b>
+        <span className={`text-xs font-semibold ${CONNECTION_STATUS_COLOR[item.status]}`}>{CONNECTION_STATUS_LABEL[item.status]}</span>
+      </div>
+      <p className="mt-2 text-xs text-slate-400">Terakhir berhasil: {item.lastSuccessfulSyncAt ? jakartaDateTime(item.lastSuccessfulSyncAt) : "Belum ada"}</p>
+      {item.status === "BERMASALAH" && (
+        <p className="mt-1 text-xs text-rose-300">
+          Masalah terakhir: {item.issue ? CONNECTION_ISSUE_LABEL[item.issue] : "Tidak diketahui"}
+          {item.lastError ? ` — ${item.lastError}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
 const sources = ["olsera", "ayo-booking", "ayo-payment-events"] as const;
 const label: Record<(typeof sources)[number], string> = { olsera: "Olsera Sales", "ayo-booking": "AYO Booking", "ayo-payment-events": "AYO Payment Events" };
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
@@ -35,7 +79,7 @@ const AYO_TOKEN_STATUS_COLOR: Record<AyoTokenHealth["status"], string> = {
 // modul "audit" harus melihat alasannya, bukan panel kosong yang terlihat seperti bug.
 type LoadState =
   | { kind: "loading" }
-  | { kind: "ready"; health: Health[]; ayoMobileToken: AyoTokenHealth | null }
+  | { kind: "ready"; health: Health[]; ayoMobileToken: AyoTokenHealth | null; connectionHealth: ConnectionHealth | null }
   | { kind: "unauthenticated" }
   | { kind: "forbidden" }
   | { kind: "error" };
@@ -51,7 +95,7 @@ export function PrivateIntegrationMonitor() {
       if (res.status === 403) { setState({ kind: "forbidden" }); return; }
       if (!res.ok) { setState({ kind: "error" }); return; }
       const data = await res.json();
-      setState({ kind: "ready", health: Array.isArray(data.tokenHealth) ? data.tokenHealth : [], ayoMobileToken: data.ayoMobileToken ?? null });
+      setState({ kind: "ready", health: Array.isArray(data.tokenHealth) ? data.tokenHealth : [], ayoMobileToken: data.ayoMobileToken ?? null, connectionHealth: data.connectionHealth ?? null });
     } catch { setState({ kind: "error" }); }
   };
   useEffect(() => { const end = today(); const date = new Date(`${end}T00:00:00Z`); date.setUTCDate(date.getUTCDate() - 29); setFrom(date.toISOString().slice(0, 10)); setTo(end); void load(); }, []);
@@ -100,7 +144,7 @@ export function PrivateIntegrationMonitor() {
     );
   }
 
-  const { health, ayoMobileToken } = state;
+  const { health, ayoMobileToken, connectionHealth } = state;
   // AYO Mobile Token punya kartu khusus di bawah (lebih detail); jangan tampilkan dua kali di grid generik.
   const otherHealth = health.filter((item) => item.source !== "ayo-mobile");
 
@@ -164,6 +208,32 @@ export function PrivateIntegrationMonitor() {
               {item.lastError && <p className="text-xs text-rose-300">{item.lastError}</p>}
             </div>
           ))}
+        </div>
+      )}
+
+      {connectionHealth && (
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <h3 className="text-sm font-semibold text-slate-100">Kesehatan Koneksi</h3>
+          <div className="mt-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">AYO</p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <ConnectionHealthCard item={connectionHealth.ayo.booking} />
+              <ConnectionHealthCard item={connectionHealth.ayo.paymentEvents} />
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Olsera</p>
+              <span className={`text-xs font-semibold ${connectionHealth.olsera.overall.status === "TERHUBUNG" ? "text-emerald-300" : "text-amber-300"}`}>
+                {connectionHealth.olsera.overall.status === "TERHUBUNG" ? "Olsera: Terhubung" : `Olsera: Perlu Dicek (${connectionHealth.olsera.overall.problemModules.join(", ")})`}
+              </span>
+            </div>
+            <div className="mt-2 grid gap-3 sm:grid-cols-3">
+              <ConnectionHealthCard item={connectionHealth.olsera.sales} />
+              <ConnectionHealthCard item={connectionHealth.olsera.inventory} />
+              <ConnectionHealthCard item={connectionHealth.olsera.financial} />
+            </div>
+          </div>
         </div>
       )}
 

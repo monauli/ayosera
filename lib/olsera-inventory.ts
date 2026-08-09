@@ -46,6 +46,20 @@ import {
 const BASE_URL = "https://api-open.olsera.co.id";
 const API_PREFIX = "/api/open-api/v1/id";
 const LIST_DELAY_MS = 150;
+/** Konsisten dengan OLSERA_REQUEST_TIMEOUT_MS di lib/olsera.ts — timeout per-request, bukan mengandalkan budget durasi Vercel. */
+export const INVENTORY_REQUEST_TIMEOUT_MS = 20_000;
+
+/** Error yang membawa klasifikasi eksplisit (401/403, timeout, jaringan, 5xx, respons rusak) untuk connection health — lihat lib/connection-health.ts. */
+export class OlseraInventoryFetchError extends Error {
+  readonly kind: "auth" | "timeout" | "network" | "server" | "invalid-response";
+  readonly status: number | null;
+  constructor(message: string, kind: "auth" | "timeout" | "network" | "server" | "invalid-response", status: number | null = null) {
+    super(message);
+    this.name = "OlseraInventoryFetchError";
+    this.kind = kind;
+    this.status = status;
+  }
+}
 
 export { INVENTORY_BASELINE_DATE, DEFAULT_LOW_STOCK_THRESHOLD, INVENTORY_SYNC_STALE_MINUTES };
 
@@ -61,10 +75,20 @@ async function getJson(token: string, pathName: string, params: Record<string, s
   const url = new URL(BASE_URL + pathName);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   for (let attempt = 1; ; attempt++) {
-    const response = await fetch(url.toString(), {
-      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(INVENTORY_REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new OlseraInventoryFetchError(`Timeout memanggil ${pathName}`, "timeout");
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new OlseraInventoryFetchError(`Gagal terhubung ke Olsera saat memanggil ${pathName}: ${message}`, "network");
+    }
     const isRateLimited = response.status === 429;
     if ((isRateLimited || response.status >= 500) && attempt < (isRateLimited ? 6 : 4)) {
       const retryAfter = Number(response.headers.get("retry-after"));
@@ -72,11 +96,21 @@ async function getJson(token: string, pathName: string, params: Record<string, s
       await sleep(Math.min(waitMs, 10_000));
       continue;
     }
-    if (!response.ok) {
-      const raw = await response.text();
-      throw new Error(`HTTP ${response.status} untuk ${pathName}: ${raw.slice(0, 200)}`);
+    if (response.status === 401 || response.status === 403) {
+      const raw = await response.text().catch(() => "");
+      throw new OlseraInventoryFetchError(`HTTP ${response.status} untuk ${pathName}: ${raw.slice(0, 200)}`, "auth", response.status);
     }
-    return (await response.json()) as Record<string, unknown>;
+    if (!response.ok) {
+      const raw = await response.text().catch(() => "");
+      const kind = response.status >= 500 ? "server" : "invalid-response";
+      throw new OlseraInventoryFetchError(`HTTP ${response.status} untuk ${pathName}: ${raw.slice(0, 200)}`, kind, response.status);
+    }
+    try {
+      return (await response.json()) as Record<string, unknown>;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new OlseraInventoryFetchError(`Respons tidak valid dari ${pathName}: ${message}`, "invalid-response", response.status);
+    }
   }
 }
 

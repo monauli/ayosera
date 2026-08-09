@@ -8,6 +8,7 @@ import { fetchOlseraSalesAuditSource, OlseraSalesAuditSourceError } from "@/lib/
 import { compareOlseraSalesGap, type OlseraAuditItem, type OlseraAuditOrder } from "@/lib/olsera-sales-gap";
 import { collections, getDb } from "@/lib/mongodb";
 import { integrationTokenHealth, classifyAyoMobileToken } from "@/lib/private-integration-monitor";
+import { getConnectionHealthSummary } from "@/lib/connection-health";
 import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 
@@ -181,7 +182,10 @@ export async function GET() {
       lastSuccessfulSyncAt: checkpoint?.lastSuccessfulSyncAt ?? null,
       lastError: checkpoint?.lastError ?? null,
     });
-    return NextResponse.json({ enabled: true, tokenHealth: integrationTokenHealth(), ayoMobileToken }, { headers: NO_CACHE_HEADERS });
+    // Kesehatan koneksi (Phase 3D.1): dibaca dari log/checkpoint sync existing per modul,
+    // tidak memanggil AYO/Olsera hanya untuk cek koneksi.
+    const connectionHealth = await getConnectionHealthSummary();
+    return NextResponse.json({ enabled: true, tokenHealth: integrationTokenHealth(), ayoMobileToken, connectionHealth }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     return NextResponse.json({ error: "Gagal memuat monitoring integritas." }, { status: 500 });
