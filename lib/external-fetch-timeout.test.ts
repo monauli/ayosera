@@ -32,8 +32,12 @@ test("lib/olsera.ts: kedua fetch (token & report) memakai AbortSignal.timeout", 
 
 test("lib/olsera-financial-client.ts: sudah punya timeout sebelumnya (AbortController 10s) — dipastikan tidak ikut berubah/rusak", () => {
   const source = read("./olsera-financial-client.ts");
+  // Phase 3C.5.1: nilai 10s disentralkan jadi FINANCIAL_REQUEST_TIMEOUT_MS (dipakai juga oleh
+  // lib/olsera-financial-sync.ts untuk menghitung margin start-safety guard) — bukan lagi literal
+  // tersebar, konsisten dengan pola AYO_REQUEST_TIMEOUT_MS/OLSERA_REQUEST_TIMEOUT_MS di atas.
+  assert.ok(source.includes("export const FINANCIAL_REQUEST_TIMEOUT_MS = 10_000;"));
   assert.match(source, /new AbortController\(\)/);
-  assert.match(source, /setTimeout\(\(\) => controller\.abort\(\), 10000\)/);
+  assert.match(source, /setTimeout\(\(\) => controller\.abort\(\), FINANCIAL_REQUEST_TIMEOUT_MS\)/);
 });
 
 test("app/api/webhooks/ayo/route.ts: rate limit + batas ukuran body diterapkan sebelum memproses payload", () => {

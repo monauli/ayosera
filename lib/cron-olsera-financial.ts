@@ -5,13 +5,14 @@
 // periode (financialSyncRunId), sehingga panggilan cron berikutnya
 // melanjutkan, bukan mengulang dari awal.
 //
-// Satu request cron menjalankan BEBERAPA step secara berurutan (sequential,
-// tidak paralel) supaya sync selesai lebih cepat tanpa perlu cron dipanggil
-// berkali-kali dalam sehari — tapi tetap dibatasi (MAX_STEPS_PER_REQUEST +
-// TIME_BUDGET_MS) supaya tidak menjadi loop tanpa batas atau melebihi
-// timeout Vercel. Bila belum selesai, checkpoint tersimpan di MongoDB
-// (phase/accountCursor — lib/olsera-financial-sync.ts) dan panggilan cron
-// berikutnya melanjutkan (bukan mengulang dari awal).
+// Satu request cron BOLEH menjalankan beberapa step secara berurutan
+// (sequential, tidak paralel) — tapi dalam praktiknya deadline internal
+// (TIME_BUDGET_MS, Phase 3C.5) jauh lebih ketat daripada MAX_STEPS_PER_REQUEST:
+// cron-job.org hanya menunggu response ~30 detik, jadi biasanya HANYA satu
+// step (bahkan sebagian dari satu step) yang sempat jalan per invocation.
+// Bila belum selesai, checkpoint tersimpan di MongoDB (phase/accountCursor —
+// lib/olsera-financial-sync.ts) dan panggilan cron berikutnya melanjutkan
+// (bukan mengulang dari awal) — ini NORMAL, bukan error.
 //
 // Phase 3B/3B.1 — jendela pemeliharaan otomatis "bulan berjalan + bulan
 // sebelumnya" (docs: audit Phase 3A). Root cause lama: begitu suatu periode
@@ -33,8 +34,7 @@
 //
 // PENTING — batas waktu Vercel/cron-job.org: satu invocation TETAP hanya
 // mengerjakan SATU periode (dipilih lewat selectFinancialCronTarget, bukan
-// dua periode sekaligus) — jumlah step/batas waktu per request TIDAK
-// berubah dari sebelumnya. Prioritas (lihat dokumentasi lengkap di
+// dua periode sekaligus). Prioritas (lihat dokumentasi lengkap di
 // selectFinancialCronTarget): periode yang benar-benar belum selesai
 // (current dulu, baru previous) SELALU didahulukan dari periode yang
 // "hanya" perlu refresh ulang — supaya previous yang sedang berjalan tidak
@@ -43,7 +43,7 @@
 import { todayJakarta } from "@/lib/olsera-sync";
 import { previousFinancialPeriod, validatePeriod } from "@/lib/olsera-financial-core";
 import { FinancialClientError } from "@/lib/olsera-financial-client";
-import { startFinancialSync, stepFinancialSync } from "@/lib/olsera-financial-sync";
+import { startFinancialSync, stepFinancialSync, FINANCIAL_INVOCATION_TIME_BUDGET_MS, FINANCIAL_MIN_REMAINING_MS_TO_START_WORK } from "@/lib/olsera-financial-sync";
 import { getFinancialSyncLogForPeriod, type FinancialSyncRun } from "@/lib/olsera-financial-store";
 import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-cron-lock";
@@ -54,13 +54,26 @@ import { isDatabaseTimeoutError, withDatabaseRetry } from "@/lib/mongodb-errors"
 // tengah proses sendiri.
 const LEASE_MS = 6 * 60 * 1000;
 // Maksimal step yang dijalankan SEQUENTIAL dalam satu request cron — batas
-// eksplisit supaya tidak loop tanpa batas walau periode punya ratusan akun.
+// pengaman tambahan (defense-in-depth) di ATAS deadline waktu di bawah; dalam
+// praktiknya deadline 21 detik hampir selalu tercapai lebih dulu daripada
+// batas 8 step ini.
 const MAX_STEPS_PER_REQUEST = 8;
-// Batas waktu internal, lebih pendek dari maxDuration route (300 detik) dan
-// dari LEASE_MS — begitu terlampaui, loop berhenti di step yang sedang
-// berjalan (tidak memotong step yang sudah dimulai), checkpoint tersimpan,
-// dan request berikutnya melanjutkan.
-const TIME_BUDGET_MS = 240_000;
+// Deadline internal SATU invocation — konsep TUNGGAL dibagi dengan
+// stepFinancialSync (lib/olsera-financial-sync.ts, FINANCIAL_INVOCATION_TIME_BUDGET_MS)
+// supaya tidak ada dua timer yang saling bertentangan (Phase 3C.5). Jauh
+// lebih pendek dari maxDuration route (300 detik) dan LEASE_MS (6 menit) —
+// cron-job.org hanya menunggu response ~30 detik. Dicek di antara step DI
+// SINI, dan di antara akun DI DALAM stepFinancialSync (fase ledger-details) —
+// begitu terlampaui, proses berhenti tanpa memotong akun yang sudah mulai
+// diproses, checkpoint tersimpan, dan request berikutnya melanjutkan.
+const TIME_BUDGET_MS = FINANCIAL_INVOCATION_TIME_BUDGET_MS;
+// Phase 3C.5.1 — HARDENING: "belum lewat TIME_BUDGET_MS" saja tidak cukup
+// untuk memutuskan boleh memanggil step BARU — step itu sendiri bisa
+// memicu request Olsera baru (monthly-reports/ledger-details) yang butuh
+// waktu sampai FINANCIAL_REQUEST_TIMEOUT_MS lagi. Dipakai rumus SAMA persis
+// dengan stepFinancialSync (lib/olsera-financial-sync.ts) supaya route dan
+// step sepakat pada satu definisi "aman untuk mulai kerja baru".
+const MIN_REMAINING_MS_TO_START_WORK = FINANCIAL_MIN_REMAINING_MS_TO_START_WORK;
 // Jeda minimum sebelum cron memulai ulang run yang sudah final sebagai
 // "partial" — mencegah restart beruntun setiap invocation.
 const PARTIAL_RESTART_COOLDOWN_MS = 30 * 60 * 1000;
@@ -240,6 +253,10 @@ export async function runOlseraFinancialCron(
 
   const { runId } = lock;
   const startedAt = Date.now();
+  // SATU deadline dibagi dengan stepFinancialSync (lihat komentar TIME_BUDGET_MS
+  // di atas) — dihitung sekali di sini, diteruskan apa adanya, tidak pernah
+  // dihitung ulang secara terpisah supaya kedua sisi selalu sepakat.
+  const deadlineAt = startedAt + TIME_BUDGET_MS;
   let stepsExecuted = 0;
   console.log(`[cron:olsera:financial] runId=${runId} period=${currentPeriod} startedAt=${new Date(startedAt).toISOString()}`);
   try {
@@ -313,9 +330,12 @@ export async function runOlseraFinancialCron(
     // satu kondisi berikut terpenuhi: run selesai (phase != "running"), batas
     // step tercapai, atau sisa waktu serverless sudah tipis.
     while (stepsExecuted < MAX_STEPS_PER_REQUEST) {
-      if (Date.now() - startedAt >= TIME_BUDGET_MS) break;
+      // Start-safety guard (Phase 3C.5.1) — rumus SAMA dengan di dalam
+      // stepFinancialSync: jangan mulai step baru kalau sisa waktu tidak
+      // cukup untuk request Olsera terburuk + margin finalisasi.
+      if (deadlineAt - Date.now() <= MIN_REMAINING_MS_TO_START_WORK) break;
 
-      const stepped = await stepFinancialSync(run._id);
+      const stepped = await stepFinancialSync(run._id, undefined, deadlineAt);
       if (!stepped) {
         console.error(`[cron:olsera:financial] runId=${runId} period=${period} run tidak ditemukan setelah step ${stepsExecuted + 1}.`);
         return {
@@ -341,8 +361,15 @@ export async function runOlseraFinancialCron(
     }
 
     const completed = run.phase === "completed" || run.status === "success";
+    // Bukan error — berhenti karena deadline internal (Phase 3C.5/3C.5.1)
+    // adalah perilaku NORMAL yang disengaja: checkpoint sudah tersimpan,
+    // cron berikutnya melanjutkan. Rumus SAMA dengan guard di atas dan di
+    // dalam stepFinancialSync — "berhenti karena time budget" berarti sisa
+    // waktu sudah di bawah ambang aman untuk memulai kerja baru, BUKAN
+    // hanya "sudah lewat deadlineAt mentah".
+    const stoppedForTimeBudget = !completed && deadlineAt - Date.now() <= MIN_REMAINING_MS_TO_START_WORK;
     console.log(
-      `[cron:olsera:financial] runId=${runId} finishedAt=${new Date().toISOString()} period=${period} stepsExecuted=${stepsExecuted} status=${run.status} phase=${run.phase}`,
+      `[cron:olsera:financial] runId=${runId} finishedAt=${new Date().toISOString()} period=${period} stepsExecuted=${stepsExecuted} status=${run.status} phase=${run.phase} stoppedForTimeBudget=${stoppedForTimeBudget}`,
     );
     return {
       status: 200,
@@ -358,6 +385,7 @@ export async function runOlseraFinancialCron(
         processedCount: run.accountsProcessed,
         nextCheckpoint: completed ? null : run.accountCursor,
         completed,
+        stoppedForTimeBudget,
         ...(explicitRequest ? {} : { staleRunningDetected }),
       },
     };

@@ -35,8 +35,20 @@ const startFinancialSyncMock = mock.fn(async (_year: unknown, _month: unknown) =
   fakeRun({ status: "running", phase: "monthly-reports", accountCursor: 0 }),
 );
 const stepFinancialSyncMock = mock.fn(async (_runId: string) => fakeRun({ accountCursor: 4, accountsProcessed: 4 }));
+// FINANCIAL_INVOCATION_TIME_BUDGET_MS dan FINANCIAL_MIN_REMAINING_MS_TO_START_WORK
+// harus ikut di-mock (nilai sama dengan production, lib/olsera-financial-sync.ts)
+// — modul ini di-mock UTUH, jadi tanpa entri ini import-nya di
+// lib/cron-olsera-financial.ts akan `undefined` dan deadlineAt/guard jadi NaN
+// (Phase 3C.5 / 3C.5.1).
+const FINANCIAL_INVOCATION_TIME_BUDGET_MS = 21_000;
+const FINANCIAL_MIN_REMAINING_MS_TO_START_WORK = 13_000; // FINANCIAL_REQUEST_TIMEOUT_MS(10_000) + FINANCIAL_ACCOUNT_START_SAFETY_MARGIN_MS(3_000)
 mock.module("@/lib/olsera-financial-sync", {
-  namedExports: { startFinancialSync: startFinancialSyncMock, stepFinancialSync: stepFinancialSyncMock },
+  namedExports: {
+    startFinancialSync: startFinancialSyncMock,
+    stepFinancialSync: stepFinancialSyncMock,
+    FINANCIAL_INVOCATION_TIME_BUDGET_MS,
+    FINANCIAL_MIN_REMAINING_MS_TO_START_WORK,
+  },
 });
 
 const acquireOlseraSyncLockMock = mock.fn(async () => ({ ok: true, runId: "run-financial-lock-1" }));
@@ -582,4 +594,67 @@ test("Test J (3B.1): panggilan cron berulang akhirnya memberi giliran current DA
   target = selectFinancialCronTarget({ currentPeriod: "2026-08", previousPeriod: "2026-07", currentLog: currentRefreshedAgain, previousLog: previousJustSucceeded, now });
   assert.equal(target?.period, "2026-07");
   assert.equal(target?.reason, "previous-refresh-due");
+});
+
+// --- Phase 3C.5 — deadline internal (F, G): berhenti karena time budget
+// adalah PROGRESS NORMAL (bukan error/timeout/409), dan lock tetap dilepas
+// tepat seperti alasan berhenti lain (step-limit, completed, dst). Dipakai
+// mock.timers untuk memajukan Date.now() secara deterministik TANPA
+// menunggu 21 detik sungguhan di dalam test. ---
+
+test("F) deadline internal tercapai -> response partial-progress normal (bukan error/409/timeout), stoppedForTimeBudget:true", async (t) => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  // Step pertama "memakan waktu" >= TIME_BUDGET_MS (21 detik) — mensimulasikan
+  // satu step ledger-details lambat yang melewati deadline (Phase 3C.4).
+  stepFinancialSyncMock.mock.mockImplementation(async () => {
+    t.mock.timers.tick(21_000);
+    return fakeRun({ status: "running", phase: "ledger-details", accountCursor: 6 });
+  });
+
+  const res = await runOlseraFinancialCron("Bearer test-secret");
+
+  assert.equal(res.status, 200, "berhenti karena deadline BUKAN error — tetap HTTP 200");
+  assert.equal(res.body.status, "partial-progress");
+  assert.equal(res.body.completed, false);
+  assert.equal(res.body.stoppedForTimeBudget, true);
+  assert.equal(res.body.nextCheckpoint, 6, "checkpoint step yang sudah selesai tetap dikembalikan");
+  // Deadline sudah lewat setelah step pertama -> TIDAK lanjut ke step kedua
+  // (membuktikan berhenti karena DEADLINE, bukan karena MAX_STEPS_PER_REQUEST).
+  assert.equal(stepFinancialSyncMock.mock.callCount(), 1);
+  assert.equal(res.body.stepsExecuted, 1);
+});
+
+test("G) lock tetap dilepas setelah invocation berhenti karena deadline internal", async (t) => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  stepFinancialSyncMock.mock.mockImplementation(async () => {
+    t.mock.timers.tick(21_000);
+    return fakeRun({ status: "running", phase: "ledger-details" });
+  });
+
+  await runOlseraFinancialCron("Bearer test-secret");
+
+  assert.equal(releaseOlseraSyncLockMock.mock.callCount(), 1);
+  assert.equal(releaseOlseraSyncLockMock.mock.calls[0].arguments[0], "run-financial-lock-1");
+});
+
+test("deadline BELUM tercapai -> beberapa step tetap berjalan sequential seperti biasa (tidak berhenti prematur)", async (t) => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  let cursor = 0;
+  stepFinancialSyncMock.mock.mockImplementation(async () => {
+    t.mock.timers.tick(500); // jauh di bawah deadline 21 detik
+    cursor += 4;
+    return fakeRun({ status: cursor >= 16 ? "success" : "running", phase: cursor >= 16 ? "completed" : "ledger-details", accountCursor: cursor });
+  });
+
+  const res = await runOlseraFinancialCron("Bearer test-secret");
+
+  assert.equal(res.body.completed, true);
+  assert.equal(res.body.stoppedForTimeBudget, false, "selesai normal sebelum deadline -> bukan karena time budget");
+  assert.equal(stepFinancialSyncMock.mock.callCount(), 4);
 });
