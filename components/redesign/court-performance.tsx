@@ -18,7 +18,6 @@ export function CourtPerformance({
   topLabel,
   totalOrders,
   totalRevenue,
-  topContributionPercent,
 }: {
   items: CourtPerformanceItem[];
   topLabel: string;

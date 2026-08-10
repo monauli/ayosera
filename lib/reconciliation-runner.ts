@@ -18,7 +18,6 @@ import {
   loadInventoryMovementFindings,
   loadProductIdentityFindings,
   loadSnapshotConsistencyFindings,
-  periodToMonthRange,
   resolveSourceContext,
   type ReconciliationSourceContext,
   type SourceFinding,
@@ -491,7 +490,6 @@ async function runWrite(input: RunnerInput, sourceContext: ReconciliationSourceC
           upsert: true,
         },
       }));
-      // eslint-disable-next-line no-await-in-loop
       await writeContext.findings.bulkWrite(ops);
     }
 

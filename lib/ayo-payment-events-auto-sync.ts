@@ -2,7 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { planBackfill } from "./ayo-payment-events-backfill.ts";
 import { aggregatePaymentEvents, planPaymentEventUpsert } from "./ayo-payment-events-engine.ts";
-import { fetchAyoPaymentEvents, validatePaymentPeriod, type AyoPaymentEvent } from "./ayo-payment-events.ts";
+import { fetchAyoPaymentEvents, validatePaymentPeriod } from "./ayo-payment-events.ts";
 import type { AyoPaymentEventStagingEvent, AyoPaymentEventStagingRun } from "./ayo-payment-event-staging.ts";
 import type { AyoPaymentEventSyncStateDocument } from "./mongodb.ts";
 

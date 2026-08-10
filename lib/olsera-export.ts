@@ -56,12 +56,6 @@ export function dateRange(start: string, end: string): string[] {
   return out;
 }
 
-function fmtDateId(date: string) {
-  const [y, m, d] = date.split("-").map(Number);
-  if (!y || !m || !d) return date;
-  return `${d} ${MONTHS_ID[m - 1]} ${y}`;
-}
-
 /** "DD/MM" — dipakai sebagai header kolom tanggal (jelas walau rentang lintas bulan). */
 function fmtDateShort(date: string) {
   const [, m, d] = date.split("-");

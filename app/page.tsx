@@ -5,7 +5,6 @@ import {
   Activity,
   AlertTriangle,
   ArrowDown,
-  ArrowLeft,
   ArrowDownToLine,
   ArrowUp,
   ArrowUpDown,
@@ -33,7 +32,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { OlseraFinancialPanel } from "@/components/olsera-financial-panel";
 import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-sync-lock";
@@ -208,14 +206,6 @@ type SessionUserInfo = {
 };
 
 const THEME_STORAGE_KEY = "ayo-theme";
-const themeOptions = [
-  { value: "white", label: "Putih + Rosé", swatch: "#ffffff", ring: "#FFD8DF" },
-  { value: "rose", label: "Rosé", swatch: "#FFD8DF", ring: "#f472b6" },
-  { value: "mint", label: "Mint", swatch: "#A8DF8E", ring: "#86c36e" },
-  { value: "lavender", label: "Lavender", swatch: "#DDD6FE", ring: "#a78bfa" },
-  { value: "ocean", label: "Ocean", swatch: "#A5E6F0", ring: "#67c8dc" },
-  { value: "amber", label: "Amber", swatch: "#FDDDA8", ring: "#f5b45a" },
-];
 
 /** "2026-07-13T11:11:39Z" → "13 Jul 2026 pukul 18:11:39" (Asia/Jakarta). */
 function formatSyncDateTime(value: string) {
@@ -335,10 +325,6 @@ function addDaysISO(date: string, days: number) {
   const parsed = new Date(`${date}T00:00:00Z`);
   parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
-}
-
-function daysBetweenISO(startDate: string, endDate: string) {
-  return Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000);
 }
 
 function formatDisplayDate(value: string) {
@@ -1852,7 +1838,6 @@ export default function DashboardPage() {
     { key: "completed", label: "Selesai", description: "Pesanan yang sudah selesai", value: completedCount, color: "#10b981" },
   ];
   const eventRows = dashboard?.syncEvents ?? [];
-  const courtOptions = dashboard?.branchOptions ?? [];
   const latestEvent = eventRows[0];
   const syncStatusLabel = latestEvent ? (latestEvent.tone.includes("teal") ? "OK" : "Gagal") : "-";
   const lastCheckpoint = latestEvent ? formatEventTime(latestEvent.time) : "-";

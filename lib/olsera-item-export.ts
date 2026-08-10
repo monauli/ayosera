@@ -4,7 +4,6 @@ import { escapeExcelFormulaPrefix, safeSheetName } from "./olsera-category-expor
 import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
-const DATE_TIME_FMT = "dd-mmm-yyyy\nhh:mm:ss";
 const BLUE = "FF9DC3E6";
 const GRAY = "FFA6A6A6";
 const DARK_GRAY = "FF8F8F8F";

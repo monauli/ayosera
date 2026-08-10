@@ -29,7 +29,7 @@ function moduleLabels(modules: string[]) {
   return MODULE_OPTIONS.filter((option) => modules.includes(option.value)).map((option) => option.label);
 }
 
-export function UsersPanel({ currentUserId, isSupervisor }: { currentUserId: string; isSupervisor: boolean }) {
+export function UsersPanel({ currentUserId }: { currentUserId: string; isSupervisor: boolean }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");

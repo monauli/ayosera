@@ -23,7 +23,6 @@ import {
   Wallet,
   XCircle,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock, subscribeOlseraSyncLock } from "@/lib/olsera-sync-lock";
@@ -609,7 +608,6 @@ export function OlseraFinancialPanel() {
   const bs = snapshot?.reports.balanceSheet ?? null;
   const pl = snapshot?.reports.profitLoss ?? null;
   const cf = snapshot?.reports.cashFlow ?? null;
-  const ls = snapshot?.reports.ledgerSummary ?? null;
   const summaryWarnings = visibleFinancialSourceDiagnostics(snapshot?.summaryDiagnostics ?? []);
   const subtotalWarning = hasSubtotalMismatch(bs) || hasSubtotalMismatch(pl) || hasSubtotalMismatch(cf);
 

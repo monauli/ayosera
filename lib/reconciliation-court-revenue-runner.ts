@@ -20,10 +20,10 @@
 //                  tanggal itu yang tidak muncul lagi.
 import "server-only";
 import { loadCourtRevenueFindings, resolveCourtRevenueSourceContext, type CourtRevenueFinding, type CourtRevenueSourceContext } from "./reconciliation-court-revenue-source.ts";
-import { summarizeRun, type FindingWithImpactConfidence, type RunSummary } from "./reconciliation-aggregate.ts";
+import { summarizeRun, type RunSummary } from "./reconciliation-aggregate.ts";
 import { capImpactForDraftPeriod, requiresManualAdjustment as statusRequiresManualAdjustment, type ReconciliationImpact } from "./reconciliation-types.ts";
 import { isCurrentJakartaPeriod } from "./olsera-financial-core.ts";
-import type { ReconciliationFindingDocument, ReconciliationRunDocument } from "./mongodb.ts";
+import type { ReconciliationFindingDocument } from "./mongodb.ts";
 
 export class CourtRevenueRunnerError extends Error {
   constructor(message: string) {
@@ -285,7 +285,6 @@ export async function runCourtRevenueReconciliationRange(
   const results: CourtRevenueRunnerResult[] = [];
   let cursor = input.startDate;
   while (cursor <= input.endDate) {
-    // eslint-disable-next-line no-await-in-loop
     const result = await runCourtRevenueReconciliation({ ...input, date: cursor }, context);
     results.push(result);
     const next = new Date(`${cursor}T00:00:00Z`);

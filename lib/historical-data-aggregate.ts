@@ -59,11 +59,6 @@ export type HistoricalDataSummary = {
   issues: HistoricalIssueItem[];
 };
 
-function issueStatus(canAutoFix: boolean, jumlahOpen: number): HistoricalIssueStatus {
-  if (jumlahOpen === 0) return "selesai";
-  return canAutoFix ? "pending" : "manual";
-}
-
 // --- Bagian A/B/C: Product Mapping (olsera_order_items) ---
 export function buildProductMappingReport(input: { periode: string; summary: IdentityClassificationSummary; resolvedCount: number }): { category: HistoricalCategoryReport; issues: HistoricalIssueItem[] } {
   const { periode, summary, resolvedCount } = input;

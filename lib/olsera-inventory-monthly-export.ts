@@ -36,7 +36,6 @@ import { hasInventoryActivity } from "./olsera-inventory-ui.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
-const INT_FMT = "#,##0";
 const HEADER_GRAY = "FFA6A6A6";
 const TOTAL_BLUE = "FF9DC3E6";
 const AKTUAL_YELLOW = "FFFFF2CC";

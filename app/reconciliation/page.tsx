@@ -110,15 +110,6 @@ function LockBadge() {
   );
 }
 
-function AccountCard({ title, breakdown }: { title: string; breakdown: AccountBreakdown }) {
-  return (
-    <div>
-      <span>{title} — bersih (sebelum reklasifikasi)</span>
-      <b>{formatRupiah(breakdown.net)}</b>
-    </div>
-  );
-}
-
 function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, finalStatus, wide = false, locked = false }: { title: string; ayoLabel: string; olseraLabel: string; comparison: SportComparison; finalStatus?: OmzetStatus; wide?: boolean; locked?: boolean }) {
   return (
     <section className={`recon-sport-card${wide ? " recon-sport-card-wide" : ""}`}>

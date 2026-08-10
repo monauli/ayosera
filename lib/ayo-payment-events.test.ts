@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeAyoPaymentEvent, paymentEventIdentity, validatePaymentPeriod, fetchAyoPaymentEvents, type AyoPaymentEvent } from "./ayo-payment-events.ts";
+import { normalizeAyoPaymentEvent, paymentEventIdentity, validatePaymentPeriod, fetchAyoPaymentEvents } from "./ayo-payment-events.ts";
 import { readValidatedPaymentEvents } from "./ayo-payment-events-sync.ts";
 
 const row = (extra: Record<string, unknown> = {}) => ({ source_table: "reservation_payments", id: 1, booking_id: "BK-1", reservation_payment_id: "RP-1", field_name: "Court No 1", date: "2026-06-01", total: 100, final_status: "paid", ...extra });

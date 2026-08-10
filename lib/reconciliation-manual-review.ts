@@ -66,7 +66,6 @@ export async function buildManualReviewSummary(storeId: number, options: BuildMa
   let total = 0;
   let truncated = false;
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const result = await listFindings({ storeId, requiresManualAdjustment: true, page, limit: 200, sort: "lastCheckedAt", sortDir: "desc" }, options.storeContext);
     total = result.total;

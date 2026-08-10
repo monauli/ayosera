@@ -11,8 +11,6 @@ import {
   summarizeOpname,
 } from "./inventory-stock-opname.ts";
 
-const COMPLETE = { status: "complete" as const, canonicalProductId: null };
-
 // 1. stok sistem 10, berita acara 10 -> Cocok
 test("status: stok sistem 10 dan berita acara 10 -> COCOK", () => {
   const status = determineOpnameStatus({ physicalQty: 10, systemClosingQty: 10, manualAdjust: false });

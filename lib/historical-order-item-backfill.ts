@@ -94,7 +94,6 @@ export async function runOrderItemIdentityBackfill(input: OrderItemBackfillInput
   let skippedAlreadyFilled = 0;
 
   for (const item of input.plan) {
-    // eslint-disable-next-line no-await-in-loop
     const current = await orderItems.findOne({ _id: item.orderItemId });
     // HANYA productId yang menentukan "sudah dibackfill atau belum" — variantId
     // dan sku boleh SAH bernilai null selamanya (produk tanpa varian/SKU di
@@ -108,10 +107,8 @@ export async function runOrderItemIdentityBackfill(input: OrderItemBackfillInput
       skippedAlreadyFilled++;
       continue;
     }
-    // eslint-disable-next-line no-await-in-loop
     await orderItems.updateOne({ _id: item.orderItemId }, { $set: { productId: item.after.productId, variantId: item.after.variantId, sku: item.after.sku } });
     try {
-      // eslint-disable-next-line no-await-in-loop
       await auditLog.insertOne({
         _id: item.orderItemId,
         storeId: input.storeId,

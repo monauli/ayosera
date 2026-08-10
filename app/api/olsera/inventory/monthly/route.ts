@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireModule } from "@/lib/auth";
-import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument, type OlseraInventoryProductDocument } from "@/lib/mongodb";
+import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/olsera-inventory-core";
 import { isHiddenInventoryCategory } from "@/lib/olsera-inventory-ui";

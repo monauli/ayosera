@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyOrderItemIdentity, type IdentityClassificationContext, type ClassifiedOrderItem } from "./historical-order-item-identity.ts";
+import { classifyOrderItemIdentity, type IdentityClassificationContext } from "./historical-order-item-identity.ts";
 import { planExactMatchBackfill, runOrderItemIdentityBackfill, type OrderItemBackfillWriteContext } from "./historical-order-item-backfill.ts";
 import type { HistoricalBackfillAuditLogDocument } from "./mongodb.ts";
 
