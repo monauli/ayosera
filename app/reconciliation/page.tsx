@@ -171,6 +171,8 @@ export default function ReconciliationPage() {
   const [finalPreview, setFinalPreview] = useState<{ ayo: number; olsera: number; difference: number; finalAgreedAmount: number; adjustmentAmount: number; lockedDisplay: { ayo: number; olsera: number; difference: number; status: string } } | null>(null);
   const [finalBusy, setFinalBusy] = useState(false);
   const [finalError, setFinalError] = useState("");
+  const [uploadSuccessMessage, setUploadSuccessMessage] = useState("");
+  const [finalSaveMessage, setFinalSaveMessage] = useState("");
   const [analysis, setAnalysis] = useState<BeritaAcaraAnalysis | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
@@ -209,7 +211,7 @@ export default function ReconciliationPage() {
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
-    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError("");
+    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage("");
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
@@ -300,15 +302,22 @@ export default function ReconciliationPage() {
     return data;
   };
   const uploadFinalAttachment = async () => {
-    if (!finalFile) return; setFinalBusy(true); setFinalError("");
-    try { const uploadedFile = finalFile; const form = new FormData(); form.set("file", finalFile); if (finalization) form.set("version", String(finalization.version)); const data = await finalizationRequest("upload", { method: "POST", body: form }); setFinalization(data.data); setFinalFile(null); setFinalPreview(null); setShowFinalLockConfirm(false); void analyzeFileClient(uploadedFile); }
+    if (!finalFile) return; setFinalBusy(true); setFinalError(""); setUploadSuccessMessage(""); setFinalSaveMessage("");
+    try { const uploadedFile = finalFile; const form = new FormData(); form.set("file", finalFile); if (finalization) form.set("version", String(finalization.version)); const data = await finalizationRequest("upload", { method: "POST", body: form }); setFinalization(data.data); setFinalFile(null); setFinalPreview(null); setShowFinalLockConfirm(false); setUploadSuccessMessage("Berita Acara berhasil diunggah"); void analyzeFileClient(uploadedFile); }
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal mengunggah berita acara."); }
     finally { setFinalBusy(false); }
   };
+  // "Simpan" di UI = memanggil endpoint preview yang sama (recordOmzetPeriodLockPreview
+  // di lib/reconciliation-omzet-period-lock.ts) — INI SENGAJA, bukan endpoint baru.
+  // Precondition keamanan Kunci Periode (history terakhir harus "preview" yang
+  // cocok persis dengan finalAgreedAmount/adjustmentReason saat ini) tidak boleh
+  // dilemahkan, jadi "Simpan" secara internal tetap merekam entri "preview" yang
+  // sama persis seperti sebelumnya — hanya label dan pesan sukses yang berubah
+  // untuk user, bukan mekanisme keamanannya.
   const previewFinalization = async () => {
-    setFinalBusy(true); setFinalError("");
-    try { const data = await finalizationRequest("preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason }) }); setFinalPreview(data.data); setFinalization(data.lock); }
-    catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal membuat preview."); }
+    setFinalBusy(true); setFinalError(""); setFinalSaveMessage("");
+    try { const data = await finalizationRequest("preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason }) }); setFinalPreview(data.data); setFinalization(data.lock); setFinalSaveMessage("Finalisasi berhasil disimpan."); }
+    catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal menyimpan finalisasi."); }
     finally { setFinalBusy(false); }
   };
   const lockFinalization = async () => {
@@ -518,20 +527,24 @@ export default function ReconciliationPage() {
                       )}
                       {analysis?.matchStatus === "TIDAK_COCOK" && <p className="recon-error"><AlertTriangle size={14} /> Nominal/arah Berita Acara TIDAK cocok dengan selisih sistem. Periksa dokumen sebelum melanjutkan; preview dan lock ditahan sampai direview.</p>}
                       {analysis?.matchStatus === "PERLU_REVIEW" && <p className="recon-special"><AlertTriangle size={14} /> Berita Acara perlu direview manual (nominal/arah tidak terbaca otomatis, atau OCR belum yakin). Isi field di bawah secara manual.</p>}
-                      <label className="recon-upload-label">Ganti/unggah berita acara
-                        <input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={finalBusy} onChange={(event) => setFinalFile(event.target.files?.[0] ?? null)} />
-                      </label>
-                      <button className="recon-button secondary" disabled={!finalFile || finalBusy} onClick={() => void uploadFinalAttachment()}><Paperclip size={14} /> Upload Berita Acara</button>
+                      <div className="recon-actions">
+                        <label className="recon-upload-label">Pilih File
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={finalBusy} onChange={(event) => { setFinalFile(event.target.files?.[0] ?? null); setUploadSuccessMessage(""); }} />
+                        </label>
+                        <button className="recon-button secondary" disabled={!finalFile || finalBusy} onClick={() => void uploadFinalAttachment()}><Paperclip size={14} /> Upload File</button>
+                      </div>
+                      {uploadSuccessMessage && <p className="recon-lock-summary">{uploadSuccessMessage}</p>}
                       <label className="recon-upload-label">Nominal final disepakati
-                        <input type="number" step="1" value={finalAmount} disabled={finalBusy || !finalization?.attachment || analysis?.matchStatus === "COCOK"} onChange={(event) => { setFinalAmount(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); }} />
+                        <input type="number" step="1" value={finalAmount} disabled={finalBusy || !finalization?.attachment || analysis?.matchStatus === "COCOK"} onChange={(event) => { setFinalAmount(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); setFinalSaveMessage(""); }} />
                       </label>
                       <label className="recon-upload-label">Alasan penyesuaian
-                        <textarea value={finalReason} disabled={finalBusy || !finalization?.attachment} onChange={(event) => { setFinalReason(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); }} />
+                        <textarea value={finalReason} disabled={finalBusy || !finalization?.attachment} onChange={(event) => { setFinalReason(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); setFinalSaveMessage(""); }} />
                       </label>
                       <div className="recon-actions">
-                        <button className="recon-button secondary" disabled={!finalization?.attachment || finalBusy || !finalReason.trim()} onClick={() => void previewFinalization()}>Preview Finalisasi</button>
+                        <button className="recon-button secondary" disabled={!finalization?.attachment || finalBusy || !finalReason.trim()} onClick={() => void previewFinalization()}>Simpan</button>
                         <button className="recon-button" disabled={!finalPreview || finalBusy || !canLockFinalization} onClick={() => setShowFinalLockConfirm(true)} title={!canLockFinalization ? "Kunci hanya diizinkan saat Berita Acara COCOK dengan selisih sistem (atau isi manual lalu preview ulang)." : undefined}><Lock size={14} /> Kunci Periode</button>
                       </div>
+                      {finalSaveMessage && <p className="recon-lock-summary">{finalSaveMessage}</p>}
                       {showFinalLockConfirm && <div className="recon-form" role="alertdialog" aria-label="Konfirmasi finalisasi periode"><p>Nominal final akan menjadi tampilan periode terkunci. Data sumber rekonsiliasi tetap tidak diubah.</p><div className="recon-actions"><button className="recon-button" disabled={finalBusy} onClick={() => void lockFinalization()}>Ya, Kunci Periode</button><button className="recon-button secondary" disabled={finalBusy} onClick={() => setShowFinalLockConfirm(false)}>Batal</button></div></div>}
                     </>
                   )}

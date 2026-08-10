@@ -58,15 +58,33 @@ export async function uploadOmzetPeriodLockAttachment(input: { storeId: number; 
   const before = snapshot(current); const action = "upload" as const;
   const document = await source.locks.findOneAndUpdate(
     current ? { _id: id, version: current.version, status: { $ne: "locked" } } : { _id: id, version: { $exists: false } },
-    // NOTE: _id sengaja TIDAK dimasukkan ke $setOnInsert — filter query di
-    // atas SUDAH menetapkan _id (baik lewat equality langsung maupun via
-    // { _id: id, version: ... }). Menyertakan _id di $setOnInsert SEKALIGUS
-    // di filter memicu MongoDB error "Performing an update on the path
-    // '_id' would modify the immutable field '_id'" pada sebagian versi
-    // driver/server saat upsert benar-benar melakukan insert baru — inilah
-    // root cause upload berita acara gagal dengan pesan generik. _id insert
-    // otomatis diambil dari filter oleh MongoDB, jadi aman dihilangkan di sini.
-    { $set: { storeId: input.storeId, year, month, periodKey: input.period, status: current?.status ?? "draft", attachment: input.attachment, updatedAt: now }, $setOnInsert: { originalAyoAmount: null, originalOlseraAmount: null, originalDifference: null, finalAgreedAmount: null, adjustmentAmount: null, adjustmentReason: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, history: [], createdAt: now, version: 0 }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: null, before, after: { fileName: input.attachment.fileName } } } },
+    // NOTE: _id sengaja TIDAK dimasukkan ke $setOnInsert (lihat penjelasan
+    // immutable-field di riwayat commit) — filter query di atas SUDAH
+    // menetapkan _id, jadi MongoDB otomatis mengambilnya dari filter saat
+    // insert.
+    //
+    // NOTE PENTING KEDUA (root cause upload gagal generik yang SEBENARNYA,
+    // terverifikasi lewat reproduksi langsung terhadap MongoDB Atlas
+    // sungguhan, BUKAN mock lokal): `version` dan `history` TIDAK BOLEH
+    // muncul di $setOnInsert sekaligus juga jadi target $inc ($inc: version)
+    // / $push ($push: history) pada update yang sama. MongoDB menolak update
+    // seperti itu dengan error server code 40: "Updating the path 'version'
+    // would create a conflict at 'version'" (dan sama untuk 'history') —
+    // ini SELALU terjadi, baik saat upsert benar-benar insert maupun saat
+    // dokumen sudah ada (MongoDB memvalidasi struktur update-nya, bukan
+    // hanya efeknya), sehingga SETIAP upload — termasuk yang pertama kali
+    // untuk periode baru seperti Maret 2026 — gagal dengan MongoServerError
+    // yang tidak dikenali oleh regex penanganan error khusus di route.ts,
+    // lalu jatuh ke fallback generik "Gagal menyimpan berita acara. Coba
+    // lagi.". Fixture test lokal sebelumnya (lib/reconciliation-omzet-period-lock.test.ts)
+    // tidak menangkap ini karena fake findOneAndUpdate di sana menerapkan
+    // $setOnInsert/$inc/$push secara independen tanpa validasi konflik path
+    // ala MongoDB asli. Perbaikan: $inc pada field yang belum ada otomatis
+    // menginisialisasi field itu dari nilai increment-nya (0+1=1), dan $push
+    // pada field array yang belum ada otomatis membuat array baru berisi
+    // elemen yang di-push — jadi `version: 0` dan `history: []` di
+    // $setOnInsert tidak diperlukan sama sekali dan harus dihapus.
+    { $set: { storeId: input.storeId, year, month, periodKey: input.period, status: current?.status ?? "draft", attachment: input.attachment, updatedAt: now }, $setOnInsert: { originalAyoAmount: null, originalOlseraAmount: null, originalDifference: null, finalAgreedAmount: null, adjustmentAmount: null, adjustmentReason: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, createdAt: now }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: null, before, after: { fileName: input.attachment.fileName } } } },
     { upsert: !current, returnDocument: "after" },
   );
   if (!document) throw new OmzetPeriodLockError("Konflik upload; muat ulang lalu coba lagi.", "CONFLICT");

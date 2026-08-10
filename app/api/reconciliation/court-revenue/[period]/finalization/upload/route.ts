@@ -39,6 +39,17 @@ export async function POST(request: Request, context: { params: Promise<{ period
     if (/E11000|duplicate key/i.test(message)) {
       return NextResponse.json({ error: "Gagal menyimpan berita acara: data periode sudah ada. Muat ulang lalu coba lagi." }, { status: 409, headers: NO_CACHE_HEADERS });
     }
+    // Regresi V6: root cause upload gagal generik SEBENARNYA (lihat
+    // lib/reconciliation-omzet-period-lock.ts uploadOmzetPeriodLockAttachment)
+    // adalah MongoDB server error code 40 "Updating the path 'x' would create
+    // a conflict at 'x'" saat $setOnInsert dan $inc/$push menyasar field yang
+    // sama. Root cause-nya sudah diperbaiki di lib tsb, tapi cabang ini tetap
+    // dipertahankan sebagai jaring pengaman berpesan jelas — bukan tebakan —
+    // seandainya kelas bug serupa muncul lagi di masa depan.
+    if (/would create a conflict at/i.test(message)) {
+      console.error("[reconciliation:period-finalization:upload:mongo-path-conflict]", message);
+      return NextResponse.json({ error: "Gagal menyimpan berita acara: struktur pembaruan data periode bentrok. Hubungi admin." }, { status: 502, headers: NO_CACHE_HEADERS });
+    }
     if (/Mongo|ECONNREFUSED|ETIMEDOUT|topology/i.test(message)) {
       return NextResponse.json({ error: "Gagal menyimpan berita acara: koneksi database bermasalah. Coba lagi." }, { status: 502, headers: NO_CACHE_HEADERS });
     }

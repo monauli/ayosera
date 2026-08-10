@@ -37,6 +37,27 @@ function fixture() {
       async findOne(filter) { return value && matches(value as unknown as Record<string, unknown>, filter) ? structuredClone(value) : null; },
       async findOneAndUpdate(filter, update, options) {
         if (failWrites) throw new Error("MongoDB unavailable");
+        // Meniru validasi MongoDB sungguhan (server error code 40): sebuah
+        // field TIDAK BOLEH disasar oleh dua operator update berbeda dalam
+        // update document yang sama (mis. $setOnInsert.version DAN $inc.version
+        // sekaligus) — MongoDB menolak update itu dengan "Updating the path
+        // 'x' would create a conflict at 'x'" TERLEPAS apakah insert benar2
+        // terjadi atau tidak (ini validasi STRUKTUR update, bukan efeknya).
+        // Root cause upload berita acara gagal generik di produksi (V6)
+        // adalah persis pelanggaran ini (version & history) — mock lama TIDAK
+        // menangkapnya karena menerapkan $setOnInsert/$inc/$push independen
+        // tanpa cek konflik path. Reproduksi nyata sudah diverifikasi langsung
+        // terhadap MongoDB Atlas (server error code 40) sebelum fixture ini
+        // ditulis ulang.
+        const setOnInsertKeys = new Set(Object.keys((update.$setOnInsert ?? {}) as object));
+        for (const key of [...Object.keys((update.$inc ?? {}) as object), ...Object.keys((update.$push ?? {}) as object)]) {
+          if (setOnInsertKeys.has(key)) {
+            const conflictError = new Error(`Updating the path '${key}' would create a conflict at '${key}'`) as Error & { name: string; code: number };
+            conflictError.name = "MongoServerError";
+            conflictError.code = 40;
+            throw conflictError;
+          }
+        }
         if (!value && !options.upsert) return null;
         if (value && !matches(value as unknown as Record<string, unknown>, filter)) return null;
         // Meniru perilaku MongoDB sungguhan: pada upsert yang benar-benar
@@ -47,15 +68,33 @@ function fixture() {
         const filterLiterals = Object.fromEntries(Object.entries(filter).filter(([, v]) => !(v && typeof v === "object" && !Array.isArray(v))));
         const target = value ?? structuredClone({ ...filterLiterals, ...(update.$setOnInsert ?? {}) } as ReconciliationOmzetPeriodLockDocument);
         Object.assign(target, (update.$set ?? {}) as object);
-        for (const [key, increment] of Object.entries((update.$inc ?? {}) as Record<string, number>)) target[key as keyof ReconciliationOmzetPeriodLockDocument] = ((target[key as keyof ReconciliationOmzetPeriodLockDocument] as number) + increment) as never;
+        // $inc pada field yang belum ada di dokumen (mis. dokumen legacy tanpa
+        // `version`, atau insert baru sekarang tanpa version:0 di $setOnInsert)
+        // meniru MongoDB asli: field diinisialisasi 0 dulu baru ditambah.
+        for (const [key, increment] of Object.entries((update.$inc ?? {}) as Record<string, number>)) {
+          const current = target[key as keyof ReconciliationOmzetPeriodLockDocument];
+          target[key as keyof ReconciliationOmzetPeriodLockDocument] = ((typeof current === "number" ? current : 0) + increment) as never;
+        }
         const push = (update.$push ?? {}) as Record<string, unknown>;
-        if (push.history) target.history.push(push.history as ReconciliationOmzetPeriodLockDocument["history"][number]);
+        // $push pada array yang belum ada (dokumen legacy tanpa `history`, atau
+        // insert baru tanpa history:[] di $setOnInsert) meniru MongoDB asli:
+        // array baru dibuat berisi elemen yang di-push.
+        if (push.history) target.history = [...(target.history ?? []), push.history as ReconciliationOmzetPeriodLockDocument["history"][number]];
         value = structuredClone(target);
         return structuredClone(value);
       },
     },
   };
-  return { context, document: () => value && structuredClone(value), failWrites: () => { failWrites = true; } };
+  return {
+    context,
+    document: () => value && structuredClone(value),
+    failWrites: () => { failWrites = true; },
+    // Menyuntik dokumen "sudah ada" langsung ke penyimpanan fake — dipakai
+    // untuk mensimulasikan bentuk dokumen produksi nyata/legacy (record
+    // kosong/partial dari upaya gagal sebelumnya, dokumen lama tanpa field
+    // baru, dst.) TANPA harus melalui uploadOmzetPeriodLockAttachment dulu.
+    seed: (doc: Partial<ReconciliationOmzetPeriodLockDocument> & { _id: string }) => { value = doc as ReconciliationOmzetPeriodLockDocument; },
+  };
 }
 
 async function upload(f = fixture()) {
@@ -166,4 +205,101 @@ test("MongoDB write failure never produces a false locked document", async () =>
   f.failWrites();
   await assert.rejects(() => uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment }, f.context));
   assert.equal(f.document(), null);
+});
+
+// V6: regresi produksi Maret 2026 — root cause SEBENARNYA (terverifikasi
+// lewat reproduksi langsung terhadap MongoDB Atlas sungguhan, BUKAN mock
+// lokal) adalah MongoDB server error code 40 "Updating the path 'version'
+// would create a conflict at 'version'" (dan sama untuk 'history') karena
+// $setOnInsert dan $inc/$push menyasar field yang sama pada update document
+// yang SAMA — SELALU terjadi, baik dokumen periode belum ada (insert
+// pertama, persis kasus Maret 2026 yang koleksi produksinya kosong sama
+// sekali) MAUPUN dokumen sudah ada (MongoDB memvalidasi struktur update-nya,
+// bukan cuma efeknya). Fixture di atas sekarang meniru validasi ini secara
+// setia, jadi skenario di bawah gagal lagi kalau bug ini terulang.
+test("V6 regresi: skenario data legacy/produksi nyata pada uploadOmzetPeriodLockAttachment", async (t) => {
+  await t.test("1. periode tanpa dokumen sama sekali (persis Maret 2026 di produksi) -> upload sukses", async () => {
+    const f = fixture();
+    const lock = await uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment }, f.context);
+    assert.equal(lock.status, "draft");
+    assert.equal(lock.version, 1);
+    assert.equal(lock.attachment?.fileName, attachment.fileName);
+  });
+
+  await t.test("2. dokumen existing nyaris-kosong (hanya _id/version/status/history) -> upload sukses", async () => {
+    const f = fixture();
+    f.seed({ _id: "324175:2026-03", storeId: 324175, year: 2026, month: 3, version: 1, status: "draft", history: [] });
+    const lock = await uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment }, f.context);
+    assert.equal(lock.version, 2);
+    assert.equal(lock.attachment?.fileName, attachment.fileName);
+  });
+
+  await t.test("3. dokumen sisa percobaan gagal sebelum fix (attachment null, history kosong) -> retry sukses", async () => {
+    const f = fixture();
+    f.seed({ _id: "324175:2026-03", storeId: 324175, year: 2026, month: 3, version: 1, status: "draft", attachment: null, history: [] });
+    const lock = await uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment }, f.context);
+    assert.equal(lock.attachment?.fileName, attachment.fileName);
+    assert.equal(lock.status, "draft");
+  });
+
+  await t.test("4. dokumen dengan attachment valid -> ganti file baru sukses", async () => {
+    const { f, lock } = await upload();
+    const newAttachment = { ...attachment, fileName: "berita-acara-v2.pdf" };
+    const replaced = await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment: newAttachment, expectedVersion: lock.version }, f.context);
+    assert.equal(replaced.attachment?.fileName, "berita-acara-v2.pdf");
+    assert.equal(replaced.version, lock.version + 1);
+  });
+
+  await t.test("5. upload file yang sama dua kali berturut-turut -> tidak error/crash", async () => {
+    const { f, lock } = await upload();
+    const second = await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment, expectedVersion: lock.version }, f.context);
+    assert.equal(second.attachment?.fileName, attachment.fileName);
+    assert.equal(second.version, lock.version + 1);
+    const third = await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment, expectedVersion: second.version }, f.context);
+    assert.equal(third.attachment?.fileName, attachment.fileName);
+    assert.equal(third.version, second.version + 1);
+  });
+
+  await t.test("6. dokumen legacy tanpa field `version` (missing, bukan 0) -> tetap bisa diupdate tanpa kehilangan data lama", async () => {
+    const f = fixture();
+    f.seed({ _id: "324175:2026-03", storeId: 324175, year: 2026, month: 3, status: "draft", history: [], finalAgreedAmount: 123 } as unknown as ReconciliationOmzetPeriodLockDocument);
+    const lock = await uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment }, f.context);
+    assert.equal(lock.attachment?.fileName, attachment.fileName);
+    // Data lama (finalAgreedAmount) tidak boleh hilang oleh $set parsial.
+    assert.equal((lock as unknown as { finalAgreedAmount: number }).finalAgreedAmount, 123);
+  });
+
+  await t.test("7. tidak ada konflik field immutable `_id` saat insert maupun update", async () => {
+    const f = fixture();
+    const lock = await uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment }, f.context);
+    assert.equal(lock._id, "324175:2026-03");
+    const again = await uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment, expectedVersion: lock.version }, f.context);
+    assert.equal(again._id, "324175:2026-03");
+  });
+
+  await t.test("8. percobaan upload berulang tidak memicu duplicate-key", async () => {
+    const f = fixture();
+    let version: number | undefined;
+    for (let i = 0; i < 4; i += 1) {
+      const lock = await uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment, expectedVersion: version ?? null }, f.context);
+      version = lock.version;
+    }
+    assert.equal(version, 4);
+  });
+
+  await t.test("9. Blob sukses + Mongo save sukses -> hasil akhir mencerminkan sukses (attachment tersimpan)", async () => {
+    const f = fixture();
+    const lock = await uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment }, f.context);
+    assert.ok(lock.attachment);
+    assert.equal(lock.attachment?.url, attachment.url);
+  });
+
+  await t.test("10. kegagalan Mongo sungguhan (driver-level, bukan Error generik) -> pesan/kode error dapat dibedakan, bukan silent generic", async () => {
+    const f = fixture();
+    f.failWrites();
+    await assert.rejects(
+      () => uploadOmzetPeriodLockAttachment({ storeId: 324175, period: "2026-03", actor: "supervisor-a", attachment }, f.context),
+      (error: unknown) => error instanceof Error && error.message === "MongoDB unavailable",
+    );
+  });
 });

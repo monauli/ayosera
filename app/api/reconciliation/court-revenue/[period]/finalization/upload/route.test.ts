@@ -142,4 +142,42 @@ test("error koneksi Mongo dari lock lib -> 502, pesan spesifik menyebut koneksi 
   assert.match(body.error, /koneksi database/);
 });
 
+// V6: regresi Maret 2026 — root cause SEBENARNYA adalah MongoDB server error
+// code 40 "Updating the path 'x' would create a conflict at 'x'" (lihat
+// lib/reconciliation-omzet-period-lock.ts + lib/reconciliation-omzet-period-lock.test.ts
+// untuk reproduksi dan perbaikan akarnya). Bug itu sudah diperbaiki di lib,
+// tapi route ini tetap diuji supaya kalau kelas bug serupa muncul lagi, user
+// dapat pesan spesifik yang bisa didiagnosis — BUKAN fallback generik "Coba
+// lagi." yang tidak bisa ditindaklanjuti.
+test("error driver Mongo asli (MongoServerError code 40, path conflict) dari lock lib -> 502, pesan spesifik BUKAN fallback generik", async () => {
+  uploadLockAttachmentMock.mock.mockImplementationOnce(async () => {
+    const error = new Error("Updating the path 'version' would create a conflict at 'version'") as Error & { name: string; code: number };
+    error.name = "MongoServerError";
+    error.code = 40;
+    throw error;
+  });
+  const res = await POST(req(fileFormData(new Uint8Array([1, 2, 3]), "berita-acara.pdf", "application/pdf")), ctx());
+  assert.equal(res.status, 502);
+  const body = (await res.json()) as { error: string };
+  assert.notEqual(body.error, "Gagal menyimpan berita acara. Coba lagi.");
+  assert.match(body.error, /struktur pembaruan data periode bentrok/);
+});
+
+// Blob (langkah 2) sukses lalu Mongo save (langkah 3) gagal: frontend TIDAK
+// BOLEH menerima respons sukses (201) — harus menerima error yang jelas,
+// bukan status ambigu yang membuat UI mengira upload selesai padahal belum
+// tersimpan di database.
+test("Blob sukses tapi Mongo save gagal -> frontend TIDAK menerima 201, menerima error yang jelas", async () => {
+  uploadLockAttachmentMock.mock.mockImplementationOnce(async () => {
+    throw new Error("MongoDB unavailable");
+  });
+  const res = await POST(req(fileFormData(new Uint8Array([1, 2, 3]), "berita-acara.pdf", "application/pdf")), ctx());
+  assert.equal(uploadBlobMock.mock.callCount(), 1, "blob upload (langkah 2) tetap dipanggil dan sukses");
+  assert.notEqual(res.status, 201);
+  assert.equal(res.status, 502);
+  const body = (await res.json()) as { error: string; data?: unknown };
+  assert.equal(body.data, undefined, "tidak ada data lock yang dikembalikan seolah sukses");
+  assert.ok(body.error);
+});
+
 // Skenario 13 (unauthorized) sudah dicakup oleh test "non-supervisor ditolak" di atas.

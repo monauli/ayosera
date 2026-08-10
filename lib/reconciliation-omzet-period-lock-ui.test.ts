@@ -7,8 +7,16 @@ const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf
 const uploadRoute = readFileSync(new URL("../app/api/reconciliation/court-revenue/[period]/finalization/upload/route.ts", import.meta.url), "utf8");
 
 test("finalization UI requires an attachment, preview, confirmation, and unlock reason", () => {
-  assert.match(page, /Upload Berita Acara/);
-  assert.match(page, /Preview Finalisasi/);
+  assert.match(page, /Upload File/);
+  assert.match(page, /Pilih File/);
+  assert.match(page, />Simpan</);
+  // V6: tombol "Preview Finalisasi" user-facing dihapus total (relabel jadi
+  // "Simpan" tanpa melemahkan precondition preview di backend — lihat
+  // lib/reconciliation-omzet-period-lock.ts lockOmzetPeriodFinalization).
+  assert.doesNotMatch(page, /Preview Finalisasi/);
+  assert.doesNotMatch(page, /Upload Berita Acara/);
+  assert.match(page, /Berita Acara berhasil diunggah/);
+  assert.match(page, /Finalisasi berhasil disimpan\./);
   assert.match(page, /Konfirmasi finalisasi periode/);
   assert.match(page, /Buka Kunci/);
   assert.match(page, /Alasan buka kunci/);
@@ -30,10 +38,10 @@ test("V5: kontrol finalisasi (input file, upload, nominal, alasan, preview, kunc
   assert.doesNotMatch(page, /\{finalization\?\.attachment && finalization\?\.status !== "locked" && \(/, "root cause lama: gating salah mensyaratkan attachment sebelum menampilkan form upload");
   assert.match(page, /\{finalization\?\.status !== "locked" && \(/);
   assert.match(page, /type="file" accept="\.pdf,\.jpg,\.jpeg,\.png,application\/pdf,image\/jpeg,image\/png"/);
-  assert.match(page, /Upload Berita Acara/);
+  assert.match(page, /Upload File/);
   assert.match(page, /Nominal final disepakati/);
   assert.match(page, /Alasan penyesuaian/);
-  assert.match(page, /Preview Finalisasi/);
+  assert.match(page, />Simpan</);
   assert.match(page, />[\s\S]{0,30}Kunci Periode</);
 });
 
