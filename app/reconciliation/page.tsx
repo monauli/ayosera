@@ -4,6 +4,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { AlertTriangle, ChevronRight, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
+import { analyzeBeritaAcaraFileClient, STATUS_READING } from "@/lib/reconciliation-berita-acara-client-ocr";
 
 type LedgerEntry = { transactionNo: string | null; transactionDate: string | null; description: string | null; debit: number; credit: number };
 type AccountBreakdown = {
@@ -173,6 +174,7 @@ export default function ReconciliationPage() {
   const [analysis, setAnalysis] = useState<BeritaAcaraAnalysis | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
+  const [analysisStatus, setAnalysisStatus] = useState("");
   const [showFinalLockConfirm, setShowFinalLockConfirm] = useState(false);
   const [showUnlock, setShowUnlock] = useState(false);
   const [unlockReason, setUnlockReason] = useState("");
@@ -230,8 +232,15 @@ export default function ReconciliationPage() {
     }
   };
 
+  // Fallback: dipakai saat TIDAK ada objek File lokal (mis. membuka kembali
+  // periode dengan attachment yang sudah tersimpan dari sesi sebelumnya) —
+  // baca via server (lib/reconciliation-berita-acara-ocr.ts). Untuk PDF hasil
+  // scan, server jujur melaporkan pdf-scanned-unsupported/PERLU_REVIEW
+  // (rasterisasi PDF butuh binary native yang dilarang di server); jalur
+  // BROWSER (analyzeFileClient di bawah, dipakai persis setelah upload saat
+  // File masih ada di tangan) yang benar-benar men-support PDF hasil scan.
   const analyzeAttachment = async (period: string) => {
-    setAnalysisLoading(true); setAnalysisError(""); setAnalysis(null);
+    setAnalysisLoading(true); setAnalysisError(""); setAnalysis(null); setAnalysisStatus("");
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}/finalization/analyze`, { method: "POST" });
       const data = await response.json().catch(() => null);
@@ -254,6 +263,35 @@ export default function ReconciliationPage() {
     }
   };
 
+  // Analisis BROWSER-SIDE: dipakai persis setelah upload, saat File yang
+  // dipilih user masih tersedia di memori (lib/reconciliation-berita-acara-client-ocr.ts).
+  // Ini satu-satunya jalur yang benar-benar men-support PDF Berita Acara hasil
+  // scan (image-only) — server tidak bisa rasterisasi PDF tanpa binary native.
+  // Kegagalan APA PUN (OCR crash, PDF korup, dsb.) TIDAK PERNAH ditebak —
+  // langsung jatuh ke pesan fallback manual di bawah, dan status pencocokan
+  // tidak pernah diisi otomatis.
+  const analyzeFileClient = async (file: File) => {
+    setAnalysisLoading(true); setAnalysisError(""); setAnalysis(null); setAnalysisStatus(STATUS_READING);
+    try {
+      const systemDifference = detail?.differenceRevenue ?? 0;
+      const result = await analyzeBeritaAcaraFileClient(file, systemDifference, { onStatus: setAnalysisStatus });
+      setAnalysis(result);
+      if (result.reason) setFinalReason((current) => current || result.reason!);
+      setFinalPreview(null);
+      setShowFinalLockConfirm(false);
+    } catch (e) {
+      console.error("[reconciliation:client-ocr]", e);
+      // Dokumen belum dapat dibaca otomatis — user tetap bisa lanjut lewat
+      // isian manual (nominal/arah/alasan) di bawah, preview tetap wajib
+      // sebelum Kunci Periode (canLockFinalization tidak pernah otomatis
+      // meloloskan status ini).
+      setAnalysisError("Dokumen belum dapat dibaca otomatis. Periksa dan isi data secara manual.");
+    } finally {
+      setAnalysisLoading(false);
+      setAnalysisStatus("");
+    }
+  };
+
   const finalizationRequest = async (path: string, init: RequestInit) => {
     if (!selectedPeriod) throw new Error("Periode belum dipilih.");
     const response = await fetch(`/api/reconciliation/court-revenue/${selectedPeriod}/finalization/${path}`, init);
@@ -263,7 +301,7 @@ export default function ReconciliationPage() {
   };
   const uploadFinalAttachment = async () => {
     if (!finalFile) return; setFinalBusy(true); setFinalError("");
-    try { const form = new FormData(); form.set("file", finalFile); if (finalization) form.set("version", String(finalization.version)); const data = await finalizationRequest("upload", { method: "POST", body: form }); setFinalization(data.data); setFinalFile(null); setFinalPreview(null); setShowFinalLockConfirm(false); if (selectedPeriod) void analyzeAttachment(selectedPeriod); }
+    try { const uploadedFile = finalFile; const form = new FormData(); form.set("file", finalFile); if (finalization) form.set("version", String(finalization.version)); const data = await finalizationRequest("upload", { method: "POST", body: form }); setFinalization(data.data); setFinalFile(null); setFinalPreview(null); setShowFinalLockConfirm(false); void analyzeFileClient(uploadedFile); }
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal mengunggah berita acara."); }
     finally { setFinalBusy(false); }
   };
@@ -495,7 +533,7 @@ export default function ReconciliationPage() {
                   ) : <p className="recon-before">Unggah berita acara PDF/JPG/JPEG/PNG (maks. 10MB) sebelum preview dan lock.</p>}
                   {finalization?.attachment && finalization?.status !== "locked" && (
                     <>
-                      {analysisLoading && <p className="recon-before">Membaca berita acara secara otomatis…</p>}
+                      {analysisLoading && <p className="recon-before">{analysisStatus || "Membaca berita acara..."}</p>}
                       {analysisError && <p className="recon-error">{analysisError} <button className="recon-link" onClick={() => selectedPeriod && void analyzeAttachment(selectedPeriod)}>Coba baca ulang</button></p>}
                       {analysis && (
                         <section className="recon-detail-grid" aria-label="Hasil baca otomatis Berita Acara">

@@ -6,7 +6,13 @@
 //   (C) alasan singkat, DIAMBIL dari teks dokumen — tidak pernah dikarang.
 // Jika sinyal ambigu/tidak ditemukan/OCR confidence rendah -> status
 // PERLU_REVIEW, BUKAN tebakan.
-import "server-only";
+//
+// CATATAN: modul ini SENGAJA tidak ditandai "server-only" — dipakai baik di
+// server (lib/reconciliation-berita-acara-ocr.ts, API route analyze) maupun
+// di BROWSER (lib/reconciliation-berita-acara-client-ocr.ts, untuk PDF hasil
+// scan yang di-OCR di sisi klien). Modul ini murni fungsi (tanpa I/O), jadi
+// aman dijalankan di kedua lingkungan — tetap SATU-SATUNYA sumber kebenaran
+// parsing, jangan digandakan/di-fork di sisi klien.
 
 export type BeritaAcaraDirection = "PENAMBAHAN" | "PENGURANGAN";
 export type BeritaAcaraParseStatus = "OK" | "PERLU_REVIEW";
@@ -48,11 +54,36 @@ const PENAMBAHAN_PATTERN = /\b(penambahan|ditambahkan|menambah(?:kan)?|tambah(?:
 const PENGURANGAN_PATTERN = /\b(pengurangan|dikurangkan|mengurangi|kurang(?:i|an)?)\b/i;
 const REASON_FIELD_PATTERN = /(?:alasan|keterangan)\s*[:\-]\s*(.+)/i;
 
-function firstLineContaining(text: string, index: number): string {
-  const start = text.lastIndexOf("\n", index) + 1;
-  const nextNewline = text.indexOf("\n", index);
-  const end = nextNewline === -1 ? text.length : nextNewline;
-  return text.slice(start, end).trim();
+/** Bersihkan artefak spasi/baris OCR (spasi ganda, baris terpotong) tanpa mengubah kata. */
+function cleanOcrWhitespace(s: string): string {
+  return s
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, " ")
+    .trim();
+}
+
+/**
+ * Cari kalimat/paragraf di sekitar `index` (biasanya posisi nominal) yang
+ * menjelaskan penyesuaian — bukan cuma satu baris pendek, karena OCR/PDF
+ * sering membungkus kalimat panjang jadi banyak baris pendek. Batas kalimat
+ * dicari via tanda titik/titik-koma/baris-baru terdekat sebelum & sesudah
+ * index; TIDAK PERNAH menambah kata yang tidak ada di teks sumber.
+ */
+// Batas kalimat/paragraf: "." atau ";" yang TIDAK diikuti digit (supaya
+// tidak salah potong di dalam nominal seperti "Rp500.000"), atau baris
+// kosong (ganti paragraf). Baris baru TUNGGAL bukan batas — dokumen/OCR
+// sering membungkus satu kalimat jadi beberapa baris pendek berturutan.
+const SENTENCE_BOUNDARY_PATTERN = /[.;](?!\d)|\n{2,}/g;
+
+function sentenceContaining(text: string, index: number): string {
+  const before = text.slice(0, index);
+  const boundaries = [...before.matchAll(SENTENCE_BOUNDARY_PATTERN)];
+  const lastBoundary = boundaries.at(-1);
+  const start = lastBoundary ? (lastBoundary.index ?? 0) + 1 : 0;
+  const after = text.slice(index);
+  const afterBoundary = [...after.matchAll(SENTENCE_BOUNDARY_PATTERN)][0];
+  const end = afterBoundary ? index + (afterBoundary.index ?? 0) + 1 : text.length;
+  return text.slice(start, end);
 }
 
 /** Cari nominal terbesar/paling meyakinkan dalam teks (biasanya nominal utama BA). */
@@ -80,13 +111,22 @@ function extractDirection(text: string): BeritaAcaraDirection | null {
 
 function extractReason(text: string, nominalIndex: number | null): string | null {
   const explicit = text.match(REASON_FIELD_PATTERN);
-  if (explicit?.[1]) {
-    const reason = explicit[1].split(/\r?\n/)[0].trim().replace(/[.;]+$/, "");
+  if (explicit?.[1] && explicit.index !== undefined) {
+    // Ambil sampai paragraf berakhir (baris kosong berikutnya), bukan hanya
+    // baris pertama — dokumen/OCR sering membungkus kalimat panjang jadi
+    // beberapa baris pendek berturutan setelah label "Alasan:"/"Keterangan:".
+    const labelEnd = explicit.index + explicit[0].indexOf(explicit[1]);
+    const paragraphEnd = text.indexOf("\n\n", labelEnd);
+    const block = paragraphEnd === -1 ? text.slice(labelEnd) : text.slice(labelEnd, paragraphEnd);
+    const reason = cleanOcrWhitespace(block).replace(/[.;]+$/, "").trim();
     if (reason) return reason;
   }
   if (nominalIndex !== null) {
-    const line = firstLineContaining(text, nominalIndex);
-    if (line) return line;
+    // Tidak ada label eksplisit: ambil kalimat/paragraf di sekitar nominal
+    // yang menjelaskan penambahan/pengurangan (verbatim dari sumber, hanya
+    // dibersihkan artefak spasi OCR — tidak pernah dikarang).
+    const sentence = cleanOcrWhitespace(sentenceContaining(text, nominalIndex)).replace(/[.;]+$/, "").trim();
+    if (sentence) return sentence;
   }
   return null;
 }

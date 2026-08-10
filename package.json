@@ -64,7 +64,7 @@
     "test:reconciliation-omzet-ledger": "tsx --conditions=react-server --test lib/reconciliation-omzet-ledger.test.ts lib/reconciliation-omzet-ui.test.ts",
     "test:reconciliation-omzet-notes": "tsx --conditions=react-server --test lib/reconciliation-omzet-note-store.test.ts",
     "test:reconciliation-period-lock": "tsx --conditions=react-server --test lib/reconciliation-omzet-period-lock.test.ts",
-    "test:reconciliation-berita-acara": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/reconciliation-berita-acara-parser.test.ts lib/reconciliation-berita-acara-ocr.test.ts",
+    "test:reconciliation-berita-acara": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/reconciliation-berita-acara-parser.test.ts lib/reconciliation-berita-acara-ocr.test.ts lib/reconciliation-berita-acara-client-ocr.test.ts",
     "test:reconciliation-period-lock-ui": "node --no-warnings --experimental-strip-types --test lib/reconciliation-omzet-period-lock-ui.test.ts",
     "test:private-integration-monitor": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/private-integration-monitor.test.ts lib/ayo-data-gap.test.ts lib/olsera-sales-gap.test.ts lib/connection-health.test.ts",
     "test:audit-sync-menu-ui": "node --no-warnings --experimental-strip-types --test lib/audit-sync-menu-ui.test.ts",
