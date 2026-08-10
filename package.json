@@ -147,7 +147,6 @@
     "postcss": "^8.5.15",
     "tailwindcss": "^4.1.12",
     "tsx": "^4.23.1",
-    "typescript": "^5.9.3",
-    "xlsx": "^0.18.5"
+    "typescript": "^5.9.3"
   }
 }

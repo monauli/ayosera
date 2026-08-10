@@ -15,7 +15,7 @@
 //
 // Jalankan: node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/bootstrap-monthly-snapshot-baseline.ts
 import path from "path";
-import XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { normalizeItemName, stripGenericCategoryPrefix, type InventoryProductInput } from "../lib/olsera-inventory-monthly-core.ts";
 import { dominantStoreId, lastDayOfMonth, monthlySnapshotDocId, stripDuplicateSuffix } from "../lib/olsera-inventory-monthly-snapshot-core.ts";
 import { fetchMatchingContext, getMongoMonthlySnapshotRepo } from "../lib/olsera-inventory-monthly-snapshot-store.ts";
@@ -52,27 +52,44 @@ type BaselineRow = {
   stockAkhir: number;
 };
 
-function readBaselineRows(): BaselineRow[] {
-  const wb = XLSX.readFile(BASELINE_PATH);
-  const sheet = wb.Sheets[SHEET_NAME];
+/**
+ * Nilai sel apa adanya; sel formula (jarang di file baseline ini) memakai
+ * hasil terhitungnya. Sel merge yang BUKAN sel jangkar (master) dianggap
+ * kosong — exceljs mengisi nilai master ke seluruh sel dalam rentang merge
+ * saat dibaca, sedangkan `xlsx` (library lama) hanya menyimpan nilai di sel
+ * jangkar. Tanpa ini, baris judul bertitel "Laporan Stock Opname" (merge
+ * lebar di baris 1) ikut lolos filter group/name karena kolom B (name) jadi
+ * berisi teks judul, bukan kosong seperti pada `xlsx`.
+ */
+function cellValue(cell: ExcelJS.Cell): unknown {
+  if (cell.isMerged && cell.master !== cell) return null;
+  const v = cell.value;
+  if (v && typeof v === "object" && "result" in (v as unknown as Record<string, unknown>)) return (v as unknown as { result: unknown }).result;
+  return v;
+}
+
+async function readBaselineRows(): Promise<BaselineRow[]> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(BASELINE_PATH);
+  const sheet = workbook.getWorksheet(SHEET_NAME);
   if (!sheet) throw new Error(`Sheet "${SHEET_NAME}" tidak ditemukan di ${BASELINE_PATH}.`);
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true }) as unknown[][];
   const result: BaselineRow[] = [];
-  for (const row of rows) {
-    const group = String(row[0] ?? "").trim();
-    const name = String(row[1] ?? "").trim();
-    if (!group || !name) continue; // lewati baris judul/header tanpa data (Group/Nama kosong)
-    if (group.toLowerCase() === "total" || group.toLowerCase() === "group" || name.toLowerCase() === "nama barang") continue; // lewati baris Total & baris header kolom itu sendiri
+  sheet.eachRow({ includeEmpty: true }, (row) => {
+    const cell = (col: number) => cellValue(row.getCell(col));
+    const group = String(cell(1) ?? "").trim(); // kolom A
+    const name = String(cell(2) ?? "").trim(); // kolom B
+    if (!group || !name) return; // lewati baris judul/header tanpa data (Group/Nama kosong)
+    if (group.toLowerCase() === "total" || group.toLowerCase() === "group" || name.toLowerCase() === "nama barang") return; // lewati baris Total & baris header kolom itu sendiri
     result.push({
       group,
       name,
-      stokAwal: Number(row[4]) || 0,
-      barangMasuk: Number(row[5]) || 0,
-      penjualan: Number(row[36]) || 0,
-      keluar: Number(row[37]) || 0,
-      stockAkhir: Number(row[38]) || 0,
+      stokAwal: Number(cell(5)) || 0, // kolom E
+      barangMasuk: Number(cell(6)) || 0, // kolom F
+      penjualan: Number(cell(37)) || 0, // kolom AK
+      keluar: Number(cell(38)) || 0, // kolom AL
+      stockAkhir: Number(cell(39)) || 0, // kolom AM
     });
-  }
+  });
   return result;
 }
 
@@ -143,7 +160,7 @@ function matchProduct(
 
 async function main() {
   console.log(`Membaca baseline: ${BASELINE_PATH} sheet "${SHEET_NAME}"...`);
-  const baselineRows = readBaselineRows();
+  const baselineRows = await readBaselineRows();
   console.log(`  ${baselineRows.length} baris produk terbaca.`);
 
   const groups = new Set(baselineRows.map((r) => r.group));

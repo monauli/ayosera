@@ -28,12 +28,25 @@ import {
   parseSummaryWorkbookBuffer,
 } from "../lib/olsera-inventory-monthly-export.ts";
 import type { InventoryProductInput } from "../lib/olsera-inventory-core.ts";
-import XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 const DOC_DIR = path.join(process.cwd(), "doc export");
 const SUMMARY_PATH = path.join(DOC_DIR, "summary-2026-06-01__2026-06-30.xlsx");
 const INVENTORI_PATH = path.join(DOC_DIR, "INVENTORI.xlsx");
 const OUTPUT_PATH = path.join(DOC_DIR, "Laporan Stock Opname-2026-06 (uji, tanpa Mongo live).xlsx");
+
+/**
+ * Nilai sel apa adanya; sel formula memakai hasil terhitungnya. Sel merge
+ * yang bukan sel jangkar (master) dianggap kosong — lihat catatan yang sama
+ * di scripts/bootstrap-monthly-snapshot-baseline.ts (baris judul merge lebar
+ * akan ikut lolos filter kalau tidak ditangani).
+ */
+function invCellValue(cell: ExcelJS.Cell): unknown {
+  if (cell.isMerged && cell.master !== cell) return null;
+  const v = cell.value;
+  if (v && typeof v === "object" && "result" in (v as unknown as Record<string, unknown>)) return (v as unknown as { result: unknown }).result;
+  return v;
+}
 
 async function main() {
   const summaryBuffer = await readFile(SUMMARY_PATH);
@@ -46,21 +59,25 @@ async function main() {
 
   // Katalog + penjualan harian dari INVENTORI.xlsx (lihat catatan di atas —
   // pengganti sementara katalog/movement live karena DB tidak terjangkau).
-  const wb = XLSX.readFile(INVENTORI_PATH);
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const invRows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }) as unknown[][];
+  const invWorkbook = new ExcelJS.Workbook();
+  await invWorkbook.xlsx.readFile(INVENTORI_PATH);
+  const ws = invWorkbook.worksheets[0];
 
   const priceByName = new Map<string, { buyPrice: number; sellPrice: number }>();
   const dailyByName = new Map<string, number[]>();
-  for (let r = 3; r < invRows.length; r++) {
-    const row = invRows[r];
-    const name = String(row[1] ?? "").trim();
-    if (!name) continue;
-    priceByName.set(name, { buyPrice: Number(row[2]) || 0, sellPrice: Number(row[3]) || 0 });
+  ws.eachRow({ includeEmpty: true }, (row) => {
+    if (row.number <= 3) return; // 3 baris pertama = header
+    const cell = (col: number) => invCellValue(row.getCell(col));
+    const name = String(cell(2) ?? "").trim(); // kolom B
+    if (!name) return;
+    priceByName.set(name, { buyPrice: Number(cell(3)) || 0, sellPrice: Number(cell(4)) || 0 }); // kolom C, D
     const days: number[] = [];
-    for (let c = 6; c <= 35; c++) days.push(row[c] === "" ? 0 : Number(row[c]));
+    for (let c = 7; c <= 36; c++) { // kolom G..AJ
+      const v = cell(c);
+      days.push(v === "" || v === null || v === undefined ? 0 : Number(v));
+    }
     dailyByName.set(name, days);
-  }
+  });
 
   // Katalog fixture: memakai nama KANONIK dari INVENTORI.xlsx (mensimulasikan
   // katalog Mongo olsera_inventory_products) — SENGAJA BUKAN nama dari file
