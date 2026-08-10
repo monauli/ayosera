@@ -19,9 +19,43 @@ test("nonce yang diberikan muncul persis di script-src (skrip bootstrap tema bis
   assert.ok(csp.includes("'nonce-my-unique-nonce-value'"));
 });
 
-test("production: tidak ada 'unsafe-eval' (tidak melemahkan proteksi XSS demi kemudahan)", () => {
+// CATATAN V7: dicek sebagai token persis "'unsafe-eval'" (dengan quote),
+// BUKAN substring "unsafe-eval" mentah — 'wasm-unsafe-eval' (ditambahkan V7
+// untuk mengizinkan kompilasi WebAssembly mesin OCR tesseract.js, lihat
+// buildContentSecurityPolicy) secara sengaja MENGANDUNG substring yang sama
+// tapi adalah primitif CSP berbeda dan jauh lebih sempit: hanya mengizinkan
+// WebAssembly.compile/instantiate, TIDAK mengizinkan eval()/Function() JS
+// string-to-code seperti 'unsafe-eval'. Assertion substring lama akan salah
+// gagal (false positive) begitu 'wasm-unsafe-eval' ditambahkan.
+test("production: tidak ada 'unsafe-eval' JS penuh (tidak melemahkan proteksi XSS demi kemudahan) — 'wasm-unsafe-eval' (WASM saja) TETAP diizinkan", () => {
   const csp = buildContentSecurityPolicy("n", false);
-  assert.equal(csp.includes("unsafe-eval"), false);
+  assert.equal(csp.includes("'unsafe-eval'"), false);
+  assert.ok(csp.includes("'wasm-unsafe-eval'"), "WASM mesin OCR tesseract.js butuh ini");
+});
+
+// V7: root cause OCR Berita Acara tidak pernah tampil di UI setelah upload —
+// tesseract.js (client-side OCR, lib/reconciliation-berita-acara-client-ocr.ts)
+// diam-diam gagal di production karena CSP lama menolak fetch CDN
+// worker/core/lang-data-nya, blob: worker, dan kompilasi WASM. Test ini
+// adalah regresi yang SEHARUSNYA menangkap bug itu dari awal — beda dengan
+// reconciliation-berita-acara-client-ocr.test.ts yang mock.module tesseract.js
+// total sehingga tidak pernah benar-benar melewati CSP.
+test("V7: CSP mengizinkan tepat apa yang dibutuhkan mesin OCR client-side tesseract.js (host CDN resmi npm-mirror, blob: worker, WASM) — TIDAK lebih longgar dari itu", () => {
+  const csp = buildContentSecurityPolicy("n", false);
+  const connectSrc = csp.split(";").find((d) => d.trim().startsWith("connect-src"))!;
+  const workerSrc = csp.split(";").find((d) => d.trim().startsWith("worker-src"))!;
+  assert.ok(connectSrc.includes("https://cdn.jsdelivr.net"), "workerPath/corePath/langPath default tesseract.js");
+  assert.ok(workerSrc.includes("'self'") && workerSrc.includes("blob:"), "tesseract.js workerBlobURL:true -> new Worker(blob:...)");
+  // Tidak wildcard sembarang host lain.
+  assert.equal(connectSrc.includes("*"), false);
+});
+
+test("V7: img-src dan frame-src mengizinkan *.public.blob.vercel-storage.com (satu-satunya origin lampiran Berita Acara publik) untuk preview PDF/gambar tanpa proxy", () => {
+  const csp = buildContentSecurityPolicy("n", false);
+  const imgSrc = csp.split(";").find((d) => d.trim().startsWith("img-src"))!;
+  const frameSrc = csp.split(";").find((d) => d.trim().startsWith("frame-src"))!;
+  assert.ok(imgSrc.includes("https://*.public.blob.vercel-storage.com"));
+  assert.ok(frameSrc.includes("https://*.public.blob.vercel-storage.com"));
 });
 
 test("development: 'unsafe-eval' diizinkan (Fast Refresh butuh eval) tanpa mengubah production", () => {

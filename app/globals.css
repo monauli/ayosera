@@ -805,3 +805,25 @@ th[scope],
 .recon-confirm-overlay{position:fixed;inset:0;z-index:90;display:grid;place-items:center;background:rgb(0 0 0 / .45);padding:1rem}.recon-confirm-box{max-width:420px;width:100%;border:1px solid rgb(var(--rd-card-border));border-radius:.75rem;background:rgb(var(--rd-panel-bg) / .98);padding:1.25rem;display:grid;gap:.75rem}.recon-confirm-box h3{margin:0;color:rgb(var(--rd-text));font-size:1rem}.recon-confirm-box p{margin:0;color:rgb(var(--rd-text-secondary));font-size:.85rem}
 .recon-opname-cell{display:flex;align-items:center;gap:.35rem}.recon-opname-input{width:5.5rem;min-width:0;border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha));border-radius:.4rem;background:rgb(var(--rd-surface) / var(--rd-surface-alpha));color:rgb(var(--rd-text));padding:.35rem .5rem;font:inherit}.recon-opname-input:disabled{opacity:.55;cursor:not-allowed}.recon-opname-clear{border:0;background:transparent;color:rgb(var(--rd-text-muted));cursor:pointer;padding:.15rem}.recon-opname-clear:hover{color:rgb(225 29 72)}.recon-opname-clear:disabled{opacity:.3;cursor:not-allowed}.recon-form textarea.recon-opname-note{min-height:3.5rem}
 @media (max-width:1100px){.recon-filters{grid-template-columns:repeat(3,minmax(0,1fr))}.recon-cards{grid-template-columns:repeat(5,minmax(0,1fr))}.recon-readiness{grid-template-columns:repeat(3,minmax(0,1fr))}.recon-table{font-size:.75rem}.recon-table th,.recon-table td{padding:.6rem .5rem}}@media (max-width:720px){.recon-page{padding:1rem}.recon-header{align-items:stretch;flex-direction:column}.recon-header .recon-button{align-self:flex-start}.recon-filters{grid-template-columns:repeat(2,minmax(0,1fr));padding:.75rem}.recon-keyword{grid-column:span 2}.recon-cards,.recon-readiness{grid-template-columns:repeat(3,minmax(0,1fr))}.recon-card{padding:.6rem}.recon-table{display:none}.recon-mobile-list{display:grid;gap:.5rem;padding:.7rem}.recon-mobile-card{display:flex;justify-content:space-between;gap:.5rem;width:100%;border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha));border-radius:.55rem;background:rgb(var(--rd-surface) / var(--rd-surface-alpha));color:rgb(var(--rd-text-secondary));padding:.65rem;text-align:left}.recon-mobile-card strong,.recon-mobile-card span{display:block;overflow-wrap:anywhere}.recon-mobile-card span{margin-top:.2rem;color:rgb(var(--rd-text-muted));font-size:.7rem}.recon-mobile-card>div:last-child{display:grid;align-content:start;gap:.25rem}.recon-pagination{justify-content:space-between;flex-wrap:wrap}.recon-detail-grid,.recon-json-grid{grid-template-columns:1fr}.recon-resolution{display:grid}.recon-actions{justify-content:flex-start;flex-wrap:wrap}.recon-drawer{width:100vw}.recon-drawer-body{padding:1rem}}
+
+/* V7: preview Berita Acara (PDF/gambar) langsung dari Blob URL publik
+   (lib/blob-storage.ts, access:"public") — lihat lib/csp.ts img-src/frame-src
+   untuk origin yang diizinkan. Scrollable + cukup besar untuk dibaca, tapi
+   tidak pernah melebar keluar drawer (overflow-x:auto di container, bukan di
+   body). */
+.recon-ba-preview{display:grid;gap:.45rem}
+.recon-ba-preview-frame-wrap{position:relative;width:100%;height:min(70vh,640px);min-height:320px;overflow:auto;border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha));border-radius:.55rem;background:rgb(var(--rd-surface) / var(--rd-surface-alpha))}
+.recon-ba-preview-frame-wrap iframe{width:100%;height:100%;border:0;display:block}
+.recon-ba-preview-image-wrap{width:100%;max-height:70vh;overflow:auto;border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha));border-radius:.55rem;background:rgb(var(--rd-surface) / var(--rd-surface-alpha));padding:.5rem;text-align:center}
+.recon-ba-preview-image-wrap img{max-width:100%;height:auto;display:inline-block;border-radius:.35rem}
+.recon-ba-preview-unsupported{margin:0;padding:.65rem;border:1px dashed rgb(var(--rd-border) / var(--rd-border-alpha));border-radius:.55rem;color:rgb(var(--rd-text-tertiary));font-size:.78rem}
+
+/* V7: 3 kartu hasil pencocokan Berita Acara (Selisih Sistem/Nominal Berita
+   Acara/Hasil Pencocokan) — reuse .recon-sport-card (bukan style baru) dan
+   .recon-badge-{ok|warn|danger} yang sudah ada untuk Hasil Pencocokan (Goal
+   4: skema warna status konsisten, tidak diciptakan baru). */
+.recon-ba-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem}
+.recon-ba-cards .recon-sport-card{display:grid;gap:.3rem;align-content:start}
+.recon-ba-cards .recon-sport-card span{color:rgb(var(--rd-text-muted));font-size:.68rem}
+.recon-ba-cards .recon-sport-card b{font-size:.95rem;overflow-wrap:anywhere}
+@media (max-width:720px){.recon-ba-cards{grid-template-columns:1fr}.recon-ba-preview-frame-wrap{height:min(60vh,480px)}}

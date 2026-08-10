@@ -60,6 +60,60 @@ test("upload route enforces supervisor authorization and server-side validation"
   assert.match(uploadRoute, /validateOmzetPeriodLockAttachment\(file\)/);
 });
 
+// ---------------------------------------------------------------------------
+// V7: root cause fix regression — upload sukses harus otomatis memicu
+// analisis (Goal 3), preview PDF/gambar harus dirender (Goal 2), dan hasil
+// analisis harus benar-benar dipakai untuk auto-fill (Goal 6/7), bukan cuma
+// disimpan ke state yang tidak pernah dibaca render. Ini melengkapi test
+// EXECUTABLE di lib/reconciliation-berita-acara-ui.test.ts (logika murni)
+// dan lib/csp.test.ts (root cause CSP sungguhan) — test string di sini
+// mengunci WIRING-nya benar-benar terpasang di JSX/handler.
+// ---------------------------------------------------------------------------
+test("V7: upload sukses memicu analyzeFileClient otomatis TANPA klik kedua (Goal 3)", () => {
+  assert.match(page, /setUploadSuccessMessage\("Berita Acara berhasil diunggah"\);\s*void analyzeFileClient\(uploadedFile\)/);
+});
+
+test("V7: preview Berita Acara (PDF via iframe, gambar via img) dirender begitu attachment ada, lepas dari status lock/OCR (Goal 2/10)", () => {
+  assert.match(page, /\{finalization\?\.attachment && <BeritaAcaraPreview attachment=\{finalization\.attachment\} \/>\}/);
+  assert.match(page, /function BeritaAcaraPreview/);
+  assert.match(page, /<iframe src=\{attachment\.url\}/);
+  assert.match(page, /<img src=\{attachment\.url\}/);
+  assert.match(page, />\s*Buka File/);
+  assert.match(styles, /\.recon-ba-preview-frame-wrap/);
+  assert.match(styles, /\.recon-ba-preview-image-wrap/);
+});
+
+test("V7: 3 kartu hasil (Selisih Sistem/Nominal Berita Acara/Hasil Pencocokan) dirender dari state `analysis`, reuse recon-badge (bukan warna baru) (Goal 4)", () => {
+  assert.match(page, /\{analysis && <BeritaAcaraResultCards analysis=\{analysis\} \/>\}/);
+  assert.match(page, /function BeritaAcaraResultCards/);
+  assert.match(page, /Selisih Sistem/);
+  assert.match(page, /Nominal Berita Acara/);
+  assert.match(page, /Hasil Pencocokan/);
+  assert.match(page, /recon-badge recon-badge-\$\{cards\.matchTone\}/);
+});
+
+test("V7: hasil analisis (nominal final + alasan) benar-benar diterapkan ke state lewat applyAnalysisResult, bukan cuma disimpan tanpa dipakai (Goal 6/7)", () => {
+  assert.match(page, /const applyAnalysisResult = \(result: BeritaAcaraAnalysis, originalOlseraAmount: number\) => \{/);
+  assert.match(page, /nextReasonAfterAnalysis\(\{ current, userEdited: reasonEditedByUser, parsedReason: result\.reason \}\)/);
+  assert.match(page, /computeAutoFinalAgreedAmount\(\{ originalOlseraAmount, analysis: result \}\)/);
+  assert.match(page, /applyAnalysisResult\(data\.data as BeritaAcaraAnalysis, originalOlseraAmount\)/);
+  assert.match(page, /applyAnalysisResult\(result, detail\?\.olseraTotal \?\? 0\)/);
+});
+
+test("V7: edit manual alasan dilacak (reasonEditedByUser) dan direset saat dokumen/periode baru (Goal 6/CRITICAL)", () => {
+  assert.match(page, /const \[reasonEditedByUser, setReasonEditedByUser\] = useState\(false\);/);
+  assert.match(page, /setFinalReason\(event\.target\.value\); setReasonEditedByUser\(true\)/);
+  assert.match(page, /setReasonEditedByUser\(false\);\s*try \{ const uploadedFile = finalFile;/);
+  assert.match(page, /setReasonEditedByUser\(false\);\s*try \{\s*const response = await fetch\(`\/api\/reconciliation\/court-revenue\/\$\{period\}`/);
+});
+
+test("V7: gating Simpan/Kunci memakai fungsi murni yang bisa dites (canSaveBeritaAcaraFinalization/canLockAfterSave), bukan kondisi ad-hoc di JSX (Goal 8/9)", () => {
+  assert.match(page, /disabled=\{!canSaveFinalization\}/);
+  assert.match(page, /disabled=\{!canLockFinalization\}/);
+  assert.match(page, /const canSaveFinalization = canSaveBeritaAcaraFinalization\(/);
+  assert.match(page, /const canLockFinalization = canLockAfterSave\(/);
+});
+
 test("detail reconciliation stays compact: desktop 2+1 grid, accessible disclosures, and mobile single column", () => {
   assert.match(page, /className=\{`recon-sport-card\$\{wide \? " recon-sport-card-wide" : ""\}`\}/);
   assert.match(page, /title="COURT"/); assert.match(page, /title="PICKLEBALL"/); assert.match(page, /title="TOTAL GABUNGAN"/);
