@@ -490,39 +490,13 @@ export default function ReconciliationPage() {
                 </CollapsibleSection>
               )}
 
-              <CollapsibleSection title="Verifikasi Reklasifikasi">
-              <section className="recon-detail-grid">
-                <div>
-                  <span>Jumlah booking AYO eligible</span>
-                  <b>{detail.ayo.count}</b>
-                </div>
-                <div>
-                  <span>Verifikasi reklasifikasi 40004 → 21003</span>
-                  <b>{detail.pickleballVerification.applicable ? (detail.pickleballVerification.verified ? "Terverifikasi" : detail.pickleballVerification.verified === false ? "Belum terverifikasi" : "Belum dapat dipastikan") : "Tidak berlaku (tidak ada aktivitas 40004)"}</b>
-                </div>
-                <div>
-                  <span>Alasan verifikasi</span>
-                  <b>{detail.pickleballVerification.reason}</b>
-                </div>
-                <div>
-                  <span>Total Omzet Olsera final (40001+40004)</span>
-                  <b>{formatRupiah(detail.olseraTotal)}</b>
-                </div>
-                <div>
-                  <span>Selisih (Olsera − AYO)</span>
-                  <b>{formatRupiah(detail.differenceRevenue)}</b>
-                </div>
-                <div>
-                  <span>Status</span>
-                  <div style={{ display: "flex", gap: ".35rem", flexWrap: "wrap" }}>
-                    {/*
-                    <StatusBadge status={detail.status} /> {detail.explanation?.locked && <LockBadge />}
-                    */}
-                    <StatusBadge status={reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue)} /> {detail.explanation?.locked && <LockBadge />}
-                  </div>
-                </div>
-              </section>
-              </CollapsibleSection>
+              {/*
+                V5: accordion detail teknis reklasifikasi 40004 -> 21003 dihapus
+                dari tampilan atas permintaan (membingungkan sebagian besar user).
+                Data dan logika backend (detail.pickleballVerification, dsb.)
+                TIDAK dihapus -- tetap dikirim API dan tetap dipakai internal oleh
+                engine rekonsiliasi bila perlu; hanya rendernya yang dihilangkan.
+              */}
 
               {finalization?.status === "locked" && <p className="recon-lock-summary"><Lock size={14} /> Cocok â€” Terkunci · Detail Penyesuaian tersedia di Berita Acara dan Finalisasi.</p>}
               {supervisor && (
@@ -531,7 +505,7 @@ export default function ReconciliationPage() {
                   {finalization?.attachment ? (
                     <p className="recon-before"><Paperclip size={12} /> {finalization.attachment.fileName} ({Math.ceil(finalization.attachment.size / 1024)} KB) â€” diunggah {dateTimeLabel(finalization.attachment.uploadedAt)} oleh {finalization.attachment.uploadedBy} <a className="recon-link" href={finalization.attachment.url} target="_blank" rel="noreferrer">Lihat</a></p>
                   ) : <p className="recon-before">Unggah berita acara PDF/JPG/JPEG/PNG (maks. 10MB) sebelum preview dan lock.</p>}
-                  {finalization?.attachment && finalization?.status !== "locked" && (
+                  {finalization?.status !== "locked" && (
                     <>
                       {analysisLoading && <p className="recon-before">{analysisStatus || "Membaca berita acara..."}</p>}
                       {analysisError && <p className="recon-error">{analysisError} <button className="recon-link" onClick={() => selectedPeriod && void analyzeAttachment(selectedPeriod)}>Coba baca ulang</button></p>}
@@ -589,7 +563,7 @@ export default function ReconciliationPage() {
                 </>
               ) : detail.explanation ? (
                 <>
-                  <h3>Penjelasan selisih (bukti jurnal nyata)</h3>
+                  <h3>Penjelasan selisih</h3>
                   <ul className="recon-history">
                     <li>
                       {/* evidenceType di sini TIDAK PERNAH LOCK_WITHOUT_EXPLANATION_MARKER — sudah ditangkap cabang di atas; cast murni supaya TS tahu itu */}

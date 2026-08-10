@@ -29,11 +29,18 @@ test("status Cocok\\/Selisih Terjelaskan\\/Perlu Dicek\\/Bulan Berjalan — tanp
   assert.doesNotMatch(page, /Buat keputusan|Ganti keputusan|Revoke/); assert.doesNotMatch(page, /[Aa]udit ?[Ll]og|Audit trail/);
   assert.doesNotMatch(page, /[Ff]eature ?[Ff]lag/); assert.doesNotMatch(page, /[Rr]eadiness/);
 });
-test("detail bulan menampilkan pecahan akun 40001/40004, verifikasi reklasifikasi 21003, total final, selisih, dan penyebab status — tanpa kategori/POS lama", () => {
-  assert.match(page, /Jumlah booking AYO eligible/); assert.match(page, /Total Omzet Olsera final \(40001\+40004\)/);
-  assert.match(page, /Verifikasi reklasifikasi 40004/); assert.match(page, /Penyebab status/);
+test("detail bulan menampilkan pecahan akun 40001/40004, total final, selisih, dan penyebab status — tanpa kategori/POS lama", () => {
+  assert.match(page, /Penyebab status/);
   assert.doesNotMatch(page, /resolvedCategoryName|categoryResolutionStatus|classifyCategoryForCourtRevenue/);
   assert.doesNotMatch(page, /mismatchedDays/);
+});
+// V5: "Verifikasi Reklasifikasi" (dan "Jumlah booking AYO eligible" /
+// "Verifikasi reklasifikasi 40004" yang jadi isinya) dihapus dari render UI —
+// data/logika backend (detail.pickleballVerification dsb.) TETAP dikirim API,
+// hanya tidak lagi dirender. Lihat app/reconciliation/page.tsx.
+test("Verifikasi Reklasifikasi tidak lagi dirender di UI", () => {
+  assert.doesNotMatch(page, /Verifikasi Reklasifikasi/);
+  assert.doesNotMatch(page, /Jumlah booking AYO eligible/);
 });
 test("read model menjalankan filter, pagination, priority impact dan aggregate di MongoDB", () => {
   assert.match(model, /requireModule\("rekonsiliasi"\)/); assert.match(model, /\$facet/); assert.match(model, /\$lookup/);

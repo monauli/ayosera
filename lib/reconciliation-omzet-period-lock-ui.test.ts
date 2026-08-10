@@ -19,6 +19,34 @@ test("finalization UI requires an attachment, preview, confirmation, and unlock 
   assert.doesNotMatch(page, /\/court-revenue\/\$\{selectedPeriod\}\/lock/);
 });
 
+// V5 regression: "Berita Acara dan Finalisasi" harus menampilkan kontrol
+// upload/preview/lock TANPA menunggu attachment sudah ada dulu (bug produksi
+// lama: input file, tombol Upload, Nominal final, Alasan penyesuaian, Preview
+// Finalisasi, dan Kunci Periode semuanya bersarang di dalam kondisi yang
+// mensyaratkan `finalization?.attachment` sudah truthy — sehingga mustahil
+// diisi pertama kali karena attachment baru ada SETELAH upload). Sekarang
+// gating hanya berdasar status "locked", bukan ada/tidaknya attachment.
+test("V5: kontrol finalisasi (input file, upload, nominal, alasan, preview, kunci) muncul untuk periode BELUM terkunci walau belum ada attachment", () => {
+  assert.doesNotMatch(page, /\{finalization\?\.attachment && finalization\?\.status !== "locked" && \(/, "root cause lama: gating salah mensyaratkan attachment sebelum menampilkan form upload");
+  assert.match(page, /\{finalization\?\.status !== "locked" && \(/);
+  assert.match(page, /type="file" accept="\.pdf,\.jpg,\.jpeg,\.png,application\/pdf,image\/jpeg,image\/png"/);
+  assert.match(page, /Upload Berita Acara/);
+  assert.match(page, /Nominal final disepakati/);
+  assert.match(page, /Alasan penyesuaian/);
+  assert.match(page, /Preview Finalisasi/);
+  assert.match(page, />[\s\S]{0,30}Kunci Periode</);
+});
+
+// V5: wording lama yang tidak lagi akurat (alur sekarang pakai Berita Acara,
+// bukan penjelasan manual bukti-jurnal) tidak boleh muncul lagi, diganti
+// bahasa yang menyebut nominal selisih dalam format Rupiah.
+test("V5: wording status selisih memakai 'menunggu verifikasi Berita Acara', bukan frasa lama 'bukti jurnal nyata'", () => {
+  assert.doesNotMatch(page, /bukti jurnal nyata/);
+  const ledger = readFileSync(new URL("./reconciliation-omzet-ledger.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(ledger, /belum terbukti dengan bukti jurnal nyata/);
+  assert.match(ledger, /menunggu verifikasi Berita Acara/);
+});
+
 test("upload route enforces supervisor authorization and server-side validation", () => {
   assert.match(uploadRoute, /requireSupervisor/);
   assert.match(uploadRoute, /validateOmzetPeriodLockAttachment\(file\)/);
@@ -28,7 +56,9 @@ test("detail reconciliation stays compact: desktop 2+1 grid, accessible disclosu
   assert.match(page, /className=\{`recon-sport-card\$\{wide \? " recon-sport-card-wide" : ""\}`\}/);
   assert.match(page, /title="COURT"/); assert.match(page, /title="PICKLEBALL"/); assert.match(page, /title="TOTAL GABUNGAN"/);
   assert.match(page, /Omzet AYO Court/); assert.match(page, /Olsera akun 40001/); assert.match(page, /Omzet AYO Pickleball/); assert.match(page, /Olsera akun 40004/); assert.match(page, /Selisih \(Olsera - AYO\)/); assert.match(page, /Status/);
-  assert.match(page, /<CollapsibleSection title="Verifikasi Reklasifikasi">/);
+  // V5: "Verifikasi Reklasifikasi" dihapus dari render UI (lihat
+  // reconciliation-phase5d-ui.test.ts) — backend/data tetap ada, hanya tidak dirender.
+  assert.doesNotMatch(page, /<CollapsibleSection title="Verifikasi Reklasifikasi">/);
   assert.match(page, /<CollapsibleSection title="Berita Acara dan Finalisasi">/);
   assert.match(page, /AYO Belum Terpetakan/);
   assert.match(page, /aria-expanded=\{open\}/); assert.match(page, /aria-controls=\{contentId\}/);

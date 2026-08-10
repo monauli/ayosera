@@ -485,11 +485,20 @@ function classifyStatus(input: {
   if (input.explanation && input.explanation.evidenceType !== OMZET_LOCK_WITHOUT_EXPLANATION_MARKER && input.explanation.explainedAmount === input.differenceRevenue) {
     return {
       status: "SELISIH_TERJELASKAN",
-      statusReason: `Selisih ${input.differenceRevenue} dijelaskan: ${OMZET_EVIDENCE_TYPE_LABEL[input.explanation.evidenceType]} — ${input.explanation.description}`,
+      statusReason: `Selisih ${formatRupiahLedger(input.differenceRevenue)} dijelaskan: ${OMZET_EVIDENCE_TYPE_LABEL[input.explanation.evidenceType]} — ${input.explanation.description}`,
     };
   }
 
-  return { status: "PERLU_DICEK", statusReason: `Ada selisih ${input.differenceRevenue} yang penyebabnya belum terbukti dengan bukti jurnal nyata.` };
+  // V5: wording lama menyebut istilah dari alur manual yang sudah tidak
+  // dipakai. Alur saat ini memakai Berita Acara (lihat
+  // reconciliation-berita-acara-parser.ts), jadi bahasanya diperbarui supaya
+  // tidak menyesatkan.
+  return { status: "PERLU_DICEK", statusReason: `Selisih ${formatRupiahLedger(input.differenceRevenue)} menunggu verifikasi Berita Acara.` };
+}
+
+/** Format Rupiah tanpa spasi, konsisten dengan formatRupiah di app/reconciliation/page.tsx (UI klien) — dipakai di sini karena statusReason ditampilkan apa adanya ke user. */
+function formatRupiahLedger(value: number): string {
+  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(value).replace(/\s/g, "");
 }
 
 /**
