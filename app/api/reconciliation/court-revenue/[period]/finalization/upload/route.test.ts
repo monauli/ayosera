@@ -119,3 +119,27 @@ test("kegagalan upload ke Blob (mis. token belum dikonfigurasi) -> 502, pesan me
   assert.match(body.error, /BLOB_READ_WRITE_TOKEN/);
   assert.equal(uploadLockAttachmentMock.mock.callCount(), 0);
 });
+
+// Regresi untuk bug _id immutable pada upsert (lib/reconciliation-omzet-period-lock.ts):
+// pastikan error MongoDB itu diterjemahkan ke pesan spesifik, bukan hanya fallback generik.
+test("error Mongo immutable _id dari lock lib -> 502, pesan spesifik menyebut konflik _id", async () => {
+  uploadLockAttachmentMock.mock.mockImplementationOnce(async () => {
+    throw new Error("Performing an update on the path '_id' would modify the immutable field '_id'");
+  });
+  const res = await POST(req(fileFormData(new Uint8Array([1, 2, 3]), "berita-acara.pdf", "application/pdf")), ctx());
+  assert.equal(res.status, 502);
+  const body = (await res.json()) as { error: string };
+  assert.match(body.error, /_id/);
+});
+
+test("error koneksi Mongo dari lock lib -> 502, pesan spesifik menyebut koneksi database", async () => {
+  uploadLockAttachmentMock.mock.mockImplementationOnce(async () => {
+    throw new Error("MongoServerSelectionError: connect ECONNREFUSED");
+  });
+  const res = await POST(req(fileFormData(new Uint8Array([1, 2, 3]), "berita-acara.pdf", "application/pdf")), ctx());
+  assert.equal(res.status, 502);
+  const body = (await res.json()) as { error: string };
+  assert.match(body.error, /koneksi database/);
+});
+
+// Skenario 13 (unauthorized) sudah dicakup oleh test "non-supervisor ditolak" di atas.

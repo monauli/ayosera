@@ -58,7 +58,15 @@ export async function uploadOmzetPeriodLockAttachment(input: { storeId: number; 
   const before = snapshot(current); const action = "upload" as const;
   const document = await source.locks.findOneAndUpdate(
     current ? { _id: id, version: current.version, status: { $ne: "locked" } } : { _id: id, version: { $exists: false } },
-    { $set: { storeId: input.storeId, year, month, periodKey: input.period, status: current?.status ?? "draft", attachment: input.attachment, updatedAt: now }, $setOnInsert: { _id: id, originalAyoAmount: null, originalOlseraAmount: null, originalDifference: null, finalAgreedAmount: null, adjustmentAmount: null, adjustmentReason: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, history: [], createdAt: now, version: 0 }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: null, before, after: { fileName: input.attachment.fileName } } } },
+    // NOTE: _id sengaja TIDAK dimasukkan ke $setOnInsert — filter query di
+    // atas SUDAH menetapkan _id (baik lewat equality langsung maupun via
+    // { _id: id, version: ... }). Menyertakan _id di $setOnInsert SEKALIGUS
+    // di filter memicu MongoDB error "Performing an update on the path
+    // '_id' would modify the immutable field '_id'" pada sebagian versi
+    // driver/server saat upsert benar-benar melakukan insert baru — inilah
+    // root cause upload berita acara gagal dengan pesan generik. _id insert
+    // otomatis diambil dari filter oleh MongoDB, jadi aman dihilangkan di sini.
+    { $set: { storeId: input.storeId, year, month, periodKey: input.period, status: current?.status ?? "draft", attachment: input.attachment, updatedAt: now }, $setOnInsert: { originalAyoAmount: null, originalOlseraAmount: null, originalDifference: null, finalAgreedAmount: null, adjustmentAmount: null, adjustmentReason: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, history: [], createdAt: now, version: 0 }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: null, before, after: { fileName: input.attachment.fileName } } } },
     { upsert: !current, returnDocument: "after" },
   );
   if (!document) throw new OmzetPeriodLockError("Konflik upload; muat ulang lalu coba lagi.", "CONFLICT");

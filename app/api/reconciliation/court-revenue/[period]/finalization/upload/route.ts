@@ -29,6 +29,19 @@ export async function POST(request: Request, context: { params: Promise<{ period
     if (error instanceof Response) return error;
     if (error instanceof OmzetPeriodLockError) return NextResponse.json({ error: error.message }, { status: error.code === "CONFLICT" ? 409 : error.code === "LOCKED" ? 423 : 400, headers: NO_CACHE_HEADERS });
     console.error("[reconciliation:period-finalization:upload]", error);
+    // Beberapa penyebab umum diberi pesan spesifik supaya bisa didiagnosis
+    // dari UI tanpa perlu log server; error yang tidak dikenali tetap jatuh
+    // ke fallback generik di bawah.
+    const message = error instanceof Error ? error.message : "";
+    if (/immutable field '_id'/i.test(message)) {
+      return NextResponse.json({ error: "Gagal menyimpan berita acara: konflik penyimpanan data periode (_id). Coba lagi." }, { status: 502, headers: NO_CACHE_HEADERS });
+    }
+    if (/E11000|duplicate key/i.test(message)) {
+      return NextResponse.json({ error: "Gagal menyimpan berita acara: data periode sudah ada. Muat ulang lalu coba lagi." }, { status: 409, headers: NO_CACHE_HEADERS });
+    }
+    if (/Mongo|ECONNREFUSED|ETIMEDOUT|topology/i.test(message)) {
+      return NextResponse.json({ error: "Gagal menyimpan berita acara: koneksi database bermasalah. Coba lagi." }, { status: 502, headers: NO_CACHE_HEADERS });
+    }
     return NextResponse.json({ error: "Gagal menyimpan berita acara. Coba lagi." }, { status: 502, headers: NO_CACHE_HEADERS });
   }
 }

@@ -56,6 +56,15 @@ type OmzetResult = {
   periodLock?: PeriodLock | null;
 };
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
+type BeritaAcaraAnalysis = {
+  systemDifference: number;
+  nominal: number | null;
+  direction: "PENAMBAHAN" | "PENGURANGAN" | null;
+  reason: string | null;
+  parseStatus: "OK" | "PERLU_REVIEW";
+  matchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW";
+  ocrSource: string;
+};
 
 const STATUS_LABEL: Record<OmzetStatus, string> = {
   COCOK: "Cocok",
@@ -81,6 +90,14 @@ const EVIDENCE_LABEL: Record<EvidenceType, string> = {
 function formatRupiah(value: number) {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(value).replace(/\s/g, "");
 }
+function formatSignedRupiah(value: number) {
+  return `${value > 0 ? "+" : ""}${formatRupiah(value)}`;
+}
+const MATCH_STATUS_LABEL: Record<"COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW", string> = {
+  COCOK: "COCOK",
+  TIDAK_COCOK: "TIDAK COCOK",
+  PERLU_REVIEW: "PERLU REVIEW",
+};
 function monthLabel(period: string) {
   const [year, month] = period.split("-").map(Number);
   return new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(Date.UTC(year, month - 1, 1)));
@@ -153,6 +170,9 @@ export default function ReconciliationPage() {
   const [finalPreview, setFinalPreview] = useState<{ ayo: number; olsera: number; difference: number; finalAgreedAmount: number; adjustmentAmount: number; lockedDisplay: { ayo: number; olsera: number; difference: number; status: string } } | null>(null);
   const [finalBusy, setFinalBusy] = useState(false);
   const [finalError, setFinalError] = useState("");
+  const [analysis, setAnalysis] = useState<BeritaAcaraAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState("");
   const [showFinalLockConfirm, setShowFinalLockConfirm] = useState(false);
   const [showUnlock, setShowUnlock] = useState(false);
   const [unlockReason, setUnlockReason] = useState("");
@@ -187,7 +207,7 @@ export default function ReconciliationPage() {
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
-    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason("");
+    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError("");
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
@@ -196,10 +216,41 @@ export default function ReconciliationPage() {
       setFinalization(data.data.periodLock ?? null);
       setFinalAmount(String(data.data.periodLock?.finalAgreedAmount ?? data.data.olseraTotal));
       setFinalReason(data.data.periodLock?.adjustmentReason ?? (Math.abs(data.data.differenceRevenue) <= 1 ? "Penyesuaian pembulatan rekonsiliasi" : ""));
+      // Dokumen lock lama (sebelum fitur baca-otomatis ini ada) tetap harus
+      // terbaca normal (kompatibilitas mundur) — bila sudah ada attachment
+      // tersimpan, jalankan analisis otomatis juga saat refresh/buka detail,
+      // bukan hanya persis setelah upload.
+      if (data.data.periodLock?.attachment && data.data.periodLock.status !== "locked") {
+        void analyzeAttachment(period);
+      }
     } catch (e) {
       setDetailError(e instanceof Error ? e.message : "Gagal memuat detail bulan ini.");
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const analyzeAttachment = async (period: string) => {
+    setAnalysisLoading(true); setAnalysisError(""); setAnalysis(null);
+    try {
+      const response = await fetch(`/api/reconciliation/court-revenue/${period}/finalization/analyze`, { method: "POST" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Gagal membaca berita acara secara otomatis.");
+      const result = data.data as BeritaAcaraAnalysis;
+      setAnalysis(result);
+      // Nominal final TIDAK dihitung ulang lewat rumus baru — tetap memakai
+      // logika finalisasi yang sudah ada (default "Nominal final disepakati"
+      // = Total Omzet Olsera, sama seperti sebelum fitur ini ada; lihat
+      // openDetail di atas). Saat BA COCOK, field ini hanya dikunci
+      // read-only di UI (bukan diformulasikan ulang) — previewOmzetPeriodLock
+      // tetap satu-satunya sumber kebenaran untuk adjustmentAmount.
+      if (result.reason) setFinalReason((current) => current || result.reason!);
+      setFinalPreview(null);
+      setShowFinalLockConfirm(false);
+    } catch (e) {
+      setAnalysisError(e instanceof Error ? e.message : "Gagal membaca berita acara secara otomatis.");
+    } finally {
+      setAnalysisLoading(false);
     }
   };
 
@@ -212,7 +263,7 @@ export default function ReconciliationPage() {
   };
   const uploadFinalAttachment = async () => {
     if (!finalFile) return; setFinalBusy(true); setFinalError("");
-    try { const form = new FormData(); form.set("file", finalFile); if (finalization) form.set("version", String(finalization.version)); const data = await finalizationRequest("upload", { method: "POST", body: form }); setFinalization(data.data); setFinalFile(null); setFinalPreview(null); setShowFinalLockConfirm(false); }
+    try { const form = new FormData(); form.set("file", finalFile); if (finalization) form.set("version", String(finalization.version)); const data = await finalizationRequest("upload", { method: "POST", body: form }); setFinalization(data.data); setFinalFile(null); setFinalPreview(null); setShowFinalLockConfirm(false); if (selectedPeriod) void analyzeAttachment(selectedPeriod); }
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal mengunggah berita acara."); }
     finally { setFinalBusy(false); }
   };
@@ -234,6 +285,13 @@ export default function ReconciliationPage() {
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal membuka kunci periode."); }
     finally { setFinalBusy(false); }
   };
+
+  // Gating Kunci Periode (Langkah 8): TIDAK PERNAH otomatis blokir total —
+  // hanya mismatch YANG DIKETAHUI (TIDAK_COCOK) yang menahan tombol lock.
+  // Belum ada analisis (dokumen lama/kompat mundur) atau PERLU_REVIEW tetap
+  // membuka jalur manual (user isi sendiri lalu preview ulang), sesuai
+  // instruksi: jangan pernah memblokir total user pada data yang tidak pasti.
+  const canLockFinalization = analysis?.matchStatus !== "TIDAK_COCOK";
 
   const supervisor = user?.role === "supervisor";
   if (user && !user.allowedModules.includes("rekonsiliasi") && !supervisor) {
@@ -435,21 +493,32 @@ export default function ReconciliationPage() {
                   {finalization?.attachment ? (
                     <p className="recon-before"><Paperclip size={12} /> {finalization.attachment.fileName} ({Math.ceil(finalization.attachment.size / 1024)} KB) â€” diunggah {dateTimeLabel(finalization.attachment.uploadedAt)} oleh {finalization.attachment.uploadedBy} <a className="recon-link" href={finalization.attachment.url} target="_blank" rel="noreferrer">Lihat</a></p>
                   ) : <p className="recon-before">Unggah berita acara PDF/JPG/JPEG/PNG (maks. 10MB) sebelum preview dan lock.</p>}
-                  {finalization?.status !== "locked" && (
+                  {finalization?.attachment && finalization?.status !== "locked" && (
                     <>
+                      {analysisLoading && <p className="recon-before">Membaca berita acara secara otomatis…</p>}
+                      {analysisError && <p className="recon-error">{analysisError} <button className="recon-link" onClick={() => selectedPeriod && void analyzeAttachment(selectedPeriod)}>Coba baca ulang</button></p>}
+                      {analysis && (
+                        <section className="recon-detail-grid" aria-label="Hasil baca otomatis Berita Acara">
+                          <div><span>Selisih Sistem</span><b>{formatSignedRupiah(analysis.systemDifference)}</b></div>
+                          <div><span>Nominal Berita Acara</span><b>{analysis.nominal !== null ? `${analysis.direction === "PENGURANGAN" ? "-" : "+"}${formatRupiah(analysis.nominal)}` : "Tidak terbaca"}</b></div>
+                          <div><span>Hasil Pencocokan</span><b>{MATCH_STATUS_LABEL[analysis.matchStatus]}</b></div>
+                        </section>
+                      )}
+                      {analysis?.matchStatus === "TIDAK_COCOK" && <p className="recon-error"><AlertTriangle size={14} /> Nominal/arah Berita Acara TIDAK cocok dengan selisih sistem. Periksa dokumen sebelum melanjutkan; preview dan lock ditahan sampai direview.</p>}
+                      {analysis?.matchStatus === "PERLU_REVIEW" && <p className="recon-special"><AlertTriangle size={14} /> Berita Acara perlu direview manual (nominal/arah tidak terbaca otomatis, atau OCR belum yakin). Isi field di bawah secara manual.</p>}
                       <label className="recon-upload-label">Ganti/unggah berita acara
                         <input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={finalBusy} onChange={(event) => setFinalFile(event.target.files?.[0] ?? null)} />
                       </label>
                       <button className="recon-button secondary" disabled={!finalFile || finalBusy} onClick={() => void uploadFinalAttachment()}><Paperclip size={14} /> Upload Berita Acara</button>
                       <label className="recon-upload-label">Nominal final disepakati
-                        <input type="number" step="1" value={finalAmount} disabled={finalBusy || !finalization?.attachment} onChange={(event) => { setFinalAmount(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); }} />
+                        <input type="number" step="1" value={finalAmount} disabled={finalBusy || !finalization?.attachment || analysis?.matchStatus === "COCOK"} onChange={(event) => { setFinalAmount(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); }} />
                       </label>
                       <label className="recon-upload-label">Alasan penyesuaian
                         <textarea value={finalReason} disabled={finalBusy || !finalization?.attachment} onChange={(event) => { setFinalReason(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); }} />
                       </label>
                       <div className="recon-actions">
                         <button className="recon-button secondary" disabled={!finalization?.attachment || finalBusy || !finalReason.trim()} onClick={() => void previewFinalization()}>Preview Finalisasi</button>
-                        <button className="recon-button" disabled={!finalPreview || finalBusy} onClick={() => setShowFinalLockConfirm(true)}><Lock size={14} /> Kunci Periode</button>
+                        <button className="recon-button" disabled={!finalPreview || finalBusy || !canLockFinalization} onClick={() => setShowFinalLockConfirm(true)} title={!canLockFinalization ? "Kunci hanya diizinkan saat Berita Acara COCOK dengan selisih sistem (atau isi manual lalu preview ulang)." : undefined}><Lock size={14} /> Kunci Periode</button>
                       </div>
                       {showFinalLockConfirm && <div className="recon-form" role="alertdialog" aria-label="Konfirmasi finalisasi periode"><p>Nominal final akan menjadi tampilan periode terkunci. Data sumber rekonsiliasi tetap tidak diubah.</p><div className="recon-actions"><button className="recon-button" disabled={finalBusy} onClick={() => void lockFinalization()}>Ya, Kunci Periode</button><button className="recon-button secondary" disabled={finalBusy} onClick={() => setShowFinalLockConfirm(false)}>Batal</button></div></div>}
                     </>

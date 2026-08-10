@@ -39,7 +39,13 @@ function fixture() {
         if (failWrites) throw new Error("MongoDB unavailable");
         if (!value && !options.upsert) return null;
         if (value && !matches(value as unknown as Record<string, unknown>, filter)) return null;
-        const target = value ?? structuredClone((update.$setOnInsert ?? {}) as ReconciliationOmzetPeriodLockDocument);
+        // Meniru perilaku MongoDB sungguhan: pada upsert yang benar-benar
+        // insert, field filter yang berupa equality literal (mis. { _id: id })
+        // otomatis ikut menjadi bagian dokumen baru walau tidak disebut di
+        // $setOnInsert — inilah kenapa menaruh _id di KEDUA filter dan
+        // $setOnInsert memicu konflik "immutable field '_id'" pada Mongo asli.
+        const filterLiterals = Object.fromEntries(Object.entries(filter).filter(([, v]) => !(v && typeof v === "object" && !Array.isArray(v))));
+        const target = value ?? structuredClone({ ...filterLiterals, ...(update.$setOnInsert ?? {}) } as ReconciliationOmzetPeriodLockDocument);
         Object.assign(target, (update.$set ?? {}) as object);
         for (const [key, increment] of Object.entries((update.$inc ?? {}) as Record<string, number>)) target[key as keyof ReconciliationOmzetPeriodLockDocument] = ((target[key as keyof ReconciliationOmzetPeriodLockDocument] as number) + increment) as never;
         const push = (update.$push ?? {}) as Record<string, unknown>;
@@ -68,6 +74,18 @@ test("upload validates PDF and rejects oversized or invalid MIME", async () => {
   assert.equal(lock.status, "draft");
   assert.equal(lock.attachment?.fileName, attachment.fileName);
   assert.equal(lock.history[0]?.action, "upload");
+});
+
+test("upload attachment persists and survives a simulated page refresh (fresh findOne)", async () => {
+  const { f, lock } = await upload();
+  assert.equal(lock._id, "1:2026-06");
+  assert.equal(lock.version, 1);
+  // Simulasikan refresh halaman: baca ulang lewat findOne murni, terpisah
+  // dari nilai `lock` yang dikembalikan upload() di atas.
+  const reloaded = await f.context.locks.findOne({ _id: "1:2026-06" });
+  assert.ok(reloaded, "dokumen periode harus ditemukan setelah upload (bug _id upsert sebelumnya membuat ini gagal)");
+  assert.equal(reloaded?.attachment?.fileName, attachment.fileName);
+  assert.equal(reloaded?.status, "draft");
 });
 
 test("preview requires attachment and never changes the source presentation", () => {
