@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { AlertTriangle, ChevronRight, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
 
@@ -321,9 +322,9 @@ export default function ReconciliationPage() {
     <main className="recon-page">
       <header className="recon-header">
         <div>
-          <a href="/" className="recon-back">
+          <Link href="/" className="recon-back">
             ← Kembali ke Dashboard
-          </a>
+          </Link>
           <h1>Rekonsiliasi Omzet AYOSERA</h1>
           <p>
             Omzet AYO (booking eligible) vs Omzet Olsera — akun ledger 40001 (Court Fees) + 40004 (Pickleball) sebelum reklasifikasi, diverifikasi ke akun 21003. Per bulan.

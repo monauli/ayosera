@@ -750,7 +750,7 @@ export function OlseraFinancialPanel() {
             </div>
             <p className={TITLE}>Belum ada data untuk {formatPeriodLabel(period)}</p>
             <p className={`${DESC} max-w-md`}>
-              Laporan keuangan periode ini belum pernah disinkronkan. Klik "Sync Sekarang" di atas untuk menarik data dari Olsera dan
+              Laporan keuangan periode ini belum pernah disinkronkan. Klik &quot;Sync Sekarang&quot; di atas untuk menarik data dari Olsera dan
               menyimpannya sebagai snapshot.
             </p>
           </div>

@@ -17,7 +17,7 @@ function matches(value: Record<string, unknown>, filter: Record<string, unknown>
   return Object.entries(filter).every(([key, expected]) => value[key] === expected);
 }
 function cursor<T extends Record<string, unknown>>(source: T[]) {
-  let values = [...source];
+  const values = [...source];
   return {
     sort(spec: Record<string, 1 | -1>) {
       const [key, direction] = Object.entries(spec)[0];

@@ -285,7 +285,7 @@ export default function InventoryOpnamePage() {
       ) : !data ? (
         <section className="recon-empty">
           <FileSearch />
-          <p>Pilih tahun & bulan, lalu klik "Tampilkan Data".</p>
+          <p>Pilih tahun & bulan, lalu klik &quot;Tampilkan Data&quot;.</p>
         </section>
       ) : (
         <>

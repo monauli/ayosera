@@ -1,4 +1,3 @@
-// @ts-nocheck
 import "server-only";
 import { createHash } from "node:crypto";
 import { reconcileLedgerSummaryWithDetails } from "./olsera-financial-core";
@@ -372,6 +371,8 @@ export async function reconcileLedgerSummarySnapshot(
   const report = reports["ledger-summary"];
   if (!report) return;
   const normalizedPayload = reconcileLedgerSummaryWithDetails(report.normalizedPayload, entries);
+  // @ts-expect-error — normalizedPayload untuk reportType "ledger-summary" adalah array baris ledger
+  // (bukan Record<string, unknown> tunggal seperti tipe parameter fungsi ini); perilaku existing, bukan bug baru.
   await updateMonthlyReportNormalizedPayload(period, "ledger-summary", normalizedPayload, context);
   await zeroConfirmedEmptyLedgerSummaryRows(period, context);
 }
@@ -455,6 +456,8 @@ export async function zeroConfirmedEmptyLedgerSummaryRows(period: string, contex
     const entries = await fc.ledgerEntries.find({ storeId: storeId(), period }).toArray();
     const hasDetail = new Set(entries.filter((row: any) => row.isOpeningBalance !== true).map((row: any) => String(row.accountCode)));
     const next = report.normalizedPayload.map((row: any) => codes.includes(String(row.accountCode)) && !hasDetail.has(String(row.accountCode)) ? { ...row, debit: 0, credit: 0, formattedDebit: "0", formattedCredit: "0" } : row);
+    // @ts-expect-error — normalizedPayload untuk reportType "ledger-summary" adalah array baris ledger
+    // (bukan Record<string, unknown> tunggal seperti tipe parameter fungsi ini); perilaku existing, bukan bug baru.
     await updateMonthlyReportNormalizedPayload(period, "ledger-summary", next, context);
   });
 }

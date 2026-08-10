@@ -1,4 +1,3 @@
-// @ts-nocheck
 import "server-only";
 import { MongoClient } from "mongodb";
 import type { FinancialCollections } from "./olsera-financial-store";
