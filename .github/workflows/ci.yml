@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      # Dummy build-time secret ONLY — never a real credential. Next.js
+      # collects page data during `next build` for every route, and
+      # lib/auth-secret.ts throws if BETTER_AUTH_SECRET/JWT_SECRET is
+      # missing under NODE_ENV=production. No other env var is required to
+      # build: CRON_SECRET / MONGODB_URI / AYO_* are only read at request
+      # time (runtime), not at build/module-load time.
+      BETTER_AUTH_SECRET: ci-build-only-dummy-secret-not-a-real-credential
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      # Baseline (Phase 4C): 88 pre-existing lint errors / 59 warnings on
+      # already-existing code, mostly @typescript-eslint/no-explicit-any.
+      # Fixing them means touching business-logic files, out of scope for
+      # this phase. Lint still runs on every push/PR so NEW issues are
+      # visible in the log, but it does not block the pipeline yet.
+      # Follow-up: burn down the baseline, then drop continue-on-error.
+      - name: Lint (non-blocking, known baseline)
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Unit tests
+        run: |
+          npm run test:unit
+          npm run test:ayo-payment-events
+          npm run test:mongodb-indexes
+          npm run test:ayo-payment-events-backfill
+          npm run test:reconciliation-period-lock-ui
+
+      - name: Build
+        run: npm run build
+
+      # Known baseline (Phase 4A/4C audit, npm audit as of this workflow):
+      # 1 critical (tar, transitive via @tailwindcss/oxide, build-time only),
+      # 3 high (nanoid + postcss transitive; xlsx direct but only used in
+      # offline admin scripts, no upstream fix available), 1 moderate.
+      # None of these are safely fixable right now without a Next.js major
+      # upgrade (postcss) or a fix that doesn't exist yet (xlsx). Failing CI
+      # on every run for already-known, already-triaged issues just trains
+      # everyone to ignore red CI. Instead: fail only if the count of
+      # critical+high vulnerabilities grows PAST this baseline, so a newly
+      # introduced dependency vulnerability is never silently missed.
+      - name: Dependency security audit (fails only above known baseline)
+        run: |
+          npm audit --json > audit-result.json || true
+          node -e '
+            const KNOWN_CRITICAL = 1;
+            const KNOWN_HIGH = 3;
+            const data = JSON.parse(require("fs").readFileSync("audit-result.json", "utf8"));
+            const v = data.metadata?.vulnerabilities ?? {};
+            console.log("npm audit summary:", JSON.stringify(v));
+            const critical = v.critical ?? 0;
+            const high = v.high ?? 0;
+            if (critical > KNOWN_CRITICAL || high > KNOWN_HIGH) {
+              console.error(
+                `New dependency vulnerabilities detected: critical=${critical} (baseline ${KNOWN_CRITICAL}), high=${high} (baseline ${KNOWN_HIGH}).`
+              );
+              process.exit(1);
+            }
+            console.log("No new critical/high vulnerabilities above known baseline.");
+          '
