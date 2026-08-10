@@ -55,21 +55,22 @@ jobs:
       - name: Build
         run: npm run build
 
-      # Known baseline (Phase 4A/4C audit, npm audit as of this workflow):
-      # 1 critical (tar, transitive via @tailwindcss/oxide, build-time only),
-      # 3 high (nanoid + postcss transitive; xlsx direct but only used in
-      # offline admin scripts, no upstream fix available), 1 moderate.
-      # None of these are safely fixable right now without a Next.js major
-      # upgrade (postcss) or a fix that doesn't exist yet (xlsx). Failing CI
-      # on every run for already-known, already-triaged issues just trains
-      # everyone to ignore red CI. Instead: fail only if the count of
-      # critical+high vulnerabilities grows PAST this baseline, so a newly
-      # introduced dependency vulnerability is never silently missed.
+      # Known baseline (Phase 4D: tar critical fixed via `npm update tar`,
+      # 7.4.3 -> 7.5.22, transitive-only, no major upgrade — critical is now
+      # 0 and must stay 0). 3 high remain (nanoid + postcss transitive; xlsx
+      # direct but only used in offline admin scripts, no upstream fix
+      # available), 1 moderate. None of these 3 are safely fixable right now
+      # without a Next.js major upgrade (postcss) or a fix that doesn't
+      # exist yet (xlsx). Failing CI on every run for already-known,
+      # already-triaged issues just trains everyone to ignore red CI.
+      # Instead: fail only if the count of critical+high vulnerabilities
+      # grows PAST this baseline, so a newly introduced dependency
+      # vulnerability is never silently missed.
       - name: Dependency security audit (fails only above known baseline)
         run: |
           npm audit --json > audit-result.json || true
           node -e '
-            const KNOWN_CRITICAL = 1;
+            const KNOWN_CRITICAL = 0;
             const KNOWN_HIGH = 3;
             const data = JSON.parse(require("fs").readFileSync("audit-result.json", "utf8"));
             const v = data.metadata?.vulnerabilities ?? {};
