@@ -139,6 +139,16 @@ test("unlock restores original presentation and retains attachment and audit his
   assert.deepEqual(applyLockedOmzetPresentation(source, unlocked), { ...source, periodLock: unlocked });
 });
 
+test("unlock rejects empty/whitespace-only reason and non-locked status", async () => {
+  const { f, lock } = await upload();
+  const preview = await previewForLock(f, lock.version);
+  const locked = await lockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: preview.lock.version, original: june, finalAgreedAmount: june.olsera, adjustmentReason: "Pembulatan" }, f.context);
+  await assert.rejects(() => unlockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: locked.version, reason: "   " }, f.context), OmzetPeriodLockError);
+  await assert.rejects(() => unlockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: locked.version, reason: "" }, f.context), OmzetPeriodLockError);
+  const draftFixture = await upload();
+  await assert.rejects(() => unlockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: draftFixture.lock.version, reason: "Alasan valid" }, draftFixture.f.context), OmzetPeriodLockError);
+});
+
 test("relock is additive and stale/concurrent submissions conflict safely", async () => {
   const { f, lock } = await upload();
   const preview = await previewForLock(f, lock.version);

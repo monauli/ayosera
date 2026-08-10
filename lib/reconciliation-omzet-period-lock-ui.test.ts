@@ -11,7 +11,9 @@ test("finalization UI requires an attachment, preview, confirmation, and unlock 
   assert.match(page, /Preview Finalisasi/);
   assert.match(page, /Konfirmasi finalisasi periode/);
   assert.match(page, /Buka Kunci/);
-  assert.match(page, /Konfirmasi Buka Kunci/);
+  assert.match(page, /Alasan buka kunci/);
+  assert.match(page, /Periode akan dapat diedit dan difinalisasi ulang\. Berita Acara dan histori sebelumnya tidak akan dihapus\./);
+  assert.match(page, /PERIODE DIKUNCI/);
   assert.match(page, /Cocok â€” Terkunci/);
   assert.match(page, /Detail Penyesuaian/);
   assert.doesNotMatch(page, /\/court-revenue\/\$\{selectedPeriod\}\/lock/);

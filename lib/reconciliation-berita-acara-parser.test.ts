@@ -96,6 +96,19 @@ test("scenario 11c: dua arah disebut sekaligus (ambigu) -> direction null, PERLU
   assert.equal(result.status, "PERLU_REVIEW");
 });
 
+// Kasus toleransi Rp1 lengkap (9 kasus) — 6 harus COCOK, 3 harus TIDAK_COCOK.
+test("matcher: 9 kasus toleransi Rp1 dengan arah wajib", () => {
+  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: "PENAMBAHAN" }), "COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(739_999, { nominal: 740_000, direction: "PENAMBAHAN" }), "COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(740_001, { nominal: 740_000, direction: "PENAMBAHAN" }), "COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(-740_000, { nominal: 740_000, direction: "PENGURANGAN" }), "COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(-739_999, { nominal: 740_000, direction: "PENGURANGAN" }), "COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(-740_001, { nominal: 740_000, direction: "PENGURANGAN" }), "COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(739_998, { nominal: 740_000, direction: "PENAMBAHAN" }), "TIDAK_COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(-739_998, { nominal: 740_000, direction: "PENGURANGAN" }), "TIDAK_COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: "PENGURANGAN" }), "TIDAK_COCOK");
+});
+
 test("matcher: nominal atau direction null -> PERLU_REVIEW, bukan TIDAK_COCOK", () => {
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: null, direction: "PENAMBAHAN" }), "PERLU_REVIEW");
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: null }), "PERLU_REVIEW");
