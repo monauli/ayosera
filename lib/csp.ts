@@ -32,10 +32,25 @@
 // sukses (jalur upload tidak lewat OCR sama sekali). Test unit sebelumnya
 // TIDAK menangkap ini karena reconciliation-berita-acara-client-ocr.test.ts
 // mock.module("tesseract.js", ...) total — tidak pernah menjalankan fetch
-// sungguhan yang kena CSP. Perbaikan di bawah HANYA membuka host CDN resmi
+// sungguhan yang kena CSP. Perbaikan V7 HANYA membuka host CDN resmi
 // tesseract.js (npm mirror jsdelivr, bukan layanan AI berbayar) dan primitif
 // browser (blob: worker, WASM) yang secara faktual dibutuhkan mesin OCR
 // lokal ini — tidak melonggarkan apa pun di luar itu.
+//
+// HARDENING PASCA-V7 (self-host aset tesseract.js): host CDN cdn.jsdelivr.net
+// dari poin (1) di atas DIHAPUS dari connect-src. Worker script, mesin OCR
+// WASM (tesseract-core-lstm.wasm.js, varian LSTM-only non-SIMD saja — lihat
+// lib/reconciliation-berita-acara-client-ocr.ts), dan data bahasa
+// (ind+eng.traineddata.gz) sekarang di-vendor sebagai file statis di
+// public/tesseract/ dan dilayani same-origin oleh Next.js — createWorker()
+// diberi corePath/langPath/workerPath eksplisit yang menunjuk ke situ, jadi
+// connect-src 'self' saja sudah cukup (tidak perlu origin eksternal apa pun
+// untuk OCR lagi). worker-src 'self' blob: TETAP dipertahankan tanpa
+// perubahan: workerBlobURL tesseract.js tidak diubah dari default (true),
+// jadi mekanisme spawn worker (Blob + new Worker(blobURL)) persis sama
+// dengan yang sudah terverifikasi jalan di production — hanya path aset di
+// dalam Blob-nya sekarang same-origin, bukan CDN. 'wasm-unsafe-eval' juga
+// tetap dipertahankan (masih dibutuhkan untuk kompilasi WASM lokal).
 //
 // img-src/frame-src juga diperluas ke *.public.blob.vercel-storage.com —
 // SATU-SATUNYA origin tempat lampiran Berita Acara publik disimpan (lihat
@@ -49,7 +64,7 @@ export function buildContentSecurityPolicy(nonce: string, isDev: boolean): strin
     "img-src 'self' data: https://*.public.blob.vercel-storage.com",
     "frame-src https://*.public.blob.vercel-storage.com",
     "font-src 'self'",
-    "connect-src 'self' https://cdn.jsdelivr.net",
+    "connect-src 'self'",
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

@@ -94,3 +94,21 @@ test("ikon tab dikecualikan dari matcher: /icon.svg tidak pernah dijawab redirec
   }
   assert.equal(pattern.test("/"), true, "route aplikasi harus tetap diproses middleware");
 });
+
+// Hardening pasca-V7 (self-host tesseract.js): sama seperti icon.svg di atas,
+// aset OCR statis di public/tesseract/ tidak boleh butuh sesi — kalau tidak,
+// fetch/importScripts tesseract.js dari dalam Worker (yang kebetulan
+// terkirim tanpa cookie, mis. isolasi pihak-ketiga browser tertentu) akan
+// menerima 307 HTML ke /login alih-alih file JS/WASM/gzip sungguhan, dan
+// OCR gagal dengan cara yang membingungkan alih-alih jelas.
+test("aset OCR tesseract.js dikecualikan dari matcher: /tesseract/* tidak pernah masuk middleware (jadi tidak pernah dijawab redirect ke /login)", () => {
+  // Catatan: config.matcher difilter Next.js SEBELUM middleware() dipanggil
+  // (bukan logika di dalam middleware() itu sendiri) — jadi test ini, sama
+  // seperti test icon.svg di atas, memeriksa pattern regex-nya langsung,
+  // bukan memanggil middleware() (yang tidak tahu-menahu soal matcher).
+  const pattern = new RegExp(config.matcher[0].replace(/^\/\(/, "^/(").concat("$"));
+  for (const excluded of ["/tesseract/worker.min.js", "/tesseract/tesseract-core-lstm.wasm.js", "/tesseract/lang/eng.traineddata.gz", "/tesseract/lang/ind.traineddata.gz"]) {
+    assert.equal(pattern.test(excluded), false, `${excluded} seharusnya tidak diproses middleware`);
+  }
+  assert.equal(pattern.test("/reconciliation"), true, "route aplikasi lain harus tetap diproses middleware");
+});

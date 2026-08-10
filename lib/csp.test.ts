@@ -40,12 +40,23 @@ test("production: tidak ada 'unsafe-eval' JS penuh (tidak melemahkan proteksi XS
 // adalah regresi yang SEHARUSNYA menangkap bug itu dari awal — beda dengan
 // reconciliation-berita-acara-client-ocr.test.ts yang mock.module tesseract.js
 // total sehingga tidak pernah benar-benar melewati CSP.
-test("V7: CSP mengizinkan tepat apa yang dibutuhkan mesin OCR client-side tesseract.js (host CDN resmi npm-mirror, blob: worker, WASM) — TIDAK lebih longgar dari itu", () => {
+//
+// HARDENING PASCA-V7: aset tesseract.js (worker script, mesin OCR WASM, data
+// bahasa) sekarang di-vendor same-origin di public/tesseract/ (lihat
+// lib/reconciliation-berita-acara-client-ocr.ts, TESSERACT_ASSET_OPTIONS)
+// alih-alih fetch ke CDN cdn.jsdelivr.net saat runtime. connect-src TIDAK
+// LAGI perlu mengizinkan origin eksternal apa pun untuk OCR. worker-src
+// 'self' blob: TETAP dipertahankan tanpa perubahan (workerBlobURL tesseract.js
+// tidak diubah dari default true — mekanisme spawn worker persis sama
+// dengan yang sudah terverifikasi jalan di production, cuma path aset di
+// dalamnya sekarang same-origin).
+test("Hardening: CSP TIDAK LAGI mereferensikan CDN eksternal apa pun untuk OCR client-side tesseract.js (aset di-self-host same-origin) — connect-src 'self' saja sudah cukup", () => {
   const csp = buildContentSecurityPolicy("n", false);
   const connectSrc = csp.split(";").find((d) => d.trim().startsWith("connect-src"))!;
   const workerSrc = csp.split(";").find((d) => d.trim().startsWith("worker-src"))!;
-  assert.ok(connectSrc.includes("https://cdn.jsdelivr.net"), "workerPath/corePath/langPath default tesseract.js");
-  assert.ok(workerSrc.includes("'self'") && workerSrc.includes("blob:"), "tesseract.js workerBlobURL:true -> new Worker(blob:...)");
+  assert.equal(connectSrc.trim(), "connect-src 'self'", "tidak boleh ada host CDN (cdn.jsdelivr.net atau lainnya) lagi di connect-src");
+  assert.equal(csp.includes("jsdelivr"), false, "tidak ada jejak CDN jsdelivr tersisa di CSP mana pun");
+  assert.ok(workerSrc.includes("'self'") && workerSrc.includes("blob:"), "tesseract.js workerBlobURL:true (tidak diubah) -> new Worker(blob:...) tetap butuh ini");
   // Tidak wildcard sembarang host lain.
   assert.equal(connectSrc.includes("*"), false);
 });

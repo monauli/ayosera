@@ -27,6 +27,39 @@ export type BeritaAcaraClientOcrResult = {
 
 export type OnOcrStatus = (status: string) => void;
 
+// Aset runtime tesseract.js (worker script, mesin OCR WASM, data bahasa)
+// DI-HOSTING SENDIRI sebagai file statis yang di-commit langsung di
+// public/tesseract/ (worker.min.js disalin apa adanya dari
+// node_modules/tesseract.js/dist/; tesseract-core-lstm.wasm.js disalin apa
+// adanya dari node_modules/tesseract.js-core/; lang/{ind,eng}.traineddata.gz
+// diunduh satu kali dari mirror npm resmi tesseract.js,
+// https://cdn.jsdelivr.net/npm/@tesseract.js-data/<lang>/4.0.0_best_int/<lang>.traineddata.gz
+// — SATU-SATUNYA sumber resmi paket data bahasa ini, tidak dipublikasikan
+// sebagai file terpisah di npm) alih-alih dibiarkan fetch ke CDN itu setiap
+// kali OCR jalan di browser pengguna. Proyek ini tidak punya konvensi
+// postinstall/build-time asset-fetch (tidak ada public/ sebelumnya) — commit
+// langsung sebagai file statis dipilih supaya build tetap deterministik
+// tanpa panggilan jaringan tambahan saat `next build`/deploy Vercel. Ini
+// menghapus kebutuhan CSP connect-src mengizinkan origin eksternal apa pun
+// untuk OCR — lihat lib/csp.ts. corePath SENGAJA menunjuk satu file .js
+// spesifik (bukan direktori) supaya tesseract.js TIDAK menjalankan deteksi
+// fitur SIMD (paket wasm-feature-detect) yang biasanya memilih salah satu
+// dari 3 varian core (base/simd/relaxed-simd) — kita hanya vendor varian
+// dasar non-SIMD, LSTM-only (oem default tesseract.js, sama seperti sebelum
+// perubahan ini: createWorker() di bawah tidak pernah mengirim oem eksplisit)
+// yang jalan di SEMUA browser modern, demi ukuran repo yang wajar. Ini TIDAK
+// mengubah akurasi/mesin OCR — hanya bisa sedikit lebih lambat di browser
+// yang sebenarnya mendukung WASM SIMD (Chrome/Firefox/Safari versi baru).
+// workerBlobURL TIDAK diubah dari default tesseract.js (true) — mekanisme
+// spawn worker (Blob + new Worker(blobURL)) persis sama dengan yang sudah
+// terverifikasi jalan di production (V7), hanya path aset di dalamnya yang
+// sekarang same-origin, bukan CDN.
+export const TESSERACT_ASSET_OPTIONS = {
+  workerPath: "/tesseract/worker.min.js",
+  corePath: "/tesseract/tesseract-core-lstm.wasm.js",
+  langPath: "/tesseract/lang",
+} as const;
+
 const MAX_OCR_PAGES = 3;
 // Ambang sama dengan lib/reconciliation-berita-acara-ocr.ts: text layer PDF
 // hasil scan biasanya kosong/nyaris kosong.
@@ -76,7 +109,7 @@ export type ClientOcrDeps = {
 
 async function ocrScannedPdf(doc: PdfDocumentProxy, deps: Required<Pick<ClientOcrDeps, "createCanvas" | "onStatus">>): Promise<BeritaAcaraClientOcrResult> {
   const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker("ind+eng");
+  const worker = await createWorker("ind+eng", undefined, TESSERACT_ASSET_OPTIONS);
   const pagesToRead = Math.min(doc.numPages, MAX_OCR_PAGES);
   const texts: string[] = [];
   const confidences: number[] = [];
@@ -114,7 +147,7 @@ async function ocrScannedPdf(doc: PdfDocumentProxy, deps: Required<Pick<ClientOc
 async function ocrImage(file: File, deps: Required<Pick<ClientOcrDeps, "onStatus">>): Promise<BeritaAcaraClientOcrResult> {
   deps.onStatus(STATUS_READING);
   const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker("ind+eng");
+  const worker = await createWorker("ind+eng", undefined, TESSERACT_ASSET_OPTIONS);
   try {
     const result = await worker.recognize(file);
     const confidence = Math.max(0, Math.min(1, (result.data.confidence ?? 0) / 100));

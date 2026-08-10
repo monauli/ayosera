@@ -1,0 +1,8 @@
+# Aset tesseract.js yang di-vendor (worker script, mesin OCR WASM, data
+# bahasa .traineddata.gz) di public/tesseract/ HARUS di-commit byte-per-byte
+# apa adanya — TIDAK boleh kena normalisasi line-ending (LF<->CRLF) git,
+# walau beberapa di antaranya (mis. tesseract-core-lstm.wasm.js, yang
+# membungkus binary WASM sebagai data di dalam JS) terdeteksi git sebagai
+# "text" karena isinya sebagian besar karakter ASCII. Konversi CRLF yang
+# tidak sengaja bisa merusak data biner yang dibungkus di dalamnya.
+public/tesseract/** -text

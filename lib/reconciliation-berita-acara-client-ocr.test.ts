@@ -7,6 +7,8 @@
 // memenuhi interface yang dipakai modul (getContext/width/height), gaya yang
 // sama dengan "no render infra" di seluruh test suite proyek ini.
 import assert from "node:assert/strict";
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
 import test, { before, mock } from "node:test";
 
 type FakePage = { text: string; renderCalls: number };
@@ -65,10 +67,11 @@ mock.module("tesseract.js", {
 let extractBeritaAcaraTextClient!: typeof import("./reconciliation-berita-acara-client-ocr.ts").extractBeritaAcaraTextClient;
 let mergeOcrPages!: typeof import("./reconciliation-berita-acara-client-ocr.ts").mergeOcrPages;
 let averageConfidence!: typeof import("./reconciliation-berita-acara-client-ocr.ts").averageConfidence;
+let TESSERACT_ASSET_OPTIONS!: typeof import("./reconciliation-berita-acara-client-ocr.ts").TESSERACT_ASSET_OPTIONS;
 let parseBeritaAcaraText!: typeof import("./reconciliation-berita-acara-parser.ts").parseBeritaAcaraText;
 let matchBeritaAcaraToSystemDifference!: typeof import("./reconciliation-berita-acara-parser.ts").matchBeritaAcaraToSystemDifference;
 before(async () => {
-  ({ extractBeritaAcaraTextClient, mergeOcrPages, averageConfidence } = await import("./reconciliation-berita-acara-client-ocr.ts"));
+  ({ extractBeritaAcaraTextClient, mergeOcrPages, averageConfidence, TESSERACT_ASSET_OPTIONS } = await import("./reconciliation-berita-acara-client-ocr.ts"));
   ({ parseBeritaAcaraText, matchBeritaAcaraToSystemDifference } = await import("./reconciliation-berita-acara-parser.ts"));
 });
 
@@ -181,6 +184,84 @@ test("tipe file tidak dikenal -> unsupported, tidak melempar", async () => {
   const result = await extractBeritaAcaraTextClient(fakeFile("data.txt", "text/plain"));
   assert.equal(result.source, "unsupported");
   assert.equal(result.text, "");
+});
+
+// ---------------------------------------------------------------------------
+// Hardening pasca-V7: createWorker() TIDAK LAGI dipanggil tanpa opsi (yang
+// akan diam-diam fetch ke CDN default tesseract.js) — WAJIB selalu diberi
+// corePath/langPath/workerPath same-origin. Test tesseract.js di atas
+// di-mock TOTAL (tidak pernah benar-benar fetch), jadi ini murni mengecek
+// WIRING pemanggilan (bukan bukti "jalan di browser sungguhan" — itu perlu
+// verifikasi manual di browser nyata). Melengkapi blind spot yang sama
+// seperti dijelaskan di komentar atas file test ini.
+// ---------------------------------------------------------------------------
+
+test("Hardening: createWorker() dipanggil dengan corePath/langPath/workerPath same-origin (bukan default CDN tesseract.js) untuk OCR PDF scan", async () => {
+  pages[0] = { text: "", renderCalls: 0 };
+  pdfPageCount = 1;
+  recognizeCalls = [];
+  recognizeResults = [{ text: "cek wiring", confidence: 80 }];
+  const { createWorker } = await import("tesseract.js");
+  const createWorkerMock = createWorker as unknown as { mock: { calls: Array<{ arguments: unknown[] }>; resetCalls: () => void } };
+  createWorkerMock.mock.resetCalls();
+  await extractBeritaAcaraTextClient(fakeFile("ba-scan.pdf", "application/pdf"), { createCanvas: fakeCanvas });
+  assert.equal(createWorkerMock.mock.calls.length, 1);
+  const [langs, , options] = createWorkerMock.mock.calls[0]!.arguments as [string, unknown, typeof TESSERACT_ASSET_OPTIONS];
+  assert.equal(langs, "ind+eng");
+  assert.deepEqual(options, TESSERACT_ASSET_OPTIONS);
+  assert.ok(options.workerPath.startsWith("/tesseract/"), "workerPath harus same-origin (bukan https://cdn.jsdelivr.net)");
+  assert.ok(options.corePath.startsWith("/tesseract/"), "corePath harus same-origin");
+  assert.ok(options.langPath.startsWith("/tesseract/"), "langPath harus same-origin");
+  assert.equal([options.workerPath, options.corePath, options.langPath].some((p) => p.includes("cdn.jsdelivr.net")), false);
+});
+
+test("Hardening: createWorker() dipanggil dengan opsi same-origin yang sama untuk OCR JPG/PNG langsung", async () => {
+  recognizeCalls = [];
+  recognizeResults = [{ text: "cek wiring image", confidence: 80 }];
+  const { createWorker } = await import("tesseract.js");
+  const createWorkerMock = createWorker as unknown as { mock: { calls: Array<{ arguments: unknown[] }>; resetCalls: () => void } };
+  createWorkerMock.mock.resetCalls();
+  await extractBeritaAcaraTextClient(fakeFile("ba.jpg", "image/jpeg"));
+  assert.equal(createWorkerMock.mock.calls.length, 1);
+  const [, , options] = createWorkerMock.mock.calls[0]!.arguments as [string, unknown, typeof TESSERACT_ASSET_OPTIONS];
+  assert.deepEqual(options, TESSERACT_ASSET_OPTIONS);
+});
+
+// ---------------------------------------------------------------------------
+// Hardening pasca-V7: verifikasi STRUKTURAL bahwa file yang ditunjuk
+// TESSERACT_ASSET_OPTIONS benar-benar ada di public/tesseract/ dan bukan
+// file kosong/rusak. Ini TIDAK membuktikan OCR jalan di browser sungguhan
+// (tesseract.js di-mock total di file test ini) — hanya membuktikan aset
+// yang di-vendor benar-benar ada, cukup besar untuk masuk akal jadi
+// worker/wasm-core/traineddata sungguhan, dan konsisten dengan path yang
+// dipakai createWorker(). Kompensasi blind spot "mock total" yang sama
+// dengan alasan test CSP V7 ditambahkan.
+// ---------------------------------------------------------------------------
+
+test("Hardening: aset tesseract.js yang di-vendor (worker script, core WASM, data bahasa ind+eng) benar-benar ada di public/tesseract/ dan tidak kosong", () => {
+  const publicDir = path.join(process.cwd(), "public");
+  const workerFile = path.join(publicDir, "tesseract", "worker.min.js");
+  const coreFile = path.join(publicDir, "tesseract", "tesseract-core-lstm.wasm.js");
+  const engLang = path.join(publicDir, "tesseract", "lang", "eng.traineddata.gz");
+  const indLang = path.join(publicDir, "tesseract", "lang", "ind.traineddata.gz");
+
+  for (const [label, file, minBytes] of [
+    ["worker.min.js", workerFile, 10_000],
+    ["tesseract-core-lstm.wasm.js (mesin OCR WASM LSTM-only)", coreFile, 1_000_000],
+    ["lang/eng.traineddata.gz", engLang, 500_000],
+    ["lang/ind.traineddata.gz", indLang, 200_000],
+  ] as const) {
+    assert.ok(existsSync(file), `${label} harus ada di ${file}`);
+    const size = statSync(file).size;
+    assert.ok(size >= minBytes, `${label} ukurannya ${size} byte, terlalu kecil untuk file sungguhan (min ${minBytes})`);
+  }
+
+  // Path di TESSERACT_ASSET_OPTIONS (dipakai createWorker) harus persis
+  // konsisten dengan lokasi file di public/ (Next.js melayani public/X
+  // di URL /X) — kalau salah satu berubah tanpa yang lain, OCR akan 404 diam-diam.
+  assert.equal(TESSERACT_ASSET_OPTIONS.workerPath, "/tesseract/worker.min.js");
+  assert.equal(TESSERACT_ASSET_OPTIONS.corePath, "/tesseract/tesseract-core-lstm.wasm.js");
+  assert.equal(TESSERACT_ASSET_OPTIONS.langPath, "/tesseract/lang");
 });
 
 // ---------------------------------------------------------------------------

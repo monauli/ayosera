@@ -34,5 +34,16 @@ export const config = {
   // icon.svg ikut dikecualikan bersama favicon.ico: ikon tab tidak boleh
   // memerlukan sesi — tanpa ini permintaan ikon dari halaman /login dijawab
   // 307 ke /login (browser menerima HTML untuk sebuah gambar).
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|icon.svg).*)"],
+  //
+  // tesseract dikecualikan karena alasan yang SAMA PERSIS: aset OCR
+  // tesseract.js yang di-self-host di public/tesseract/ (worker script, core
+  // WASM, data bahasa — lihat lib/reconciliation-berita-acara-client-ocr.ts)
+  // adalah aset statis publik, BUKAN halaman aplikasi. Tanpa pengecualian
+  // ini permintaan tesseract.js ke path itu (fetch/importScripts dari dalam
+  // Worker) akan dijawab 307 ke /login (HTML) alih-alih file JS/WASM/gzip
+  // sungguhan bila cookie sesi kebetulan tidak terkirim — sebelum hardening
+  // ini aset-aset itu di-fetch dari CDN eksternal (cdn.jsdelivr.net) yang
+  // sama sekali tidak tunduk pada middleware auth aplikasi ini, jadi masalah
+  // ini baru muncul setelah aset jadi same-origin.
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|icon.svg|tesseract/).*)"],
 };
