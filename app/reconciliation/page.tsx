@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { AlertTriangle, ChevronRight, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
@@ -146,15 +146,6 @@ export default function ReconciliationPage() {
   const [detail, setDetail] = useState<OmzetResult | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
-  const [showExplainForm, setShowExplainForm] = useState(false);
-  const [explainSubmitting, setExplainSubmitting] = useState(false);
-  const [explainError, setExplainError] = useState("");
-  const [evidenceType, setEvidenceType] = useState<EvidenceType>("shifted-period");
-  const [explainDescription, setExplainDescription] = useState("");
-  const [uploadedAttachment, setUploadedAttachment] = useState<{ attachmentUrl: string; attachmentFileName: string } | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [finalization, setFinalization] = useState<PeriodLock | null>(null);
   const [finalFile, setFinalFile] = useState<File | null>(null);
   const [finalAmount, setFinalAmount] = useState("");
@@ -196,13 +187,7 @@ export default function ReconciliationPage() {
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
-    setShowExplainForm(false);
-    setExplainError("");
-    setUploadedAttachment(null);
-    setUploadError("");
-    setUploading(false);
     setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
@@ -211,8 +196,6 @@ export default function ReconciliationPage() {
       setFinalization(data.data.periodLock ?? null);
       setFinalAmount(String(data.data.periodLock?.finalAgreedAmount ?? data.data.olseraTotal));
       setFinalReason(data.data.periodLock?.adjustmentReason ?? (Math.abs(data.data.differenceRevenue) <= 1 ? "Penyesuaian pembulatan rekonsiliasi" : ""));
-      setExplainDescription("");
-      setEvidenceType("shifted-period");
     } catch (e) {
       setDetailError(e instanceof Error ? e.message : "Gagal memuat detail bulan ini.");
     } finally {
@@ -250,54 +233,6 @@ export default function ReconciliationPage() {
     try { await finalizationRequest("unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization.version, reason: unlockReason }) }); if (selectedPeriod) { await openDetail(selectedPeriod); await refresh(); } }
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal membuka kunci periode."); }
     finally { setFinalBusy(false); }
-  };
-
-  const uploadAttachment = async (file: File) => {
-    if (!selectedPeriod) return;
-    setUploading(true);
-    setUploadError("");
-    setUploadedAttachment(null);
-    try {
-      const formData = new FormData();
-      formData.set("file", file);
-      const response = await fetch(`/api/reconciliation/court-revenue/${selectedPeriod}/attachment`, { method: "POST", body: formData });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.error || "Gagal mengunggah lampiran.");
-      setUploadedAttachment(data.data);
-    } catch (e) {
-      setUploadError(e instanceof Error ? e.message : "Gagal mengunggah lampiran.");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const submitExplanation = async () => {
-    if (!selectedPeriod || !detail) return;
-    setExplainSubmitting(true);
-    setExplainError("");
-    try {
-      const response = await fetch(`/api/reconciliation/court-revenue/${selectedPeriod}/explanation`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          evidenceType,
-          description: explainDescription,
-          explainedAmount: detail.differenceRevenue,
-          attachmentUrl: uploadedAttachment?.attachmentUrl ?? null,
-          attachmentFileName: uploadedAttachment?.attachmentFileName ?? null,
-        }),
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.error || "Gagal menyimpan penjelasan selisih.");
-      setShowExplainForm(false);
-      await openDetail(selectedPeriod);
-      await refresh();
-    } catch (e) {
-      setExplainError(e instanceof Error ? e.message : "Gagal menyimpan penjelasan selisih.");
-    } finally {
-      setExplainSubmitting(false);
-    }
   };
 
   const supervisor = user?.role === "supervisor";
@@ -572,67 +507,6 @@ export default function ReconciliationPage() {
                   </ul>
                 </>
               ) : null}
-
-              {supervisor && detail.differenceRevenue !== 0 && detail.status !== "BULAN_BERJALAN" && (
-                <section className="recon-resolution">
-                  {detail.explanation?.locked ? (
-                    <p className="recon-readonly" style={{ width: "100%" }}>
-                      <Lock size={16} /> Periode ini sudah dikunci dan tidak bisa diubah. Hubungi admin/developer bila perlu revisi.
-                    </p>
-                  ) : !showExplainForm ? (
-                    <button className="recon-button secondary" onClick={() => setShowExplainForm(true)}>
-                      {detail.explanation ? "Perbarui penjelasan selisih" : "Tambahkan penjelasan selisih"}
-                    </button>
-                  ) : (
-                    <div className="recon-form" style={{ width: "100%" }}>
-                      <h3>Bukti jurnal nyata untuk selisih {formatRupiah(detail.differenceRevenue)}</h3>
-                      <label>
-                        Jenis bukti
-                        <select value={evidenceType} onChange={(e) => setEvidenceType(e.target.value as EvidenceType)}>
-                          {(Object.keys(EVIDENCE_LABEL) as EvidenceType[]).map((key) => (
-                            <option key={key} value={key}>
-                              {EVIDENCE_LABEL[key]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        Penjelasan (wajib — sebutkan transaksi/jurnal spesifik)
-                        <textarea value={explainDescription} onChange={(e) => setExplainDescription(e.target.value)} placeholder="Contoh: transaksi BK/2428/260430 dibayar 1 Mei, dibukukan Olsera di bulan April (JU26050500001060)." />
-                      </label>
-                      <label>
-                        Lampiran Berita Acara (opsional — PDF/JPG/PNG, maks 4MB)
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
-                          disabled={uploading || explainSubmitting}
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) void uploadAttachment(file);
-                          }}
-                        />
-                      </label>
-                      {uploading && <p className="recon-before">Mengunggah lampiran…</p>}
-                      {uploadError && <p className="recon-error">{uploadError}</p>}
-                      {uploadedAttachment && !uploading && (
-                        <p className="recon-before">
-                          <Paperclip size={12} /> Terunggah: {uploadedAttachment.attachmentFileName}
-                        </p>
-                      )}
-                      {explainError && <p className="recon-error">{explainError}</p>}
-                      <div className="recon-actions">
-                        <button className="recon-button" disabled={explainSubmitting || uploading || !explainDescription.trim()} onClick={() => void submitExplanation()}>
-                          Simpan penjelasan
-                        </button>
-                        <button className="recon-button secondary" disabled={explainSubmitting} onClick={() => setShowExplainForm(false)}>
-                          Batal
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </section>
-              )}
 
             </div>
           ) : null}

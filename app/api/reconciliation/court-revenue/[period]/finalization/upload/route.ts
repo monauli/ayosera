@@ -15,13 +15,20 @@ export async function POST(request: Request, context: { params: Promise<{ period
     const form = await request.formData(); const file = form.get("file"); const version = form.get("version");
     if (!(file instanceof File) || file.size === 0) return NextResponse.json({ error: "File berita acara wajib diunggah." }, { status: 400, headers: NO_CACHE_HEADERS });
     validateOmzetPeriodLockAttachment(file);
-    const storeId = currentStoreId(); const uploaded = await uploadBlob({ storeId, period, file });
+    const storeId = currentStoreId();
+    let uploaded;
+    try {
+      uploaded = await uploadBlob({ storeId, period, file });
+    } catch (error) {
+      console.error("[reconciliation:period-finalization:upload:blob]", error);
+      return NextResponse.json({ error: "Gagal mengunggah berita acara ke penyimpanan file. Pastikan BLOB_READ_WRITE_TOKEN sudah dikonfigurasi." }, { status: 502, headers: NO_CACHE_HEADERS });
+    }
     const lock = await uploadOmzetPeriodLockAttachment({ storeId, period, actor: user.id, expectedVersion: version ? Number(version) : null, attachment: { fileName: file.name, mimeType: file.type, size: file.size, url: uploaded.url, uploadedAt: new Date(), uploadedBy: user.id } });
     return NextResponse.json({ data: lock }, { status: 201, headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof OmzetPeriodLockError) return NextResponse.json({ error: error.message }, { status: error.code === "CONFLICT" ? 409 : error.code === "LOCKED" ? 423 : 400, headers: NO_CACHE_HEADERS });
     console.error("[reconciliation:period-finalization:upload]", error);
-    return NextResponse.json({ error: "Gagal mengunggah berita acara." }, { status: 502, headers: NO_CACHE_HEADERS });
+    return NextResponse.json({ error: "Gagal menyimpan berita acara. Coba lagi." }, { status: 502, headers: NO_CACHE_HEADERS });
   }
 }
