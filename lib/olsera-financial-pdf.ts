@@ -506,21 +506,22 @@ export async function renderRingkasanBukuBesarPdf(
 // laporan lengkap (semua akun) dan per akun ("Download Akun Ini").
 // ---------------------------------------------------------------------------
 
-/** Kolom Tanggal/No. Jurnal/Deskripsi/Debit/Kredit (landscape, sesuai lebar halaman A4). */
+/** Kolom Tanggal/No. Jurnal/Deskripsi/Debit/Kredit/Saldo (landscape, sesuai lebar halaman A4). */
 function ledgerDetailColumns(): Column[] {
   const pageW = A4.h;
   const usable = pageW - MARGIN * 2;
-  const amountW = 95;
-  const dateW = 90;
-  const noW = 130;
+  const amountW = 80;
+  const dateW = 85;
+  const noW = 120;
   const descX = MARGIN + dateW + noW;
-  const descW = usable - dateW - noW - amountW * 2;
+  const descW = usable - dateW - noW - amountW * 3;
   return [
     { header: "Tanggal", x: MARGIN, width: dateW, align: "left" },
     { header: "No. Jurnal", x: MARGIN + dateW, width: noW, align: "left" },
     { header: "Deskripsi", x: descX, width: descW, align: "left" },
     { header: "Debit", x: descX + descW, width: amountW, align: "right" },
     { header: "Kredit", x: descX + descW + amountW, width: amountW, align: "right" },
+    { header: "Saldo", x: descX + descW + amountW * 2, width: amountW, align: "right" },
   ];
 }
 
@@ -572,10 +573,12 @@ export async function renderBukuBesarDetailPdf(
       report.textLines(columns[2].x, descriptionLines, { size: 8, leading: 10 });
       if (!entry.isOpeningBalance && entry.debit) report.textRight(rightOf(columns[3]), formatAccountingID(entry.debit), { size: 8 });
       if (!entry.isOpeningBalance && entry.credit) report.textRight(rightOf(columns[4]), formatAccountingID(entry.credit), { size: 8 });
+      if (entry.balance != null) report.textRight(rightOf(columns[5]), formatAccountingID(entry.balance), { size: 8 });
       report.advance(rowHeight);
     }
 
-    // Total pergerakan akun
+    // Total pergerakan akun — kolom Saldo (col 6) sengaja dikosongkan: ini
+    // total movement (SUM Debit/SUM Kredit), bukan posisi saldo.
     report.moveToRowThenEnsure(LINE_HEIGHT);
     report.ruleAbove();
     report.text(columns[2].x, "Total Pergerakan", { bold: true, size: 8 });
@@ -626,10 +629,12 @@ export async function renderLedgerAccountDetailPdf(
     report.textLines(columns[2].x, descriptionLines, { size: 8, leading: 10 });
     if (entry.debit) report.textRight(rightOf(columns[3]), formatAccountingID(entry.debit), { size: 8 });
     if (entry.credit) report.textRight(rightOf(columns[4]), formatAccountingID(entry.credit), { size: 8 });
+    if (entry.balance != null) report.textRight(rightOf(columns[5]), formatAccountingID(entry.balance), { size: 8 });
     report.advance(rowHeight);
   }
 
   // Total debit/kredit, pergerakan periode, saldo akhir — selalu tampil (baris saldo/total, tidak difilter Fitur 2).
+  // "Total"/"Pergerakan Periode" TIDAK mengisi kolom Saldo — nilai saldo eksplisit hanya di baris "Saldo Akhir".
   report.moveToRowThenEnsure(LINE_HEIGHT * 4);
   report.ruleAbove();
   report.text(columns[2].x, "Total", { bold: true, size: 8.5 });
@@ -640,7 +645,7 @@ export async function renderLedgerAccountDetailPdf(
   report.textRight(rightOf(columns[4]), formatAccountingID(detail.movement), { bold: true, size: 8.5 });
   report.advance();
   report.text(columns[2].x, "Saldo Akhir", { bold: true, size: 8.5 });
-  report.textRight(rightOf(columns[4]), formatAccountingID(detail.endingBalance), { bold: true, size: 8.5 });
+  report.textRight(rightOf(columns[5]), formatAccountingID(detail.endingBalance), { bold: true, size: 8.5 });
   report.advance();
 
   return report.finalize();

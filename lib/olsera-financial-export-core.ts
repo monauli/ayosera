@@ -545,6 +545,8 @@ export interface LedgerDetailEntry {
   description: string;
   debit: number;
   credit: number;
+  /** Saldo berjalan dari sumber (Olsera famount), bukan hasil hitung ulang. */
+  balance: number | null;
   isOpeningBalance: boolean;
 }
 export interface LedgerDetailGroup {
@@ -592,12 +594,14 @@ export function buildLedgerDetailGroups(
     // dari seluruh baris (baris nol tidak mengubah jumlah).
     if (!isHiddenZeroLedgerRow(debit, credit, isOpening)) {
       const display = deriveLedgerRowDisplay(entry);
+      const balance = typeof entry.balance === "number" && Number.isFinite(entry.balance) ? entry.balance : null;
       group.entries.push({
         date: isOpening ? "Saldo Awal" : display.date,
         transactionNo: display.transactionNo,
         description: display.description,
         debit,
         credit,
+        balance,
         isOpeningBalance: isOpening,
       });
     }
@@ -697,6 +701,7 @@ export function buildLedgerAccountDetail(
       description: display.description,
       debit,
       credit,
+      balance: balanceValue,
       isOpeningBalance: false,
     });
   }

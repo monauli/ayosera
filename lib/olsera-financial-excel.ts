@@ -278,7 +278,7 @@ function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExc
   const sheet = workbook.addWorksheet("Buku Besar Detail");
   const headerRow = titleBlock(sheet, input.companyName, "Buku Besar Detail", periodText, 5, draftLines, input.sourceWarningLines);
 
-  const header = sheet.addRow(["Tanggal", "No. Jurnal", "Deskripsi", "Debit", "Kredit"]);
+  const header = sheet.addRow(["Tanggal", "No. Jurnal", "Deskripsi", "Debit", "Kredit", "Saldo"]);
   header.eachCell((cell, colNumber) => {
     cell.font = { name: FONT, bold: true, size: 10, color: { argb: "FFFFFFFF" } };
     cell.fill = fill(HEADER_FILL);
@@ -289,7 +289,7 @@ function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExc
   for (const group of groups) {
     const accountRow = sheet.addRow([sanitizeExcelCellValue(`${group.code} — ${group.name}`)]);
     accountRow.getCell(1).font = { name: FONT, bold: true, size: 10 };
-    sheet.mergeCells(accountRow.number, 1, accountRow.number, 5);
+    sheet.mergeCells(accountRow.number, 1, accountRow.number, 6);
     accountRow.eachCell((c) => (c.fill = fill(GROUP_FILL)));
 
     for (const entry of group.entries) {
@@ -298,15 +298,19 @@ function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExc
       r.getCell(3).alignment = { wrapText: true, vertical: "top" };
       const debit = r.getCell(4);
       const credit = r.getCell(5);
+      const balance = r.getCell(6);
       if (!entry.isOpeningBalance && entry.debit) debit.value = entry.debit;
       if (!entry.isOpeningBalance && entry.credit) credit.value = entry.credit;
-      for (const cell of [debit, credit]) {
+      if (entry.balance != null) balance.value = entry.balance;
+      for (const cell of [debit, credit, balance]) {
         cell.numFmt = MONEY_FMT;
         cell.alignment = { horizontal: "right" };
         cell.font = { name: FONT, size: 9 };
       }
     }
 
+    // Saldo (kolom 6) SENGAJA dikosongkan di baris Total Pergerakan — ini
+    // baris total movement (SUM Debit/SUM Kredit), bukan posisi saldo.
     const totalRow = sheet.addRow(["", "", "Total Pergerakan"]);
     totalRow.getCell(3).font = { name: FONT, bold: true, size: 9 };
     totalRow.getCell(3).alignment = { horizontal: "right" };
@@ -319,20 +323,22 @@ function renderLedgerDetailSheet(workbook: ExcelJS.Workbook, input: FinancialExc
       cell.font = { name: FONT, bold: true, size: 9 };
       cell.border = topBorder();
     }
+    totalRow.getCell(6).border = topBorder();
   }
 
   if (!groups.length) {
     const empty = sheet.addRow(["Tidak ada data buku besar pada periode ini."]);
     empty.getCell(1).font = { name: FONT, italic: true, size: 10 };
-    sheet.mergeCells(empty.number, 1, empty.number, 5);
+    sheet.mergeCells(empty.number, 1, empty.number, 6);
   }
 
   sheet.getColumn(1).width = 20;
   sheet.getColumn(2).width = 22;
-  sheet.getColumn(3).width = 56;
+  sheet.getColumn(3).width = 50;
   sheet.getColumn(4).width = 18;
   sheet.getColumn(5).width = 18;
-  configurePrint(sheet, "E", headerRow);
+  sheet.getColumn(6).width = 18;
+  configurePrint(sheet, "F", headerRow);
 }
 
 /** Susun workbook gabungan 5-sheet. Urutan sheet mengikuti spesifikasi Tahap 4C. */
@@ -414,7 +420,7 @@ export function buildLedgerAccountWorkbook(input: LedgerAccountExcelInput): Exce
     `Saldo Awal: ${formatAccountingID(detail.openingBalance)}`,
   ]);
 
-  const header = sheet.addRow(["Tanggal", "No. Jurnal", "Deskripsi", "Debit", "Kredit"]);
+  const header = sheet.addRow(["Tanggal", "No. Jurnal", "Deskripsi", "Debit", "Kredit", "Saldo"]);
   header.eachCell((cell, colNumber) => {
     cell.font = { name: FONT, bold: true, size: 10, color: { argb: "FFFFFFFF" } };
     cell.fill = fill(HEADER_FILL);
@@ -427,9 +433,11 @@ export function buildLedgerAccountWorkbook(input: LedgerAccountExcelInput): Exce
     r.getCell(3).alignment = { wrapText: true, vertical: "top" };
     const debit = r.getCell(4);
     const credit = r.getCell(5);
+    const balance = r.getCell(6);
     if (entry.debit) debit.value = entry.debit;
     if (entry.credit) credit.value = entry.credit;
-    for (const cell of [debit, credit]) {
+    if (entry.balance != null) balance.value = entry.balance;
+    for (const cell of [debit, credit, balance]) {
       cell.numFmt = MONEY_FMT;
       cell.alignment = { horizontal: "right" };
       cell.font = { name: FONT, size: 9 };
@@ -439,10 +447,11 @@ export function buildLedgerAccountWorkbook(input: LedgerAccountExcelInput): Exce
   if (!detail.entries.length) {
     const empty = sheet.addRow(["Tidak ada transaksi pada periode ini."]);
     empty.getCell(1).font = { name: FONT, italic: true, size: 10 };
-    sheet.mergeCells(empty.number, 1, empty.number, 5);
+    sheet.mergeCells(empty.number, 1, empty.number, 6);
   }
 
   // Total debit/kredit, pergerakan periode, saldo akhir — baris saldo/total, selalu tampil (tidak difilter Fitur 2).
+  // Saldo (kolom 6) SENGAJA dikosongkan di baris Total — itu total movement, bukan posisi saldo (lihat baris Saldo Akhir).
   const totalRow = sheet.addRow(["", "", "Total"]);
   styleSummaryLabelCell(totalRow.getCell(3));
   styleSummaryMoneyCell(totalRow.getCell(4), detail.totalDebit, true);
@@ -454,13 +463,14 @@ export function buildLedgerAccountWorkbook(input: LedgerAccountExcelInput): Exce
 
   const endingRow = sheet.addRow(["", "", "Saldo Akhir"]);
   styleSummaryLabelCell(endingRow.getCell(3));
-  styleSummaryMoneyCell(endingRow.getCell(5), detail.endingBalance);
+  styleSummaryMoneyCell(endingRow.getCell(6), detail.endingBalance);
 
   sheet.getColumn(1).width = 20;
   sheet.getColumn(2).width = 22;
-  sheet.getColumn(3).width = 56;
+  sheet.getColumn(3).width = 50;
   sheet.getColumn(4).width = 18;
   sheet.getColumn(5).width = 18;
-  configurePrint(sheet, "E", headerRow);
+  sheet.getColumn(6).width = 18;
+  configurePrint(sheet, "F", headerRow);
   return workbook;
 }

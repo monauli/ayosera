@@ -358,6 +358,37 @@ test("Buku Besar Detail: seluruh baris dikelompokkan per akun, tidak ada yang hi
   }
 });
 
+// ---- Regresi komplain: Total Kredit HARUS TIDAK ikut Total Debit -----------
+// Kasus nyata: Debit total Rp20.614.923,86, Kredit transaksi Rp1.275.576,14 —
+// Total Pergerakan Kredit sempat salah menampilkan Rp20.614.923,86 (= Debit).
+// Total Debit dan Total Kredit harus SELALU dihitung independen per akun.
+
+test("buildLedgerDetailGroups: Total Debit dan Total Kredit independen (regresi komplain user)", () => {
+  const entries: LedgerEntryInput[] = [
+    { accountCode: "51000", accountName: "Beban Operasional", isOpeningBalance: true, debit: 0, credit: 0, balance: 0 },
+    { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-01", debit: 20614923.86, credit: 0, balance: 20614923.86 },
+    { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-05", debit: 0, credit: 1275576.14, balance: 19339347.72 },
+  ];
+  const [group] = buildLedgerDetailGroups(entries);
+  assert.equal(group.totalDebit, 20614923.86);
+  assert.equal(group.totalCredit, 1275576.14);
+  assert.notEqual(group.totalCredit, group.totalDebit);
+});
+
+test("buildLedgerAccountDetail: Total Debit dan Total Kredit independen (regresi komplain user)", () => {
+  const entries: LedgerEntryInput[] = [
+    { accountCode: "51000", accountName: "Beban Operasional", isOpeningBalance: true, debit: 0, credit: 0, balance: 0 },
+    { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-01", debit: 20614923.86, credit: 0, balance: 20614923.86 },
+    { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-05", debit: 0, credit: 1275576.14, balance: 19339347.72 },
+  ];
+  const detail = buildLedgerAccountDetail(entries, "51000");
+  assert.equal(detail.totalDebit, 20614923.86);
+  assert.equal(detail.totalCredit, 1275576.14);
+  assert.notEqual(detail.totalCredit, detail.totalDebit);
+  assert.equal(detail.movement, 20614923.86 - 1275576.14);
+  assert.equal(detail.endingBalance, 19339347.72);
+});
+
 // ---- Excel: satu workbook, 5 sheet, urutan & total benar -------------------
 
 test("Excel: workbook berisi tepat 5 sheet dengan nama yang benar", async () => {
@@ -403,7 +434,7 @@ test("Excel: sheet Neraca memuat nilai Total Aset persis snapshot", () => {
   assert.equal(found, 2519025675.61);
 });
 
-test("Excel ledger mempertahankan dua desimal, pengaturan cetak, dan Total Pergerakan kosong", () => {
+test("Excel ledger mempertahankan dua desimal, pengaturan cetak, kolom Saldo terisi, dan Total Pergerakan tidak mengisi Saldo", () => {
   const workbook = buildFinancialWorkbook({ period: "2026-05", companyName: "BC PADEL CLUB", balanceSheet: BALANCE_SHEET, profitLoss: PROFIT_LOSS, cashFlow: CASH_FLOW, ledgerSummary: LEDGER_SUMMARY, ledgerEntries: makeLedgerEntries() });
   const summary = workbook.getWorksheet("Ringkasan Buku Besar")!;
   // Baris 6, bukan 7: akun 11101 (Kas, debit=kredit=saldo=0) disembunyikan Fitur 2.
@@ -423,7 +454,11 @@ test("Excel ledger mempertahankan dua desimal, pengaturan cetak, dan Total Perge
   assert.equal(totalRow!.getCell(2).value, "");
   assert.equal(totalRow!.getCell(4).value, 37500000);
   assert.equal(totalRow!.getCell(5).value, 22500000);
-  assert.equal(detail.getRow(5).getCell(6).value, null);
+  assert.equal(detail.getRow(5).getCell(6).value, "Saldo");
+  // Total Pergerakan adalah total movement (SUM Debit/SUM Kredit) — kolom Saldo (6) sengaja tidak diisi di baris ini.
+  assert.equal(totalRow!.getCell(6).value, null);
+  // Saldo berjalan (dari sumber Olsera famount) tampil per baris transaksi.
+  assert.equal(detail.getRow(7).getCell(6).value, 1000000);
   assert.equal(detail.getRow(7).getCell(3).alignment?.wrapText, true);
   assert.equal(detail.pageSetup.printTitlesRow, "5:5");
 });

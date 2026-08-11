@@ -56,6 +56,7 @@ export async function GET(req: Request) {
         description: row.description,
         debit: row.debit,
         credit: row.credit,
+        balance: row.balance,
         isOpeningBalance: row.isOpeningBalance,
       })),
       total,

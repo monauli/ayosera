@@ -194,6 +194,7 @@ type LedgerEntryRow = {
   description: string | null;
   debit: number;
   credit: number;
+  balance: number | null;
   isOpeningBalance: boolean;
 };
 
@@ -1051,7 +1052,7 @@ export function OlseraFinancialPanel() {
                           </p>
                         </div>
                         <div className="overflow-x-auto rounded-xl border border-white/10">
-                          <table className="rd-table w-full min-w-[720px] text-sm">
+                          <table className="rd-table w-full min-w-[860px] text-sm">
                             <thead>
                               <tr>
                                 <th className={TH}>Tanggal</th>
@@ -1059,6 +1060,7 @@ export function OlseraFinancialPanel() {
                                 <th className={TH}>Deskripsi</th>
                                 <th className={`${TH} text-right`}>Debit</th>
                                 <th className={`${TH} text-right`}>Kredit</th>
+                                <th className={`${TH} text-right`}>Saldo</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1074,6 +1076,9 @@ export function OlseraFinancialPanel() {
                                   </td>
                                   <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-200">
                                     {row.credit ? formatRupiah(row.credit) : "-"}
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-200">
+                                    {row.balance == null ? "-" : formatRupiah(row.balance)}
                                   </td>
                                 </tr>
                               ))}
