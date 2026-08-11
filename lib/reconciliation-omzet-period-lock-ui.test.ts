@@ -208,3 +208,63 @@ test("V9 Goal 6: Simpan (previewFinalization) mengirim adjustmentReason: finalRe
   assert.match(page, /adjustmentReason: finalReason/);
   assert.match(page, /setFinalReason\(data\.data\.periodLock\?\.adjustmentReason \?\?/);
 });
+
+// ---------------------------------------------------------------------------
+// V10 Goal 1/2/7: status "Cocok karena Berita Acara" begitu Simpan sukses
+// (tanpa menunggu Kunci Periode), icon/badge terpisah dari badge locked,
+// beritaAcaraVerified diturunkan dari `finalization` (live, bukan snapshot
+// detail) supaya update instan tanpa refetch.
+// ---------------------------------------------------------------------------
+test("V10 Goal 1/7: beritaAcaraVerified diturunkan dari finalization.status !== 'locked' && finalization.verifiedMatchStatus === 'COCOK' (live, update instan setelah Simpan)", () => {
+  assert.match(page, /const beritaAcaraVerified = Boolean\(finalization && finalization\.status !== "locked" && finalization\.verifiedMatchStatus === "COCOK"\);/);
+});
+
+test("V10 Goal 2: badge 'Berita Acara' (BeritaAcaraVerifiedBadge, icon FileCheck) dirender di tabel utama TERPISAH dari badge 'Cocok — Terkunci' (locked tidak berubah)", () => {
+  assert.match(page, /function BeritaAcaraVerifiedBadge\(\)/);
+  assert.match(page, /title="Selisih telah diverifikasi dengan Berita Acara"/);
+  assert.match(page, /<FileCheck size=\{12\} \/> Berita Acara/);
+  // Kedua baris tabel (desktop + mobile) memakai badge baru sebagai fallback SEBELUM LockBadge lama, TIDAK menggantikan badge locked yang sudah ada.
+  assert.match(page, /row\.periodLock\?\.status === "locked" \? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size=\{12\} \/> Cocok — Terkunci · Detail Penyesuaian<\/span> : row\.beritaAcaraVerified \? <BeritaAcaraVerifiedBadge \/> : row\.explanation\?\.locked && <LockBadge \/>/);
+  assert.match(page, /row\.periodLock\?\.status === "locked" \? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size=\{12\} \/> Cocok — Terkunci<\/span> : row\.beritaAcaraVerified \? <BeritaAcaraVerifiedBadge \/> : row\.explanation\?\.locked && <LockBadge \/>/);
+});
+
+test("V10 Goal 3/9: status tabel utama memakai reconciliationOmzetUiStatus(row.status, row.differenceRevenue, row.beritaAcaraVerified) — selisih (row.differenceRevenue) TIDAK PERNAH ditimpa/dinolkan di sini", () => {
+  assert.match(page, /reconciliationOmzetUiStatus\(row\.status, row\.differenceRevenue, row\.beritaAcaraVerified\)/);
+  assert.doesNotMatch(page, /row\.differenceRevenue = 0/);
+});
+
+test("V10 Goal 6: wording detail 'menunggu verifikasi' -> 'telah diverifikasi' HANYA saat beritaAcaraVerified true, selisih asli (detail.differenceRevenue) tetap dipakai di kalimatnya", () => {
+  assert.match(page, /\{beritaAcaraVerified \? `Selisih \$\{formatRupiah\(detail\.differenceRevenue\)\} telah diverifikasi dengan Berita Acara\.` : detail\.statusReason\}/);
+});
+
+test("V10 Goal 7: banner 'Cocok — Selisih telah diverifikasi' muncul begitu Simpan sukses (beritaAcaraVerified), TIDAK menunggu Kunci Periode (terpisah dari banner locked)", () => {
+  assert.match(page, /\{beritaAcaraVerified && <p className="recon-lock-summary"><FileCheck size=\{14\} \/> Cocok — Selisih telah diverifikasi dengan Berita Acara\.<\/p>\}/);
+});
+
+test("V10 Goal 7: Simpan (previewFinalization) mengirim beritaAcaraNominal/beritaAcaraDirection dari hasil analisis OCR, dan me-refresh tabel utama (await refresh()) supaya status/icon langsung ter-update", () => {
+  assert.match(page, /beritaAcaraNominal: analysis\?\.nominal \?\? null, beritaAcaraDirection: analysis\?\.direction \?\? null/);
+  assert.match(page, /setFinalSaveMessage\("Finalisasi berhasil disimpan\."\);[\s\S]{0,300}await refresh\(\);/);
+});
+
+// ---------------------------------------------------------------------------
+// V10 Goal 9-13: "Bersihkan Riwayat Upload" — supervisor-only, tombol kecil,
+// confirmation persis sesuai instruksi, raw actor id TIDAK PERNAH dirender.
+// ---------------------------------------------------------------------------
+test("V10 Goal 9/13: tombol 'Bersihkan Riwayat Upload' HANYA muncul untuk supervisor DAN >1 entri upload, style recon-link (tidak dominan)", () => {
+  assert.match(page, /\{supervisor && finalization\.history\.filter\(\(item\) => item\.action === "upload"\)\.length > 1 && \(/);
+  assert.match(page, /<button type="button" className="recon-link" disabled=\{cleanupBusy\} onClick=\{\(\) => setShowCleanupConfirm\(true\)\}>\s*Bersihkan Riwayat Upload/);
+});
+
+test("V10 Goal 11: teks konfirmasi cleanup PERSIS sesuai instruksi (menyebut Simpan/Kunci/Buka Kunci tidak akan dihapus)", () => {
+  assert.match(page, /Hapus riwayat upload lama\/duplikat\? Riwayat Simpan, Kunci, dan Buka Kunci tidak akan dihapus\./);
+});
+
+test("V10 Goal 9: cleanupUploadHistory memanggil endpoint cleanup-upload-history dengan version finalization saat ini", () => {
+  assert.match(page, /const cleanupUploadHistory = async \(\) => \{/);
+  assert.match(page, /finalizationRequest\("cleanup-upload-history", \{ method: "POST", headers: \{ "Content-Type": "application\/json" \}, body: JSON\.stringify\(\{ version: finalization\.version \}\) \}\)/);
+});
+
+test("V10: tombol cleanup TIDAK menampilkan raw actor id di mana pun — pola raw id lama ({item.actor}/{history.actor}) tidak ada", () => {
+  assert.doesNotMatch(page, /\{item\.actor\}/);
+  assert.doesNotMatch(page, /Bersihkan.*\{.*\.actor\}/);
+});

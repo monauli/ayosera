@@ -6,10 +6,23 @@ export type ReconciliationOmzetUiStatus = "COCOK" | "SELISIH_TERJELASKAN" | "PER
 
 const EXISTING_MATCH_TOLERANCE_IDR = 1;
 
+// V10: `beritaAcaraVerified` opsional (default false — SEMUA pemanggil lama
+// dengan 2 argumen tetap berperilaku IDENTIK, termasuk perilaku existing
+// yang sengaja menurunkan status "COCOK" balik ke PERLU_DICEK bila selisih
+// SAAT INI di luar toleransi — lihat test "rekonsiliasi di luar toleransi
+// adalah Perlu Dicek" di reconciliation-omzet-ui.test.ts, TIDAK diubah).
+// `beritaAcaraVerified` SENGAJA jadi satu-satunya jalur baru untuk memaksa
+// "COCOK" terlepas dari besar selisih mentahnya (bukan `status === "COCOK"`
+// yang di-passthrough begitu saja — itu akan melemahkan safety-net existing
+// di atas) — hanya periode yang BENAR-BENAR sudah di-Simpan dan
+// server-verified (lihat isBeritaAcaraVerifiedUnlocked di
+// lib/reconciliation-omzet-period-lock.ts) yang boleh lewat jalur ini.
 export function reconciliationOmzetUiStatus(
   status: ReconciliationOmzetUiStatus,
   differenceRevenue: number,
+  beritaAcaraVerified = false,
 ): ReconciliationOmzetUiStatus {
+  if (beritaAcaraVerified) return "COCOK";
   if (Math.abs(differenceRevenue) <= EXISTING_MATCH_TOLERANCE_IDR) return "COCOK";
   if (status === "BULAN_BERJALAN") return "BULAN_BERJALAN";
   if (status === "SELISIH_TERJELASKAN") return "SELISIH_TERJELASKAN";

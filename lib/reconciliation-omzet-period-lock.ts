@@ -1,5 +1,7 @@
 import "server-only";
 import { collections, type ReconciliationOmzetPeriodLockDocument } from "./mongodb.ts";
+import { matchBeritaAcaraToSystemDifference, type BeritaAcaraDirection, type BeritaAcaraMatchStatus } from "./reconciliation-berita-acara-parser.ts";
+import { formatRupiah } from "./reconciliation-berita-acara-ui.ts";
 
 export class OmzetPeriodLockError extends Error {
   constructor(message: string, readonly code: "VALIDATION" | "NOT_FOUND" | "CONFLICT" | "LOCKED" = "VALIDATION") { super(message); this.name = "OmzetPeriodLockError"; }
@@ -36,6 +38,18 @@ export function validateOmzetPeriodLockAttachment(file: { name: string; type: st
 function text(value: unknown, field: string, max = 2_000) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max) throw new OmzetPeriodLockError(`${field} wajib diisi.`);
   return value.trim();
+}
+// V10: nominal/arah Berita Acara di preview (Simpan) OPSIONAL dan TIDAK
+// PERNAH memblokir Simpan bila hilang/tidak valid — nilai sampah/hilang
+// diperlakukan sebagai "tidak ada sinyal" (null), yang membuat
+// matchBeritaAcaraToSystemDifference mengembalikan PERLU_REVIEW (bukan
+// error) — konsisten dengan filosofi "jangan pernah blokir total" yang
+// sudah dipakai di seluruh alur finalisasi ini.
+function optionalPositiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+function optionalBeritaAcaraDirection(value: unknown): BeritaAcaraDirection | null {
+  return value === "PENAMBAHAN" || value === "PENGURANGAN" ? value : null;
 }
 function snapshot(doc: ReconciliationOmzetPeriodLockDocument | null) {
   return doc ? { status: doc.status, version: doc.version, finalAgreedAmount: doc.finalAgreedAmount, adjustmentAmount: doc.adjustmentAmount, adjustmentReason: doc.adjustmentReason } : {};
@@ -84,22 +98,32 @@ export async function uploadOmzetPeriodLockAttachment(input: { storeId: number; 
     // pada field array yang belum ada otomatis membuat array baru berisi
     // elemen yang di-push — jadi `version: 0` dan `history: []` di
     // $setOnInsert tidak diperlukan sama sekali dan harus dihapus.
-    { $set: { storeId: input.storeId, year, month, periodKey: input.period, status: current?.status ?? "draft", attachment: input.attachment, updatedAt: now }, $setOnInsert: { originalAyoAmount: null, originalOlseraAmount: null, originalDifference: null, finalAgreedAmount: null, adjustmentAmount: null, adjustmentReason: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, createdAt: now }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: null, before, after: { fileName: input.attachment.fileName } } } },
+    { $set: { storeId: input.storeId, year, month, periodKey: input.period, status: current?.status ?? "draft", attachment: input.attachment, updatedAt: now }, $setOnInsert: { originalAyoAmount: null, originalOlseraAmount: null, originalDifference: null, finalAgreedAmount: null, adjustmentAmount: null, adjustmentReason: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, verifiedMatchStatus: null, beritaAcaraNominal: null, beritaAcaraDirection: null, createdAt: now }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: null, before, after: { fileName: input.attachment.fileName } } } },
     { upsert: !current, returnDocument: "after" },
   );
   if (!document) throw new OmzetPeriodLockError("Konflik upload; muat ulang lalu coba lagi.", "CONFLICT");
   return document;
 }
 
-export function previewOmzetPeriodLock(input: { original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown; attachment: PeriodLockAttachment | null }) {
+export function previewOmzetPeriodLock(input: { original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown; attachment: PeriodLockAttachment | null; beritaAcaraNominal?: unknown; beritaAcaraDirection?: unknown }) {
   const finalAgreedAmount = integer(input.finalAgreedAmount, "Nominal final");
   const adjustmentReason = text(input.adjustmentReason, "Alasan penyesuaian");
   if (!input.attachment) throw new OmzetPeriodLockError("Berita acara wajib diunggah sebelum preview.", "NOT_FOUND");
-  return { ...input.original, finalAgreedAmount, adjustmentAmount: finalAgreedAmount - input.original.olsera, adjustmentReason, attachment: input.attachment, lockedDisplay: { ayo: finalAgreedAmount, olsera: finalAgreedAmount, difference: 0, status: "COCOK_TERKUNCI" as const } };
+  const beritaAcaraNominal = optionalPositiveInteger(input.beritaAcaraNominal);
+  const beritaAcaraDirection = optionalBeritaAcaraDirection(input.beritaAcaraDirection);
+  // V10: verifikasi SERVER-SIDE (bukan klaim client) — matchBeritaAcaraToSystemDifference
+  // dijalankan terhadap input.original.difference, yaitu selisih sistem yang
+  // SERVER sendiri hitung (loadOmzetLedgerMonthDetail di route), BUKAN
+  // nilai yang dikirim client. Supervisor tetap bisa mengklaim
+  // nominal/arah apa pun, tapi status "Cocok karena Berita Acara" di tabel
+  // utama hanya benar-benar valid kalau klaim itu memang cocok dengan
+  // selisih sistem sungguhan — mencegah status Cocok dipalsukan.
+  const verifiedMatchStatus: BeritaAcaraMatchStatus = matchBeritaAcaraToSystemDifference(input.original.difference, { nominal: beritaAcaraNominal, direction: beritaAcaraDirection });
+  return { ...input.original, finalAgreedAmount, adjustmentAmount: finalAgreedAmount - input.original.olsera, adjustmentReason, attachment: input.attachment, beritaAcaraNominal, beritaAcaraDirection, verifiedMatchStatus, lockedDisplay: { ayo: finalAgreedAmount, olsera: finalAgreedAmount, difference: 0, status: "COCOK_TERKUNCI" as const } };
 }
 
 /** Records a non-locking preview in the append-only audit trail. */
-export async function recordOmzetPeriodLockPreview(input: { storeId: number; period: string; actor: string; expectedVersion: unknown; original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown }, context?: OmzetPeriodLockContext) {
+export async function recordOmzetPeriodLockPreview(input: { storeId: number; period: string; actor: string; expectedVersion: unknown; original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown; beritaAcaraNominal?: unknown; beritaAcaraDirection?: unknown }, context?: OmzetPeriodLockContext) {
   const source = await contextOrDefault(context);
   const expectedVersion = integer(input.expectedVersion, "Versi");
   const id = `${input.storeId}:${input.period}`;
@@ -111,7 +135,12 @@ export async function recordOmzetPeriodLockPreview(input: { storeId: number; per
   const document = await source.locks.findOneAndUpdate(
     { _id: id, version: expectedVersion, status: { $in: ["draft", "unlocked"] } },
     {
-      $set: { updatedAt: now },
+      // V10: "Simpan" adalah SATU-SATUNYA tempat verifiedMatchStatus/
+      // beritaAcaraNominal/beritaAcaraDirection ditulis — supaya status
+      // "Cocok karena Berita Acara" di tabel utama (lihat
+      // applyLockedOmzetPresentation) selalu mencerminkan Simpan TERAKHIR,
+      // bukan analisis OCR client yang belum pernah disimpan.
+      $set: { updatedAt: now, verifiedMatchStatus: preview.verifiedMatchStatus, beritaAcaraNominal: preview.beritaAcaraNominal, beritaAcaraDirection: preview.beritaAcaraDirection },
       $inc: { version: 1 },
       $push: { history: { action: "preview", actor: input.actor, timestamp: now, reason: preview.adjustmentReason, before: snapshot(current), after: { finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount } } },
     },
@@ -140,7 +169,86 @@ export async function unlockOmzetPeriodFinalization(input: { storeId: number; pe
   return document;
 }
 
+/** true bila Berita Acara SUDAH tervalidasi server (Simpan terakhir COCOK) TAPI periode belum dikunci — status Cocok, TANPA collapse ke Rp0 (beda dari locked). */
+export function isBeritaAcaraVerifiedUnlocked(lock: ReconciliationOmzetPeriodLockDocument | null): boolean {
+  return Boolean(lock && lock.status !== "locked" && lock.verifiedMatchStatus === "COCOK");
+}
+
 export function applyLockedOmzetPresentation<T extends { ayo: { count: number; revenue: number }; olseraTotal: number; differenceRevenue: number; status: string; statusReason: string }>(result: T, lock: ReconciliationOmzetPeriodLockDocument | null) {
-  if (lock?.status !== "locked" || lock.finalAgreedAmount === null) return { ...result, periodLock: lock };
-  return { ...result, ayo: { ...result.ayo, revenue: lock.finalAgreedAmount }, olseraTotal: lock.finalAgreedAmount, differenceRevenue: 0, status: "COCOK", statusReason: "Cocok — Terkunci berdasarkan berita acara rekonsiliasi.", periodLock: lock };
+  if (lock?.status === "locked" && lock.finalAgreedAmount !== null) {
+    return { ...result, ayo: { ...result.ayo, revenue: lock.finalAgreedAmount }, olseraTotal: lock.finalAgreedAmount, differenceRevenue: 0, status: "COCOK", statusReason: "Cocok — Terkunci berdasarkan berita acara rekonsiliasi.", periodLock: lock, beritaAcaraVerified: true };
+  }
+  // V10: Simpan (recordOmzetPeriodLockPreview) sudah menghasilkan pencocokan
+  // COCOK server-verified, TAPI periode BELUM dikunci — status tabel utama
+  // sudah boleh "Cocok" TANPA menunggu Kunci Periode, tapi selisih ASLI
+  // TETAP ditampilkan apa adanya (TIDAK di-collapse ke Rp0 seperti cabang
+  // locked di atas) — transparansi, sesuai instruksi V10: "Selisih asli
+  // JANGAN diubah menjadi Rp0". Beda mendasar dari cabang locked: locked =
+  // finalisasi penuh (collapse sengaja), ini = konfirmasi awal (angka tetap
+  // apa adanya).
+  if (isBeritaAcaraVerifiedUnlocked(lock)) {
+    return { ...result, status: "COCOK", statusReason: `Selisih ${formatRupiah(result.differenceRevenue)} telah diverifikasi dengan Berita Acara.`, periodLock: lock, beritaAcaraVerified: true };
+  }
+  return { ...result, periodLock: lock, beritaAcaraVerified: false };
+}
+
+// ---------------------------------------------------------------------------
+// V10: "Bersihkan Riwayat Upload" — supervisor boleh membersihkan entri
+// `history` beraksi "upload" yang duplikat/gagal/percobaan lama, TANPA
+// PERNAH menyentuh entri lain (preview/lock/relock/unlock — audit trail
+// finalisasi WAJIB permanen) dan TANPA PERNAH menghapus entri upload yang
+// menghasilkan attachment yang SEDANG AKTIF.
+//
+// Solusi PALING AMAN yang dipakai (bukan cocok-cocokan fileName/timestamp,
+// yang bisa ambigu kalau nama file sama atau jam server berbeda beberapa
+// ms antara `attachment.uploadedAt` yang di-set di route.ts dan `now` yang
+// di-set di dalam uploadOmzetPeriodLockAttachment): SELALU pertahankan
+// entri "upload" TERAKHIR (paling akhir) dalam array `history`, hapus semua
+// entri "upload" SEBELUM itu. Ini benar SECARA STRUKTURAL — bukan heuristik
+// — karena `history` di-$push secara berurutan (append-only, tidak pernah
+// disisipkan di tengah) dan field `attachment` dokumen SELALU berasal dari
+// upload PALING BARU (tidak mungkin ada upload yang terjadi "sesudah" upload
+// terakhir tapi tidak tercatat sebagai entri upload terakhir), jadi entri
+// upload terakhir di array PASTI entri yang menghasilkan attachment aktif
+// saat ini — terlepas dari nama file/waktu.
+// ---------------------------------------------------------------------------
+
+/** Fungsi MURNI (bisa dites tanpa DB) — hapus semua entri "upload" KECUALI yang terakhir; entri lain (preview/lock/relock/unlock) TIDAK PERNAH disentuh, urutan sisanya TIDAK berubah. */
+export function computeCleanedUploadHistory(history: ReconciliationOmzetPeriodLockDocument["history"]): ReconciliationOmzetPeriodLockDocument["history"] {
+  const uploadIndices: number[] = [];
+  history.forEach((entry, index) => {
+    if (entry.action === "upload") uploadIndices.push(index);
+  });
+  if (uploadIndices.length <= 1) return history;
+  const lastUploadIndex = uploadIndices[uploadIndices.length - 1];
+  return history.filter((entry, index) => entry.action !== "upload" || index === lastUploadIndex);
+}
+
+/**
+ * Bersihkan entri "upload" duplikat/lama dari riwayat SATU periode. Otorisasi
+ * (supervisor-only) WAJIB diverifikasi di route.ts SEBELUM memanggil ini —
+ * fungsi ini sendiri TIDAK memeriksa role, sama seperti seluruh fungsi lain
+ * di modul ini (pola existing: auth selalu di layer route, bukan di lib).
+ * TIDAK PERNAH menghapus seluruh dokumen/array history, TIDAK PERNAH
+ * menyentuh attachment aktif — hanya memangkas entri "upload" lama lewat
+ * computeCleanedUploadHistory (lihat komentar di atasnya untuk alasan
+ * keamanannya).
+ */
+export async function cleanupOmzetPeriodUploadHistory(input: { storeId: number; period: string; actor: string; expectedVersion: unknown }, context?: OmzetPeriodLockContext) {
+  const source = await contextOrDefault(context);
+  const expectedVersion = integer(input.expectedVersion, "Versi");
+  const id = `${input.storeId}:${input.period}`;
+  const current = await source.locks.findOne({ _id: id });
+  if (!current) throw new OmzetPeriodLockError("Periode tidak ditemukan.", "NOT_FOUND");
+  const cleanedHistory = computeCleanedUploadHistory(current.history);
+  const removedCount = current.history.length - cleanedHistory.length;
+  if (removedCount === 0) return { lock: current, removedCount: 0 };
+  const now = new Date();
+  const document = await source.locks.findOneAndUpdate(
+    { _id: id, version: expectedVersion },
+    { $set: { history: cleanedHistory, updatedAt: now }, $inc: { version: 1 } },
+    { returnDocument: "after" },
+  );
+  if (!document) throw new OmzetPeriodLockError("Konflik pembersihan riwayat; muat ulang lalu coba lagi.", "CONFLICT");
+  return { lock: document, removedCount };
 }

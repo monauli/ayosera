@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileCheck, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
 import { analyzeBeritaAcaraFileClient, STATUS_READING } from "@/lib/reconciliation-berita-acara-client-ocr";
 import {
@@ -38,7 +38,10 @@ type SportReconciliation = { court: SportComparison; pickleball: SportComparison
 // diresolve server (lib/reconciliation-actor-display.ts) dari actor id mentah
 // -> nama/email/fallback "User" — UI TIDAK PERNAH menampilkan
 // uploadedBy/lockedBy/unlockedBy/history[].actor (raw id) langsung (Goal 3 V8).
-type PeriodLock = { status: "draft" | "locked" | "unlocked"; version: number; originalAyoAmount: number | null; originalOlseraAmount: number | null; originalDifference: number | null; finalAgreedAmount: number | null; adjustmentAmount: number | null; adjustmentReason: string | null; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: string; uploadedBy: string; uploadedByName: string } | null; lockedAt: string | null; lockedBy: string | null; lockedByName: string; unlockedAt: string | null; unlockedBy: string | null; unlockedByName: string; history: Array<{ action: string; actor: string; actorName: string; timestamp: string; reason: string | null }> };
+// verifiedMatchStatus/beritaAcaraNominal/beritaAcaraDirection (V10): hasil
+// pencocokan Berita Acara TERAKHIR yang di-server-verify saat Simpan — lihat
+// lib/reconciliation-omzet-period-lock.ts previewOmzetPeriodLock.
+type PeriodLock = { status: "draft" | "locked" | "unlocked"; version: number; originalAyoAmount: number | null; originalOlseraAmount: number | null; originalDifference: number | null; finalAgreedAmount: number | null; adjustmentAmount: number | null; adjustmentReason: string | null; verifiedMatchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | null; beritaAcaraNominal: number | null; beritaAcaraDirection: "PENAMBAHAN" | "PENGURANGAN" | null; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: string; uploadedBy: string; uploadedByName: string } | null; lockedAt: string | null; lockedBy: string | null; lockedByName: string; unlockedAt: string | null; unlockedBy: string | null; unlockedByName: string; history: Array<{ action: string; actor: string; actorName: string; timestamp: string; reason: string | null }> };
 type EvidenceType = "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
 /** Penanda note yang dikunci LANGSUNG dari status Cocok (selisih Rp0), TANPA penjelasan manual — lihat lib/reconciliation-omzet-ledger.ts OMZET_LOCK_WITHOUT_EXPLANATION_MARKER. TIDAK muncul di dropdown "Jenis bukti" (bukan kategori bukti sungguhan). */
 const LOCK_WITHOUT_EXPLANATION_MARKER = "matched-no-explanation" as const;
@@ -69,6 +72,8 @@ type OmzetResult = {
   statusReason: string;
   explanation: Explanation | null;
   periodLock?: PeriodLock | null;
+  /** V10: true bila Berita Acara sudah di-Simpan dan server-verified COCOK (lihat isBeritaAcaraVerifiedUnlocked) — dipakai list & detail untuk status/icon "Cocok" TANPA mengubah differenceRevenue. */
+  beritaAcaraVerified?: boolean;
 };
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 type BeritaAcaraAnalysis = {
@@ -131,6 +136,18 @@ function LockBadge() {
   return (
     <span className="recon-badge recon-badge-warn">
       <Lock size={12} /> Dikunci
+    </span>
+  );
+}
+
+// V10 Goal 2: indikator "Cocok karena Berita Acara" untuk periode yang SUDAH
+// Simpan + server-verified COCOK tapi BELUM dikunci — beda dari badge
+// "Cocok — Terkunci" (locked) yang sudah ada; selisih ASLI TETAP tampil di
+// kolom lain (tabel/kartu), badge ini murni indikator, tidak mengubah angka.
+function BeritaAcaraVerifiedBadge() {
+  return (
+    <span className="recon-badge recon-badge-ok" title="Selisih telah diverifikasi dengan Berita Acara">
+      <FileCheck size={12} /> Berita Acara
     </span>
   );
 }
@@ -294,6 +311,12 @@ export default function ReconciliationPage() {
   const [showFinalLockConfirm, setShowFinalLockConfirm] = useState(false);
   const [showUnlock, setShowUnlock] = useState(false);
   const [unlockReason, setUnlockReason] = useState("");
+  // V10 Goal 9-13: "Bersihkan Riwayat Upload" — state terpisah dari
+  // finalBusy/finalError supaya tidak saling mengganggu dengan aksi
+  // Simpan/Kunci/Buka Kunci yang berjalan di section yang sama.
+  const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupError, setCleanupError] = useState("");
 
   const refresh = async () => {
     setLoading(true);
@@ -325,7 +348,7 @@ export default function ReconciliationPage() {
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
-    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage(""); reasonEditedByUserRef.current = false;
+    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage(""); setShowCleanupConfirm(false); setCleanupError(""); reasonEditedByUserRef.current = false;
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
@@ -453,7 +476,21 @@ export default function ReconciliationPage() {
   // untuk user, bukan mekanisme keamanannya.
   const previewFinalization = async () => {
     setFinalBusy(true); setFinalError(""); setFinalSaveMessage("");
-    try { const data = await finalizationRequest("preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason }) }); setFinalPreview(data.data); setFinalization(data.lock); setFinalSaveMessage("Finalisasi berhasil disimpan."); }
+    try {
+      // V10 Goal 7: kirim nominal/arah Berita Acara HASIL ANALISIS (kalau
+      // ada) supaya server bisa menghitung verifiedMatchStatus SENDIRI
+      // (matchBeritaAcaraToSystemDifference terhadap selisih sistem server,
+      // bukan klaim client) — inilah yang membuat status tabel utama bisa
+      // langsung "Cocok" begitu Simpan sukses, tanpa menunggu Kunci Periode.
+      const data = await finalizationRequest("preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason, beritaAcaraNominal: analysis?.nominal ?? null, beritaAcaraDirection: analysis?.direction ?? null }) });
+      setFinalPreview(data.data);
+      setFinalization(data.lock);
+      setFinalSaveMessage("Finalisasi berhasil disimpan.");
+      // Tabel utama (items) TIDAK otomatis ikut ter-update dari state
+      // finalization di atas (fetch terpisah) — refresh supaya status/icon
+      // Berita Acara di tabel langsung mencerminkan Simpan ini.
+      await refresh();
+    }
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal menyimpan finalisasi."); }
     finally { setFinalBusy(false); }
   };
@@ -469,6 +506,16 @@ export default function ReconciliationPage() {
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal membuka kunci periode."); }
     finally { setFinalBusy(false); }
   };
+  // V10 Goal 9-13: hapus HANYA entri "upload" lama/duplikat dari Riwayat
+  // Aktivitas (lihat cleanupOmzetPeriodUploadHistory di
+  // lib/reconciliation-omzet-period-lock.ts — mempertahankan upload
+  // TERAKHIR/aktif, TIDAK PERNAH menyentuh preview/lock/relock/unlock).
+  const cleanupUploadHistory = async () => {
+    if (!finalization) return; setCleanupBusy(true); setCleanupError("");
+    try { await finalizationRequest("cleanup-upload-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization.version }) }); setShowCleanupConfirm(false); if (selectedPeriod) await openDetail(selectedPeriod); }
+    catch (error) { setCleanupError(error instanceof Error ? error.message : "Gagal membersihkan riwayat unggahan."); }
+    finally { setCleanupBusy(false); }
+  };
 
   // Gating Simpan (Goal 8, test wajib #14): attachment ada, tidak sedang
   // busy/analisis, alasan diisi, nominal final berupa integer valid. SENGAJA
@@ -483,6 +530,17 @@ export default function ReconciliationPage() {
   // membuka jalur manual (user isi sendiri lalu preview ulang), sesuai
   // instruksi: jangan pernah memblokir total user pada data yang tidak pasti.
   const canLockFinalization = canLockAfterSave({ hasPreview: Boolean(finalPreview), busy: finalBusy, matchStatus: analysis?.matchStatus });
+
+  // V10 Goal 7/8: diturunkan LANGSUNG dari `finalization` (state periodLock,
+  // di-update setiap Simpan/Lock/Unlock — lihat previewFinalization dkk di
+  // atas) alih-alih `detail.beritaAcaraVerified` (snapshot yang hanya
+  // diambil sekali saat openDetail) — supaya banner/wording di drawer detail
+  // langsung berubah begitu Simpan sukses, TANPA perlu refetch detail penuh
+  // (yang akan membuang finalPreview yang baru saja ditampilkan). Predikat
+  // ini SENGAJA sama persis dengan isBeritaAcaraVerifiedUnlocked di
+  // lib/reconciliation-omzet-period-lock.ts (server) — duplikasi kecil yang
+  // disengaja demi live-update tanpa refetch.
+  const beritaAcaraVerified = Boolean(finalization && finalization.status !== "locked" && finalization.verifiedMatchStatus === "COCOK");
 
   const supervisor = user?.role === "supervisor";
   if (user && !user.allowedModules.includes("rekonsiliasi") && !supervisor) {
@@ -553,7 +611,7 @@ export default function ReconciliationPage() {
                     {/*
                     <StatusBadge status={row.status} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok â€” Terkunci · Detail Penyesuaian</span> : row.explanation?.locked && <LockBadge />}
                     */}
-                    <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci · Detail Penyesuaian</span> : row.explanation?.locked && <LockBadge />}
+                    <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue, row.beritaAcaraVerified)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci · Detail Penyesuaian</span> : row.beritaAcaraVerified ? <BeritaAcaraVerifiedBadge /> : row.explanation?.locked && <LockBadge />}
                   </td>
                   <td>
                     <button className="recon-link" onClick={() => void openDetail(row.period)}>
@@ -577,7 +635,7 @@ export default function ReconciliationPage() {
                   {/*
                   <StatusBadge status={row.status} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok â€” Terkunci</span> : row.explanation?.locked && <LockBadge />}
                   */}
-                  <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci</span> : row.explanation?.locked && <LockBadge />}
+                  <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue, row.beritaAcaraVerified)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci</span> : row.beritaAcaraVerified ? <BeritaAcaraVerifiedBadge /> : row.explanation?.locked && <LockBadge />}
                 </div>
               </button>
             ))}
@@ -617,8 +675,13 @@ export default function ReconciliationPage() {
                   <AlertTriangle /> <strong>Data belum dapat diverifikasi.</strong> Ledger akun 40001/40004 belum tersedia (belum disinkronkan) untuk periode ini.
                 </p>
               )}
+              {/* V10 Goal 6: wording "menunggu verifikasi" -> "telah diverifikasi"
+                  HANYA saat beritaAcaraVerified true (Simpan sudah server-verified
+                  COCOK) — selisih ASLI (detail.differenceRevenue, tidak diubah)
+                  tetap muncul di kalimatnya, periode BELUM diverifikasi tetap
+                  memakai detail.statusReason apa adanya dari server. */}
               <p className="recon-readonly">
-                <strong>Penyebab status:</strong> {detail.statusReason}
+                <strong>Penyebab status:</strong> {beritaAcaraVerified ? `Selisih ${formatRupiah(detail.differenceRevenue)} telah diverifikasi dengan Berita Acara.` : detail.statusReason}
               </p>
 
               <section className="recon-sport-sections" aria-label="Rincian omzet per olahraga">
@@ -628,8 +691,8 @@ export default function ReconciliationPage() {
                   title="TOTAL GABUNGAN"
                   ayoLabel="Total Omzet AYO"
                   olseraLabel="Total Omzet Olsera (40001+40004)"
-                  comparison={{ ayo: detail.sportReconciliation.total, olsera: detail.olseraTotal, difference: detail.differenceRevenue, status: reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue) === "COCOK" ? "COCOK" : "PERLU_DICEK" }}
-                  finalStatus={reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue)}
+                  comparison={{ ayo: detail.sportReconciliation.total, olsera: detail.olseraTotal, difference: detail.differenceRevenue, status: reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue, beritaAcaraVerified) === "COCOK" ? "COCOK" : "PERLU_DICEK" }}
+                  finalStatus={reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue, beritaAcaraVerified)}
                   wide
                   locked={detail.periodLock?.status === "locked"}
                 />
@@ -652,6 +715,10 @@ export default function ReconciliationPage() {
               */}
 
               {finalization?.status === "locked" && <p className="recon-lock-summary"><Lock size={14} /> Cocok — Terkunci · Detail Penyesuaian tersedia di Berita Acara dan Finalisasi.</p>}
+              {/* V10 Goal 7: status Cocok begitu Simpan sukses server-verified,
+                  TIDAK menunggu Kunci Periode (yang tetap langkah terpisah,
+                  lihat tombol Kunci Periode di bawah). */}
+              {beritaAcaraVerified && <p className="recon-lock-summary"><FileCheck size={14} /> Cocok — Selisih telah diverifikasi dengan Berita Acara.</p>}
               {supervisor && (
                 <CollapsibleSection title="Berita Acara dan Finalisasi">
                 <section className="recon-finalization">
@@ -712,6 +779,34 @@ export default function ReconciliationPage() {
                   {finalization?.history?.length ? (
                     <details className="recon-json">
                       <summary>Riwayat Aktivitas ({finalization.history.length})</summary>
+                      {/* V10 Goal 9/11/13: HANYA supervisor, HANYA saat ada >1 entri
+                          "upload" (duplikat/percobaan lama untuk dibersihkan) — tombol
+                          kecil (recon-link, bukan recon-button) supaya tidak dominan.
+                          Backend (cleanup-upload-history/route.ts) tetap WAJIB
+                          requireSupervisor() sendiri — tombol ini hanya UX, bukan
+                          satu-satunya lapisan otorisasi. */}
+                      {supervisor && finalization.history.filter((item) => item.action === "upload").length > 1 && (
+                        <div className="recon-actions">
+                          {!showCleanupConfirm ? (
+                            <button type="button" className="recon-link" disabled={cleanupBusy} onClick={() => setShowCleanupConfirm(true)}>
+                              Bersihkan Riwayat Upload
+                            </button>
+                          ) : (
+                            <div className="recon-form" role="alertdialog" aria-label="Konfirmasi bersihkan riwayat upload">
+                              <p>Hapus riwayat upload lama/duplikat? Riwayat Simpan, Kunci, dan Buka Kunci tidak akan dihapus.</p>
+                              <div className="recon-actions">
+                                <button type="button" className="recon-button" disabled={cleanupBusy} onClick={() => void cleanupUploadHistory()}>
+                                  Ya, Bersihkan
+                                </button>
+                                <button type="button" className="recon-button secondary" disabled={cleanupBusy} onClick={() => setShowCleanupConfirm(false)}>
+                                  Batal
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {cleanupError && <p className="recon-error">{cleanupError}</p>}
+                        </div>
+                      )}
                       <ul className="recon-history">
                         {finalization.history
                           .slice()

@@ -3,6 +3,9 @@ import test from "node:test";
 import type { ReconciliationOmzetPeriodLockDocument } from "./mongodb.ts";
 import {
   applyLockedOmzetPresentation,
+  cleanupOmzetPeriodUploadHistory,
+  computeCleanedUploadHistory,
+  isBeritaAcaraVerifiedUnlocked,
   lockOmzetPeriodFinalization,
   OmzetPeriodLockError,
   previewOmzetPeriodLock,
@@ -175,7 +178,7 @@ test("unlock restores original presentation and retains attachment and audit his
   assert.equal(unlocked.status, "unlocked");
   assert.equal(unlocked.attachment?.url, attachment.url);
   assert.equal(unlocked.history.at(-1)?.action, "unlock");
-  assert.deepEqual(applyLockedOmzetPresentation(source, unlocked), { ...source, periodLock: unlocked });
+  assert.deepEqual(applyLockedOmzetPresentation(source, unlocked), { ...source, periodLock: unlocked, beritaAcaraVerified: false });
 });
 
 test("unlock rejects empty/whitespace-only reason and non-locked status", async () => {
@@ -302,4 +305,219 @@ test("V6 regresi: skenario data legacy/produksi nyata pada uploadOmzetPeriodLock
       (error: unknown) => error instanceof Error && error.message === "MongoDB unavailable",
     );
   });
+});
+
+// ---------------------------------------------------------------------------
+// V10: status "Cocok karena Berita Acara" begitu Simpan sukses (SEBELUM
+// Kunci Periode), selisih ASLI TETAP tampil (tidak di-collapse ke Rp0),
+// diverifikasi SERVER-SIDE (matchBeritaAcaraToSystemDifference terhadap
+// original.difference, bukan klaim client) — lihat komentar ROOT CAUSE/Goal
+// di reconciliation-omzet-period-lock.ts.
+// ---------------------------------------------------------------------------
+
+const maret = { ayo: 197_855_000, olsera: 198_595_000, difference: 740_000 };
+const april = { ayo: 0, olsera: 0, difference: -739_999 };
+
+test("previewOmzetPeriodLock: V10 test wajib #2/#4 — verifiedMatchStatus dihitung server-side dari original.difference, BUKAN klaim client mentah", () => {
+  const maretPreview = previewOmzetPeriodLock({ original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", attachment, beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" });
+  assert.equal(maretPreview.verifiedMatchStatus, "COCOK");
+  assert.equal(maretPreview.beritaAcaraNominal, 740_000);
+  assert.equal(maretPreview.beritaAcaraDirection, "PENAMBAHAN");
+
+  const aprilPreview = previewOmzetPeriodLock({ original: april, finalAgreedAmount: april.olsera, adjustmentReason: "x", attachment, beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN" });
+  assert.equal(aprilPreview.verifiedMatchStatus, "COCOK", "toleransi ±Rp1 tetap berlaku (740.000 vs 739.999)");
+});
+
+test("previewOmzetPeriodLock: V10 test wajib #5/#6 — nominal beda >Rp1 atau arah salah -> TIDAK_COCOK, bukan COCOK dipalsukan", () => {
+  const wrongAmount = previewOmzetPeriodLock({ original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", attachment, beritaAcaraNominal: 750_000, beritaAcaraDirection: "PENAMBAHAN" });
+  assert.equal(wrongAmount.verifiedMatchStatus, "TIDAK_COCOK");
+  const wrongDirection = previewOmzetPeriodLock({ original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", attachment, beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN" });
+  assert.equal(wrongDirection.verifiedMatchStatus, "TIDAK_COCOK");
+});
+
+test("previewOmzetPeriodLock: V10 test wajib #7 — tanpa nominal/direction (upload tanpa analisis valid) -> PERLU_REVIEW, bukan COCOK", () => {
+  const noSignal = previewOmzetPeriodLock({ original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", attachment });
+  assert.equal(noSignal.verifiedMatchStatus, "PERLU_REVIEW");
+  assert.equal(noSignal.beritaAcaraNominal, null);
+  assert.equal(noSignal.beritaAcaraDirection, null);
+});
+
+test("previewOmzetPeriodLock: input beritaAcaraNominal/direction sampah (bukan angka positif / bukan enum valid) diperlakukan sebagai tidak ada sinyal, TIDAK PERNAH throw", () => {
+  const garbage = previewOmzetPeriodLock({ original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", attachment, beritaAcaraNominal: "bukan-angka", beritaAcaraDirection: "SALAH" });
+  assert.equal(garbage.verifiedMatchStatus, "PERLU_REVIEW");
+  assert.equal(garbage.beritaAcaraNominal, null);
+  assert.equal(garbage.beritaAcaraDirection, null);
+});
+
+test("recordOmzetPeriodLockPreview: V10 test wajib #2 — Simpan (preview) sebelum ada nominal/direction valid -> verifiedMatchStatus TIDAK COCOK, status tetap draft", async () => {
+  const { f, lock } = await upload();
+  const result = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: june, finalAgreedAmount: june.olsera, adjustmentReason: "Pembulatan" }, f.context);
+  assert.equal(result.lock.verifiedMatchStatus, "PERLU_REVIEW");
+  assert.equal(result.lock.status, "draft", "Simpan TIDAK PERNAH mengubah status draft/unlocked/locked itu sendiri — hanya verifiedMatchStatus");
+});
+
+test("recordOmzetPeriodLockPreview: V10 test wajib #3 — Simpan dengan nominal/direction COCOK mempersist verifiedMatchStatus=COCOK ke dokumen (survive refresh)", async () => {
+  const { f, lock } = await upload();
+  const result = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: june, finalAgreedAmount: june.olsera, adjustmentReason: "Pembulatan", beritaAcaraNominal: 1, beritaAcaraDirection: "PENAMBAHAN" }, f.context);
+  assert.equal(result.lock.verifiedMatchStatus, "COCOK");
+  // "refresh" = findOne baru, terpisah dari nilai yang dikembalikan langsung — data harus dari record tersimpan (Goal 8), bukan cuma state React.
+  const reloaded = await f.context.locks.findOne({ _id: "1:2026-06" });
+  assert.equal(reloaded?.verifiedMatchStatus, "COCOK");
+  assert.equal(reloaded?.beritaAcaraNominal, 1);
+  assert.equal(reloaded?.beritaAcaraDirection, "PENAMBAHAN");
+});
+
+test("isBeritaAcaraVerifiedUnlocked / applyLockedOmzetPresentation: V10 test wajib #1 — tanpa periodLock sama sekali -> selisih 0 -> Cocok lewat toleransi existing (tidak berubah)", () => {
+  assert.equal(isBeritaAcaraVerifiedUnlocked(null), false);
+  const source = { ayo: { count: 1, revenue: 100 }, olseraTotal: 100, differenceRevenue: 0, status: "COCOK", statusReason: "Toleransi" };
+  const presentation = applyLockedOmzetPresentation(source, null);
+  assert.equal(presentation.status, "COCOK");
+  assert.equal(presentation.beritaAcaraVerified, false);
+});
+
+test("applyLockedOmzetPresentation: V10 test wajib #3/#9 — periode Cocok karena Berita Acara (Simpan, belum lock) -> status Cocok + beritaAcaraVerified true, TAPI selisih ASLI TIDAK diubah ke Rp0", async () => {
+  const { f, lock } = await upload();
+  const saved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "Pembayaran di muka Maret", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" }, f.context);
+  assert.equal(isBeritaAcaraVerifiedUnlocked(saved.lock), true);
+  const source = { ayo: { count: 1, revenue: maret.ayo }, olseraTotal: maret.olsera, differenceRevenue: maret.difference, status: "PERLU_DICEK", statusReason: "Selisih Rp740.000 menunggu verifikasi Berita Acara." };
+  const presentation = applyLockedOmzetPresentation(source, saved.lock);
+  assert.equal(presentation.status, "COCOK");
+  assert.equal(presentation.beritaAcaraVerified, true);
+  assert.equal(presentation.differenceRevenue, 740_000, "V10: selisih asli JANGAN diubah menjadi Rp0 (beda dari periode locked)");
+  assert.equal(presentation.olseraTotal, maret.olsera, "olseraTotal TIDAK di-collapse ke finalAgreedAmount seperti periode locked");
+  assert.match(presentation.statusReason, /telah diverifikasi dengan Berita Acara/);
+  assert.match(presentation.statusReason, /Rp740\.000/);
+});
+
+test("applyLockedOmzetPresentation: V10 test wajib #2 — upload saja TANPA Simpan (verifiedMatchStatus masih null) -> TETAP Perlu Dicek, bukan Cocok", async () => {
+  const { f, lock } = await upload();
+  assert.equal(isBeritaAcaraVerifiedUnlocked(lock), false, "belum Simpan sama sekali -> belum verified");
+  const source = { ayo: { count: 1, revenue: maret.ayo }, olseraTotal: maret.olsera, differenceRevenue: maret.difference, status: "PERLU_DICEK", statusReason: "Selisih Rp740.000 menunggu verifikasi Berita Acara." };
+  const presentation = applyLockedOmzetPresentation(source, lock);
+  assert.equal(presentation.status, "PERLU_DICEK");
+  assert.equal(presentation.beritaAcaraVerified, false);
+});
+
+test("applyLockedOmzetPresentation: V10 test wajib #6 — Simpan dengan arah/nominal SALAH (TIDAK_COCOK) -> TETAP Perlu Dicek, tidak pernah Cocok palsu", async () => {
+  const { f, lock } = await upload();
+  const saved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN" }, f.context);
+  assert.equal(saved.lock.verifiedMatchStatus, "TIDAK_COCOK");
+  const source = { ayo: { count: 1, revenue: maret.ayo }, olseraTotal: maret.olsera, differenceRevenue: maret.difference, status: "PERLU_DICEK", statusReason: "Selisih Rp740.000 menunggu verifikasi Berita Acara." };
+  const presentation = applyLockedOmzetPresentation(source, saved.lock);
+  assert.equal(presentation.status, "PERLU_DICEK");
+  assert.equal(presentation.beritaAcaraVerified, false);
+});
+
+test("applyLockedOmzetPresentation: V10 test wajib #4 — April PENGURANGAN toleransi ±Rp1 -> Cocok, selisih -Rp739.999 tetap tampil", async () => {
+  const { f, lock } = await upload();
+  const saved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: april, finalAgreedAmount: april.olsera, adjustmentReason: "Sudah diakui Maret", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN" }, f.context);
+  const source = { ayo: { count: 1, revenue: april.ayo }, olseraTotal: april.olsera, differenceRevenue: april.difference, status: "PERLU_DICEK", statusReason: "x" };
+  const presentation = applyLockedOmzetPresentation(source, saved.lock);
+  assert.equal(presentation.status, "COCOK");
+  assert.equal(presentation.beritaAcaraVerified, true);
+  assert.equal(presentation.differenceRevenue, -739_999);
+});
+
+test("applyLockedOmzetPresentation: cabang locked TETAP tidak berubah (collapse Rp0, beritaAcaraVerified true juga) — regresi V10 tidak boleh mengubah perilaku lock lama", async () => {
+  const { f, lock } = await upload();
+  const preview = await previewForLock(f, lock.version);
+  const locked = await lockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: preview.lock.version, original: june, finalAgreedAmount: june.olsera, adjustmentReason: "Pembulatan" }, f.context);
+  const source = { ayo: { count: 1, revenue: june.ayo }, olseraTotal: june.olsera, differenceRevenue: june.difference, status: "PERLU_DICEK", statusReason: "x" };
+  const presentation = applyLockedOmzetPresentation(source, locked);
+  assert.equal(presentation.differenceRevenue, 0);
+  assert.equal(presentation.status, "COCOK");
+  assert.equal(presentation.beritaAcaraVerified, true);
+  assert.equal(presentation.statusReason, "Cocok — Terkunci berdasarkan berita acara rekonsiliasi.");
+});
+
+// ---------------------------------------------------------------------------
+// V10 Goal 9-13: "Bersihkan Riwayat Upload" — computeCleanedUploadHistory
+// (murni) dan cleanupOmzetPeriodUploadHistory (integrasi via fixture).
+// ---------------------------------------------------------------------------
+
+function historyEntry(action: ReconciliationOmzetPeriodLockDocument["history"][number]["action"], extra: Partial<ReconciliationOmzetPeriodLockDocument["history"][number]> = {}) {
+  return { action, actor: "supervisor-a", timestamp: new Date(), reason: null, before: {}, after: {}, ...extra };
+}
+
+test("computeCleanedUploadHistory: test wajib #12/#13 — banyak upload duplikat -> hanya upload TERAKHIR (aktif) yang dipertahankan", () => {
+  const history = [
+    historyEntry("upload", { after: { fileName: "a.pdf" } }),
+    historyEntry("upload", { after: { fileName: "a.pdf" } }),
+    historyEntry("upload", { after: { fileName: "b.pdf" } }),
+  ];
+  const cleaned = computeCleanedUploadHistory(history);
+  assert.equal(cleaned.length, 1);
+  assert.equal(cleaned[0], history[2], "upload TERAKHIR (indeks paling akhir) yang dipertahankan, apa pun nama filenya");
+});
+
+test("computeCleanedUploadHistory: test wajib #14/#15/#16 — preview/lock/unlock TIDAK PERNAH terhapus, urutan lainnya tidak berubah", () => {
+  const history = [
+    historyEntry("upload"),
+    historyEntry("upload"),
+    historyEntry("preview"),
+    historyEntry("lock"),
+    historyEntry("unlock"),
+    historyEntry("upload"),
+    historyEntry("preview"),
+  ];
+  const cleaned = computeCleanedUploadHistory(history);
+  assert.equal(cleaned.filter((e) => e.action === "upload").length, 1);
+  assert.equal(cleaned.filter((e) => e.action === "preview").length, 2);
+  assert.equal(cleaned.filter((e) => e.action === "lock").length, 1);
+  assert.equal(cleaned.filter((e) => e.action === "unlock").length, 1);
+  // Urutan relatif entri yang dipertahankan tidak berubah.
+  assert.deepEqual(cleaned.map((e) => e.action), ["preview", "lock", "unlock", "upload", "preview"]);
+});
+
+test("computeCleanedUploadHistory: 0 atau 1 entri upload -> history dikembalikan APA ADANYA (tidak ada yang dibersihkan)", () => {
+  const noUpload = [historyEntry("preview"), historyEntry("lock")];
+  assert.equal(computeCleanedUploadHistory(noUpload), noUpload);
+  const oneUpload = [historyEntry("upload"), historyEntry("preview")];
+  assert.equal(computeCleanedUploadHistory(oneUpload), oneUpload);
+});
+
+test("cleanupOmzetPeriodUploadHistory: test wajib #10/#12/#13/#17 — hapus upload duplikat, sisakan upload aktif, attachment TIDAK berubah, version bertambah", async () => {
+  const f = fixture();
+  const { lock: firstUpload } = await upload(f);
+  const second = await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment: { ...attachment, fileName: "revisi.pdf" }, expectedVersion: firstUpload.version }, f.context);
+  const preview = await previewForLock(f, second.version);
+  const result = await cleanupOmzetPeriodUploadHistory({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: preview.lock.version }, f.context);
+  assert.equal(result.removedCount, 1);
+  assert.equal(result.lock.history.filter((e) => e.action === "upload").length, 1);
+  assert.equal(result.lock.history.filter((e) => e.action === "preview").length, 1, "entri preview (Simpan) TIDAK ikut terhapus");
+  assert.equal(result.lock.attachment?.fileName, "revisi.pdf", "attachment aktif TIDAK berubah oleh cleanup");
+  assert.equal(result.lock.version, preview.lock.version + 1);
+});
+
+test("cleanupOmzetPeriodUploadHistory: test wajib #14/#15/#16 — Simpan/Kunci/Buka Kunci history tetap utuh setelah cleanup", async () => {
+  const f = fixture();
+  const { lock: firstUpload } = await upload(f);
+  await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment, expectedVersion: firstUpload.version }, f.context);
+  const reuploaded = await f.context.locks.findOne({ _id: "1:2026-06" });
+  const preview = await previewForLock(f, reuploaded!.version);
+  const locked = await lockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: preview.lock.version, original: june, finalAgreedAmount: june.olsera, adjustmentReason: "Pembulatan" }, f.context);
+  const unlocked = await unlockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: locked.version, reason: "Koreksi" }, f.context);
+  const result = await cleanupOmzetPeriodUploadHistory({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: unlocked.version }, f.context);
+  assert.equal(result.lock.history.some((e) => e.action === "preview"), true);
+  assert.equal(result.lock.history.some((e) => e.action === "lock"), true);
+  assert.equal(result.lock.history.some((e) => e.action === "unlock"), true);
+});
+
+test("cleanupOmzetPeriodUploadHistory: hanya satu upload (belum ada duplikat) -> removedCount 0, version TIDAK berubah", async () => {
+  const { f, lock } = await upload();
+  const result = await cleanupOmzetPeriodUploadHistory({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version }, f.context);
+  assert.equal(result.removedCount, 0);
+  assert.equal(result.lock.version, lock.version, "tidak ada perubahan -> tidak perlu increment version");
+});
+
+test("cleanupOmzetPeriodUploadHistory: periode tidak ditemukan -> NOT_FOUND, bukan crash", async () => {
+  const f = fixture();
+  await assert.rejects(() => cleanupOmzetPeriodUploadHistory({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: 1 }, f.context), OmzetPeriodLockError);
+});
+
+test("cleanupOmzetPeriodUploadHistory: version basi (konflik konkuren) -> CONFLICT, bukan silent overwrite", async () => {
+  const f = fixture();
+  const { lock: firstUpload } = await upload(f);
+  await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment, expectedVersion: firstUpload.version }, f.context);
+  await assert.rejects(() => cleanupOmzetPeriodUploadHistory({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: firstUpload.version }, f.context), OmzetPeriodLockError);
 });

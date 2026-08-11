@@ -3,7 +3,7 @@ import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { loadOmzetLedgerMonthDetail } from "@/lib/reconciliation-omzet-ledger";
 import { currentStoreId } from "@/lib/olsera-store-id";
-import { getOmzetPeriodLock } from "@/lib/reconciliation-omzet-period-lock";
+import { getOmzetPeriodLock, isBeritaAcaraVerifiedUnlocked } from "@/lib/reconciliation-omzet-period-lock";
 import { attachActorDisplayNames } from "@/lib/reconciliation-actor-display";
 
 export const runtime = "nodejs";
@@ -22,11 +22,21 @@ export async function GET(request: Request, context: { params: Promise<{ period:
 
     const detail = await loadOmzetLedgerMonthDetail(period);
     let periodLock = null;
+    let beritaAcaraVerified = false;
     try {
       const lock = await getOmzetPeriodLock(currentStoreId(), period);
+      // V10: HANYA flag "sudah diverifikasi" yang ditambahkan di sini —
+      // detail.status/statusReason/ayo/olseraTotal/differenceRevenue TETAP
+      // apa adanya dari ledger (TIDAK di-collapse seperti list route via
+      // applyLockedOmzetPresentation), supaya kartu rincian per-olahraga di
+      // detail drawer (SportReconciliationCard) TETAP menampilkan angka asli
+      // walau periode sudah Cocok — collapse Rp0 HANYA untuk periode locked,
+      // dan itu pun sudah ditangani terpisah lewat blok "PERIODE DIKUNCI" di
+      // client (finalization.originalAyoAmount dkk), bukan di sini.
+      beritaAcaraVerified = isBeritaAcaraVerifiedUnlocked(lock);
       periodLock = lock ? await attachActorDisplayNames(lock) : null;
     } catch { /* fail closed: detail tetap memakai data asli */ }
-    return NextResponse.json({ data: { ...detail, periodLock } }, { headers: NO_CACHE_HEADERS });
+    return NextResponse.json({ data: { ...detail, periodLock, beritaAcaraVerified } }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     console.error("[reconciliation:court-revenue:detail]", error);

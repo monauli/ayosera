@@ -305,6 +305,16 @@ export type ReconciliationOmzetPeriodLockDocument = {
   lockedBy: string | null;
   unlockedAt: Date | null;
   unlockedBy: string | null;
+  // V10: hasil pencocokan Berita Acara TERAKHIR yang di-server-verify (bukan
+  // klaim client) — diisi setiap "Simpan" (recordOmzetPeriodLockPreview)
+  // lewat matchBeritaAcaraToSystemDifference murni di
+  // lib/reconciliation-berita-acara-parser.ts, dijalankan terhadap selisih
+  // sistem SERVER (bukan dikirim client), supaya status "Cocok" di tabel
+  // utama tidak bisa dipalsukan hanya dengan mengirim matchStatus mentah.
+  // null sebelum Simpan pertama kali (mis. baru upload saja).
+  verifiedMatchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | null;
+  beritaAcaraNominal: number | null;
+  beritaAcaraDirection: "PENAMBAHAN" | "PENGURANGAN" | null;
   history: Array<{ action: "upload" | "preview" | "lock" | "unlock" | "relock"; actor: string; timestamp: Date; reason: string | null; before: Record<string, unknown>; after: Record<string, unknown> }>;
   createdAt: Date;
   updatedAt: Date;
