@@ -74,13 +74,49 @@ test("V7: upload sukses memicu analyzeFileClient otomatis TANPA klik kedua (Goal
 });
 
 test("V7: preview Berita Acara (PDF via iframe, gambar via img) dirender begitu attachment ada, lepas dari status lock/OCR (Goal 2/10)", () => {
-  assert.match(page, /\{finalization\?\.attachment && <BeritaAcaraPreview attachment=\{finalization\.attachment\} \/>\}/);
+  assert.match(page, /\{finalization\?\.attachment && <BeritaAcaraPreview key=\{finalization\.attachment\.url\} attachment=\{finalization\.attachment\} \/>\}/);
   assert.match(page, /function BeritaAcaraPreview/);
   assert.match(page, /<iframe src=\{attachment\.url\}/);
   assert.match(page, /<img src=\{attachment\.url\}/);
   assert.match(page, />\s*Buka File/);
   assert.match(styles, /\.recon-ba-preview-frame-wrap/);
   assert.match(styles, /\.recon-ba-preview-image-wrap/);
+});
+
+// ---------------------------------------------------------------------------
+// V8: metadata panjang dihapus, preview bisa minimize, "Riwayat Aktivitas"
+// (bukan raw actor id) — lihat lib/reconciliation-actor-display.ts untuk
+// resolusi id->nama server-side, lib/reconciliation-berita-acara-ui.ts untuk
+// formatPeriodLockHistoryLine (kalimat manusiawi).
+// ---------------------------------------------------------------------------
+
+test("V8 Goal 1: metadata attachment mentah (nama file + ukuran + tanggal + raw actor id, dulu di atas preview) TIDAK LAGI dirender", () => {
+  assert.doesNotMatch(page, /\{finalization\.attachment\.fileName\} \(\{Math\.ceil\(finalization\.attachment\.size/, "baris metadata lama masih ada");
+  assert.doesNotMatch(page, /diunggah \{dateTimeLabel\(finalization\.attachment\.uploadedAt\)\} oleh \{finalization\.attachment\.uploadedBy\}/);
+});
+
+test("V8 Goal 2: Preview Berita Acara punya toggle minimize/expand (state lokal, reset ke terbuka lewat key={attachment.url} saat upload baru)", () => {
+  assert.match(page, /const \[open, setOpen\] = useState\(true\);/);
+  assert.match(page, /aria-expanded=\{open\}/);
+  assert.match(page, /Minimize/);
+  assert.match(page, /onClick=\{\(\) => setOpen\(\(value\) => !value\)\}/);
+});
+
+test("V8 Goal 3: label 'Riwayat Aktivitas' (bukan 'Riwayat audit'), memakai formatPeriodLockHistoryLine + actorName/lockedByName (bukan raw actor/lockedBy)", () => {
+  assert.doesNotMatch(page, /Riwayat audit/i);
+  assert.match(page, /Riwayat Aktivitas/);
+  assert.match(page, /formatPeriodLockHistoryLine\(item\)/);
+  assert.match(page, /\{finalization\.lockedByName\}/);
+  assert.doesNotMatch(page, /Dikunci oleh \{finalization\.lockedBy\}/);
+  // Alasan buka kunci ditampilkan di baris riwayat unlock.
+  assert.match(page, /\{line\.reason && <small>Alasan: \{line\.reason\}<\/small>\}/);
+});
+
+test("V8: PeriodLock type membawa *Name yang sudah diresolve server (uploadedByName/lockedByName/unlockedByName/history[].actorName), bukan hanya raw id", () => {
+  assert.match(page, /uploadedByName: string/);
+  assert.match(page, /lockedByName: string/);
+  assert.match(page, /unlockedByName: string/);
+  assert.match(page, /actorName: string/);
 });
 
 test("V7: 3 kartu hasil (Selisih Sistem/Nominal Berita Acara/Hasil Pencocokan) dirender dari state `analysis`, reuse recon-badge (bukan warna baru) (Goal 4)", () => {

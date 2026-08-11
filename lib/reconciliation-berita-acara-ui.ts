@@ -160,3 +160,33 @@ export function canSaveBeritaAcaraFinalization(input: {
 export function canLockAfterSave(input: { hasPreview: boolean; busy: boolean; matchStatus: BeritaAcaraMatchStatus | null | undefined }): boolean {
   return input.hasPreview && !input.busy && input.matchStatus !== "TIDAK_COCOK";
 }
+
+// ---------------------------------------------------------------------------
+// V8 Goal 3: "Riwayat Aktivitas" — ubah action mentah (upload/preview/lock/
+// relock/unlock) + actorName (SUDAH diresolve server, lihat
+// lib/reconciliation-actor-display.ts — TIDAK PERNAH raw ID di sini) jadi
+// kalimat manusiawi. "preview" secara internal MEMANG action yang sama dipakai
+// tombol "Simpan" (lihat komentar previewFinalization di page.tsx) — makanya
+// labelnya "Finalisasi disimpan", bukan "Preview".
+// ---------------------------------------------------------------------------
+export type PeriodLockHistoryAction = "upload" | "preview" | "lock" | "relock" | "unlock";
+
+const HISTORY_ACTION_LABEL: Record<PeriodLockHistoryAction, string> = {
+  upload: "Berita Acara diunggah",
+  preview: "Finalisasi disimpan",
+  lock: "Periode dikunci",
+  relock: "Periode dikunci kembali",
+  unlock: "Periode dibuka kembali",
+};
+
+export type PeriodLockHistoryEntryLike = { action: string; actorName: string; reason: string | null };
+export type PeriodLockHistoryLine = { summary: string; reason: string | null };
+
+/** `reason` HANYA ditampilkan untuk action "unlock" (Goal 3: "Untuk unlock tampilkan juga: Alasan: ...") — action lain punya reason juga di data (mis. preview/lock menyimpan adjustmentReason) tapi itu sudah tampil di tempat lain di UI, bukan di baris riwayat ini. */
+export function formatPeriodLockHistoryLine(entry: PeriodLockHistoryEntryLike): PeriodLockHistoryLine {
+  const label = HISTORY_ACTION_LABEL[entry.action as PeriodLockHistoryAction] ?? entry.action;
+  return {
+    summary: `${label} oleh ${entry.actorName}`,
+    reason: entry.action === "unlock" ? entry.reason : null,
+  };
+}

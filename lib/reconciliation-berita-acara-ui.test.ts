@@ -19,6 +19,7 @@ import {
   canSaveBeritaAcaraFinalization,
   canLockAfterSave,
   MATCH_STATUS_TONE,
+  formatPeriodLockHistoryLine,
 } from "./reconciliation-berita-acara-ui.ts";
 
 test("formatRupiah/formatSignedRupiah: format Indonesia, tanda eksplisit untuk nilai positif", () => {
@@ -193,4 +194,38 @@ test("buildBeritaAcaraCards: arah salah -> TIDAK_COCOK, tone danger, meski nomin
   assert.equal(matchStatus, "TIDAK_COCOK");
   assert.equal(cards.matchLabel, "TIDAK COCOK");
   assert.equal(cards.matchTone, "danger");
+});
+
+// ---------------------------------------------------------------------------
+// V8 Goal 3: formatPeriodLockHistoryLine — kalimat "Riwayat Aktivitas"
+// manusiawi. actorName di sini SUDAH diresolve server (lihat
+// lib/reconciliation-actor-display.ts) — fungsi ini murni memformat, TIDAK
+// PERNAH menerima/mengembalikan raw actor id.
+// ---------------------------------------------------------------------------
+test("formatPeriodLockHistoryLine: upload -> 'Berita Acara diunggah oleh <nama>', tanpa alasan", () => {
+  const line = formatPeriodLockHistoryLine({ action: "upload", actorName: "Simon", reason: null });
+  assert.equal(line.summary, "Berita Acara diunggah oleh Simon");
+  assert.equal(line.reason, null);
+});
+
+test("formatPeriodLockHistoryLine: preview (tombol Simpan) -> 'Finalisasi disimpan oleh <nama>'", () => {
+  const line = formatPeriodLockHistoryLine({ action: "preview", actorName: "Simon", reason: "Penyesuaian pembulatan" });
+  assert.equal(line.summary, "Finalisasi disimpan oleh Simon");
+  assert.equal(line.reason, null, "reason preview/lock TIDAK ditampilkan di baris riwayat (sudah tampil di tempat lain di UI) — hanya unlock");
+});
+
+test("formatPeriodLockHistoryLine: lock -> 'Periode dikunci oleh <nama>'; relock -> 'Periode dikunci kembali oleh <nama>'", () => {
+  assert.equal(formatPeriodLockHistoryLine({ action: "lock", actorName: "Supervisor", reason: "x" }).summary, "Periode dikunci oleh Supervisor");
+  assert.equal(formatPeriodLockHistoryLine({ action: "relock", actorName: "Supervisor", reason: "x" }).summary, "Periode dikunci kembali oleh Supervisor");
+});
+
+test("formatPeriodLockHistoryLine: unlock -> 'Periode dibuka kembali oleh <nama>' DAN alasan buka kunci ditampilkan", () => {
+  const line = formatPeriodLockHistoryLine({ action: "unlock", actorName: "Supervisor", reason: "Salah unggah dokumen" });
+  assert.equal(line.summary, "Periode dibuka kembali oleh Supervisor");
+  assert.equal(line.reason, "Salah unggah dokumen");
+});
+
+test("formatPeriodLockHistoryLine: actorName fallback 'User' (dari resolver, bukan di sini) tetap dirender apa adanya, bukan raw id", () => {
+  const line = formatPeriodLockHistoryLine({ action: "upload", actorName: "User", reason: null });
+  assert.equal(line.summary, "Berita Acara diunggah oleh User");
 });

@@ -31,21 +31,20 @@ export type OnOcrStatus = (status: string) => void;
 // DI-HOSTING SENDIRI sebagai file statis yang di-commit langsung di
 // public/tesseract/ (worker.min.js disalin apa adanya dari
 // node_modules/tesseract.js/dist/; tesseract-core-lstm.wasm.js disalin apa
-// adanya dari node_modules/tesseract.js-core/; lang/{ind,eng}.traineddata.gz
-// diunduh satu kali dari mirror npm resmi tesseract.js,
-// https://cdn.jsdelivr.net/npm/@tesseract.js-data/<lang>/4.0.0_best_int/<lang>.traineddata.gz
-// — SATU-SATUNYA sumber resmi paket data bahasa ini, tidak dipublikasikan
-// sebagai file terpisah di npm) alih-alih dibiarkan fetch ke CDN itu setiap
-// kali OCR jalan di browser pengguna. Proyek ini tidak punya konvensi
-// postinstall/build-time asset-fetch (tidak ada public/ sebelumnya) — commit
-// langsung sebagai file statis dipilih supaya build tetap deterministik
-// tanpa panggilan jaringan tambahan saat `next build`/deploy Vercel. Ini
-// menghapus kebutuhan CSP connect-src mengizinkan origin eksternal apa pun
-// untuk OCR — lihat lib/csp.ts. corePath SENGAJA menunjuk satu file .js
-// spesifik (bukan direktori) supaya tesseract.js TIDAK menjalankan deteksi
-// fitur SIMD (paket wasm-feature-detect) yang biasanya memilih salah satu
-// dari 3 varian core (base/simd/relaxed-simd) — kita hanya vendor varian
-// dasar non-SIMD, LSTM-only (oem default tesseract.js, sama seperti sebelum
+// adanya dari node_modules/tesseract.js-core/; lang/{ind,eng}.traineddata
+// diunduh satu kali dari mirror npm resmi tesseract.js lalu DI-DEKOMPRES —
+// lihat ROOT CAUSE V8 di bawah untuk alasan tidak lagi disimpan sebagai
+// .gz) alih-alih dibiarkan fetch ke CDN itu setiap kali OCR jalan di browser
+// pengguna. Proyek ini tidak punya konvensi postinstall/build-time
+// asset-fetch (tidak ada public/ sebelumnya) — commit langsung sebagai file
+// statis dipilih supaya build tetap deterministik tanpa panggilan jaringan
+// tambahan saat `next build`/deploy Vercel. Ini menghapus kebutuhan CSP
+// connect-src mengizinkan origin eksternal apa pun untuk OCR — lihat
+// lib/csp.ts. corePath SENGAJA menunjuk satu file .js spesifik (bukan
+// direktori) supaya tesseract.js TIDAK menjalankan deteksi fitur SIMD
+// (paket wasm-feature-detect) yang biasanya memilih salah satu dari 3
+// varian core (base/simd/relaxed-simd) — kita hanya vendor varian dasar
+// non-SIMD, LSTM-only (oem default tesseract.js, sama seperti sebelum
 // perubahan ini: createWorker() di bawah tidak pernah mengirim oem eksplisit)
 // yang jalan di SEMUA browser modern, demi ukuran repo yang wajar. Ini TIDAK
 // mengubah akurasi/mesin OCR — hanya bisa sedikit lebih lambat di browser
@@ -54,10 +53,44 @@ export type OnOcrStatus = (status: string) => void;
 // spawn worker (Blob + new Worker(blobURL)) persis sama dengan yang sudah
 // terverifikasi jalan di production (V7), hanya path aset di dalamnya yang
 // sekarang same-origin, bukan CDN.
+//
+// ROOT CAUSE V8 (OCR production tetap "Tidak terbaca" walau CSP/self-host
+// V7 sudah benar — DITEMUKAN via real-browser reproduction, BUKAN tebakan):
+// permintaan `fetch()` tesseract.js ke *.traineddata.gz (dipicu dari dalam
+// Worker, lihat worker-script di node_modules/tesseract.js) DI-HIJACK oleh
+// ekstensi browser download-manager pihak ketiga (terverifikasi: "IDM
+// Advanced Integration" / Internet Download Manager — SANGAT umum terpasang
+// di PC Windows Indonesia, sering bundel/bajakan) yang mencegat request
+// berdasarkan EKSTENSI URL yang cocok pola "file yang bisa diunduh" (.gz,
+// .bin, arsip pada umumnya) — respons asli (200, body gzip berisi data
+// bahasa) tidak pernah sampai ke halaman; fetch() menerima respons sintetis
+// 204 kosong ("Intercepted by the IDM Advanced Integration") alih-alih. Ini
+// membuat tesseract.js gagal memuat SEMUA bahasa ("Tesseract couldn't load
+// any languages!") dan gagal itu tidak pernah ter-reject dengan rapi
+// (unhandled rejection di dalam worker) — hasilnya panggilan OCR
+// menggantung/gagal diam-diam, `analysis` tidak pernah ke-set, dan UI jatuh
+// ke fallback "Dokumen belum dapat dibaca otomatis" / status PERLU_REVIEW.
+// Diverifikasi presisi via reproduksi langsung (Playwright + Chromium
+// sungguhan menghadap `next build && next start`, BUKAN mock): mengganti
+// HANYA ekstensi URL dari `.traineddata.gz` -> `.traineddata` (byte sama,
+// server sama, satu-satunya variabel adalah ekstensi) membuat request lolos
+// normal (200, bytes lengkap) — membuktikan ekstensi URL persis penyebabnya,
+// bukan CSP/worker/CORS/ukuran file (yang semuanya sudah benar sejak V7).
+// PERBAIKAN: matikan kompresi transport tesseract.js sendiri (`gzip: false`
+// di bawah) supaya URL yang benar-benar di-fetch browser adalah
+// `<lang>.traineddata` (TANPA `.gz`) — file bahasa di public/tesseract/lang/
+// sekarang disimpan APA ADANYA (sudah didekompres), bukan lagi `.gz`. Next.js
+// tetap mengompresi transfer secara transparan lewat Content-Encoding: gzip
+// bila browser mendukung (sama seperti worker.min.js/*.wasm.js — lihat
+// header respons `content-encoding: gzip` untuk aset itu), jadi TIDAK ada
+// biaya bandwidth tambahan sungguhan; yang berubah murni ekstensi di URL
+// supaya tidak lagi cocok pola ekstensi "unduhan" yang dicegat ekstensi
+// pihak ketiga semacam itu.
 export const TESSERACT_ASSET_OPTIONS = {
   workerPath: "/tesseract/worker.min.js",
   corePath: "/tesseract/tesseract-core-lstm.wasm.js",
   langPath: "/tesseract/lang",
+  gzip: false,
 } as const;
 
 const MAX_OCR_PAGES = 3;

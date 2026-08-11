@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { AlertTriangle, ChevronRight, ExternalLink, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
 import { analyzeBeritaAcaraFileClient, STATUS_READING } from "@/lib/reconciliation-berita-acara-client-ocr";
 import {
@@ -13,6 +13,7 @@ import {
   nextReasonAfterAnalysis,
   canSaveBeritaAcaraFinalization,
   canLockAfterSave,
+  formatPeriodLockHistoryLine,
 } from "@/lib/reconciliation-berita-acara-ui";
 
 type LedgerEntry = { transactionNo: string | null; transactionDate: string | null; description: string | null; debit: number; credit: number };
@@ -33,7 +34,11 @@ type SportReconciliationStatus = "COCOK" | "PERLU_DICEK";
 type SportSide = { count: number; revenue: number };
 type SportComparison = { ayo: SportSide; olsera: number; difference: number; status: SportReconciliationStatus };
 type SportReconciliation = { court: SportComparison; pickleball: SportComparison; unmapped: SportSide; total: SportSide };
-type PeriodLock = { status: "draft" | "locked" | "unlocked"; version: number; originalAyoAmount: number | null; originalOlseraAmount: number | null; originalDifference: number | null; finalAgreedAmount: number | null; adjustmentAmount: number | null; adjustmentReason: string | null; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: string; uploadedBy: string } | null; lockedAt: string | null; lockedBy: string | null; unlockedAt: string | null; unlockedBy: string | null; history: Array<{ action: string; actor: string; timestamp: string; reason: string | null }> };
+// uploadedByName/lockedByName/unlockedByName/history[].actorName SUDAH
+// diresolve server (lib/reconciliation-actor-display.ts) dari actor id mentah
+// -> nama/email/fallback "User" — UI TIDAK PERNAH menampilkan
+// uploadedBy/lockedBy/unlockedBy/history[].actor (raw id) langsung (Goal 3 V8).
+type PeriodLock = { status: "draft" | "locked" | "unlocked"; version: number; originalAyoAmount: number | null; originalOlseraAmount: number | null; originalDifference: number | null; finalAgreedAmount: number | null; adjustmentAmount: number | null; adjustmentReason: string | null; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: string; uploadedBy: string; uploadedByName: string } | null; lockedAt: string | null; lockedBy: string | null; lockedByName: string; unlockedAt: string | null; unlockedBy: string | null; unlockedByName: string; history: Array<{ action: string; actor: string; actorName: string; timestamp: string; reason: string | null }> };
 type EvidenceType = "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
 /** Penanda note yang dikunci LANGSUNG dari status Cocok (selisih Rp0), TANPA penjelasan manual — lihat lib/reconciliation-omzet-ledger.ts OMZET_LOCK_WITHOUT_EXPLANATION_MARKER. TIDAK muncul di dropdown "Jenis bukti" (bukan kategori bukti sungguhan). */
 const LOCK_WITHOUT_EXPLANATION_MARKER = "matched-no-explanation" as const;
@@ -138,7 +143,7 @@ function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, fin
         <div><span>{ayoLabel}</span><b>{formatRupiah(comparison.ayo.revenue)}</b></div>
         <div><span>{olseraLabel}</span><b>{formatRupiah(comparison.olsera)}</b></div>
         <div><span>Selisih (Olsera - AYO)</span><b>{formatRupiah(comparison.difference)}</b></div>
-        <div><span>Status</span><div className="recon-card-status"><StatusBadge status={finalStatus ?? comparison.status} /> {locked && <span className="recon-badge recon-badge-ok"><Lock size={12} /> Cocok â€” Terkunci</span>}</div></div>
+        <div><span>Status</span><div className="recon-card-status"><StatusBadge status={finalStatus ?? comparison.status} /> {locked && <span className="recon-badge recon-badge-ok"><Lock size={12} /> Cocok — Terkunci</span>}</div></div>
       </div>
     </section>
   );
@@ -150,28 +155,50 @@ function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, fin
 // (frame-src di lib/csp.ts mengizinkan origin Blob ini secara eksplisit),
 // gambar lewat <img>. Selalu tampil begitu attachment ada, TERLEPAS dari
 // hasil OCR (Goal 10: preview tetap tampil walau OCR gagal).
+//
+// V8 Goal 2 (bisa diminimize): `open` murni state UI lokal, TIDAK disimpan ke
+// backend. Parent (di bawah) me-render dengan `key={attachment.url}` supaya
+// upload Berita Acara BARU (URL beda) me-remount komponen ini -> `open`
+// kembali ke default true (preview otomatis terbuka setelah upload baru),
+// sementara toggle minimize/expand pada dokumen YANG SAMA tidak pernah
+// direset oleh render ulang lain (mis. polling/re-fetch detail).
 function BeritaAcaraPreview({ attachment }: { attachment: NonNullable<PeriodLock["attachment"]> }) {
+  const [open, setOpen] = useState(true);
   const kind = resolveBeritaAcaraPreviewKind(attachment.mimeType);
   return (
     <div className="recon-ba-preview">
       <div className="recon-actions" style={{ justifyContent: "space-between" }}>
         <strong style={{ fontSize: ".78rem" }}>Preview Berita Acara</strong>
-        <a className="recon-link" href={attachment.url} target="_blank" rel="noreferrer">
-          <ExternalLink size={12} /> Buka File
-        </a>
+        <div style={{ display: "flex", gap: ".75rem", alignItems: "center" }}>
+          <a className="recon-link" href={attachment.url} target="_blank" rel="noreferrer">
+            <ExternalLink size={12} /> Buka File
+          </a>
+          <button type="button" className="recon-link" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+            {open ? (
+              <>
+                <ChevronUp size={12} /> Minimize
+              </>
+            ) : (
+              <>
+                <ChevronDown size={12} /> Tampilkan
+              </>
+            )}
+          </button>
+        </div>
       </div>
-      {kind === "pdf" ? (
-        <div className="recon-ba-preview-frame-wrap">
-          <iframe src={attachment.url} title={`Preview ${attachment.fileName}`} />
-        </div>
-      ) : kind === "image" ? (
-        <div className="recon-ba-preview-image-wrap">
-          {/* eslint-disable-next-line @next/next/no-img-element -- URL Blob eksternal dinamis, bukan aset statis lokal */}
-          <img src={attachment.url} alt={`Preview ${attachment.fileName}`} />
-        </div>
-      ) : (
-        <p className="recon-ba-preview-unsupported">Pratinjau tidak didukung untuk tipe file ini — gunakan &quot;Buka File&quot;.</p>
-      )}
+      {open &&
+        (kind === "pdf" ? (
+          <div className="recon-ba-preview-frame-wrap">
+            <iframe src={attachment.url} title={`Preview ${attachment.fileName}`} />
+          </div>
+        ) : kind === "image" ? (
+          <div className="recon-ba-preview-image-wrap">
+            {/* eslint-disable-next-line @next/next/no-img-element -- URL Blob eksternal dinamis, bukan aset statis lokal */}
+            <img src={attachment.url} alt={`Preview ${attachment.fileName}`} />
+          </div>
+        ) : (
+          <p className="recon-ba-preview-unsupported">Pratinjau tidak didukung untuk tipe file ini — gunakan &quot;Buka File&quot;.</p>
+        ))}
     </div>
   );
 }
@@ -603,15 +630,19 @@ export default function ReconciliationPage() {
                 engine rekonsiliasi bila perlu; hanya rendernya yang dihilangkan.
               */}
 
-              {finalization?.status === "locked" && <p className="recon-lock-summary"><Lock size={14} /> Cocok â€” Terkunci · Detail Penyesuaian tersedia di Berita Acara dan Finalisasi.</p>}
+              {finalization?.status === "locked" && <p className="recon-lock-summary"><Lock size={14} /> Cocok — Terkunci · Detail Penyesuaian tersedia di Berita Acara dan Finalisasi.</p>}
               {supervisor && (
                 <CollapsibleSection title="Berita Acara dan Finalisasi">
                 <section className="recon-finalization">
-                  {finalization?.attachment ? (
-                    <p className="recon-before"><Paperclip size={12} /> {finalization.attachment.fileName} ({Math.ceil(finalization.attachment.size / 1024)} KB) â€” diunggah {dateTimeLabel(finalization.attachment.uploadedAt)} oleh {finalization.attachment.uploadedBy} <a className="recon-link" href={finalization.attachment.url} target="_blank" rel="noreferrer">Lihat</a></p>
-                  ) : <p className="recon-before">Unggah berita acara PDF/JPG/JPEG/PNG (maks. 10MB) sebelum preview dan lock.</p>}
-                  {/* Goal 2/10: preview tampil begitu ada attachment, TERLEPAS dari status OCR/lock — user harus tetap bisa melihat dokumennya walau OCR gagal atau periode sudah terkunci. */}
-                  {finalization?.attachment && <BeritaAcaraPreview attachment={finalization.attachment} />}
+                  {/* V8 Goal 1: metadata mentah (nama file panjang/ukuran/raw actor id,
+                      dulunya "<file> (<size> KB) — diunggah <tanggal> oleh <raw id>")
+                      TIDAK LAGI ditampilkan di sini — data itu tetap tersimpan di
+                      backend (finalization.attachment) dan tetap terlihat, dalam
+                      bentuk manusiawi (nama aktor, bukan raw id), di Riwayat
+                      Aktivitas di bawah. */}
+                  {!finalization?.attachment && <p className="recon-before">Unggah berita acara PDF/JPG/JPEG/PNG (maks. 10MB) sebelum preview dan lock.</p>}
+                  {/* Goal 2/10: preview tampil begitu ada attachment, TERLEPAS dari status OCR/lock — user harus tetap bisa melihat dokumennya walau OCR gagal atau periode sudah terkunci. key={url}: upload baru (URL beda) -> preview otomatis terbuka lagi (Goal 2 V8). */}
+                  {finalization?.attachment && <BeritaAcaraPreview key={finalization.attachment.url} attachment={finalization.attachment} />}
                   {finalization?.status !== "locked" && (
                     <>
                       {analysisLoading && <p className="recon-before">{analysisStatus || "Membaca berita acara..."}</p>}
@@ -644,13 +675,39 @@ export default function ReconciliationPage() {
                   )}
                   {finalization?.status === "locked" && (
                     <>
-                      <p className="recon-readonly"><Lock size={16} /> <strong>PERIODE DIKUNCI</strong> â€” Cocok. Tabel utama menampilkan nominal final, sementara angka sumber tetap tersimpan di bawah.</p>
+                      <p className="recon-readonly"><Lock size={16} /> <strong>PERIODE DIKUNCI</strong> — Cocok. Tabel utama menampilkan nominal final, sementara angka sumber tetap tersimpan di bawah.</p>
                       {!showUnlock ? (supervisor && <button className="recon-button secondary" disabled={finalBusy} onClick={() => setShowUnlock(true)}>Buka Kunci</button>) : <div className="recon-form" role="alertdialog" aria-label="Konfirmasi buka kunci periode"><p className="recon-error">Periode akan dapat diedit dan difinalisasi ulang. Berita Acara dan histori sebelumnya tidak akan dihapus.</p><label>Alasan buka kunci<textarea value={unlockReason} maxLength={2000} onChange={(event) => setUnlockReason(event.target.value)} /></label><div className="recon-actions"><button className="recon-button" disabled={finalBusy || !unlockReason.trim()} onClick={() => void unlockFinalization()}>Buka Kunci</button><button className="recon-button secondary" disabled={finalBusy} onClick={() => setShowUnlock(false)}>Batal</button></div></div>}
                     </>
                   )}
                   {finalPreview && <div className="recon-detail-grid"><div><span>AYO asli</span><b>{formatRupiah(finalPreview.ayo)}</b></div><div><span>Olsera asli</span><b>{formatRupiah(finalPreview.olsera)}</b></div><div><span>Selisih awal</span><b>{formatRupiah(finalPreview.difference)}</b></div><div><span>Penyesuaian</span><b>{formatRupiah(finalPreview.adjustmentAmount)}</b></div><div><span>Nominal final</span><b>{formatRupiah(finalPreview.finalAgreedAmount)}</b></div><div><span>Tampilan terkunci</span><b>AYO dan Olsera {formatRupiah(finalPreview.lockedDisplay.ayo)}, selisih Rp0</b></div></div>}
-                  {finalization?.status === "locked" && <div className="recon-detail-grid"><div><span>AYO asli</span><b>{formatRupiah(finalization.originalAyoAmount ?? 0)}</b></div><div><span>Olsera asli</span><b>{formatRupiah(finalization.originalOlseraAmount ?? 0)}</b></div><div><span>Selisih awal</span><b>{formatRupiah(finalization.originalDifference ?? 0)}</b></div><div><span>Penyesuaian</span><b>{formatRupiah(finalization.adjustmentAmount ?? 0)}</b></div><div><span>Nominal final</span><b>{formatRupiah(finalization.finalAgreedAmount ?? 0)}</b></div><div><span>Alasan</span><b>{finalization.adjustmentReason}</b></div><div><span>Dikunci oleh</span><b>{finalization.lockedBy}</b></div><div><span>Waktu lock</span><b>{finalization.lockedAt ? dateTimeLabel(finalization.lockedAt) : "-"}</b></div></div>}
-                  {finalization?.history?.length ? <details className="recon-json"><summary>Riwayat audit ({finalization.history.length})</summary><ul className="recon-history">{finalization.history.slice().reverse().map((item, index) => <li key={`${item.timestamp}-${index}`}><span>{item.action} oleh {item.actor}</span><small>{dateTimeLabel(item.timestamp)}{item.reason ? ` â€” ${item.reason}` : ""}</small></li>)}</ul></details> : null}
+                  {finalization?.status === "locked" && <div className="recon-detail-grid"><div><span>AYO asli</span><b>{formatRupiah(finalization.originalAyoAmount ?? 0)}</b></div><div><span>Olsera asli</span><b>{formatRupiah(finalization.originalOlseraAmount ?? 0)}</b></div><div><span>Selisih awal</span><b>{formatRupiah(finalization.originalDifference ?? 0)}</b></div><div><span>Penyesuaian</span><b>{formatRupiah(finalization.adjustmentAmount ?? 0)}</b></div><div><span>Nominal final</span><b>{formatRupiah(finalization.finalAgreedAmount ?? 0)}</b></div><div><span>Alasan</span><b>{finalization.adjustmentReason}</b></div><div><span>Dikunci oleh</span><b>{finalization.lockedByName}</b></div><div><span>Waktu lock</span><b>{finalization.lockedAt ? dateTimeLabel(finalization.lockedAt) : "-"}</b></div></div>}
+                  {/* V8 Goal 3: label diganti jadi "Riwayat Aktivitas" (bukan label audit
+                      lama), kalimat manusiawi
+                      (formatPeriodLockHistoryLine di lib/reconciliation-berita-acara-ui.ts)
+                      memakai actorName yang SUDAH diresolve server — raw actor id
+                      TIDAK PERNAH dirender di sini. Alasan buka kunci ditampilkan
+                      eksplisit untuk action "unlock" (Goal 3: "Untuk unlock tampilkan
+                      juga: Alasan: ..."). */}
+                  {finalization?.history?.length ? (
+                    <details className="recon-json">
+                      <summary>Riwayat Aktivitas ({finalization.history.length})</summary>
+                      <ul className="recon-history">
+                        {finalization.history
+                          .slice()
+                          .reverse()
+                          .map((item, index) => {
+                            const line = formatPeriodLockHistoryLine(item);
+                            return (
+                              <li key={`${item.timestamp}-${index}`}>
+                                <span>{line.summary}</span>
+                                <small>{dateTimeLabel(item.timestamp)}</small>
+                                {line.reason && <small>Alasan: {line.reason}</small>}
+                              </li>
+                            );
+                          })}
+                      </ul>
+                    </details>
+                  ) : null}
                   {finalError && <p className="recon-error">{finalError}</p>}
                 </section>
                 </CollapsibleSection>

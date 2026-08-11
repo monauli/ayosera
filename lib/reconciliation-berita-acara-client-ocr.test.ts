@@ -242,14 +242,21 @@ test("Hardening: aset tesseract.js yang di-vendor (worker script, core WASM, dat
   const publicDir = path.join(process.cwd(), "public");
   const workerFile = path.join(publicDir, "tesseract", "worker.min.js");
   const coreFile = path.join(publicDir, "tesseract", "tesseract-core-lstm.wasm.js");
-  const engLang = path.join(publicDir, "tesseract", "lang", "eng.traineddata.gz");
-  const indLang = path.join(publicDir, "tesseract", "lang", "ind.traineddata.gz");
+  // TANPA .gz — lihat ROOT CAUSE V8 di reconciliation-berita-acara-client-ocr.ts:
+  // ekstensi .gz di URL di-hijack oleh ekstensi download-manager pihak ketiga
+  // (terverifikasi: IDM Advanced Integration) di banyak PC Windows, membuat
+  // fetch() tesseract.js menerima respons 204 kosong. File bahasa sekarang
+  // disimpan APA ADANYA (sudah didekompres) supaya URL yang di-fetch browser
+  // (`<lang>.traineddata`, lihat TESSERACT_ASSET_OPTIONS.gzip: false) tidak
+  // lagi cocok pola ekstensi "unduhan" itu.
+  const engLang = path.join(publicDir, "tesseract", "lang", "eng.traineddata");
+  const indLang = path.join(publicDir, "tesseract", "lang", "ind.traineddata");
 
   for (const [label, file, minBytes] of [
     ["worker.min.js", workerFile, 10_000],
     ["tesseract-core-lstm.wasm.js (mesin OCR WASM LSTM-only)", coreFile, 1_000_000],
-    ["lang/eng.traineddata.gz", engLang, 500_000],
-    ["lang/ind.traineddata.gz", indLang, 200_000],
+    ["lang/eng.traineddata", engLang, 500_000],
+    ["lang/ind.traineddata", indLang, 200_000],
   ] as const) {
     assert.ok(existsSync(file), `${label} harus ada di ${file}`);
     const size = statSync(file).size;
@@ -262,6 +269,17 @@ test("Hardening: aset tesseract.js yang di-vendor (worker script, core WASM, dat
   assert.equal(TESSERACT_ASSET_OPTIONS.workerPath, "/tesseract/worker.min.js");
   assert.equal(TESSERACT_ASSET_OPTIONS.corePath, "/tesseract/tesseract-core-lstm.wasm.js");
   assert.equal(TESSERACT_ASSET_OPTIONS.langPath, "/tesseract/lang");
+
+  // Regresi ROOT CAUSE V8: gzip HARUS false supaya tesseract.js meminta
+  // "<lang>.traineddata" (bukan "<lang>.traineddata.gz") — lihat komentar
+  // ROOT CAUSE V8 di reconciliation-berita-acara-client-ocr.ts. Kalau ini
+  // ke-flip ke true/dihapus, URL kembali cocok pola ekstensi "unduhan" yang
+  // di-hijack ekstensi browser download-manager pihak ketiga di production,
+  // dan file .gz lang pack tidak lagi ada di public/tesseract/lang/ untuk
+  // di-fetch.
+  assert.equal(TESSERACT_ASSET_OPTIONS.gzip, false);
+  assert.ok(!existsSync(path.join(publicDir, "tesseract", "lang", "ind.traineddata.gz")), "lang pack .gz TIDAK boleh ada lagi (lihat ROOT CAUSE V8) — hijack ekstensi download-manager memicu di file .gz, bukan .traineddata polos");
+  assert.ok(!existsSync(path.join(publicDir, "tesseract", "lang", "eng.traineddata.gz")), "lang pack .gz TIDAK boleh ada lagi (lihat ROOT CAUSE V8)");
 });
 
 // ---------------------------------------------------------------------------

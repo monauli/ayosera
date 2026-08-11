@@ -4,6 +4,7 @@ import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { loadOmzetLedgerMonthDetail } from "@/lib/reconciliation-omzet-ledger";
 import { currentStoreId } from "@/lib/olsera-store-id";
 import { getOmzetPeriodLock } from "@/lib/reconciliation-omzet-period-lock";
+import { attachActorDisplayNames } from "@/lib/reconciliation-actor-display";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +22,10 @@ export async function GET(request: Request, context: { params: Promise<{ period:
 
     const detail = await loadOmzetLedgerMonthDetail(period);
     let periodLock = null;
-    try { periodLock = await getOmzetPeriodLock(currentStoreId(), period); } catch { /* fail closed: detail tetap memakai data asli */ }
+    try {
+      const lock = await getOmzetPeriodLock(currentStoreId(), period);
+      periodLock = lock ? await attachActorDisplayNames(lock) : null;
+    } catch { /* fail closed: detail tetap memakai data asli */ }
     return NextResponse.json({ data: { ...detail, periodLock } }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
