@@ -83,11 +83,20 @@ test("Maret end-to-end: parser real -> kartu benar (Selisih Sistem +Rp740.000 be
   assert.equal(cards.matchTone, "ok");
 });
 
-test("Maret end-to-end: nominal final auto = olseraTotal + 740.000 (contoh spek: 197.855.000 + 740.000 = 198.595.000), BUKAN rumus baru", () => {
+// V12 CRITICAL FIX: test ini SEBELUMNYA mengharapkan olseraTotal + 740.000
+// (197.855.000 + 740.000 = 198.595.000) — itu PERSIS formula BUGGY yang
+// menyebabkan bug produksi Rp199.335.000 (lihat komentar panjang di
+// computeAutoFinalAgreedAmount, lib/reconciliation-berita-acara-ui.ts).
+// originalOlseraAmount di sini diperbaiki jadi nilai Olsera SUNGGUHAN
+// (198.595.000, bukan AYO 197.855.000 yang salah dipakai sebelumnya) —
+// hasil auto-fill sekarang = originalOlseraAmount APA ADANYA, tanpa
+// aritmetika BA tambahan.
+test("Maret end-to-end: nominal final auto = originalOlseraAmount APA ADANYA (198.595.000), BA TIDAK diterapkan sebagai adjustment kedua (V12 fix — bug produksi Rp199.335.000)", () => {
   const parsed = parseBeritaAcaraText(MARET_OCR_TEXT, 0.9);
   const matchStatus = matchBeritaAcaraToSystemDifference(740_000, parsed);
-  const finalAmount = computeAutoFinalAgreedAmount({ originalOlseraAmount: 197_855_000, analysis: { matchStatus, nominal: parsed.nominal, direction: parsed.direction } });
+  const finalAmount = computeAutoFinalAgreedAmount({ originalOlseraAmount: 198_595_000, analysis: { matchStatus, nominal: parsed.nominal, direction: parsed.direction } });
   assert.equal(finalAmount, 198_595_000);
+  assert.notEqual(finalAmount, 199_335_000, "regresi ke bug double-count produksi asli");
 });
 
 test("Maret end-to-end: alasan auto-fill berasal dari teks dokumen sungguhan (bukan dikarang/hardcode)", () => {
@@ -147,8 +156,31 @@ test("computeAutoFinalAgreedAmount: null saat TIDAK_COCOK (tidak pernah menebak 
 test("computeAutoFinalAgreedAmount: null saat PERLU_REVIEW", () => {
   assert.equal(computeAutoFinalAgreedAmount({ originalOlseraAmount: 100, analysis: { matchStatus: "PERLU_REVIEW", nominal: null, direction: null } }), null);
 });
-test("computeAutoFinalAgreedAmount: PENGURANGAN mengurangi nominal final dari original", () => {
-  assert.equal(computeAutoFinalAgreedAmount({ originalOlseraAmount: 100_000_000, analysis: { matchStatus: "COCOK", nominal: 740_000, direction: "PENGURANGAN" } }), 99_260_000);
+// ---------------------------------------------------------------------------
+// V12 CRITICAL FIX: root cause produksi Rp199.335.000 (Maret) — formula LAMA
+// menambahkan/mengurangkan nominal BA LAGI di atas originalOlseraAmount yang
+// SUDAH mengandung selisih itu (double count). Fix: hasil COCOK SELALU =
+// originalOlseraAmount apa adanya, terlepas dari direction — nominal/
+// direction hanya GATE "ada bukti valid", bukan lagi dipakai untuk
+// aritmetika. Test lama di bawah ini SEBELUMNYA mengharapkan
+// originalOlseraAmount dikurangi (perilaku BUGGY) — sudah diperbarui untuk
+// mengunci perilaku BENAR supaya regresi tidak mungkin kembali.
+// ---------------------------------------------------------------------------
+test("computeAutoFinalAgreedAmount: V12 FIX — COCOK TIDAK PERNAH menerapkan adjustment kedua; hasil = originalOlseraAmount apa adanya untuk PENAMBAHAN maupun PENGURANGAN", () => {
+  assert.equal(computeAutoFinalAgreedAmount({ originalOlseraAmount: 100_000_000, analysis: { matchStatus: "COCOK", nominal: 740_000, direction: "PENAMBAHAN" } }), 100_000_000);
+  assert.equal(computeAutoFinalAgreedAmount({ originalOlseraAmount: 100_000_000, analysis: { matchStatus: "COCOK", nominal: 740_000, direction: "PENGURANGAN" } }), 100_000_000);
+});
+
+test("V12 REGRESSION test wajib #16 — Maret: AYO 197.855.000, Olsera 198.595.000, BA 740.000 PENAMBAHAN -> Nominal final = 198.595.000, BUKAN 199.335.000 (bug produksi asli)", () => {
+  const result = computeAutoFinalAgreedAmount({ originalOlseraAmount: 198_595_000, analysis: { matchStatus: "COCOK", nominal: 740_000, direction: "PENAMBAHAN" } });
+  assert.equal(result, 198_595_000);
+  assert.notEqual(result, 199_335_000, "regresi ke bug double-count produksi asli");
+});
+
+test("V12 REGRESSION test wajib #16 — April: Olsera 241.390.000, BA 740.000 PENGURANGAN, toleransi ±Rp1 -> Nominal final = 241.390.000, TIDAK dikurangi lagi", () => {
+  const result = computeAutoFinalAgreedAmount({ originalOlseraAmount: 241_390_000, analysis: { matchStatus: "COCOK", nominal: 740_000, direction: "PENGURANGAN" } });
+  assert.equal(result, 241_390_000);
+  assert.notEqual(result, 240_650_000, "240.650.000 = double-count arah PENGURANGAN, tidak boleh terjadi");
 });
 
 // ---------------------------------------------------------------------------

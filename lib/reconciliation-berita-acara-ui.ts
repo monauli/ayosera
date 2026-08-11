@@ -93,15 +93,28 @@ export function buildBeritaAcaraCards(analysis: BeritaAcaraAnalysisLike): Berita
 }
 
 // ---------------------------------------------------------------------------
-// Goal 7: "Nominal final disepakati" HARUS berasal dari logika finalisasi
-// yang sudah ada (previewOmzetPeriodLock di
+// V12 CRITICAL FIX (root cause produksi Rp199.335.000, Maret): versi LAMA
+// fungsi ini menghitung `originalOlseraAmount + signedAdjustment` (mis.
+// 198.595.000 + 740.000 = 199.335.000). Itu SALAH — `originalOlseraAmount`
+// (Olsera setelah ledger/reklasifikasi) SUDAH mengandung selisih yang
+// dijelaskan Berita Acara; BA di sini berfungsi sebagai BUKTI bahwa selisih
+// itu memang valid (dicocokkan lewat matchBeritaAcaraToSystemDifference di
+// server), BUKAN penyesuaian KEDUA yang harus ditambah/dikurang lagi di atas
+// angka yang sudah benar. Nominal final yang disepakati untuk status COCOK
+// SELALU = originalOlseraAmount apa adanya — TIDAK ADA aritmetika tambahan.
+// `nominal`/`direction` di parameter tetap WAJIB non-null (di-cek di bawah)
+// murni sebagai GATE "benar-benar ada bukti BA yang valid", bukan lagi
+// dipakai untuk menghitung apa pun (lihat Maret/April di
+// reconciliation-berita-acara-ui.test.ts test wajib #16 V12 dan
+// lib/reconciliation-omzet-period-lock.test.ts untuk regresi end-to-end).
+//
+// Goal 7 (V7, MASIH BERLAKU): "Nominal final disepakati" HARUS berasal dari
+// logika finalisasi yang sudah ada (previewOmzetPeriodLock di
 // lib/reconciliation-omzet-period-lock.ts: adjustmentAmount = finalAgreedAmount
-// - original.olsera), BUKAN rumus baru. previewOmzetPeriodLock menghitung
-// adjustment DARI finalAgreedAmount yang dikirim client — jadi client yang
-// harus mengirim finalAgreedAmount = olseraTotal ± nominal BA supaya
-// adjustment yang dihasilkan server persis sama dengan nominal Berita Acara.
-// Fungsi ini HANYA menurunkan angka input itu; server tetap satu-satunya
-// yang menghitung/menyimpan adjustmentAmount sungguhan.
+// - original.olsera) — server tetap satu-satunya yang menghitung/menyimpan
+// adjustmentAmount sungguhan (yang sekarang, dengan fix ini, akan bernilai
+// 0 untuk kasus COCOK biasa — itu BENAR: tidak ada penyesuaian numerik yang
+// diperlukan, BA hanya mengonfirmasi angka yang sudah ada).
 //
 // Hanya mengisi otomatis saat status COCOK (Langkah 8: field lain dikunci
 // read-only di UI saat COCOK, lihat page.tsx) — TIDAK PERNAH menebak nominal
@@ -114,8 +127,7 @@ export function computeAutoFinalAgreedAmount(input: {
 }): number | null {
   const { analysis } = input;
   if (!analysis || analysis.matchStatus !== "COCOK" || analysis.nominal === null || analysis.direction === null) return null;
-  const signedAdjustment = analysis.direction === "PENAMBAHAN" ? analysis.nominal : -analysis.nominal;
-  return input.originalOlseraAmount + signedAdjustment;
+  return input.originalOlseraAmount;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +186,9 @@ export function canLockAfterSave(input: { hasPreview: boolean; busy: boolean; ma
 // tombol "Simpan" (lihat komentar previewFinalization di page.tsx) — makanya
 // labelnya "Finalisasi disimpan", bukan "Preview".
 // ---------------------------------------------------------------------------
-export type PeriodLockHistoryAction = "upload" | "preview" | "lock" | "relock" | "unlock";
+// V12: "reset" — Reset Finalisasi (lihat resetOmzetPeriodFinalization di
+// lib/reconciliation-omzet-period-lock.ts).
+export type PeriodLockHistoryAction = "upload" | "preview" | "lock" | "relock" | "unlock" | "reset";
 
 const HISTORY_ACTION_LABEL: Record<PeriodLockHistoryAction, string> = {
   upload: "Berita Acara diunggah",
@@ -182,6 +196,7 @@ const HISTORY_ACTION_LABEL: Record<PeriodLockHistoryAction, string> = {
   lock: "Periode dikunci",
   relock: "Periode dikunci kembali",
   unlock: "Periode dibuka kembali",
+  reset: "Finalisasi direset",
 };
 
 export type PeriodLockHistoryEntryLike = { action: string; actorName: string; reason: string | null };

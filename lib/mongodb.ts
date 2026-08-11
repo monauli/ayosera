@@ -320,7 +320,12 @@ export type ReconciliationOmzetPeriodLockDocument = {
   // TANPA PERNAH menghapusnya secara fisik dari array — event asli
   // (action/actor/timestamp/reason/before/after) tetap utuh untuk audit;
   // hiddenAt/hiddenBy null berarti entri masih tampil normal.
-  history: Array<{ action: "upload" | "preview" | "lock" | "unlock" | "relock"; actor: string; timestamp: Date; reason: string | null; before: Record<string, unknown>; after: Record<string, unknown>; hiddenAt: Date | null; hiddenBy: string | null }>;
+  // V12: "reset" — Reset Finalisasi (lihat resetOmzetPeriodFinalization di
+  // lib/reconciliation-omzet-period-lock.ts) mengosongkan active state
+  // (attachment/verifiedMatchStatus/beritaAcaraNominal/beritaAcaraDirection/
+  // finalAgreedAmount/adjustmentAmount/adjustmentReason/original*) kembali
+  // ke draft, TANPA PERNAH menyentuh data sumber AYO/Olsera.
+  history: Array<{ action: "upload" | "preview" | "lock" | "unlock" | "relock" | "reset"; actor: string; timestamp: Date; reason: string | null; before: Record<string, unknown>; after: Record<string, unknown>; hiddenAt: Date | null; hiddenBy: string | null }>;
   createdAt: Date;
   updatedAt: Date;
   version: number;

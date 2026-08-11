@@ -140,7 +140,30 @@ export async function recordOmzetPeriodLockPreview(input: { storeId: number; per
       // "Cocok karena Berita Acara" di tabel utama (lihat
       // applyLockedOmzetPresentation) selalu mencerminkan Simpan TERAKHIR,
       // bukan analisis OCR client yang belum pernah disimpan.
-      $set: { updatedAt: now, verifiedMatchStatus: preview.verifiedMatchStatus, beritaAcaraNominal: preview.beritaAcaraNominal, beritaAcaraDirection: preview.beritaAcaraDirection },
+      //
+      // V12 FIX (masalah #2/#3/#4 V12 — "Alasan penyesuaian bisa kosong"
+      // setelah reopen): SEBELUMNYA finalAgreedAmount/adjustmentAmount/
+      // adjustmentReason/original* HANYA ditulis di lockOmzetPeriodFinalization
+      // (saat Kunci Periode) — periode yang SUDAH Simpan tapi BELUM dikunci
+      // punya field-field ini tetap null di top-level dokumen, jadi
+      // restoreBeritaAcaraAnalysisFromLock (V11, lib/reconciliation-berita-acara-ui.ts)
+      // yang membaca `lock.adjustmentReason` ikut merestore null walau
+      // sudah pernah Simpan. Sekarang "Simpan" JUGA menulis field-field ini
+      // ke top-level dokumen (persis field yang sama yang ditulis lock),
+      // supaya reopen SEBELUM lock pun tetap bisa hydrate nominal
+      // final/alasan terakhir dari database, bukan hanya OCR/state lokal.
+      $set: {
+        updatedAt: now,
+        verifiedMatchStatus: preview.verifiedMatchStatus,
+        beritaAcaraNominal: preview.beritaAcaraNominal,
+        beritaAcaraDirection: preview.beritaAcaraDirection,
+        originalAyoAmount: input.original.ayo,
+        originalOlseraAmount: input.original.olsera,
+        originalDifference: input.original.difference,
+        finalAgreedAmount: preview.finalAgreedAmount,
+        adjustmentAmount: preview.adjustmentAmount,
+        adjustmentReason: preview.adjustmentReason,
+      },
       $inc: { version: 1 },
       $push: { history: { action: "preview", actor: input.actor, timestamp: now, reason: preview.adjustmentReason, before: snapshot(current), after: { finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount }, hiddenAt: null, hiddenBy: null } },
     },
@@ -299,5 +322,93 @@ export async function hideOmzetPeriodHistoryEntry(input: { storeId: number; peri
     { returnDocument: "after" },
   );
   if (!document) throw new OmzetPeriodLockError("Konflik menyembunyikan riwayat; muat ulang lalu coba lagi.", "CONFLICT");
+  return document;
+}
+
+// ---------------------------------------------------------------------------
+// V12: "Reset Finalisasi" — supervisor boleh mengosongkan SELURUH active
+// finalization state (attachment/verifiedMatchStatus/beritaAcaraNominal/
+// beritaAcaraDirection/finalAgreedAmount/adjustmentAmount/adjustmentReason/
+// original*) kembali ke "belum difinalisasi" (status "draft"), untuk
+// memulai ulang siklus Upload -> OCR -> Simpan dari nol (mis. setelah data
+// Berita Acara/nominal yang tersimpan ternyata salah). TIDAK PERNAH
+// menyentuh data sumber AYO/Olsera/ledger (fungsi ini hanya menulis field
+// di dokumen ReconciliationOmzetPeriodLockDocument, sama sekali tidak
+// membaca/menulis collection lain).
+//
+// Periode yang SEDANG locked TIDAK BOLEH langsung di-reset — harus dibuka
+// kunci (unlock) dulu secara eksplisit (alasan wajib diisi, lihat
+// unlockOmzetPeriodFinalization) supaya jejak "kenapa periode yang sudah
+// terkunci dibongkar" tetap tercatat lewat mekanisme yang sudah ada,
+// bukan langsung dilewati oleh reset.
+// ---------------------------------------------------------------------------
+
+/**
+ * Fungsi MURNI — soft-hide SEMUA entri history yang masih terlihat (entri
+ * yang sudah hiddenAt sebelumnya dibiarkan apa adanya, tidak ditimpa ulang),
+ * lalu tambahkan SATU entri baru beraksi "reset" yang TETAP terlihat. Hasil:
+ * UI Riwayat Aktivitas jadi bersih (hanya menampilkan event reset terbaru)
+ * TANPA menghapus satu pun entri lama secara fisik — desain ini SENGAJA
+ * reuse mekanisme soft-delete hiddenAt/hiddenBy yang sama seperti V11
+ * (computeHiddenHistory), bukan mekanisme baru, supaya audit safety-nya
+ * konsisten dengan yang sudah ada.
+ */
+export function computeHistoryAfterReset(
+  history: ReconciliationOmzetPeriodLockDocument["history"],
+  actor: string,
+  now: Date,
+): ReconciliationOmzetPeriodLockDocument["history"] {
+  const hiddenPrior = history.map((entry) => (entry.hiddenAt ? entry : { ...entry, hiddenAt: now, hiddenBy: actor }));
+  const resetEntry: ReconciliationOmzetPeriodLockDocument["history"][number] = {
+    action: "reset",
+    actor,
+    timestamp: now,
+    reason: null,
+    before: {},
+    after: {},
+    hiddenAt: null,
+    hiddenBy: null,
+  };
+  return [...hiddenPrior, resetEntry];
+}
+
+/**
+ * Kosongkan active finalization state SATU periode kembali ke "belum
+ * difinalisasi". Otorisasi (supervisor-only) WAJIB diverifikasi di route.ts
+ * SEBELUM memanggil ini — pola sama seperti seluruh fungsi lain di modul
+ * ini (auth selalu di layer route, bukan di lib).
+ */
+export async function resetOmzetPeriodFinalization(input: { storeId: number; period: string; actor: string; expectedVersion: unknown }, context?: OmzetPeriodLockContext) {
+  const source = await contextOrDefault(context);
+  const expectedVersion = integer(input.expectedVersion, "Versi");
+  const id = `${input.storeId}:${input.period}`;
+  const current = await source.locks.findOne({ _id: id });
+  if (!current) throw new OmzetPeriodLockError("Periode tidak ditemukan.", "NOT_FOUND");
+  if (current.status === "locked") throw new OmzetPeriodLockError("Periode terkunci; buka kunci terlebih dahulu sebelum reset.", "LOCKED");
+  const now = new Date();
+  const updatedHistory = computeHistoryAfterReset(current.history, input.actor, now);
+  const document = await source.locks.findOneAndUpdate(
+    { _id: id, version: expectedVersion, status: { $ne: "locked" } },
+    {
+      $set: {
+        status: "draft",
+        attachment: null,
+        verifiedMatchStatus: null,
+        beritaAcaraNominal: null,
+        beritaAcaraDirection: null,
+        finalAgreedAmount: null,
+        adjustmentAmount: null,
+        adjustmentReason: null,
+        originalAyoAmount: null,
+        originalOlseraAmount: null,
+        originalDifference: null,
+        history: updatedHistory,
+        updatedAt: now,
+      },
+      $inc: { version: 1 },
+    },
+    { returnDocument: "after" },
+  );
+  if (!document) throw new OmzetPeriodLockError("Konflik reset finalisasi; muat ulang lalu coba lagi.", "CONFLICT");
   return document;
 }

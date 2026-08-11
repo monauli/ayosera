@@ -6,12 +6,14 @@ import {
   cleanupOmzetPeriodUploadHistory,
   computeCleanedUploadHistory,
   computeHiddenHistory,
+  computeHistoryAfterReset,
   hideOmzetPeriodHistoryEntry,
   isBeritaAcaraVerifiedUnlocked,
   lockOmzetPeriodFinalization,
   OmzetPeriodLockError,
   previewOmzetPeriodLock,
   recordOmzetPeriodLockPreview,
+  resetOmzetPeriodFinalization,
   unlockOmzetPeriodFinalization,
   uploadOmzetPeriodLockAttachment,
   validateOmzetPeriodLockAttachment,
@@ -605,4 +607,179 @@ test("hideOmzetPeriodHistoryEntry: hide TIDAK merusak precondition lock (last au
   const preview = await previewForLock(f, reloaded!.version);
   const locked = await lockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: preview.lock.version, original: june, finalAgreedAmount: june.olsera, adjustmentReason: "Pembulatan" }, f.context);
   assert.equal(locked.status, "locked", "hide entri upload lama tidak boleh menghalangi alur Simpan -> Kunci berikutnya");
+});
+
+// ---------------------------------------------------------------------------
+// V12 CRITICAL: masalah #1 — "Nominal final disepakati" Maret jadi
+// Rp199.335.000 (SALAH, seharusnya Rp198.595.000 — Rp740.000 ditambahkan
+// DUA KALI). Root cause SEBENARNYA ada di computeAutoFinalAgreedAmount
+// (lib/reconciliation-berita-acara-ui.ts, sudah diperbaiki+diuji di sana) —
+// test di sini mengunci bahwa SISI SERVER (previewOmzetPeriodLock/
+// recordOmzetPeriodLockPreview) TIDAK PERNAH menerapkan aritmetika BA kedua
+// apa pun terhadap finalAgreedAmount yang dikirim client: server HANYA
+// menghitung adjustmentAmount = finalAgreedAmount - original.olsera dari
+// input apa adanya (tidak menyentuh nominal/direction BA sama sekali untuk
+// aritmetika) — jadi begitu client mengirim finalAgreedAmount yang BENAR
+// (= originalOlseraAmount, hasil computeAutoFinalAgreedAmount yang sudah
+// diperbaiki), hasil akhir yang tersimpan juga benar, dan adjustmentAmount
+// yang tersimpan adalah 0 (BA hanya BUKTI, bukan penyesuaian kedua).
+// ---------------------------------------------------------------------------
+
+const maretExact = { ayo: 197_855_000, olsera: 198_595_000, difference: 740_000 };
+const aprilExact = { ayo: 242_129_999, olsera: 241_390_000, difference: -739_999 };
+
+test("V12 REGRESSION test wajib #16 — Maret end-to-end: client mengirim finalAgreedAmount = olseraTotal (hasil computeAutoFinalAgreedAmount yang SUDAH diperbaiki) -> tersimpan PERSIS Rp198.595.000, BUKAN Rp199.335.000; adjustmentAmount = 0", async () => {
+  const { f, lock } = await upload();
+  const result = await recordOmzetPeriodLockPreview(
+    { storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: maretExact, finalAgreedAmount: maretExact.olsera, adjustmentReason: "Pembayaran di muka diterima pada bulan Maret dan diakui sebagai pendapatan bulan Maret.", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" },
+    f.context,
+  );
+  assert.equal(result.preview.finalAgreedAmount, 198_595_000);
+  assert.notEqual(result.preview.finalAgreedAmount, 199_335_000, "regresi ke bug double-count produksi asli");
+  assert.equal(result.preview.adjustmentAmount, 0, "BA hanya BUKTI selisih valid, bukan penyesuaian numerik kedua");
+  assert.equal(result.lock.verifiedMatchStatus, "COCOK");
+  // Persisted ke top-level dokumen (V12 fix masalah #2/#3), bukan hanya history.
+  assert.equal(result.lock.finalAgreedAmount, 198_595_000);
+  assert.equal(result.lock.adjustmentAmount, 0);
+});
+
+test("V12 REGRESSION test wajib #16 — April end-to-end: client mengirim finalAgreedAmount = olseraTotal -> tersimpan PERSIS Rp241.390.000, TIDAK dikurangi Rp740.000 lagi; COCOK dalam toleransi ±Rp1", async () => {
+  const { f, lock } = await upload();
+  const result = await recordOmzetPeriodLockPreview(
+    { storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: aprilExact, finalAgreedAmount: aprilExact.olsera, adjustmentReason: "Sudah diakui sebagai pendapatan Maret", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN" },
+    f.context,
+  );
+  assert.equal(result.preview.finalAgreedAmount, 241_390_000);
+  assert.notEqual(result.preview.finalAgreedAmount, 240_650_000, "240.650.000 = double-count arah PENGURANGAN, tidak boleh terjadi");
+  assert.equal(result.preview.adjustmentAmount, 0);
+  assert.equal(result.lock.verifiedMatchStatus, "COCOK", "toleransi ±Rp1 (740.000 vs 739.999) tetap berlaku");
+});
+
+// ---------------------------------------------------------------------------
+// V12 masalah #2/#3/#4 — "Alasan penyesuaian bisa kosong setelah reopen":
+// root cause SEBENARNYA adalah finalAgreedAmount/adjustmentAmount/
+// adjustmentReason/original* SEBELUMNYA hanya di-$set saat LOCK, bukan saat
+// SIMPAN — periode yang sudah Simpan tapi belum dikunci punya field-field
+// itu tetap null di top-level dokumen. Sekarang Simpan JUGA menulis field
+// ini (lihat komentar di recordOmzetPeriodLockPreview).
+// ---------------------------------------------------------------------------
+test("recordOmzetPeriodLockPreview: V12 FIX — finalAgreedAmount/adjustmentAmount/adjustmentReason/original* dipersist ke TOP-LEVEL dokumen saat Simpan (SEBELUM lock), survive refresh", async () => {
+  const { f, lock } = await upload();
+  await recordOmzetPeriodLockPreview(
+    { storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: maretExact, finalAgreedAmount: maretExact.olsera, adjustmentReason: "Pembayaran di muka diterima pada bulan Maret dan diakui sebagai pendapatan bulan Maret.", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" },
+    f.context,
+  );
+  // "refresh" = findOne baru, terpisah dari nilai yang dikembalikan langsung.
+  const reloaded = await f.context.locks.findOne({ _id: "1:2026-06" });
+  assert.equal(reloaded?.status, "draft", "Simpan TIDAK mengubah status draft/unlocked itu sendiri — hanya field finalisasi");
+  assert.equal(reloaded?.finalAgreedAmount, 198_595_000);
+  assert.equal(reloaded?.adjustmentAmount, 0);
+  assert.equal(reloaded?.adjustmentReason, "Pembayaran di muka diterima pada bulan Maret dan diakui sebagai pendapatan bulan Maret.");
+  assert.equal(reloaded?.originalAyoAmount, maretExact.ayo);
+  assert.equal(reloaded?.originalOlseraAmount, maretExact.olsera);
+  assert.equal(reloaded?.originalDifference, maretExact.difference);
+});
+
+test("V12 test wajib #17 — RESTORE FILE TERAKHIR: upload file A -> Simpan, lalu upload file B -> Simpan -> top-level dokumen mencerminkan file B (attachment/nominal/direction TERAKHIR), file A tidak mengisi state", async () => {
+  const f = fixture();
+  const { lock: uploadA } = await upload(f);
+  await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: uploadA.version, original: maretExact, finalAgreedAmount: maretExact.olsera, adjustmentReason: "Alasan dari file A", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" }, f.context);
+  const afterA = await f.context.locks.findOne({ _id: "1:2026-06" });
+  const attachmentB = { ...attachment, fileName: "berita-acara-B.pdf" };
+  const uploadB = await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-b", attachment: attachmentB, expectedVersion: afterA!.version }, f.context);
+  const savedB = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-b", expectedVersion: uploadB.version, original: aprilExact, finalAgreedAmount: aprilExact.olsera, adjustmentReason: "Alasan dari file B", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN" }, f.context);
+  assert.equal(savedB.lock.attachment?.fileName, "berita-acara-B.pdf", "attachment aktif harus file B, bukan file A");
+  assert.equal(savedB.lock.beritaAcaraDirection, "PENGURANGAN", "arah BA harus dari file B (PENGURANGAN), bukan file A (PENAMBAHAN)");
+  assert.equal(savedB.lock.adjustmentReason, "Alasan dari file B", "alasan harus dari file B, bukan file A");
+  assert.equal(savedB.lock.finalAgreedAmount, aprilExact.olsera, "nominal final harus dari file B (April), bukan file A (Maret)");
+});
+
+// ---------------------------------------------------------------------------
+// V12 Goal 8-11: "Reset Finalisasi" — computeHistoryAfterReset (murni) dan
+// resetOmzetPeriodFinalization (integrasi via fixture).
+// ---------------------------------------------------------------------------
+
+test("computeHistoryAfterReset: semua entri yang masih terlihat disembunyikan, entri yang SUDAH hidden dibiarkan apa adanya, SATU entri 'reset' baru ditambahkan TETAP terlihat", () => {
+  const now = new Date("2026-08-11T14:32:00.000Z");
+  const alreadyHiddenAt = new Date("2026-08-01T00:00:00.000Z");
+  const history = [
+    historyEntry("upload"),
+    historyEntry("preview", { hiddenAt: alreadyHiddenAt, hiddenBy: "supervisor-x" }),
+    historyEntry("lock"),
+  ];
+  const result = computeHistoryAfterReset(history, "supervisor-a", now);
+  assert.equal(result.length, 4);
+  assert.equal(result[0].hiddenAt, now);
+  assert.equal(result[0].hiddenBy, "supervisor-a");
+  assert.equal(result[1].hiddenAt, alreadyHiddenAt, "entri yang sudah hidden sebelumnya TIDAK ditimpa ulang");
+  assert.equal(result[1].hiddenBy, "supervisor-x");
+  assert.equal(result[2].hiddenAt, now);
+  assert.equal(result[3].action, "reset");
+  assert.equal(result[3].hiddenAt, null, "entri reset baru TETAP terlihat");
+  assert.equal(result[3].actor, "supervisor-a");
+});
+
+test("resetOmzetPeriodFinalization: test wajib #19 — mengosongkan SELURUH active state (attachment/verifiedMatchStatus/nominal/direction/finalAgreedAmount/adjustmentAmount/adjustmentReason/original*) kembali ke draft, TIDAK menyentuh source AYO/Olsera (fungsi ini tidak pernah membaca collection lain)", async () => {
+  const { f, lock } = await upload();
+  const saved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: maretExact, finalAgreedAmount: maretExact.olsera, adjustmentReason: "Pembayaran di muka Maret", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" }, f.context);
+  assert.equal(isBeritaAcaraVerifiedUnlocked(saved.lock), true, "prasyarat: sebelum reset, periode ini sudah verified");
+  const result = await resetOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: saved.lock.version }, f.context);
+  assert.equal(result.status, "draft");
+  assert.equal(result.attachment, null);
+  assert.equal(result.verifiedMatchStatus, null);
+  assert.equal(result.beritaAcaraNominal, null);
+  assert.equal(result.beritaAcaraDirection, null);
+  assert.equal(result.finalAgreedAmount, null);
+  assert.equal(result.adjustmentAmount, null);
+  assert.equal(result.adjustmentReason, null);
+  assert.equal(result.originalAyoAmount, null);
+  assert.equal(result.originalOlseraAmount, null);
+  assert.equal(result.originalDifference, null);
+  assert.equal(isBeritaAcaraVerifiedUnlocked(result), false, "verified state harus hilang setelah reset");
+});
+
+test("resetOmzetPeriodFinalization: riwayat lama di-soft-hide (BUKAN dihapus), entri 'reset' baru ditambahkan dan tetap terlihat", async () => {
+  const { f, lock } = await upload();
+  const saved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: maretExact, finalAgreedAmount: maretExact.olsera, adjustmentReason: "x", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" }, f.context);
+  const countBefore = saved.lock.history.length;
+  const result = await resetOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: saved.lock.version }, f.context);
+  assert.equal(result.history.length, countBefore + 1, "TIDAK ADA entri lama yang dihapus, hanya ditambah 1 entri reset");
+  assert.equal(result.history.slice(0, countBefore).every((entry) => entry.hiddenAt !== null), true, "semua entri lama harus soft-hidden");
+  assert.equal(result.history.at(-1)?.action, "reset");
+  assert.equal(result.history.at(-1)?.hiddenAt, null, "entri reset baru harus tetap terlihat");
+  assert.equal(result.history.at(-1)?.actor, "supervisor-a");
+});
+
+test("resetOmzetPeriodFinalization: periode locked -> ditolak (harus buka kunci dulu), bukan langsung di-reset", async () => {
+  const { f, lock } = await upload();
+  const preview = await previewForLock(f, lock.version);
+  const locked = await lockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: preview.lock.version, original: june, finalAgreedAmount: june.olsera, adjustmentReason: "Pembulatan" }, f.context);
+  await assert.rejects(
+    () => resetOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: locked.version }, f.context),
+    (error: unknown) => error instanceof OmzetPeriodLockError && error.code === "LOCKED",
+  );
+});
+
+test("resetOmzetPeriodFinalization: periode tidak ditemukan -> NOT_FOUND", async () => {
+  const f = fixture();
+  await assert.rejects(() => resetOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: 1 }, f.context), OmzetPeriodLockError);
+});
+
+test("resetOmzetPeriodFinalization: version basi (konflik konkuren) -> CONFLICT, bukan silent overwrite", async () => {
+  const f = fixture();
+  const { lock: firstUpload } = await upload(f);
+  await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment, expectedVersion: firstUpload.version }, f.context);
+  await assert.rejects(() => resetOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: firstUpload.version }, f.context), OmzetPeriodLockError);
+});
+
+test("resetOmzetPeriodFinalization: setelah reset, user bisa mulai ulang siklus Upload -> Simpan -> Kunci dari nol", async () => {
+  const f = fixture();
+  const { lock: firstUpload } = await upload(f);
+  const saved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: firstUpload.version, original: maretExact, finalAgreedAmount: 999, adjustmentReason: "salah", beritaAcaraNominal: 1, beritaAcaraDirection: "PENAMBAHAN" }, f.context);
+  const afterReset = await resetOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: saved.lock.version }, f.context);
+  const reuploaded = await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment, expectedVersion: afterReset.version }, f.context);
+  const resaved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: reuploaded.version, original: maretExact, finalAgreedAmount: maretExact.olsera, adjustmentReason: "Pembayaran di muka Maret", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" }, f.context);
+  const relocked = await lockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: resaved.lock.version, original: maretExact, finalAgreedAmount: maretExact.olsera, adjustmentReason: "Pembayaran di muka Maret" }, f.context);
+  assert.equal(relocked.status, "locked");
+  assert.equal(relocked.finalAgreedAmount, 198_595_000);
 });

@@ -398,6 +398,12 @@ export default function ReconciliationPage() {
   // "Berita Acara" di tabel utama) — TERPISAH dari `selectedPeriod`/`detail`
   // (Detail Rekonsiliasi) supaya klik badge TIDAK PERNAH membuka drawer detail.
   const [quickPreviewAttachment, setQuickPreviewAttachment] = useState<PeriodLock["attachment"] | null>(null);
+  // V12 Goal 8-13: "Reset Finalisasi" — kosongkan active state (attachment/
+  // OCR/nominal/alasan/verified) supaya user bisa mulai ulang dari nol.
+  // State terpisah dari finalBusy/finalError, pola sama seperti cleanup.
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState("");
 
   const refresh = async () => {
     setLoading(true);
@@ -429,7 +435,7 @@ export default function ReconciliationPage() {
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
-    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage(""); setShowCleanupConfirm(false); setCleanupError(""); setHideConfirmIndex(null); setHideError(""); reasonEditedByUserRef.current = false;
+    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage(""); setShowCleanupConfirm(false); setCleanupError(""); setHideConfirmIndex(null); setHideError(""); setShowResetConfirm(false); setResetError(""); reasonEditedByUserRef.current = false;
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
@@ -619,6 +625,24 @@ export default function ReconciliationPage() {
     try { await finalizationRequest("hide-history-entry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization.version, entryIndex }) }); setHideConfirmIndex(null); if (selectedPeriod) await openDetail(selectedPeriod); }
     catch (error) { setHideError(error instanceof Error ? error.message : "Gagal menyembunyikan item riwayat."); }
     finally { setHideBusy(false); }
+  };
+
+  // V12 Goal 8-13: "Reset Finalisasi" — kosongkan active finalization state
+  // (attachment/verifiedMatchStatus/beritaAcaraNominal/beritaAcaraDirection/
+  // nominal final/alasan) supaya periode kembali "belum difinalisasi" dan
+  // user bisa mulai ulang siklus Upload -> OCR -> Simpan dari nol. Riwayat
+  // lama TIDAK dihapus (soft-hide di server, lihat
+  // resetOmzetPeriodFinalization di lib/reconciliation-omzet-period-lock.ts)
+  // — openDetail dipanggil ulang supaya SEMUA state lokal (analysis/
+  // attachment/finalAmount/finalReason/dst.) ikut ter-reset dari database,
+  // BUKAN hanya field yang di-set manual di sini; refresh() memperbarui
+  // badge/status di tabel utama (attachment hilang -> badge Berita Acara
+  // ikut hilang, sama seperti pola lock/unlock).
+  const resetFinalization = async () => {
+    if (!finalization) return; setResetBusy(true); setResetError("");
+    try { await finalizationRequest("reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization.version }) }); setShowResetConfirm(false); if (selectedPeriod) { await openDetail(selectedPeriod); await refresh(); } }
+    catch (error) { setResetError(error instanceof Error ? error.message : "Gagal mereset finalisasi."); }
+    finally { setResetBusy(false); }
   };
 
   // Gating Simpan (Goal 8, test wajib #14): attachment ada, tidak sedang
@@ -896,6 +920,34 @@ export default function ReconciliationPage() {
                       </div>
                       {finalSaveMessage && <p className="recon-lock-summary">{finalSaveMessage}</p>}
                       {showFinalLockConfirm && <div className="recon-form" role="alertdialog" aria-label="Konfirmasi finalisasi periode"><p>Nominal final akan menjadi tampilan periode terkunci. Data sumber rekonsiliasi tetap tidak diubah.</p><div className="recon-actions"><button className="recon-button" disabled={finalBusy} onClick={() => void lockFinalization()}>Ya, Kunci Periode</button><button className="recon-button secondary" disabled={finalBusy} onClick={() => setShowFinalLockConfirm(false)}>Batal</button></div></div>}
+                      {/* V12 Goal 8-13: "Reset Finalisasi" — tautan kecil
+                          (recon-link, bukan recon-button) supaya tidak
+                          dominan, HANYA muncul kalau memang ada sesuatu untuk
+                          direset (attachment atau hasil verifikasi sudah
+                          ada). Backend (reset/route.ts) tetap WAJIB
+                          requireSupervisor() sendiri — tautan ini hanya UX. */}
+                      {(finalization?.attachment || finalization?.verifiedMatchStatus) && (
+                        <div className="recon-actions">
+                          {!showResetConfirm ? (
+                            <button type="button" className="recon-link" disabled={resetBusy} onClick={() => setShowResetConfirm(true)}>
+                              Reset Finalisasi
+                            </button>
+                          ) : (
+                            <div className="recon-form" role="alertdialog" aria-label="Konfirmasi reset finalisasi">
+                              <p>Reset finalisasi periode ini? Data aktif Berita Acara, hasil OCR, alasan, dan status finalisasi akan dikosongkan. Data sumber AYO/Olsera dan jejak audit tidak akan dihapus.</p>
+                              <div className="recon-actions">
+                                <button type="button" className="recon-button" disabled={resetBusy} onClick={() => void resetFinalization()}>
+                                  Ya, Reset Finalisasi
+                                </button>
+                                <button type="button" className="recon-button secondary" disabled={resetBusy} onClick={() => setShowResetConfirm(false)}>
+                                  Batal
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {resetError && <p className="recon-error">{resetError}</p>}
+                        </div>
+                      )}
                     </>
                   )}
                   {finalization?.status === "locked" && (
@@ -915,7 +967,16 @@ export default function ReconciliationPage() {
                       juga: Alasan: ..."). */}
                   {finalization?.history?.length ? (
                     <details className="recon-json">
-                      <summary>Riwayat Aktivitas ({finalization.history.length})</summary>
+                      {/* V12 masalah #6: counter WAJIB menghitung HANYA history
+                          yang terlihat (isHistoryEntryVisible — hiddenAt
+                          null/tidak ada), BUKAN finalization.history.length
+                          mentah — sebelumnya bisa tertulis "(6)" walau
+                          hanya 1 item yang benar-benar tampil di bawahnya
+                          setelah sebagian di-hide. Disclosure-nya sendiri
+                          tetap muncul selama ADA riwayat mentah sama sekali
+                          (termasuk yang semuanya sudah hidden -> tampil
+                          "(0)"), supaya bukan tiba-tiba hilang total. */}
+                      <summary>Riwayat Aktivitas ({finalization.history.filter(isHistoryEntryVisible).length})</summary>
                       {/* V10 Goal 9/11/13: HANYA supervisor, HANYA saat ada >1 entri
                           "upload" (duplikat/percobaan lama untuk dibersihkan) — tombol
                           kecil (recon-link, bukan recon-button) supaya tidak dominan.

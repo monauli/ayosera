@@ -357,3 +357,51 @@ test("V11 Goal 9: TIDAK ADA hard-delete pola (mis. .filter/.splice menghapus ent
 test("V11: hide TIDAK PERNAH menampilkan raw actor id — pola {item.actor} tidak dipakai di baris riwayat mana pun (masih actorName/formatPeriodLockHistoryLine seperti V8)", () => {
   assert.doesNotMatch(page, /\{item\.actor\}/);
 });
+
+// ---------------------------------------------------------------------------
+// V12 masalah #6: counter "Riwayat Aktivitas (N)" HARUS menghitung HANYA
+// history yang masih terlihat (isHistoryEntryVisible), bukan
+// finalization.history.length mentah — sebelumnya bisa tertulis "(6)" walau
+// hanya 1 item yang tampil.
+// ---------------------------------------------------------------------------
+test("V12 test wajib #18: counter Riwayat Aktivitas memakai finalization.history.filter(isHistoryEntryVisible).length, BUKAN finalization.history.length mentah", () => {
+  assert.match(page, /<summary>Riwayat Aktivitas \(\{finalization\.history\.filter\(isHistoryEntryVisible\)\.length\}\)<\/summary>/);
+  assert.doesNotMatch(page, /<summary>Riwayat Aktivitas \(\{finalization\.history\.length\}\)<\/summary>/, "regresi ke counter mentah yang menghitung entri hidden juga");
+});
+
+// ---------------------------------------------------------------------------
+// V12 CRITICAL masalah #1: "Nominal final disepakati" double-count. Fix-nya
+// murni di computeAutoFinalAgreedAmount (lib/reconciliation-berita-acara-ui.ts,
+// diuji end-to-end di reconciliation-berita-acara-ui.test.ts) — test di sini
+// mengunci WIRING page.tsx tidak menambahkan aritmetika BA sendiri di luar
+// fungsi murni itu (mis. `finalAmount + analysis.nominal` langsung di JSX).
+// ---------------------------------------------------------------------------
+test("V12: page.tsx TIDAK PERNAH menghitung nominal final dengan aritmetika BA sendiri (mis. + analysis.nominal / - analysis.nominal langsung) — selalu lewat computeAutoFinalAgreedAmount", () => {
+  assert.doesNotMatch(page, /originalOlseraAmount[\s\S]{0,10}[+-]\s*analysis/);
+  assert.doesNotMatch(page, /olseraTotal[\s\S]{0,10}[+-]\s*(analysis|result)\.nominal/);
+  assert.match(page, /computeAutoFinalAgreedAmount\(\{ originalOlseraAmount, analysis: result \}\)/);
+});
+
+// ---------------------------------------------------------------------------
+// V12 Goal 8-13: "Reset Finalisasi" — supervisor-only, tautan kecil, teks
+// konfirmasi PERSIS sesuai instruksi, handler memanggil endpoint reset lalu
+// reopen+refresh supaya active state & badge tabel utama ikut ter-update.
+// ---------------------------------------------------------------------------
+test("V12: tombol 'Reset Finalisasi' HANYA muncul saat ada attachment atau hasil verifikasi, style recon-link (tidak dominan)", () => {
+  assert.match(page, /\{\(finalization\?\.attachment \|\| finalization\?\.verifiedMatchStatus\) && \(/);
+  assert.match(page, /<button type="button" className="recon-link" disabled=\{resetBusy\} onClick=\{\(\) => setShowResetConfirm\(true\)\}>\s*Reset Finalisasi/);
+});
+
+test("V12: teks konfirmasi reset PERSIS sesuai instruksi (menyebut Berita Acara/OCR/alasan/status dikosongkan, AYO/Olsera/audit tidak dihapus)", () => {
+  assert.match(page, /Reset finalisasi periode ini\? Data aktif Berita Acara, hasil OCR, alasan, dan status finalisasi akan dikosongkan\. Data sumber AYO\/Olsera dan jejak audit tidak akan dihapus\./);
+});
+
+test("V12: resetFinalization memanggil endpoint 'reset' dengan version, lalu reopen (openDetail) DAN refresh() tabel utama", () => {
+  assert.match(page, /const resetFinalization = async \(\) => \{/);
+  assert.match(page, /finalizationRequest\("reset", \{ method: "POST", headers: \{ "Content-Type": "application\/json" \}, body: JSON\.stringify\(\{ version: finalization\.version \}\) \}\)/);
+  assert.match(page, /setShowResetConfirm\(false\); if \(selectedPeriod\) \{ await openDetail\(selectedPeriod\); await refresh\(\); \}/);
+});
+
+test("V12: Reset Finalisasi berada di dalam CollapsibleSection 'Berita Acara dan Finalisasi' yang sudah supervisor-only (tidak ada gating supervisor terpisah/duplikat)", () => {
+  assert.match(page, /\{supervisor && \(\s*<CollapsibleSection title="Berita Acara dan Finalisasi">/);
+});
