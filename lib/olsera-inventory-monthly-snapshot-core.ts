@@ -155,6 +155,8 @@ export type ProductAliasEntry = {
   oldVariantId: number | null;
   newProductId: number | null;
   newVariantId: number | null;
+  /** olsera_product_aliases.confidence — HANYA "verified" yang boleh membuka fallback ledger historis (lihat buildVerifiedAliasCanonicalKeys/applyVerifiedAliasLedgerFallback). "high"/"low" tetap dipakai untuk identity-index (matching stockmovement API) seperti sebelumnya, TIDAK berubah. */
+  confidence: "verified" | "high" | "low";
 };
 
 export function extendIdentityIndexWithAliases(
@@ -175,6 +177,30 @@ export function extendIdentityIndexWithAliases(
     if (!extended.has(oldKey)) extended.set(oldKey, canonical);
   }
   return extended;
+}
+
+/**
+ * Kunci kanonik (`${storeId}:${productId}:${variantId ?? 0}`, format SAMA
+ * dengan anchors/matched/rawSalesActivityByKey) yang punya SETIDAKNYA SATU
+ * alias `confidence:"verified"` menunjuk ke sana — dipakai sebagai guard
+ * ketat untuk applyVerifiedAliasLedgerFallback (Fitur historical rebuild
+ * ODEA). Alias "high"/"low" TIDAK ikut serta di sini — hanya "verified"
+ * (keputusan manusia eksplisit, pola sama scripts/seed-olsera-aliases.ts)
+ * yang boleh mempercayai ledger historis sebagai salesQty final.
+ */
+export function buildVerifiedAliasCanonicalKeys(catalogProducts: InventoryProductInput[], aliases: ProductAliasEntry[]): Set<string> {
+  const byProductVariant = new Map<string, InventoryProductInput>();
+  for (const product of catalogProducts) {
+    byProductVariant.set(`${product.productId}:${product.variantId ?? 0}`, product);
+  }
+  const keys = new Set<string>();
+  for (const alias of aliases) {
+    if (alias.confidence !== "verified" || alias.newProductId === null) continue;
+    const canonical = byProductVariant.get(`${alias.newProductId}:${alias.newVariantId ?? 0}`);
+    if (!canonical) continue;
+    keys.add(productKey(canonical.storeId, canonical.productId, canonical.variantId));
+  }
+  return keys;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +295,74 @@ function carryForwardStatusAndDiagnostic(key: string, rawSalesActivityByKey: Raw
   };
 }
 
+// ---------------------------------------------------------------------------
+// Fallback ledger historis untuk identity-change TERVERIFIKASI (Fitur ODEA,
+// generik — TIDAK hardcode nama produk apa pun). Diterapkan sebagai langkah
+// TERAKHIR (post-processing) atas entries yang SUDAH dihitung oleh sumber
+// normal (carry-forward ATAU baris stockmovement API/"matched") — TIDAK
+// mengubah cara entries itu sendiri dihitung di tempat lain.
+//
+// Guard (SEMUA harus benar-benar terbukti dari data existing, tidak ada yang
+// ditebak):
+//  1. Key ini ada di `verifiedAliasCanonicalKeys` — SATU-SATUNYA sumber
+//     kebenaran adalah olsera_product_aliases.confidence==="verified" (lihat
+//     buildVerifiedAliasCanonicalKeys), keputusan manusia eksplisit, BUKAN
+//     heuristik otomatis apa pun di sini.
+//  2. olsera_inventory_movements (rawSalesActivityByKey — saat ini HANYA
+//     berisi mutasi "penjualan", lihat lib/mongodb.ts) mencatat aktivitas
+//     LEBIH BESAR dari salesQty yang sudah dihitung entry ini dari sumber
+//     lain (carry-forward selalu 0, ATAU baris stockmovement API yang
+//     ternyata hanya sebagian/tidak lengkap) — bila TIDAK lebih besar, TIDAK
+//     ADA alasan mempercayai ledger di atas sumber yang sudah ada, sehingga
+//     TIDAK override (mencegah fallback menimpa sumber resmi yang justru
+//     lebih kuat/lengkap tanpa alasan).
+// Bila kedua syarat terpenuhi: salesQty entry diganti dengan angka ledger
+// (satu angka pasti/deterministic, bukan estimasi), lalu opening/closing
+// DIHITUNG ULANG lewat formula existing (computeOpeningFromClosingBackward/
+// computeClosingFromOpeningForward) — TIDAK PERNAH hardcode. incoming/
+// return/outgoing TIDAK disentuh (tetap apa adanya dari sumber asli, karena
+// olsera_inventory_movements saat ini hanya mencatat penjualan, bukan
+// incoming/return/outgoing). Status menjadi "complete" — bukan dipaksa,
+// tapi karena kondisi override HANYA terjadi ketika identitas SUDAH
+// terverifikasi eksplisit oleh manusia (alias confidence:"verified"), bukan
+// tebakan otomatis. Bila TIDAK terverifikasi (default — semua produk lain,
+// termasuk kasus mirip yang belum diverifikasi manual): TIDAK ADA
+// perubahan sama sekali, perilaku identik dengan sebelum fitur ini ada.
+function applyVerifiedAliasLedgerFallback(
+  key: string,
+  entry: MonthlyLedgerEntry,
+  direction: "backward" | "forward",
+  rawSalesActivityByKey: RawSalesActivityByKey | undefined,
+  verifiedAliasCanonicalKeys: Set<string> | undefined,
+): MonthlyLedgerEntry {
+  if (!verifiedAliasCanonicalKeys?.has(key)) return entry;
+  const rawSales = rawSalesActivityByKey?.get(key);
+  const currentSalesQty = entry.salesQty ?? 0;
+  if (rawSales === undefined || rawSales <= currentSalesQty) return entry;
+
+  const diagnostic = `Alias TERVERIFIKASI (olsera_product_aliases, confidence="verified") untuk identitas ini — olsera_inventory_movements mencatat aktivitas penjualan sumAbsQty=${rawSales}, lebih besar dari salesQty=${currentSalesQty} hasil sumber sebelumnya (${entry.source}). Ledger dipakai sebagai salesQty final bulan ini (fallback historis untuk identity-change terverifikasi); incoming/return/outgoing tidak diubah.`;
+  const diagnostics = [...entry.diagnostics, diagnostic];
+
+  if (direction === "backward") {
+    const openingQty = computeOpeningFromClosingBackward({
+      closingQty: entry.closingQty ?? 0,
+      incomingQty: entry.incomingQty ?? 0,
+      returnQty: entry.returnQty ?? 0,
+      salesQty: rawSales,
+      outgoingQty: entry.outgoingQty ?? 0,
+    });
+    return { ...entry, salesQty: rawSales, openingQty, status: "complete", diagnostics };
+  }
+  const closingQty = computeClosingFromOpeningForward({
+    openingQty: entry.openingQty ?? 0,
+    incomingQty: entry.incomingQty ?? 0,
+    returnQty: entry.returnQty ?? 0,
+    salesQty: rawSales,
+    outgoingQty: entry.outgoingQty ?? 0,
+  });
+  return { ...entry, salesQty: rawSales, closingQty, status: "complete", diagnostics };
+}
+
 /**
  * Satu langkah mundur (bulan N, closing SUDAH diketahui dari anchor) →
  * hitung opening bulan N via formula, jadikan opening itu closing anchor utk
@@ -303,6 +397,8 @@ export function computeMonthlyStepBackward(input: {
   catalogById: Map<string, InventoryProductInput>;
   hasEvidenceBeforeOrDuring: (productKeyId: string) => boolean;
   rawSalesActivityByKey?: RawSalesActivityByKey;
+  /** Opsional (additive) — lihat applyVerifiedAliasLedgerFallback. Default: tidak diisi, perilaku lama TIDAK berubah. */
+  verifiedAliasCanonicalKeys?: Set<string>;
 }): MonthlyStepBackwardResult {
   const entries = new Map<string, MonthlyLedgerEntry>();
   const nextAnchors = new Map<string, BackwardAnchor>();
@@ -404,6 +500,21 @@ export function computeMonthlyStepBackward(input: {
     });
   }
 
+  // Fallback ledger historis untuk identity-change TERVERIFIKASI — langkah
+  // TERAKHIR, tidak mengganggu perhitungan di atas (lihat
+  // applyVerifiedAliasLedgerFallback). Hanya entries yang memenuhi guard
+  // ketat yang berubah; nextAnchors disesuaikan supaya bulan sebelumnya
+  // (N-1) menerima closingQty (= openingQty entry ini) yang sudah benar.
+  if (input.verifiedAliasCanonicalKeys?.size) {
+    for (const [key, entry] of entries) {
+      const updated = applyVerifiedAliasLedgerFallback(key, entry, "backward", input.rawSalesActivityByKey, input.verifiedAliasCanonicalKeys);
+      if (updated === entry) continue;
+      entries.set(key, updated);
+      const anchor = nextAnchors.get(key);
+      if (anchor && updated.openingQty !== null) nextAnchors.set(key, { ...anchor, closingQty: updated.openingQty });
+    }
+  }
+
   return { entries, nextAnchors, stopped };
 }
 
@@ -428,6 +539,8 @@ export function computeMonthlyStepForward(input: {
   matched: Map<string, MatchedMovement>;
   catalogById: Map<string, InventoryProductInput>;
   rawSalesActivityByKey?: RawSalesActivityByKey;
+  /** Opsional (additive) — lihat applyVerifiedAliasLedgerFallback. Default: tidak diisi, perilaku lama TIDAK berubah. */
+  verifiedAliasCanonicalKeys?: Set<string>;
 }): MonthlyStepForwardResult {
   const entries = new Map<string, MonthlyLedgerEntry>();
   const nextAnchors = new Map<string, ForwardAnchor>();
@@ -519,6 +632,18 @@ export function computeMonthlyStepForward(input: {
     });
   }
 
+  // Fallback ledger historis untuk identity-change TERVERIFIKASI — lihat
+  // catatan yang sama di computeMonthlyStepBackward.
+  if (input.verifiedAliasCanonicalKeys?.size) {
+    for (const [key, entry] of entries) {
+      const updated = applyVerifiedAliasLedgerFallback(key, entry, "forward", input.rawSalesActivityByKey, input.verifiedAliasCanonicalKeys);
+      if (updated === entry) continue;
+      entries.set(key, updated);
+      const anchor = nextAnchors.get(key);
+      if (anchor && updated.closingQty !== null) nextAnchors.set(key, { ...anchor, openingQty: updated.closingQty });
+    }
+  }
+
   return { entries, nextAnchors };
 }
 
@@ -566,6 +691,8 @@ export type MatchingContext = {
   skuIndex: Map<string, InventoryProductInput[]>;
   nameIndex: Map<string, InventoryProductInput[]>;
   catalogById: Map<string, InventoryProductInput>;
+  /** Lihat buildVerifiedAliasCanonicalKeys — dipakai applyVerifiedAliasLedgerFallback. */
+  verifiedAliasCanonicalKeys: Set<string>;
 };
 
 export function buildMatchingContext(catalogProducts: InventoryProductInput[], aliases: ProductAliasEntry[]): MatchingContext {
@@ -574,7 +701,8 @@ export function buildMatchingContext(catalogProducts: InventoryProductInput[], a
   const skuIndex = buildSkuIndex(catalogProducts);
   const nameIndex = buildMovementNameIndex(catalogProducts);
   const catalogById = new Map(catalogProducts.map((product) => [product._id, product]));
-  return { catalogProducts, identityIndex, skuIndex, nameIndex, catalogById };
+  const verifiedAliasCanonicalKeys = buildVerifiedAliasCanonicalKeys(catalogProducts, aliases);
+  return { catalogProducts, identityIndex, skuIndex, nameIndex, catalogById, verifiedAliasCanonicalKeys };
 }
 
 /** Modus (nilai paling sering) storeId di katalog — dipakai sebagai storeId dokumen ledger bulanan (data nyata: satu toko, 324175). */

@@ -20,8 +20,10 @@ import {
   ensureMonthlySnapshotChain,
   runBackwardBackfillMonth,
   runForwardBackfillMonth,
+  type EntityFilter,
   type MinimalMovementReadCollection,
   type MonthlySnapshotRepo,
+  type RawSalesActivityFetcher,
 } from "./olsera-inventory-monthly-snapshot-store.ts";
 import type { OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
 
@@ -363,6 +365,290 @@ test("backfillBackwardRange: fetch stockmovement API GAGAL -> tidak ada dokumen 
   assert.ok(summaries.every((s) => !s.ok)); // gagal, ditandai eksplisit, bukan diam-diam sukses dgn 0 entity
   const april = await repo.findMonth(1, 2026, 4);
   assert.equal(april.length, 0);
+});
+
+// ---- Fitur ODEA: rebuild historis identity-change terverifikasi + --product-id scoped ----
+
+function odeaSeedJuneDoc(): OlseraInventoryMonthlySnapshotDocument {
+  const now = new Date("2026-07-01T00:00:00Z");
+  return {
+    _id: "1:2026:06:116138490:0",
+    storeId: 1,
+    year: 2026,
+    month: 6,
+    snapshotDate: "2026-06-30",
+    productId: 116138490,
+    variantId: null,
+    canonicalProductId: null,
+    productName: "BOLA PADEL ODEA ROSE",
+    productSku: null,
+    groupName: "BOLA PADEL",
+    openingQty: 45,
+    incomingQty: 24,
+    returnQty: 0,
+    salesQty: 46,
+    outgoingQty: 2,
+    closingQty: 21,
+    source: "baseline-file",
+    status: "complete",
+    diagnostics: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function yonexSeedJuneDoc(): OlseraInventoryMonthlySnapshotDocument {
+  const now = new Date("2026-07-01T00:00:00Z");
+  return {
+    _id: "1:2026:06:118420650:0",
+    storeId: 1,
+    year: 2026,
+    month: 6,
+    snapshotDate: "2026-06-30",
+    productId: 118420650,
+    variantId: null,
+    canonicalProductId: null,
+    productName: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate",
+    productSku: null,
+    groupName: "CELANA PRIA",
+    openingQty: 4,
+    incomingQty: 0,
+    returnQty: 0,
+    salesQty: 3,
+    outgoingQty: 0,
+    closingQty: 1,
+    source: "baseline-file",
+    status: "complete",
+    diagnostics: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function redSeedJuneDoc(): OlseraInventoryMonthlySnapshotDocument {
+  const now = new Date("2026-07-01T00:00:00Z");
+  return {
+    _id: "1:2026:06:119043265:0",
+    storeId: 1,
+    year: 2026,
+    month: 6,
+    snapshotDate: "2026-06-30",
+    productId: 119043265,
+    variantId: null,
+    canonicalProductId: null,
+    productName: "BOLA PADEL ODEA RED",
+    productSku: null,
+    groupName: "BOLA PADEL",
+    openingQty: 32,
+    incomingQty: 0,
+    returnQty: 0,
+    salesQty: 0,
+    outgoingQty: 0,
+    closingQty: 32,
+    source: "baseline-file",
+    status: "complete",
+    diagnostics: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** rawSalesActivityFetcher palsu — beberapa entity sekaligus, per bulan (YYYY-MM), key format sama seperti fetchRawSalesActivityByMonth. */
+function makeMultiLedgerFetcher(storeId: number, byMonthThenProductId: Record<string, Record<number, number>>): RawSalesActivityFetcher {
+  return async (start) => {
+    const ym = start.slice(0, 7);
+    const byProduct = byMonthThenProductId[ym] ?? {};
+    const map = new Map<string, number>();
+    for (const [productId, qty] of Object.entries(byProduct)) map.set(`${storeId}:${productId}:0`, qty);
+    return map;
+  };
+}
+
+function odeaThreeProductMatchingContext(): MatchingContext {
+  const catalog = [
+    product({ _id: "1:116138490:0", productId: 116138490, storeId: 1, name: "BOLA PADEL ODEA ROSE", category: "BOLA PADEL" }),
+    product({ _id: "1:118420650:0", productId: 118420650, storeId: 1, name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", category: "CELANA PRIA" }),
+    product({ _id: "1:119043265:0", productId: 119043265, storeId: 1, name: "BOLA PADEL ODEA RED", category: "BOLA PADEL" }),
+  ];
+  const aliases = [
+    { oldProductId: 106817649, oldVariantId: null, newProductId: 116138490, newVariantId: null, confidence: "verified" as const }, // ODEA lama -> ROSE (verified, kasus nyata)
+    { oldProductId: 106743815, oldVariantId: null, newProductId: 118420650, newVariantId: null, confidence: "verified" as const }, // Yonex lama -> duplicate (verified, kasus nyata, PRE-EXISTING sebelum fitur ini)
+    // RED (119043265) SENGAJA tidak punya alias apa pun — harus tetap terpisah.
+  ];
+  return buildMatchingContext(catalog, aliases);
+}
+
+test("backfillBackwardRange: ODEA regresi persis (Feb=30, Mar=36, Apr=51, May=55, Jun tidak berubah=46) — end-to-end lewat orkestrasi penuh, bukan hanya fungsi murni", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-06-01": [{ product_id: 116138490, product_name: "BOLA PADEL ODEA ROSE", product_group_name: "BOLA PADEL", beginning_qty: 45, sum_incoming_qty: 24, sum_return_qty: 0, sum_sales_qty: 46, sum_outgoing_qty: 2, sisa: 21 }],
+    "2026-05-01": [{ product_id: 116138490, product_name: "BOLA PADEL ODEA ROSE", product_group_name: "BOLA PADEL", beginning_qty: 0, sum_incoming_qty: 57, sum_return_qty: 0, sum_sales_qty: 12, sum_outgoing_qty: 0, sisa: 45 }],
+    // Feb/Mar/Apr: TIDAK ADA baris official API sama sekali (carry-forward) — persis kondisi nyata sebelum fix.
+  });
+  const catalog = [product({ _id: "1:116138490:0", productId: 116138490, storeId: 1, name: "BOLA PADEL ODEA ROSE", category: "BOLA PADEL" })];
+  const matchingContext = buildMatchingContext(catalog, [{ oldProductId: 106817649, oldVariantId: null, newProductId: 116138490, newVariantId: null, confidence: "verified" }]);
+  const repo = createFakeRepo([odeaSeedJuneDoc()]);
+  const rawSalesActivityFetcher = makeMultiLedgerFetcher(1, {
+    "2026-02": { 116138490: 30 },
+    "2026-03": { 116138490: 36 },
+    "2026-04": { 116138490: 51 },
+    "2026-05": { 116138490: 55 },
+    "2026-06": { 116138490: 46 }, // sama dengan hasil resmi -> tidak override
+  });
+
+  const summaries = await backfillBackwardRange({
+    fromInclusive: { year: 2026, month: 6 },
+    toInclusive: { year: 2026, month: 2 },
+    storeId: 1,
+    matchingContext,
+    repo,
+    earliestByProductId: new Map([[116138490, "2026-01-01"]]),
+    rawSalesActivityFetcher,
+  });
+  assert.ok(summaries.every((s) => s.ok));
+
+  const feb = (await repo.findMonth(1, 2026, 2))[0];
+  const mar = (await repo.findMonth(1, 2026, 3))[0];
+  const apr = (await repo.findMonth(1, 2026, 4))[0];
+  const may = (await repo.findMonth(1, 2026, 5))[0];
+  const jun = (await repo.findMonth(1, 2026, 6))[0];
+
+  assert.equal(feb.salesQty, 30);
+  assert.equal(mar.salesQty, 36);
+  assert.equal(apr.salesQty, 51);
+  assert.equal(may.salesQty, 55); // override dari ledger, resmi (12) TIDAK dipakai lagi
+  assert.equal(jun.salesQty, 46); // TIDAK berubah — ledger (46) tidak lebih besar dari resmi (46)
+
+  // Chain opening/closing tetap dihitung via formula existing, bukan hardcode — cek konsistensi berantai.
+  assert.equal(apr.closingQty, may.openingQty); // April closing = Mei opening (rantai N -> N-1)
+  assert.equal(mar.closingQty, apr.openingQty);
+  assert.equal(feb.closingQty, mar.openingQty);
+
+  // Status: bukan hardcode "complete" — hasil natural dari guard (verified + override berhasil).
+  assert.equal(feb.status, "complete");
+  assert.equal(mar.status, "complete");
+  assert.equal(apr.status, "complete");
+  assert.equal(may.status, "complete");
+
+  // Idempotent — jalankan ulang persis sama menghasilkan angka identik (bukan akumulasi/double-count).
+  const repo2 = createFakeRepo([odeaSeedJuneDoc()]);
+  await backfillBackwardRange({ fromInclusive: { year: 2026, month: 6 }, toInclusive: { year: 2026, month: 2 }, storeId: 1, matchingContext, repo: repo2, earliestByProductId: new Map([[116138490, "2026-01-01"]]), rawSalesActivityFetcher });
+  const feb2 = (await repo2.findMonth(1, 2026, 2))[0];
+  assert.equal(feb2.salesQty, feb.salesQty);
+  assert.equal(feb2.openingQty, feb.openingQty);
+});
+
+test("backfillBackwardRange DENGAN --product-id (entityFilter) SCOPED ke ODEA: Yonex (verified alias-nya SENDIRI) 100% TIDAK TERSENTUH walau ledgernya juga lebih besar dari source resmi", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-06-01": [
+      { product_id: 116138490, product_name: "BOLA PADEL ODEA ROSE", product_group_name: "BOLA PADEL", beginning_qty: 45, sum_incoming_qty: 24, sum_return_qty: 0, sum_sales_qty: 46, sum_outgoing_qty: 2, sisa: 21 },
+      { product_id: 118420650, product_name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", product_group_name: "CELANA PRIA", beginning_qty: 4, sum_incoming_qty: 0, sum_return_qty: 0, sum_sales_qty: 3, sum_outgoing_qty: 0, sisa: 1 },
+    ],
+    // Mei-Feb: TIDAK ADA baris official utk keduanya (carry-forward keduanya).
+  });
+  const matchingContext = odeaThreeProductMatchingContext();
+  const yonexSeed = yonexSeedJuneDoc();
+  const redSeed = redSeedJuneDoc();
+  const repo = createFakeRepo([odeaSeedJuneDoc(), yonexSeed, redSeed]);
+  // Yonex JUGA punya ledger lebih besar dari source resmi (0) di Feb — kalau isolasi bocor, Yonex akan ikut berubah.
+  const rawSalesActivityFetcher = makeMultiLedgerFetcher(1, {
+    "2026-02": { 116138490: 30, 118420650: 99, 119043265: 999 },
+    "2026-03": { 116138490: 36, 118420650: 99 },
+    "2026-04": { 116138490: 51, 118420650: 99 },
+    "2026-05": { 116138490: 55, 118420650: 99 },
+  });
+  const entityFilter: EntityFilter = { productId: 116138490, variantId: null };
+
+  const summaries = await backfillBackwardRange({
+    fromInclusive: { year: 2026, month: 6 },
+    toInclusive: { year: 2026, month: 2 },
+    storeId: 1,
+    matchingContext,
+    repo,
+    earliestByProductId: new Map([
+      [116138490, "2026-01-01"],
+      [118420650, "2026-01-01"],
+      [119043265, "2026-01-01"],
+    ]),
+    rawSalesActivityFetcher,
+    entityFilter,
+  });
+  assert.ok(summaries.every((s) => s.ok));
+
+  // ODEA berubah seperti diharapkan.
+  const febOdea = (await repo.findMonth(1, 2026, 2)).find((d) => d.productId === 116138490)!;
+  assert.equal(febOdea.salesQty, 30);
+
+  // Yonex TIDAK PERNAH ditulis ulang untuk bulan manapun dalam rentang — dokumen Feb/Mar/Apr/Mei untuk
+  // productId 118420650 TIDAK ADA SAMA SEKALI (tidak pernah di-upsert), dan dokumen Juni (seed awal)
+  // deep-equal PERSIS dengan sebelum rebuild dijalankan (byte-identik, termasuk createdAt/updatedAt).
+  for (const month of [2, 3, 4, 5]) {
+    const yonexDocs = (await repo.findMonth(1, 2026, month)).filter((d) => d.productId === 118420650);
+    assert.equal(yonexDocs.length, 0, `Yonex TIDAK BOLEH punya dokumen ${month} — entityFilter harus mengisolasi total`);
+  }
+  const yonexJuneAfter = (await repo.findMonth(1, 2026, 6)).find((d) => d.productId === 118420650)!;
+  assert.deepEqual(yonexJuneAfter, yonexSeed); // byte-identik dengan sebelum rebuild — TIDAK disentuh sama sekali
+
+  // ODEA RED juga sama sekali tidak tersentuh (tidak ada alias DAN di luar scope entityFilter — dua lapis proteksi).
+  for (const month of [2, 3, 4, 5]) {
+    const redDocs = (await repo.findMonth(1, 2026, month)).filter((d) => d.productId === 119043265);
+    assert.equal(redDocs.length, 0);
+  }
+  const redJuneAfter = (await repo.findMonth(1, 2026, 6)).find((d) => d.productId === 119043265)!;
+  assert.deepEqual(redJuneAfter, redSeed);
+});
+
+test("backfillBackwardRange TANPA --product-id (default, unscoped): Yonex verified DAN ledger-nya lebih besar dari source resmi -> IKUT berubah (bukti guard generik, BUKAN hardcode nama ODEA) — kontras dengan test scoped di atas", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-06-01": [
+      { product_id: 118420650, product_name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", product_group_name: "CELANA PRIA", beginning_qty: 4, sum_incoming_qty: 0, sum_return_qty: 0, sum_sales_qty: 3, sum_outgoing_qty: 0, sisa: 1 },
+    ],
+  });
+  const catalog = [product({ _id: "1:118420650:0", productId: 118420650, storeId: 1, name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", category: "CELANA PRIA" })];
+  const matchingContext = buildMatchingContext(catalog, [{ oldProductId: 106743815, oldVariantId: null, newProductId: 118420650, newVariantId: null, confidence: "verified" }]);
+  const repo = createFakeRepo([yonexSeedJuneDoc()]);
+  const rawSalesActivityFetcher = makeMultiLedgerFetcher(1, { "2026-05": { 118420650: 7 } });
+
+  await backfillBackwardRange({
+    fromInclusive: { year: 2026, month: 6 },
+    toInclusive: { year: 2026, month: 5 },
+    storeId: 1,
+    matchingContext,
+    repo,
+    earliestByProductId: new Map([[118420650, "2026-01-01"]]),
+    rawSalesActivityFetcher,
+  });
+  const may = (await repo.findMonth(1, 2026, 5))[0];
+  assert.equal(may.salesQty, 7); // guard-nya memang generik (bukan hardcode nama ODEA) — berlaku utk entity verified manapun
+});
+
+test("backfillBackwardRange: ODEA RED (tidak punya alias sama sekali) TIDAK PERNAH ikut override walau ledgernya besar — alias ODEA->ROSE tidak 'bocor' ke RED", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-06-01": [{ product_id: 119043265, product_name: "BOLA PADEL ODEA RED", product_group_name: "BOLA PADEL", beginning_qty: 32, sum_incoming_qty: 0, sum_return_qty: 0, sum_sales_qty: 0, sum_outgoing_qty: 0, sisa: 32 }],
+  });
+  const catalog = [product({ _id: "1:119043265:0", productId: 119043265, storeId: 1, name: "BOLA PADEL ODEA RED", category: "BOLA PADEL" })];
+  // TIDAK ADA alias untuk RED — sengaja kosong, mensimulasikan "alias lama->ROSE tidak mempengaruhi RED".
+  const matchingContext = buildMatchingContext(catalog, [{ oldProductId: 106817649, oldVariantId: null, newProductId: 116138490, newVariantId: null, confidence: "verified" }]);
+  const repo = createFakeRepo([redSeedJuneDoc()]);
+  const rawSalesActivityFetcher = makeMultiLedgerFetcher(1, { "2026-05": { 119043265: 500 } }); // ledger besar, TAPI tidak boleh dipakai (tidak verified utk RED)
+
+  await backfillBackwardRange({
+    fromInclusive: { year: 2026, month: 6 },
+    toInclusive: { year: 2026, month: 5 },
+    storeId: 1,
+    matchingContext,
+    repo,
+    earliestByProductId: new Map([[119043265, "2026-01-01"]]),
+    rawSalesActivityFetcher,
+  });
+  const may = (await repo.findMonth(1, 2026, 5))[0];
+  assert.equal(may.salesQty, 0); // carry-forward biasa, TIDAK di-override
+  assert.equal(may.status, "incomplete"); // tetap ditandai kontradiktif seperti sebelum fitur ini (belum verified)
+});
+
+test("scripts/backfill-monthly-snapshot.ts --product-id: productId tidak ditemukan di katalog -> gagal dengan pesan jelas (bukan silent no-op)", () => {
+  const matchingContext = odeaThreeProductMatchingContext();
+  const target = matchingContext.catalogProducts.find((p) => p.productId === 999999999);
+  assert.equal(target, undefined); // validasi yang sama dipakai CLI (lihat scripts/backfill-monthly-snapshot.ts) sebelum rebuild dimulai
 });
 
 // ---- docsToForwardAnchors ----

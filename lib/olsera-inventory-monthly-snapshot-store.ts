@@ -95,6 +95,7 @@ export async function fetchMatchingContext(): Promise<MatchingContext & { duplic
     oldVariantId: a.oldVariantId,
     newProductId: a.newProductId,
     newVariantId: a.newVariantId,
+    confidence: a.confidence,
   }));
   return { ...buildMatchingContext(catalogProducts, aliases), duplicateResolution };
 }
@@ -207,6 +208,19 @@ export type BackfillMonthResult<TAnchor> =
   | { ok: true; nextAnchors: Map<string, TAnchor>; stopped: string[]; docsWritten: number; unmatchedOrAmbiguous: UnmatchedMovementEntry[] }
   | { ok: false; error: string };
 
+/** Rebuild dibatasi ke SATU entity — lihat scripts/backfill-monthly-snapshot.ts --product-id. Produk lain TIDAK dihitung/write/diff sama sekali saat ini diisi. */
+export type EntityFilter = { productId: number; variantId: number | null };
+
+function entityFilterKey(storeId: number, filter: EntityFilter): string {
+  return `${storeId}:${filter.productId}:${filter.variantId ?? 0}`;
+}
+
+/** Saring Map anchor/entry ke SATU key saja (dipakai entityFilter) — Map baru, input tidak diubah. */
+function filterMapToKey<T>(map: Map<string, T>, key: string): Map<string, T> {
+  const value = map.get(key);
+  return value === undefined ? new Map() : new Map([[key, value]]);
+}
+
 export async function runBackwardBackfillMonth(input: {
   month: MonthKey;
   storeId: number;
@@ -218,6 +232,8 @@ export async function runBackwardBackfillMonth(input: {
   rawSalesActivityFetcher?: RawSalesActivityFetcher;
   /** Opsional — waktu "sekarang" dipakai utk menentukan finalizedAt (lihat entryToDocument). Default: new Date(). Injeksi utk tes deterministik. */
   now?: Date;
+  /** Opsional (additive) — lihat EntityFilter. Default: tidak diisi, SELURUH katalog dihitung/ditulis seperti sebelumnya (perilaku lama TIDAK berubah). */
+  entityFilter?: EntityFilter;
 }): Promise<BackfillMonthResult<BackwardAnchor>> {
   const startDate = `${input.month.year}-${String(input.month.month).padStart(2, "0")}-01`;
   const endDate = lastDayOfMonth(input.month.year, input.month.month);
@@ -236,13 +252,27 @@ export async function runBackwardBackfillMonth(input: {
 
   const hasEvidence = hasEvidenceFactory(input.matchingContext.catalogById, input.earliestByProductId, endDate);
   const rawSalesActivityByKey = input.rawSalesActivityFetcher ? await input.rawSalesActivityFetcher(startDate, endDate) : undefined;
-  const step = computeMonthlyStepBackward({ anchors: input.anchors, matched, catalogById: input.matchingContext.catalogById, hasEvidenceBeforeOrDuring: hasEvidence, rawSalesActivityByKey });
+  const step = computeMonthlyStepBackward({
+    anchors: input.anchors,
+    matched,
+    catalogById: input.matchingContext.catalogById,
+    hasEvidenceBeforeOrDuring: hasEvidence,
+    rawSalesActivityByKey,
+    verifiedAliasCanonicalKeys: input.matchingContext.verifiedAliasCanonicalKeys,
+  });
+
+  // Scoped rebuild (--product-id): HANYA entity target yang dihitung/write/
+  // diff — produk lain TIDAK PERNAH masuk `docs` (tidak pernah dipanggil
+  // repo.upsertMany untuknya) dan TIDAK PERNAH ikut nextAnchors (rantai
+  // bulan berikutnya juga tetap ter-isolasi ke entity ini saja).
+  const scopedEntries = input.entityFilter ? filterMapToKey(step.entries, entityFilterKey(input.storeId, input.entityFilter)) : step.entries;
+  const scopedNextAnchors = input.entityFilter ? filterMapToKey(step.nextAnchors, entityFilterKey(input.storeId, input.entityFilter)) : step.nextAnchors;
 
   const now = input.now ?? new Date();
-  const docs = [...step.entries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
+  const docs = [...scopedEntries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
   await input.repo.upsertMany(docs);
 
-  return { ok: true, nextAnchors: step.nextAnchors, stopped: step.stopped, docsWritten: docs.length, unmatchedOrAmbiguous };
+  return { ok: true, nextAnchors: scopedNextAnchors, stopped: step.stopped, docsWritten: docs.length, unmatchedOrAmbiguous };
 }
 
 export async function runForwardBackfillMonth(input: {
@@ -255,6 +285,8 @@ export async function runForwardBackfillMonth(input: {
   rawSalesActivityFetcher?: RawSalesActivityFetcher;
   /** Opsional — lihat runBackwardBackfillMonth. */
   now?: Date;
+  /** Opsional (additive) — lihat EntityFilter/runBackwardBackfillMonth. */
+  entityFilter?: EntityFilter;
 }): Promise<BackfillMonthResult<ForwardAnchor>> {
   const startDate = `${input.month.year}-${String(input.month.month).padStart(2, "0")}-01`;
   const endDate = lastDayOfMonth(input.month.year, input.month.month);
@@ -272,13 +304,22 @@ export async function runForwardBackfillMonth(input: {
   );
 
   const rawSalesActivityByKey = input.rawSalesActivityFetcher ? await input.rawSalesActivityFetcher(startDate, endDate) : undefined;
-  const step = computeMonthlyStepForward({ anchors: input.anchors, matched, catalogById: input.matchingContext.catalogById, rawSalesActivityByKey });
+  const step = computeMonthlyStepForward({
+    anchors: input.anchors,
+    matched,
+    catalogById: input.matchingContext.catalogById,
+    rawSalesActivityByKey,
+    verifiedAliasCanonicalKeys: input.matchingContext.verifiedAliasCanonicalKeys,
+  });
+
+  const scopedEntries = input.entityFilter ? filterMapToKey(step.entries, entityFilterKey(input.storeId, input.entityFilter)) : step.entries;
+  const scopedNextAnchors = input.entityFilter ? filterMapToKey(step.nextAnchors, entityFilterKey(input.storeId, input.entityFilter)) : step.nextAnchors;
 
   const now = input.now ?? new Date();
-  const docs = [...step.entries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
+  const docs = [...scopedEntries.values()].map((entry) => entryToDocument(entry, input.storeId, input.month, now));
   await input.repo.upsertMany(docs);
 
-  return { ok: true, nextAnchors: step.nextAnchors, stopped: [], docsWritten: docs.length, unmatchedOrAmbiguous };
+  return { ok: true, nextAnchors: scopedNextAnchors, stopped: [], docsWritten: docs.length, unmatchedOrAmbiguous };
 }
 
 // ---------------------------------------------------------------------------
@@ -331,10 +372,13 @@ export async function backfillBackwardRange(input: {
   rawSalesActivityFetcher?: RawSalesActivityFetcher;
   /** Opsional — lihat runBackwardBackfillMonth. */
   now?: Date;
+  /** Opsional (additive) — lihat EntityFilter. Default: seluruh katalog (perilaku lama TIDAK berubah). */
+  entityFilter?: EntityFilter;
 }): Promise<BackfillRangeSummary[]> {
   const earliestByProductId = input.earliestByProductId ?? (await fetchEarliestEvidenceByProductId());
   const existing = await input.repo.findMonth(input.storeId, input.fromInclusive.year, input.fromInclusive.month);
   let anchors = docsToBackwardAnchors(existing);
+  if (input.entityFilter) anchors = filterMapToKey(anchors, entityFilterKey(input.storeId, input.entityFilter));
   const summaries: BackfillRangeSummary[] = [];
 
   for (const month of monthsDescending(input.fromInclusive, input.toInclusive)) {
@@ -347,6 +391,7 @@ export async function backfillBackwardRange(input: {
       repo: input.repo,
       rawSalesActivityFetcher: input.rawSalesActivityFetcher,
       now: input.now,
+      entityFilter: input.entityFilter,
     });
     if (!result.ok) {
       summaries.push({ month, ok: false, docsWritten: 0, stopped: [], error: result.error });
@@ -368,9 +413,12 @@ export async function backfillForwardRange(input: {
   rawSalesActivityFetcher?: RawSalesActivityFetcher;
   /** Opsional — lihat runBackwardBackfillMonth. */
   now?: Date;
+  /** Opsional (additive) — lihat EntityFilter. Default: seluruh katalog (perilaku lama TIDAK berubah). */
+  entityFilter?: EntityFilter;
 }): Promise<BackfillRangeSummary[]> {
   const existing = await input.repo.findMonth(input.storeId, input.fromInclusive.year, input.fromInclusive.month);
   let anchors = docsToForwardAnchors(existing);
+  if (input.entityFilter) anchors = filterMapToKey(anchors, entityFilterKey(input.storeId, input.entityFilter));
   const summaries: BackfillRangeSummary[] = [];
 
   for (const month of monthsAscending(nextMonth(input.fromInclusive), input.toInclusive)) {
@@ -382,6 +430,7 @@ export async function backfillForwardRange(input: {
       repo: input.repo,
       rawSalesActivityFetcher: input.rawSalesActivityFetcher,
       now: input.now,
+      entityFilter: input.entityFilter,
     });
     if (!result.ok) {
       summaries.push({ month, ok: false, docsWritten: 0, stopped: [], error: result.error });

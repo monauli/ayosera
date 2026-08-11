@@ -13,6 +13,13 @@
 // Jalankan:
 //   node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/backfill-monthly-snapshot.ts --period=2026-07
 //   node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/backfill-monthly-snapshot.ts --from=2026-07 --to=2026-08 --write
+//
+// --product-id=<id> (opsional, additive) — batasi rebuild ke SATU entity
+// (productId katalog kanonik saat ini + --variant-id opsional, default
+// variantId null). Saat diisi: HANYA entity itu yang dihitung/write/diff;
+// produk lain (termasuk yang lain-lain punya alias verified sendiri, mis.
+// Yonex) TIDAK disentuh sama sekali. TANPA --product-id, perilaku PERSIS
+// sama seperti sebelumnya (seluruh katalog).
 import { dominantStoreId, monthsAscending, monthsDescending, type MonthKey } from "../lib/olsera-inventory-monthly-snapshot-core.ts";
 import {
   backfillBackwardRange,
@@ -20,6 +27,7 @@ import {
   fetchMatchingContext,
   fetchRawSalesActivityByMonth,
   getMongoMonthlySnapshotRepo,
+  type EntityFilter,
   type MonthlySnapshotRepo,
 } from "../lib/olsera-inventory-monthly-snapshot-store.ts";
 import type { OlseraInventoryMonthlySnapshotDocument } from "../lib/mongodb.ts";
@@ -40,20 +48,24 @@ function monthIndex({ year, month }: MonthKey): number {
   return year * 12 + (month - 1);
 }
 
-type Args = { period: string | null; from: string | null; to: string | null; write: boolean };
+type Args = { period: string | null; from: string | null; to: string | null; write: boolean; productId: number | null; variantId: number | null };
 
 function parseArgs(argv: string[]): Args {
   let period: string | null = null;
   let from: string | null = null;
   let to: string | null = null;
   let write = false;
+  let productId: number | null = null;
+  let variantId: number | null = null;
   for (const arg of argv) {
     if (arg === "--write") write = true;
     else if (arg.startsWith("--period=")) period = arg.slice("--period=".length);
     else if (arg.startsWith("--from=")) from = arg.slice("--from=".length);
     else if (arg.startsWith("--to=")) to = arg.slice("--to=".length);
+    else if (arg.startsWith("--product-id=")) productId = Number(arg.slice("--product-id=".length));
+    else if (arg.startsWith("--variant-id=")) variantId = Number(arg.slice("--variant-id=".length));
   }
-  return { period, from, to, write };
+  return { period, from, to, write, productId, variantId };
 }
 
 /** Repo dry-run: baca Mongo asli apa adanya, TAPI upsertMany hanya mencatat "would-be" summary — TIDAK PERNAH menulis. */
@@ -114,8 +126,17 @@ async function main() {
     );
   }
 
+  if (args.variantId !== null && args.productId === null) {
+    throw new Error("--variant-id hanya boleh diisi bersama --product-id.");
+  }
+
   console.log(`[backfill-monthly-snapshot] Mode: ${args.write ? "WRITE (akan menulis Mongo)" : "DRY-RUN (tidak menulis apa pun)"}`);
-  console.log(`[backfill-monthly-snapshot] Rentang: ${periods.map(fmt).join(", ")}\n`);
+  console.log(`[backfill-monthly-snapshot] Rentang: ${periods.map(fmt).join(", ")}`);
+  if (args.productId !== null) {
+    console.log(`[backfill-monthly-snapshot] SCOPED: HANYA productId=${args.productId} variantId=${args.variantId ?? "null"} — produk lain TIDAK dihitung/write/diff sama sekali.\n`);
+  } else {
+    console.log("");
+  }
 
   const matchingContext = await fetchMatchingContext();
   if (!matchingContext.catalogProducts.length) {
@@ -123,6 +144,18 @@ async function main() {
     process.exit(1);
   }
   const storeId = dominantStoreId(matchingContext.catalogProducts);
+
+  let entityFilter: EntityFilter | undefined;
+  if (args.productId !== null) {
+    const target = matchingContext.catalogProducts.find((p) => p.productId === args.productId && (args.variantId === null || p.variantId === args.variantId));
+    if (!target) {
+      console.error(`[backfill-monthly-snapshot] GAGAL: productId=${args.productId} variantId=${args.variantId ?? "null"} tidak ditemukan di katalog aktif (olsera_inventory_products) — rebuild dibatalkan, tidak ada yang dihitung/ditulis.`);
+      process.exit(1);
+    }
+    entityFilter = { productId: args.productId, variantId: args.variantId };
+    console.log(`[backfill-monthly-snapshot] Target scoped: "${target.name}" (productId=${target.productId}, variantId=${target.variantId ?? "null"}, kategori=${target.category})\n`);
+  }
+
   const realRepo = await getMongoMonthlySnapshotRepo();
   const { repo, changes } = args.write ? { repo: realRepo, changes: [] as ReturnType<typeof makeDryRunRepo>["changes"] } : makeDryRunRepo(realRepo);
 
@@ -157,6 +190,7 @@ async function main() {
         matchingContext,
         repo,
         rawSalesActivityFetcher: (start, end) => fetchRawSalesActivityByMonth(storeId, start, end),
+        entityFilter,
       });
       for (const s of summaries) {
         if (s.ok) console.log(`  ${fmt(s.month)}: OK — ${s.docsWritten} entity, ${s.stopped.length} dihentikan (belum ada bukti eksistensi).`);
@@ -193,6 +227,7 @@ async function main() {
         matchingContext,
         repo,
         rawSalesActivityFetcher: (start, end) => fetchRawSalesActivityByMonth(storeId, start, end),
+        entityFilter,
       });
       for (const s of summaries) {
         if (s.ok) console.log(`  ${fmt(s.month)}: OK — ${s.docsWritten} entity.`);

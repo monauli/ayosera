@@ -164,7 +164,7 @@ test("extendIdentityIndexWithAliases: baris movement productId LAMA tetap match 
   const catalog = [product({ _id: "1:118420650:0", productId: 118420650, variantId: null, storeId: 1, name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate" })];
   const baseIndex = buildProductIdentityIndex(catalog);
   const extended = extendIdentityIndexWithAliases(baseIndex, catalog, [
-    { oldProductId: 106743815, oldVariantId: null, newProductId: 118420650, newVariantId: null },
+    { oldProductId: 106743815, oldVariantId: null, newProductId: 118420650, newVariantId: null, confidence: "verified" },
   ]);
   const oldKey = productKey(1, 106743815, null);
   assert.equal(extended.get(oldKey)?._id, "1:118420650:0");
@@ -176,7 +176,7 @@ test("extendIdentityIndexWithAliases: alias yang target barunya TIDAK ada di kat
   const catalog = [product({ _id: "1:1:0", productId: 1 })];
   const baseIndex = buildProductIdentityIndex(catalog);
   const extended = extendIdentityIndexWithAliases(baseIndex, catalog, [
-    { oldProductId: 999, oldVariantId: null, newProductId: 12345, newVariantId: null }, // 12345 tidak ada di katalog
+    { oldProductId: 999, oldVariantId: null, newProductId: 12345, newVariantId: null, confidence: "verified" }, // 12345 tidak ada di katalog
   ]);
   assert.equal(extended.size, baseIndex.size);
 });
@@ -287,6 +287,127 @@ test("computeMonthlyStepBackward: carry-forward TAPI ada bukti penjualan mentah 
   assert.match(entry.diagnostics[0], /TIDAK BOLEH dipercaya/);
 });
 
+// ---- Fitur ODEA: verifiedAliasCanonicalKeys (fallback ledger historis, guarded) ----
+
+test("computeMonthlyStepBackward: carry-forward + verified alias + rawSales lebih besar -> salesQty dari ledger, status 'complete', opening dihitung ULANG via formula existing (kasus ODEA Apr: sales=51)", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 43, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const result = computeMonthlyStepBackward({
+    anchors,
+    matched: new Map(),
+    catalogById: new Map(),
+    hasEvidenceBeforeOrDuring: () => true,
+    rawSalesActivityByKey: new Map([[key, 51]]),
+    verifiedAliasCanonicalKeys: new Set([key]),
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.source, "carry-forward"); // sumber TIDAK dipalsukan jadi lain
+  assert.equal(entry.status, "complete"); // BUKAN hardcode — konsekuensi alami dari alias sudah terverifikasi
+  assert.equal(entry.salesQty, 51); // dari ledger, BUKAN 0
+  assert.equal(entry.closingQty, 43); // anchor-given, TIDAK berubah
+  assert.equal(entry.openingQty, computeOpeningFromClosingBackward({ closingQty: 43, incomingQty: 0, returnQty: 0, salesQty: 51, outgoingQty: 0 })); // formula existing, bukan hardcode
+  assert.equal(entry.openingQty, 94);
+  assert.match(entry.diagnostics.at(-1)!, /TERVERIFIKASI/);
+  // nextAnchors bulan sebelumnya (N-1) harus menerima closingQty = openingQty entry ini (94), bukan 43 lama.
+  assert.equal(result.nextAnchors.get(key)?.closingQty, 94);
+});
+
+test("computeMonthlyStepBackward: TANPA verifiedAliasCanonicalKeys (default) -> perilaku LAMA persis (regresi terhadap fitur baru) walau rawSales lebih besar", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 43, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const result = computeMonthlyStepBackward({
+    anchors,
+    matched: new Map(),
+    catalogById: new Map(),
+    hasEvidenceBeforeOrDuring: () => true,
+    rawSalesActivityByKey: new Map([[key, 51]]),
+    // verifiedAliasCanonicalKeys TIDAK diisi.
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.status, "incomplete");
+  assert.equal(entry.salesQty, 0);
+});
+
+test("computeMonthlyStepBackward: key ADA verifiedAliasCanonicalKeys TAPI BUKAN key ini -> tidak terpengaruh (isolasi antar produk, mis. Yonex tidak boleh ikut saat ODEA yang dimaksud)", () => {
+  const key = "324175:116138490:0";
+  const otherVerifiedKey = "324175:118420650:0"; // Yonex — verified alias-nya SENDIRI, beda entity
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 43, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const result = computeMonthlyStepBackward({
+    anchors,
+    matched: new Map(),
+    catalogById: new Map(),
+    hasEvidenceBeforeOrDuring: () => true,
+    rawSalesActivityByKey: new Map([[key, 51]]),
+    verifiedAliasCanonicalKeys: new Set([otherVerifiedKey]), // hanya Yonex verified, BUKAN ODEA
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.status, "incomplete");
+  assert.equal(entry.salesQty, 0);
+});
+
+test("computeMonthlyStepBackward: verified alias TAPI ledger TIDAK lebih besar dari salesQty sumber lain (baris 'matched'/stockmovement API) -> TIDAK override (tidak menimpa sumber resmi yang sudah lengkap)", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 45, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const row = movementRow({ productId: 116138490, incomingQty: 57, returnQty: 0, salesQty: 60, outgoingQty: 0, sisa: 45 }); // official API salesQty=60, sudah lebih besar dari ledger
+  const matchedMap = new Map([[key, matched(row)]]);
+  const result = computeMonthlyStepBackward({
+    anchors,
+    matched: matchedMap,
+    catalogById: new Map(),
+    hasEvidenceBeforeOrDuring: () => true,
+    rawSalesActivityByKey: new Map([[key, 55]]), // ledger 55 < official 60 -> TIDAK override
+    verifiedAliasCanonicalKeys: new Set([key]),
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.salesQty, 60); // tetap dari stockmovement API, TIDAK ditimpa ledger yang lebih kecil
+  assert.equal(entry.source, "stockmovement-backward");
+});
+
+test("computeMonthlyStepBackward: verified alias + baris 'matched' (official API) TAPI ledger LEBIH BESAR -> override (kasus ODEA Mei: official=12, ledger=55)", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 45, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const row = movementRow({ productId: 116138490, incomingQty: 57, returnQty: 0, salesQty: 12, outgoingQty: 0, sisa: 45 });
+  const matchedMap = new Map([[key, matched(row)]]);
+  const result = computeMonthlyStepBackward({
+    anchors,
+    matched: matchedMap,
+    catalogById: new Map(),
+    hasEvidenceBeforeOrDuring: () => true,
+    rawSalesActivityByKey: new Map([[key, 55]]),
+    verifiedAliasCanonicalKeys: new Set([key]),
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.salesQty, 55); // ledger dipakai, official (12) TIDAK dipercaya lagi
+  assert.equal(entry.closingQty, 45); // anchor-given, tidak berubah
+  assert.equal(entry.incomingQty, 57); // TIDAK disentuh — hanya salesQty yang diganti
+  assert.equal(entry.openingQty, computeOpeningFromClosingBackward({ closingQty: 45, incomingQty: 57, returnQty: 0, salesQty: 55, outgoingQty: 0 }));
+});
+
+test("computeMonthlyStepBackward: TANPA rawSalesActivityByKey sama sekali (undefined) TAPI verifiedAliasCanonicalKeys diisi -> tidak crash, tidak override (tidak ada dasar angka)", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 45, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const result = computeMonthlyStepBackward({
+    anchors,
+    matched: new Map(),
+    catalogById: new Map(),
+    hasEvidenceBeforeOrDuring: () => true,
+    verifiedAliasCanonicalKeys: new Set([key]),
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.salesQty, 0);
+  assert.equal(entry.status, "complete");
+});
+
+test("computeMonthlyStepBackward: rerun idempoten dengan verifiedAliasCanonicalKeys — dijalankan dua kali menghasilkan entries identik", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 43, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const rawSalesActivityByKey = new Map([[key, 51]]);
+  const verifiedAliasCanonicalKeys = new Set([key]);
+  const run1 = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => true, rawSalesActivityByKey, verifiedAliasCanonicalKeys });
+  const run2 = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => true, rawSalesActivityByKey, verifiedAliasCanonicalKeys });
+  assert.deepEqual(run1.entries.get(key), run2.entries.get(key));
+});
+
 test("computeMonthlyStepBackward: carry-forward TANPA rawSalesActivityByKey (default, tidak diisi) -> status tetap 'complete' (regresi tidak berubah)", () => {
   const anchors = new Map<string, BackwardAnchor>([["1:100:0", { closingQty: 28, productName: "THERMOFLASK", productSku: null, groupName: "THERMOFLASK" }]]);
   const result = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => true });
@@ -376,6 +497,51 @@ test("computeMonthlyStepForward: carry-forward TAPI ada bukti penjualan mentah (
   assert.equal(entry.openingQty, 21);
   assert.equal(entry.closingQty, 21);
   assert.match(entry.diagnostics[0], /sumAbsQty=8/);
+});
+
+test("computeMonthlyStepForward: carry-forward + verified alias + rawSales lebih besar -> salesQty dari ledger, closing dihitung ULANG via formula existing (arah maju)", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, ForwardAnchor>([[key, { openingQty: 21, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const result = computeMonthlyStepForward({
+    anchors,
+    matched: new Map(),
+    catalogById: new Map(),
+    rawSalesActivityByKey: new Map([[key, 8]]),
+    verifiedAliasCanonicalKeys: new Set([key]),
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.status, "complete");
+  assert.equal(entry.salesQty, 8);
+  assert.equal(entry.openingQty, 21); // anchor-given, tidak berubah di arah maju
+  assert.equal(entry.closingQty, computeClosingFromOpeningForward({ openingQty: 21, incomingQty: 0, returnQty: 0, salesQty: 8, outgoingQty: 0 }));
+  assert.equal(entry.closingQty, 13);
+  assert.equal(result.nextAnchors.get(key)?.openingQty, 13);
+});
+
+test("computeMonthlyStepForward: TANPA verifiedAliasCanonicalKeys (default) -> perilaku LAMA persis walau rawSales lebih besar", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, ForwardAnchor>([[key, { openingQty: 21, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const result = computeMonthlyStepForward({ anchors, matched: new Map(), catalogById: new Map(), rawSalesActivityByKey: new Map([[key, 8]]) });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.status, "incomplete");
+  assert.equal(entry.salesQty, 0);
+});
+
+test("computeMonthlyStepForward: verified alias TAPI ledger TIDAK lebih besar dari salesQty resmi -> TIDAK override (Jul/Aug: source lebih kuat, tidak boleh rusak)", () => {
+  const key = "324175:116138490:0";
+  const anchors = new Map<string, ForwardAnchor>([[key, { openingQty: 21, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const row = movementRow({ productId: 116138490, incomingQty: 24, returnQty: 0, salesQty: 11, outgoingQty: 2 });
+  const matchedMap = new Map([[key, matched(row)]]);
+  const result = computeMonthlyStepForward({
+    anchors,
+    matched: matchedMap,
+    catalogById: new Map(),
+    rawSalesActivityByKey: new Map([[key, 9]]), // ledger 9 < official 11 -> TIDAK override
+    verifiedAliasCanonicalKeys: new Set([key]),
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.salesQty, 11);
+  assert.equal(entry.source, "stockmovement-forward");
 });
 
 test("computeMonthlyStepForward: carry-forward TANPA rawSalesActivityByKey (default) -> status tetap 'complete' (regresi tidak berubah)", () => {
