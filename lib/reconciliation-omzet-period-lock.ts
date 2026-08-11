@@ -98,7 +98,7 @@ export async function uploadOmzetPeriodLockAttachment(input: { storeId: number; 
     // pada field array yang belum ada otomatis membuat array baru berisi
     // elemen yang di-push — jadi `version: 0` dan `history: []` di
     // $setOnInsert tidak diperlukan sama sekali dan harus dihapus.
-    { $set: { storeId: input.storeId, year, month, periodKey: input.period, status: current?.status ?? "draft", attachment: input.attachment, updatedAt: now }, $setOnInsert: { originalAyoAmount: null, originalOlseraAmount: null, originalDifference: null, finalAgreedAmount: null, adjustmentAmount: null, adjustmentReason: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, verifiedMatchStatus: null, beritaAcaraNominal: null, beritaAcaraDirection: null, createdAt: now }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: null, before, after: { fileName: input.attachment.fileName } } } },
+    { $set: { storeId: input.storeId, year, month, periodKey: input.period, status: current?.status ?? "draft", attachment: input.attachment, updatedAt: now }, $setOnInsert: { originalAyoAmount: null, originalOlseraAmount: null, originalDifference: null, finalAgreedAmount: null, adjustmentAmount: null, adjustmentReason: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, verifiedMatchStatus: null, beritaAcaraNominal: null, beritaAcaraDirection: null, createdAt: now }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: null, before, after: { fileName: input.attachment.fileName }, hiddenAt: null, hiddenBy: null } } },
     { upsert: !current, returnDocument: "after" },
   );
   if (!document) throw new OmzetPeriodLockError("Konflik upload; muat ulang lalu coba lagi.", "CONFLICT");
@@ -142,7 +142,7 @@ export async function recordOmzetPeriodLockPreview(input: { storeId: number; per
       // bukan analisis OCR client yang belum pernah disimpan.
       $set: { updatedAt: now, verifiedMatchStatus: preview.verifiedMatchStatus, beritaAcaraNominal: preview.beritaAcaraNominal, beritaAcaraDirection: preview.beritaAcaraDirection },
       $inc: { version: 1 },
-      $push: { history: { action: "preview", actor: input.actor, timestamp: now, reason: preview.adjustmentReason, before: snapshot(current), after: { finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount } } },
+      $push: { history: { action: "preview", actor: input.actor, timestamp: now, reason: preview.adjustmentReason, before: snapshot(current), after: { finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount }, hiddenAt: null, hiddenBy: null } },
     },
     { returnDocument: "after" },
   );
@@ -157,14 +157,14 @@ export async function lockOmzetPeriodFinalization(input: { storeId: number; peri
   const lastAudit = current.history.at(-1);
   if (lastAudit?.action !== "preview" || lastAudit.reason !== preview.adjustmentReason || lastAudit.after.finalAgreedAmount !== preview.finalAgreedAmount) throw new OmzetPeriodLockError("Buat preview finalisasi terbaru sebelum lock.");
   const action = current.status === "unlocked" ? "relock" : "lock";
-  const document = await source.locks.findOneAndUpdate({ _id: id, version: expectedVersion, status: { $in: ["draft", "unlocked"] } }, { $set: { status: "locked", originalAyoAmount: input.original.ayo, originalOlseraAmount: input.original.olsera, originalDifference: input.original.difference, finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount, adjustmentReason: preview.adjustmentReason, lockedAt: now, lockedBy: input.actor, unlockedAt: null, unlockedBy: null, updatedAt: now }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: preview.adjustmentReason, before: snapshot(current), after: { original: input.original, finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount } } } }, { returnDocument: "after" });
+  const document = await source.locks.findOneAndUpdate({ _id: id, version: expectedVersion, status: { $in: ["draft", "unlocked"] } }, { $set: { status: "locked", originalAyoAmount: input.original.ayo, originalOlseraAmount: input.original.olsera, originalDifference: input.original.difference, finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount, adjustmentReason: preview.adjustmentReason, lockedAt: now, lockedBy: input.actor, unlockedAt: null, unlockedBy: null, updatedAt: now }, $inc: { version: 1 }, $push: { history: { action, actor: input.actor, timestamp: now, reason: preview.adjustmentReason, before: snapshot(current), after: { original: input.original, finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount }, hiddenAt: null, hiddenBy: null } } }, { returnDocument: "after" });
   if (!document) throw new OmzetPeriodLockError("Konflik lock; data sudah berubah atau terkunci supervisor lain.", "CONFLICT");
   return document;
 }
 
 export async function unlockOmzetPeriodFinalization(input: { storeId: number; period: string; actor: string; expectedVersion: unknown; reason: unknown }, context?: OmzetPeriodLockContext) {
   const source = await contextOrDefault(context); const expectedVersion = integer(input.expectedVersion, "Versi"); const reason = text(input.reason, "Alasan buka kunci"); const now = new Date(); const id = `${input.storeId}:${input.period}`; const current = await source.locks.findOne({ _id: id });
-  const document = await source.locks.findOneAndUpdate({ _id: id, version: expectedVersion, status: "locked" }, { $set: { status: "unlocked", unlockedAt: now, unlockedBy: input.actor, updatedAt: now }, $inc: { version: 1 }, $push: { history: { action: "unlock", actor: input.actor, timestamp: now, reason, before: snapshot(current), after: { status: "unlocked" } } } }, { returnDocument: "after" });
+  const document = await source.locks.findOneAndUpdate({ _id: id, version: expectedVersion, status: "locked" }, { $set: { status: "unlocked", unlockedAt: now, unlockedBy: input.actor, updatedAt: now }, $inc: { version: 1 }, $push: { history: { action: "unlock", actor: input.actor, timestamp: now, reason, before: snapshot(current), after: { status: "unlocked" }, hiddenAt: null, hiddenBy: null } } }, { returnDocument: "after" });
   if (!document) throw new OmzetPeriodLockError("Konflik buka kunci; muat ulang lalu coba lagi.", "CONFLICT");
   return document;
 }
@@ -251,4 +251,53 @@ export async function cleanupOmzetPeriodUploadHistory(input: { storeId: number; 
   );
   if (!document) throw new OmzetPeriodLockError("Konflik pembersihan riwayat; muat ulang lalu coba lagi.", "CONFLICT");
   return { lock: document, removedCount };
+}
+
+// ---------------------------------------------------------------------------
+// V11: "×" per-item pada Riwayat Aktivitas — supervisor boleh menyembunyikan
+// SATU entri riwayat apa pun (upload/preview/lock/relock/unlock) dari
+// tampilan tanpa PERNAH menghapusnya secara fisik. Beda dari
+// cleanupOmzetPeriodUploadHistory (V10, HARD remove entri "upload" lama
+// duplikat) — ini SOFT DELETE: entri tetap ada di `history` apa adanya
+// (action/actor/timestamp/reason/before/after utuh), hanya menambahkan
+// hiddenAt/hiddenBy. UI normal (lib/reconciliation-berita-acara-ui.ts:
+// isHistoryEntryVisible) menyaring entri ber-hiddenAt keluar dari render,
+// tapi datanya tetap bisa dipertanggungjawabkan lewat DB/API mentah.
+// ---------------------------------------------------------------------------
+
+/** Fungsi MURNI — set hiddenAt/hiddenBy pada SATU entri di index tertentu; entri lain (termasuk urutan) sama sekali tidak disentuh. */
+export function computeHiddenHistory(
+  history: ReconciliationOmzetPeriodLockDocument["history"],
+  entryIndex: number,
+  actor: string,
+  now: Date,
+): ReconciliationOmzetPeriodLockDocument["history"] {
+  return history.map((entry, index) => (index === entryIndex ? { ...entry, hiddenAt: now, hiddenBy: actor } : entry));
+}
+
+/**
+ * Sembunyikan SATU entri riwayat (index dalam array `history` mentah, SAMA
+ * seperti urutan tersimpan — bukan index tampilan yang sudah difilter/
+ * dibalik di UI, lihat page.tsx). Otorisasi (supervisor-only) WAJIB
+ * diverifikasi di route.ts SEBELUM memanggil ini — pola sama seperti
+ * cleanupOmzetPeriodUploadHistory di atas, fungsi ini sendiri tidak
+ * memeriksa role.
+ */
+export async function hideOmzetPeriodHistoryEntry(input: { storeId: number; period: string; actor: string; expectedVersion: unknown; entryIndex: unknown }, context?: OmzetPeriodLockContext) {
+  const source = await contextOrDefault(context);
+  const expectedVersion = integer(input.expectedVersion, "Versi");
+  if (typeof input.entryIndex !== "number" || !Number.isInteger(input.entryIndex) || input.entryIndex < 0) throw new OmzetPeriodLockError("Indeks entri riwayat tidak valid.");
+  const id = `${input.storeId}:${input.period}`;
+  const current = await source.locks.findOne({ _id: id });
+  if (!current) throw new OmzetPeriodLockError("Periode tidak ditemukan.", "NOT_FOUND");
+  if (input.entryIndex >= current.history.length) throw new OmzetPeriodLockError("Entri riwayat tidak ditemukan.", "NOT_FOUND");
+  const now = new Date();
+  const updatedHistory = computeHiddenHistory(current.history, input.entryIndex, input.actor, now);
+  const document = await source.locks.findOneAndUpdate(
+    { _id: id, version: expectedVersion },
+    { $set: { history: updatedHistory, updatedAt: now }, $inc: { version: 1 } },
+    { returnDocument: "after" },
+  );
+  if (!document) throw new OmzetPeriodLockError("Konflik menyembunyikan riwayat; muat ulang lalu coba lagi.", "CONFLICT");
+  return document;
 }

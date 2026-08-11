@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileCheck, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
@@ -14,6 +14,10 @@ import {
   canSaveBeritaAcaraFinalization,
   canLockAfterSave,
   formatPeriodLockHistoryLine,
+  isHistoryEntryVisible,
+  resolveBeritaAcaraVerifiedComponent,
+  hasSavedBeritaAcaraAnalysis,
+  restoreBeritaAcaraAnalysisFromLock,
 } from "@/lib/reconciliation-berita-acara-ui";
 
 type LedgerEntry = { transactionNo: string | null; transactionDate: string | null; description: string | null; debit: number; credit: number };
@@ -41,7 +45,12 @@ type SportReconciliation = { court: SportComparison; pickleball: SportComparison
 // verifiedMatchStatus/beritaAcaraNominal/beritaAcaraDirection (V10): hasil
 // pencocokan Berita Acara TERAKHIR yang di-server-verify saat Simpan — lihat
 // lib/reconciliation-omzet-period-lock.ts previewOmzetPeriodLock.
-type PeriodLock = { status: "draft" | "locked" | "unlocked"; version: number; originalAyoAmount: number | null; originalOlseraAmount: number | null; originalDifference: number | null; finalAgreedAmount: number | null; adjustmentAmount: number | null; adjustmentReason: string | null; verifiedMatchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | null; beritaAcaraNominal: number | null; beritaAcaraDirection: "PENAMBAHAN" | "PENGURANGAN" | null; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: string; uploadedBy: string; uploadedByName: string } | null; lockedAt: string | null; lockedBy: string | null; lockedByName: string; unlockedAt: string | null; unlockedBy: string | null; unlockedByName: string; history: Array<{ action: string; actor: string; actorName: string; timestamp: string; reason: string | null }> };
+// history[].hiddenAt/hiddenBy (V11): soft-delete per-item ("×" di Riwayat
+// Aktivitas, lihat isHistoryEntryVisible) — hiddenAt bukan null berarti entri
+// ini disembunyikan dari render, TAPI datanya TETAP ada apa adanya untuk
+// audit (TIDAK PERNAH hard-delete, lihat hideOmzetPeriodHistoryEntry di
+// lib/reconciliation-omzet-period-lock.ts).
+type PeriodLock = { status: "draft" | "locked" | "unlocked"; version: number; originalAyoAmount: number | null; originalOlseraAmount: number | null; originalDifference: number | null; finalAgreedAmount: number | null; adjustmentAmount: number | null; adjustmentReason: string | null; verifiedMatchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | null; beritaAcaraNominal: number | null; beritaAcaraDirection: "PENAMBAHAN" | "PENGURANGAN" | null; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: string; uploadedBy: string; uploadedByName: string } | null; lockedAt: string | null; lockedBy: string | null; lockedByName: string; unlockedAt: string | null; unlockedBy: string | null; unlockedByName: string; history: Array<{ action: string; actor: string; actorName: string; timestamp: string; reason: string | null; hiddenAt: string | null }> };
 type EvidenceType = "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
 /** Penanda note yang dikunci LANGSUNG dari status Cocok (selisih Rp0), TANPA penjelasan manual — lihat lib/reconciliation-omzet-ledger.ts OMZET_LOCK_WITHOUT_EXPLANATION_MARKER. TIDAK muncul di dropdown "Jenis bukti" (bukan kategori bukti sungguhan). */
 const LOCK_WITHOUT_EXPLANATION_MARKER = "matched-no-explanation" as const;
@@ -144,15 +153,38 @@ function LockBadge() {
 // Simpan + server-verified COCOK tapi BELUM dikunci — beda dari badge
 // "Cocok — Terkunci" (locked) yang sudah ada; selisih ASLI TETAP tampil di
 // kolom lain (tabel/kartu), badge ini murni indikator, tidak mengubah angka.
-function BeritaAcaraVerifiedBadge() {
+// V11 Goal 6: `onClick` OPSIONAL — hanya badge di TABEL UTAMA (desktop+mobile)
+// yang mengirim handler ini (buka modal Preview Berita Acara ringan, lihat
+// BeritaAcaraQuickPreviewModal di bawah); badge di kartu per-olahraga
+// (SportReconciliationCard) TIDAK mengirim onClick sama sekali -> tetap
+// <span> non-interaktif seperti V10, tidak ada perubahan perilaku di sana.
+function BeritaAcaraVerifiedBadge({ onClick }: { onClick?: (event: MouseEvent) => void } = {}) {
+  const label = (
+    <>
+      <FileCheck size={12} /> Berita Acara
+    </>
+  );
+  if (onClick) {
+    return (
+      <button type="button" className="recon-badge recon-badge-ok" style={{ cursor: "pointer" }} title="Selisih telah diverifikasi dengan Berita Acara — klik untuk preview dokumen" onClick={onClick}>
+        {label}
+      </button>
+    );
+  }
   return (
     <span className="recon-badge recon-badge-ok" title="Selisih telah diverifikasi dengan Berita Acara">
-      <FileCheck size={12} /> Berita Acara
+      {label}
     </span>
   );
 }
 
-function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, finalStatus, wide = false, locked = false }: { title: string; ayoLabel: string; olseraLabel: string; comparison: SportComparison; finalStatus?: OmzetStatus; wide?: boolean; locked?: boolean }) {
+// V11 Goal 1/2: `beritaAcaraVerified` OPSIONAL — begitu true (dan bukan
+// periode locked, lihat `locked` prop yang tetap diprioritaskan seperti V10),
+// tampilkan badge "Berita Acara" DI SAMPING status Cocok kartu ini juga
+// (bukan hanya TOTAL GABUNGAN seperti V10) — lihat
+// resolveBeritaAcaraVerifiedComponent di lib/reconciliation-berita-acara-ui.ts
+// untuk aturan ambiguitas kapan ini boleh true per component.
+function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, finalStatus, beritaAcaraVerified = false, wide = false, locked = false }: { title: string; ayoLabel: string; olseraLabel: string; comparison: SportComparison; finalStatus?: OmzetStatus; beritaAcaraVerified?: boolean; wide?: boolean; locked?: boolean }) {
   return (
     <section className={`recon-sport-card${wide ? " recon-sport-card-wide" : ""}`}>
       <h3>{title}</h3>
@@ -160,9 +192,46 @@ function SportReconciliationCard({ title, ayoLabel, olseraLabel, comparison, fin
         <div><span>{ayoLabel}</span><b>{formatRupiah(comparison.ayo.revenue)}</b></div>
         <div><span>{olseraLabel}</span><b>{formatRupiah(comparison.olsera)}</b></div>
         <div><span>Selisih (Olsera - AYO)</span><b>{formatRupiah(comparison.difference)}</b></div>
-        <div><span>Status</span><div className="recon-card-status"><StatusBadge status={finalStatus ?? comparison.status} /> {locked && <span className="recon-badge recon-badge-ok"><Lock size={12} /> Cocok — Terkunci</span>}</div></div>
+        <div><span>Status</span><div className="recon-card-status"><StatusBadge status={finalStatus ?? comparison.status} /> {locked ? <span className="recon-badge recon-badge-ok"><Lock size={12} /> Cocok — Terkunci</span> : beritaAcaraVerified && <BeritaAcaraVerifiedBadge />}</div></div>
       </div>
     </section>
+  );
+}
+
+// V11 Goal 6/7: modal ringan "Preview Berita Acara" dipicu dari badge di
+// tabel utama — REUSE resolveBeritaAcaraPreviewKind (sama seperti
+// BeritaAcaraPreview di drawer detail, Goal 2 V8), bukan komponen preview
+// baru yang terpisah logikanya. `onClose` juga dipicu klik backdrop, konsisten
+// dengan pola dialog konfirmasi lain (recon-confirm-overlay sudah ada di
+// globals.css, sebelumnya belum dipakai di mana pun).
+function BeritaAcaraQuickPreviewModal({ attachment, onClose }: { attachment: NonNullable<PeriodLock["attachment"]>; onClose: () => void }) {
+  const kind = resolveBeritaAcaraPreviewKind(attachment.mimeType);
+  return (
+    <div className="recon-confirm-overlay" role="dialog" aria-modal="true" aria-label="Preview Berita Acara" onClick={onClose}>
+      <div className="recon-confirm-box" style={{ maxWidth: "min(680px, 92vw)" }} onClick={(event) => event.stopPropagation()}>
+        <h3>Preview Berita Acara</h3>
+        {kind === "pdf" ? (
+          <div className="recon-ba-preview-frame-wrap">
+            <iframe src={attachment.url} title={`Preview ${attachment.fileName}`} />
+          </div>
+        ) : kind === "image" ? (
+          <div className="recon-ba-preview-image-wrap">
+            {/* eslint-disable-next-line @next/next/no-img-element -- URL Blob eksternal dinamis, bukan aset statis lokal */}
+            <img src={attachment.url} alt={`Preview ${attachment.fileName}`} />
+          </div>
+        ) : (
+          <p className="recon-ba-preview-unsupported">Pratinjau tidak didukung untuk tipe file ini — gunakan &quot;Buka File&quot;.</p>
+        )}
+        <div className="recon-actions">
+          <a className="recon-link" href={attachment.url} target="_blank" rel="noreferrer">
+            <ExternalLink size={12} /> Buka File
+          </a>
+          <button type="button" className="recon-button secondary" onClick={onClose}>
+            Tutup
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -317,6 +386,18 @@ export default function ReconciliationPage() {
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupError, setCleanupError] = useState("");
+  // V11 Goal 8-11: "×" per-item pada Riwayat Aktivitas — hideConfirmIndex
+  // menyimpan INDEX ARRAY MENTAH (sama seperti urutan tersimpan di
+  // finalization.history, BUKAN index tampilan yang sudah difilter/dibalik,
+  // lihat map+filter+reverse di render di bawah) dari entri yang sedang
+  // diminta konfirmasi hide-nya; null berarti tidak ada konfirmasi terbuka.
+  const [hideConfirmIndex, setHideConfirmIndex] = useState<number | null>(null);
+  const [hideBusy, setHideBusy] = useState(false);
+  const [hideError, setHideError] = useState("");
+  // V11 Goal 6/7: attachment yang sedang di-preview lewat modal ringan (badge
+  // "Berita Acara" di tabel utama) — TERPISAH dari `selectedPeriod`/`detail`
+  // (Detail Rekonsiliasi) supaya klik badge TIDAK PERNAH membuka drawer detail.
+  const [quickPreviewAttachment, setQuickPreviewAttachment] = useState<PeriodLock["attachment"] | null>(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -348,7 +429,7 @@ export default function ReconciliationPage() {
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
-    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage(""); setShowCleanupConfirm(false); setCleanupError(""); reasonEditedByUserRef.current = false;
+    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage(""); setShowCleanupConfirm(false); setCleanupError(""); setHideConfirmIndex(null); setHideError(""); reasonEditedByUserRef.current = false;
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
@@ -357,12 +438,23 @@ export default function ReconciliationPage() {
       setFinalization(data.data.periodLock ?? null);
       setFinalAmount(String(data.data.periodLock?.finalAgreedAmount ?? data.data.olseraTotal));
       setFinalReason(data.data.periodLock?.adjustmentReason ?? (Math.abs(data.data.differenceRevenue) <= 1 ? "Penyesuaian pembulatan rekonsiliasi" : ""));
-      // Dokumen lock lama (sebelum fitur baca-otomatis ini ada) tetap harus
-      // terbaca normal (kompatibilitas mundur) — bila sudah ada attachment
-      // tersimpan, jalankan analisis otomatis juga saat refresh/buka detail,
-      // bukan hanya persis setelah upload.
+      // V11 Goal 3/4/5 (masalah #2 V11 — root cause "Tidak terbaca"/PERLU
+      // REVIEW/alasan kosong saat reopen): kalau periode ini SUDAH pernah
+      // Simpan dengan hasil analisis tersimpan (hasSavedBeritaAcaraAnalysis),
+      // hydrate LANGSUNG dari lock tersimpan (restoreBeritaAcaraAnalysisFromLock)
+      // — JANGAN jalankan OCR ulang lewat analyzeAttachment, karena server
+      // TIDAK BISA merasterisasi PDF hasil scan (lihat komentar
+      // analyzeAttachment di bawah), sehingga re-analyze otomatis di sini
+      // justru MENIMPA hasil COCOK yang sudah tersimpan dengan
+      // PERLU_REVIEW/"Tidak terbaca" palsu. OCR ulang HANYA untuk dokumen
+      // lock lama (sebelum fitur ini ada) yang punya attachment tapi belum
+      // pernah Simpan analisisnya sama sekali.
       if (data.data.periodLock?.attachment && data.data.periodLock.status !== "locked") {
-        void analyzeAttachment(period, data.data.olseraTotal);
+        if (hasSavedBeritaAcaraAnalysis(data.data.periodLock)) {
+          applyAnalysisResult(restoreBeritaAcaraAnalysisFromLock(data.data.periodLock, data.data.differenceRevenue), data.data.olseraTotal);
+        } else {
+          void analyzeAttachment(period, data.data.olseraTotal);
+        }
       }
     } catch (e) {
       setDetailError(e instanceof Error ? e.message : "Gagal memuat detail bulan ini.");
@@ -517,6 +609,18 @@ export default function ReconciliationPage() {
     finally { setCleanupBusy(false); }
   };
 
+  // V11 Goal 8-11: sembunyikan SATU entri Riwayat Aktivitas (soft delete —
+  // lihat hideOmzetPeriodHistoryEntry di lib/reconciliation-omzet-period-lock.ts,
+  // event asli TIDAK PERNAH dihapus). `entryIndex` WAJIB index array MENTAH
+  // (sama seperti urutan tersimpan finalization.history), bukan index
+  // tampilan yang sudah difilter/dibalik.
+  const hideHistoryEntry = async (entryIndex: number) => {
+    if (!finalization) return; setHideBusy(true); setHideError("");
+    try { await finalizationRequest("hide-history-entry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization.version, entryIndex }) }); setHideConfirmIndex(null); if (selectedPeriod) await openDetail(selectedPeriod); }
+    catch (error) { setHideError(error instanceof Error ? error.message : "Gagal menyembunyikan item riwayat."); }
+    finally { setHideBusy(false); }
+  };
+
   // Gating Simpan (Goal 8, test wajib #14): attachment ada, tidak sedang
   // busy/analisis, alasan diisi, nominal final berupa integer valid. SENGAJA
   // tidak menyertakan matchStatus (lihat komentar di
@@ -541,6 +645,11 @@ export default function ReconciliationPage() {
   // lib/reconciliation-omzet-period-lock.ts (server) — duplikasi kecil yang
   // disengaja demi live-update tanpa refetch.
   const beritaAcaraVerified = Boolean(finalization && finalization.status !== "locked" && finalization.verifiedMatchStatus === "COCOK");
+  // V11 Goal 1/2: begitu TOTAL periode ter-verifikasi BA, tandai HANYA
+  // component (COURT/PICKLEBALL) yang jadi SATU-SATUNYA penyebab PERLU_DICEK
+  // — lihat resolveBeritaAcaraVerifiedComponent untuk guard ambiguitas (dua
+  // component sama-sama PERLU_DICEK -> tidak ditempelkan ke siapa pun).
+  const componentVerified = detail ? resolveBeritaAcaraVerifiedComponent(detail.sportReconciliation, beritaAcaraVerified) : { court: false, pickleball: false };
 
   const supervisor = user?.role === "supervisor";
   if (user && !user.allowedModules.includes("rekonsiliasi") && !supervisor) {
@@ -611,7 +720,13 @@ export default function ReconciliationPage() {
                     {/*
                     <StatusBadge status={row.status} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok â€” Terkunci · Detail Penyesuaian</span> : row.explanation?.locked && <LockBadge />}
                     */}
-                    <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue, row.beritaAcaraVerified)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci · Detail Penyesuaian</span> : row.beritaAcaraVerified ? <BeritaAcaraVerifiedBadge /> : row.explanation?.locked && <LockBadge />}
+                    {/* V11 Goal 6/7: badge klik -> modal Preview Berita Acara ringan
+                        (bukan buka Detail) — HANYA saat attachment benar-benar
+                        ada (Goal 7: jangan tampil badge palsu/tidak bisa
+                        diklik ke mana-mana). stopPropagation berjaga-jaga
+                        walau badge di sini sudah di <td> terpisah dari
+                        tombol Detail (tidak nested). */}
+                    <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue, row.beritaAcaraVerified)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci · Detail Penyesuaian</span> : row.beritaAcaraVerified && row.periodLock?.attachment ? <BeritaAcaraVerifiedBadge onClick={(event) => { event.stopPropagation(); setQuickPreviewAttachment(row.periodLock!.attachment); }} /> : row.explanation?.locked && <LockBadge />}
                   </td>
                   <td>
                     <button className="recon-link" onClick={() => void openDetail(row.period)}>
@@ -624,7 +739,20 @@ export default function ReconciliationPage() {
           </table>
           <div className="recon-mobile-list">
             {items.map((row) => (
-              <button key={row.period} className="recon-mobile-card" onClick={() => void openDetail(row.period)}>
+              // V11 Goal 6: `<div role="button">` (BUKAN <button>) — badge BA di
+              // dalamnya SEKARANG bisa jadi <button> sungguhan sendiri
+              // (BeritaAcaraVerifiedBadge onClick), dan <button> nested di
+              // dalam <button> tidak valid HTML/aksesibilitas. onKeyDown
+              // mempertahankan aktivasi keyboard yang biasanya gratis dari
+              // elemen <button> asli.
+              <div
+                key={row.period}
+                role="button"
+                tabIndex={0}
+                className="recon-mobile-card"
+                onClick={() => void openDetail(row.period)}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void openDetail(row.period); } }}
+              >
                 <div>
                   <strong>{monthLabel(row.period)}</strong>
                   <span>
@@ -635,9 +763,9 @@ export default function ReconciliationPage() {
                   {/*
                   <StatusBadge status={row.status} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok â€” Terkunci</span> : row.explanation?.locked && <LockBadge />}
                   */}
-                  <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue, row.beritaAcaraVerified)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci</span> : row.beritaAcaraVerified ? <BeritaAcaraVerifiedBadge /> : row.explanation?.locked && <LockBadge />}
+                  <StatusBadge status={reconciliationOmzetUiStatus(row.status, row.differenceRevenue, row.beritaAcaraVerified)} /> {row.periodLock?.status === "locked" ? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size={12} /> Cocok — Terkunci</span> : row.beritaAcaraVerified && row.periodLock?.attachment ? <BeritaAcaraVerifiedBadge onClick={(event) => { event.stopPropagation(); setQuickPreviewAttachment(row.periodLock!.attachment); }} /> : row.explanation?.locked && <LockBadge />}
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </section>
@@ -685,14 +813,23 @@ export default function ReconciliationPage() {
               </p>
 
               <section className="recon-sport-sections" aria-label="Rincian omzet per olahraga">
-                <SportReconciliationCard title="COURT" ayoLabel="Omzet AYO Court" olseraLabel="Olsera akun 40001" comparison={detail.sportReconciliation.court} />
-                <SportReconciliationCard title="PICKLEBALL" ayoLabel="Omzet AYO Pickleball" olseraLabel="Olsera akun 40004" comparison={detail.sportReconciliation.pickleball} />
+                {/* V11 Goal 1/2/12: PICKLEBALL (atau COURT, tergantung mana
+                    yang jadi SATU-SATUNYA penyebab Perlu Dicek — lihat
+                    componentVerified/resolveBeritaAcaraVerifiedComponent)
+                    sekarang ikut "Cocok + Berita Acara" begitu total periode
+                    ter-verifikasi, BUKAN cuma TOTAL GABUNGAN seperti V10 —
+                    supaya tidak ada campuran TOTAL Cocok tapi PICKLEBALL
+                    Perlu Dicek untuk selisih yang sama yang sudah
+                    diverifikasi BA. */}
+                <SportReconciliationCard title="COURT" ayoLabel="Omzet AYO Court" olseraLabel="Olsera akun 40001" comparison={detail.sportReconciliation.court} finalStatus={componentVerified.court ? "COCOK" : undefined} beritaAcaraVerified={componentVerified.court} />
+                <SportReconciliationCard title="PICKLEBALL" ayoLabel="Omzet AYO Pickleball" olseraLabel="Olsera akun 40004" comparison={detail.sportReconciliation.pickleball} finalStatus={componentVerified.pickleball ? "COCOK" : undefined} beritaAcaraVerified={componentVerified.pickleball} />
                 <SportReconciliationCard
                   title="TOTAL GABUNGAN"
                   ayoLabel="Total Omzet AYO"
                   olseraLabel="Total Omzet Olsera (40001+40004)"
                   comparison={{ ayo: detail.sportReconciliation.total, olsera: detail.olseraTotal, difference: detail.differenceRevenue, status: reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue, beritaAcaraVerified) === "COCOK" ? "COCOK" : "PERLU_DICEK" }}
                   finalStatus={reconciliationOmzetUiStatus(detail.status, detail.differenceRevenue, beritaAcaraVerified)}
+                  beritaAcaraVerified={beritaAcaraVerified}
                   wide
                   locked={detail.periodLock?.status === "locked"}
                 />
@@ -808,20 +945,51 @@ export default function ReconciliationPage() {
                         </div>
                       )}
                       <ul className="recon-history">
+                        {/* V11 Goal 8-11: `originalIndex` = index di array
+                            MENTAH finalization.history (SEBELUM filter/reverse
+                            di bawah) — WAJIB dikirim apa adanya ke
+                            hideHistoryEntry/hideOmzetPeriodHistoryEntry,
+                            supaya backend menandai entri yang BENAR walau
+                            tampilan sudah disaring (isHistoryEntryVisible) dan
+                            dibalik urutannya di sini. Entri yang sudah
+                            hiddenAt disaring keluar dari render sama sekali
+                            (Goal 9/11: soft delete — datanya tetap ada di DB,
+                            hanya tidak dirender). */}
                         {finalization.history
+                          .map((item, originalIndex) => ({ item, originalIndex }))
+                          .filter(({ item }) => isHistoryEntryVisible(item))
                           .slice()
                           .reverse()
-                          .map((item, index) => {
+                          .map(({ item, originalIndex }) => {
                             const line = formatPeriodLockHistoryLine(item);
                             return (
-                              <li key={`${item.timestamp}-${index}`}>
-                                <span>{line.summary}</span>
+                              <li key={`${item.timestamp}-${originalIndex}`}>
+                                <div className="recon-actions" style={{ justifyContent: "space-between" }}>
+                                  <span>{line.summary}</span>
+                                  {supervisor &&
+                                    (hideConfirmIndex === originalIndex ? (
+                                      <span className="recon-actions">
+                                        <small>Sembunyikan?</small>
+                                        <button type="button" className="recon-link" disabled={hideBusy} onClick={() => void hideHistoryEntry(originalIndex)}>
+                                          Ya
+                                        </button>
+                                        <button type="button" className="recon-link" disabled={hideBusy} onClick={() => setHideConfirmIndex(null)}>
+                                          Batal
+                                        </button>
+                                      </span>
+                                    ) : (
+                                      <button type="button" className="recon-link" aria-label="Sembunyikan item riwayat ini" title="Sembunyikan item riwayat ini dari tampilan (data asli tetap tersimpan untuk audit)" disabled={hideBusy} onClick={() => setHideConfirmIndex(originalIndex)}>
+                                        <X size={12} />
+                                      </button>
+                                    ))}
+                                </div>
                                 <small>{dateTimeLabel(item.timestamp)}</small>
                                 {line.reason && <small>Alasan: {line.reason}</small>}
                               </li>
                             );
                           })}
                       </ul>
+                      {hideError && <p className="recon-error">{hideError}</p>}
                     </details>
                   ) : null}
                   {finalError && <p className="recon-error">{finalError}</p>}
@@ -873,6 +1041,10 @@ export default function ReconciliationPage() {
           ) : null}
         </aside>
       )}
+      {/* V11 Goal 6/7: modal ringan Preview Berita Acara dari badge tabel
+          utama — TERPISAH dari drawer Detail Rekonsiliasi (`selectedPeriod`
+          di atas) supaya klik badge tidak pernah membuka Detail. */}
+      {quickPreviewAttachment && <BeritaAcaraQuickPreviewModal attachment={quickPreviewAttachment} onClose={() => setQuickPreviewAttachment(null)} />}
     </main>
   );
 }

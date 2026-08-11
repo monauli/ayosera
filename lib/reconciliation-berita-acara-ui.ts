@@ -195,3 +195,92 @@ export function formatPeriodLockHistoryLine(entry: PeriodLockHistoryEntryLike): 
     reason: entry.action === "unlock" ? entry.reason : null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// V11 Goal 8-11: "×" per-item di Riwayat Aktivitas — SOFT DELETE (lihat
+// hideOmzetPeriodHistoryEntry/computeHiddenHistory di
+// lib/reconciliation-omzet-period-lock.ts). Entri asli TIDAK PERNAH hilang
+// dari database, hanya disaring dari RENDER di sini.
+// ---------------------------------------------------------------------------
+export type PeriodLockHistoryVisibilityLike = { hiddenAt: string | Date | null };
+
+export function isHistoryEntryVisible(entry: PeriodLockHistoryVisibilityLike): boolean {
+  return !entry.hiddenAt;
+}
+
+// ---------------------------------------------------------------------------
+// V11 Goal 1/2: begitu TOTAL periode ter-verifikasi Berita Acara (Simpan
+// sukses + server-verified COCOK, lihat isBeritaAcaraVerifiedUnlocked di
+// lib/reconciliation-omzet-period-lock.ts), tandai HANYA component
+// (COURT/PICKLEBALL) yang sebelumnya jadi SATU-SATUNYA penyebab
+// PERLU_DICEK — supaya mis. kartu PICKLEBALL (Maret, selisih Rp740.000)
+// juga tampil "Cocok + Berita Acara", bukan hanya TOTAL GABUNGAN.
+//
+// GUARD AMBIGUITAS (aturan eksplisit V11, section 2): kalau KEDUA component
+// sama-sama PERLU_DICEK pada saat bersamaan, BA TIDAK ditempelkan ke salah
+// satu — tidak ada cara aman menebak BA itu punya component yang mana,
+// keduanya tetap Perlu Dicek sampai scope-nya jelas. Simetris juga berlaku
+// kalau TIDAK ADA yang PERLU_DICEK (keduanya sudah Cocok sendiri lewat
+// toleransi ±Rp1 biasa) — tidak ada apa pun untuk ditempelkan BA-nya.
+// ---------------------------------------------------------------------------
+export type SportComponentStatusLike = "COCOK" | "PERLU_DICEK";
+export type SportReconciliationComponentsLike = {
+  court: { status: SportComponentStatusLike };
+  pickleball: { status: SportComponentStatusLike };
+};
+
+export function resolveBeritaAcaraVerifiedComponent(
+  sportReconciliation: SportReconciliationComponentsLike,
+  beritaAcaraVerified: boolean,
+): { court: boolean; pickleball: boolean } {
+  if (!beritaAcaraVerified) return { court: false, pickleball: false };
+  const courtUnresolved = sportReconciliation.court.status === "PERLU_DICEK";
+  const pickleballUnresolved = sportReconciliation.pickleball.status === "PERLU_DICEK";
+  if (courtUnresolved === pickleballUnresolved) return { court: false, pickleball: false };
+  return { court: courtUnresolved, pickleball: pickleballUnresolved };
+}
+
+// ---------------------------------------------------------------------------
+// V11 Goal 3/4/5: "RESTORE LAST SAVED STATE" — begitu periode punya hasil
+// Simpan tersimpan (verifiedMatchStatus/beritaAcaraNominal/beritaAcaraDirection
+// bukan null), reopen detail HARUS hydrate langsung dari database, TIDAK
+// PERNAH menjalankan OCR ulang (server tidak bisa merasterisasi PDF hasil
+// scan — lihat komentar analyzeAttachment di app/reconciliation/page.tsx —
+// jadi re-analyze otomatis saat reopen justru MENIMPA hasil COCOK yang
+// sudah tersimpan dengan PERLU_REVIEW/"Tidak terbaca" palsu, itulah root
+// cause masalah #2 V11).
+// ---------------------------------------------------------------------------
+export type SavedBeritaAcaraLockLike = {
+  verifiedMatchStatus: BeritaAcaraMatchStatus | null;
+  beritaAcaraNominal: number | null;
+  beritaAcaraDirection: BeritaAcaraDirection | null;
+  adjustmentReason: string | null;
+};
+
+/** true bila periode ini SUDAH pernah Simpan dengan hasil analisis BA tersimpan — reopen TIDAK BOLEH memicu analyzeAttachment (OCR ulang) bila ini true. */
+export function hasSavedBeritaAcaraAnalysis(lock: SavedBeritaAcaraLockLike | null | undefined): boolean {
+  return Boolean(lock && (lock.verifiedMatchStatus !== null || lock.beritaAcaraNominal !== null || lock.beritaAcaraDirection !== null));
+}
+
+export type RestoredBeritaAcaraAnalysis = {
+  systemDifference: number;
+  nominal: number | null;
+  direction: BeritaAcaraDirection | null;
+  reason: string | null;
+  parseStatus: "OK";
+  matchStatus: BeritaAcaraMatchStatus;
+  ocrSource: "restored-from-database";
+};
+
+/** Bentuk ulang BeritaAcaraAnalysis langsung dari lock TERSIMPAN (bukan dari OCR ulang) — dipakai reopen detail supaya nominal/arah/status/alasan yang tampil persis hasil Simpan TERAKHIR. */
+export function restoreBeritaAcaraAnalysisFromLock(lock: SavedBeritaAcaraLockLike, systemDifference: number): RestoredBeritaAcaraAnalysis {
+  return {
+    systemDifference,
+    nominal: lock.beritaAcaraNominal,
+    direction: lock.beritaAcaraDirection,
+    reason: lock.adjustmentReason,
+    parseStatus: "OK",
+    matchStatus: lock.verifiedMatchStatus ?? "PERLU_REVIEW",
+    ocrSource: "restored-from-database",
+  };
+}

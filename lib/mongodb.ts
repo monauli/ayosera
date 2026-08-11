@@ -315,7 +315,12 @@ export type ReconciliationOmzetPeriodLockDocument = {
   verifiedMatchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | null;
   beritaAcaraNominal: number | null;
   beritaAcaraDirection: "PENAMBAHAN" | "PENGURANGAN" | null;
-  history: Array<{ action: "upload" | "preview" | "lock" | "unlock" | "relock"; actor: string; timestamp: Date; reason: string | null; before: Record<string, unknown>; after: Record<string, unknown> }>;
+  // V11: soft-delete/hide SATU entri riwayat dari tampilan (supervisor-only,
+  // lihat hideOmzetPeriodHistoryEntry di lib/reconciliation-omzet-period-lock.ts)
+  // TANPA PERNAH menghapusnya secara fisik dari array — event asli
+  // (action/actor/timestamp/reason/before/after) tetap utuh untuk audit;
+  // hiddenAt/hiddenBy null berarti entri masih tampil normal.
+  history: Array<{ action: "upload" | "preview" | "lock" | "unlock" | "relock"; actor: string; timestamp: Date; reason: string | null; before: Record<string, unknown>; after: Record<string, unknown>; hiddenAt: Date | null; hiddenBy: string | null }>;
   createdAt: Date;
   updatedAt: Date;
   version: number;

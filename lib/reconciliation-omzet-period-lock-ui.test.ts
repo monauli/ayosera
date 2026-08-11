@@ -219,13 +219,13 @@ test("V10 Goal 1/7: beritaAcaraVerified diturunkan dari finalization.status !== 
   assert.match(page, /const beritaAcaraVerified = Boolean\(finalization && finalization\.status !== "locked" && finalization\.verifiedMatchStatus === "COCOK"\);/);
 });
 
-test("V10 Goal 2: badge 'Berita Acara' (BeritaAcaraVerifiedBadge, icon FileCheck) dirender di tabel utama TERPISAH dari badge 'Cocok — Terkunci' (locked tidak berubah)", () => {
-  assert.match(page, /function BeritaAcaraVerifiedBadge\(\)/);
-  assert.match(page, /title="Selisih telah diverifikasi dengan Berita Acara"/);
+test("V10 Goal 2 / V11 Goal 6/7: badge 'Berita Acara' (BeritaAcaraVerifiedBadge, icon FileCheck) dirender di tabel utama TERPISAH dari badge 'Cocok — Terkunci' (locked tidak berubah), klik badge membuka preview (BUKAN Detail) HANYA saat attachment ada", () => {
+  assert.match(page, /function BeritaAcaraVerifiedBadge\(\{ onClick \}: \{ onClick\?: \(event: MouseEvent\) => void \} = \{\}\)/);
+  assert.match(page, /title="Selisih telah diverifikasi dengan Berita Acara — klik untuk preview dokumen"/);
   assert.match(page, /<FileCheck size=\{12\} \/> Berita Acara/);
-  // Kedua baris tabel (desktop + mobile) memakai badge baru sebagai fallback SEBELUM LockBadge lama, TIDAK menggantikan badge locked yang sudah ada.
-  assert.match(page, /row\.periodLock\?\.status === "locked" \? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size=\{12\} \/> Cocok — Terkunci · Detail Penyesuaian<\/span> : row\.beritaAcaraVerified \? <BeritaAcaraVerifiedBadge \/> : row\.explanation\?\.locked && <LockBadge \/>/);
-  assert.match(page, /row\.periodLock\?\.status === "locked" \? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size=\{12\} \/> Cocok — Terkunci<\/span> : row\.beritaAcaraVerified \? <BeritaAcaraVerifiedBadge \/> : row\.explanation\?\.locked && <LockBadge \/>/);
+  // Kedua baris tabel (desktop + mobile) memakai badge baru sebagai fallback SEBELUM LockBadge lama, TIDAK menggantikan badge locked yang sudah ada, DAN mensyaratkan attachment ada (Goal 7: jangan badge palsu) sebelum onClick dipasang.
+  assert.match(page, /row\.periodLock\?\.status === "locked" \? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size=\{12\} \/> Cocok — Terkunci · Detail Penyesuaian<\/span> : row\.beritaAcaraVerified && row\.periodLock\?\.attachment \? <BeritaAcaraVerifiedBadge onClick=\{\(event\) => \{ event\.stopPropagation\(\); setQuickPreviewAttachment\(row\.periodLock!\.attachment\); \}\} \/> : row\.explanation\?\.locked && <LockBadge \/>/);
+  assert.match(page, /row\.periodLock\?\.status === "locked" \? <span className="recon-badge recon-badge-ok" title="Detail Penyesuaian"><Lock size=\{12\} \/> Cocok — Terkunci<\/span> : row\.beritaAcaraVerified && row\.periodLock\?\.attachment \? <BeritaAcaraVerifiedBadge onClick=\{\(event\) => \{ event\.stopPropagation\(\); setQuickPreviewAttachment\(row\.periodLock!\.attachment\); \}\} \/> : row\.explanation\?\.locked && <LockBadge \/>/);
 });
 
 test("V10 Goal 3/9: status tabel utama memakai reconciliationOmzetUiStatus(row.status, row.differenceRevenue, row.beritaAcaraVerified) — selisih (row.differenceRevenue) TIDAK PERNAH ditimpa/dinolkan di sini", () => {
@@ -267,4 +267,93 @@ test("V10 Goal 9: cleanupUploadHistory memanggil endpoint cleanup-upload-history
 test("V10: tombol cleanup TIDAK menampilkan raw actor id di mana pun — pola raw id lama ({item.actor}/{history.actor}) tidak ada", () => {
   assert.doesNotMatch(page, /\{item\.actor\}/);
   assert.doesNotMatch(page, /Bersihkan.*\{.*\.actor\}/);
+});
+
+// ---------------------------------------------------------------------------
+// V11 Goal 1/2/12: kartu COURT/PICKLEBALL di detail drawer sekarang JUGA
+// menerima finalStatus/beritaAcaraVerified dari componentVerified — bukan
+// hanya TOTAL GABUNGAN seperti V10 — supaya tidak ada campuran TOTAL Cocok
+// tapi PICKLEBALL Perlu Dicek untuk selisih yang sama yang sudah
+// diverifikasi BA.
+// ---------------------------------------------------------------------------
+test("V11 Goal 1/2: componentVerified diturunkan dari resolveBeritaAcaraVerifiedComponent(detail.sportReconciliation, beritaAcaraVerified)", () => {
+  assert.match(page, /const componentVerified = detail \? resolveBeritaAcaraVerifiedComponent\(detail\.sportReconciliation, beritaAcaraVerified\) : \{ court: false, pickleball: false \};/);
+});
+
+test("V11 Goal 1/2/12: kartu COURT dan PICKLEBALL memakai finalStatus/beritaAcaraVerified dari componentVerified (bukan hanya comparison.status mentah)", () => {
+  assert.match(page, /<SportReconciliationCard title="COURT" ayoLabel="Omzet AYO Court" olseraLabel="Olsera akun 40001" comparison=\{detail\.sportReconciliation\.court\} finalStatus=\{componentVerified\.court \? "COCOK" : undefined\} beritaAcaraVerified=\{componentVerified\.court\} \/>/);
+  assert.match(page, /<SportReconciliationCard title="PICKLEBALL" ayoLabel="Omzet AYO Pickleball" olseraLabel="Olsera akun 40004" comparison=\{detail\.sportReconciliation\.pickleball\} finalStatus=\{componentVerified\.pickleball \? "COCOK" : undefined\} beritaAcaraVerified=\{componentVerified\.pickleball\} \/>/);
+});
+
+test("V11: kartu TOTAL GABUNGAN juga mengirim beritaAcaraVerified={beritaAcaraVerified} ke SportReconciliationCard (badge 'Berita Acara' ikut tampil di kartu TOTAL, bukan hanya lewat banner terpisah)", () => {
+  assert.match(page, /finalStatus=\{reconciliationOmzetUiStatus\(detail\.status, detail\.differenceRevenue, beritaAcaraVerified\)\}\s*beritaAcaraVerified=\{beritaAcaraVerified\}/);
+});
+
+test("V11: SportReconciliationCard merender BeritaAcaraVerifiedBadge (tanpa onClick) saat beritaAcaraVerified true DAN tidak locked — locked tetap prioritas seperti V10", () => {
+  assert.match(page, /locked \? <span className="recon-badge recon-badge-ok"><Lock size=\{12\} \/> Cocok — Terkunci<\/span> : beritaAcaraVerified && <BeritaAcaraVerifiedBadge \/>/);
+});
+
+// ---------------------------------------------------------------------------
+// V11 Goal 3/4/5: RESTORE LAST SAVED STATE — reopen detail TIDAK PERNAH
+// menjalankan OCR ulang kalau hasil Simpan terakhir sudah tersimpan (root
+// cause masalah #2 V11: server tidak bisa merasterisasi PDF hasil scan,
+// sehingga re-analyze otomatis menimpa hasil COCOK tersimpan dengan
+// PERLU_REVIEW/"Tidak terbaca" palsu).
+// ---------------------------------------------------------------------------
+test("V11 Goal 3/4/5: openDetail hydrate dari restoreBeritaAcaraAnalysisFromLock (via applyAnalysisResult) saat hasSavedBeritaAcaraAnalysis true, HANYA jalankan analyzeAttachment (OCR ulang) kalau belum pernah ada hasil tersimpan", () => {
+  assert.match(page, /if \(hasSavedBeritaAcaraAnalysis\(data\.data\.periodLock\)\) \{\s*applyAnalysisResult\(restoreBeritaAcaraAnalysisFromLock\(data\.data\.periodLock, data\.data\.differenceRevenue\), data\.data\.olseraTotal\);\s*\} else \{\s*void analyzeAttachment\(period, data\.data\.olseraTotal\);\s*\}/);
+});
+
+// ---------------------------------------------------------------------------
+// V11 Goal 6/7: badge Berita Acara di tabel utama clickable -> modal preview
+// ringan (bukan Detail). Mobile card TIDAK LAGI <button> (supaya badge di
+// dalamnya bisa jadi <button> sungguhan tanpa nested-button-in-button).
+// ---------------------------------------------------------------------------
+test("V11 Goal 6/7: BeritaAcaraQuickPreviewModal dirender top-level (terpisah dari drawer selectedPeriod), pakai resolveBeritaAcaraPreviewKind yang sama seperti BeritaAcaraPreview", () => {
+  assert.match(page, /function BeritaAcaraQuickPreviewModal\(\{ attachment, onClose \}: \{ attachment: NonNullable<PeriodLock\["attachment"\]>; onClose: \(\) => void \}\)/);
+  assert.match(page, /\{quickPreviewAttachment && <BeritaAcaraQuickPreviewModal attachment=\{quickPreviewAttachment\} onClose=\{\(\) => setQuickPreviewAttachment\(null\)\} \/>\}/);
+  assert.match(page, /const kind = resolveBeritaAcaraPreviewKind\(attachment\.mimeType\);/);
+});
+
+test("V11 Goal 6: modal preview punya tombol 'Tutup' dan 'Buka File'", () => {
+  assert.match(page, />\s*Tutup\s*</);
+  assert.match(page, /<ExternalLink size=\{12\} \/> Buka File/);
+});
+
+test("V11 Goal 6: mobile card BUKAN <button> lagi (mencegah <button> BeritaAcaraVerifiedBadge nested di dalam <button> lain — invalid HTML) — pakai role=\"button\" + onKeyDown untuk tetap aksesibel via keyboard", () => {
+  assert.doesNotMatch(page, /<button key=\{row\.period\} className="recon-mobile-card"/, "regresi ke <button> akan membuat badge BA di dalamnya jadi nested button (invalid)");
+  assert.match(page, /role="button"\s*tabIndex=\{0\}\s*className="recon-mobile-card"/);
+  assert.match(page, /onKeyDown=\{\(event\) => \{ if \(event\.key === "Enter" \|\| event\.key === " "\) \{ event\.preventDefault\(\); void openDetail\(row\.period\); \} \}\}/);
+});
+
+// ---------------------------------------------------------------------------
+// V11 Goal 8-11: "×" per-item pada Riwayat Aktivitas — supervisor-only, soft
+// delete (isHistoryEntryVisible menyaring render, TIDAK menghapus data),
+// index yang dikirim ke backend HARUS index array mentah (originalIndex),
+// bukan index tampilan yang sudah difilter/dibalik.
+// ---------------------------------------------------------------------------
+test("V11 Goal 8/9: daftar riwayat disaring lewat isHistoryEntryVisible SEBELUM reverse, originalIndex (bukan index tampilan) dikirim ke hideHistoryEntry", () => {
+  assert.match(page, /\.map\(\(item, originalIndex\) => \(\{ item, originalIndex \}\)\)\s*\.filter\(\(\{ item \}\) => isHistoryEntryVisible\(item\)\)\s*\.slice\(\)\s*\.reverse\(\)/);
+  assert.match(page, /onClick=\{\(\) => void hideHistoryEntry\(originalIndex\)\}/);
+  assert.match(page, /onClick=\{\(\) => setHideConfirmIndex\(originalIndex\)\}/);
+});
+
+test("V11 Goal 8/10: icon × ('X' dari lucide-react) HANYA dirender untuk supervisor — normal user tidak melihatnya sama sekali", () => {
+  assert.match(page, /\{supervisor &&\s*\(hideConfirmIndex === originalIndex \? \(/);
+  assert.match(page, /<X size=\{12\} \/>/);
+});
+
+test("V11 Goal 8: hideHistoryEntry memanggil endpoint hide-history-entry dengan version DAN entryIndex, lalu reopen detail supaya persisten di UI", () => {
+  assert.match(page, /const hideHistoryEntry = async \(entryIndex: number\) => \{/);
+  assert.match(page, /finalizationRequest\("hide-history-entry", \{ method: "POST", headers: \{ "Content-Type": "application\/json" \}, body: JSON\.stringify\(\{ version: finalization\.version, entryIndex \}\) \}\)/);
+  assert.match(page, /setHideConfirmIndex\(null\); if \(selectedPeriod\) await openDetail\(selectedPeriod\);/);
+});
+
+test("V11 Goal 9: TIDAK ADA hard-delete pola (mis. .filter/.splice menghapus entri history) dipicu oleh hide — hanya memanggil endpoint hide-history-entry lalu reopen (server yang soft-delete)", () => {
+  assert.doesNotMatch(page, /history\.splice/);
+  assert.doesNotMatch(page, /setFinalization\([\s\S]{0,80}history: finalization\.history\.filter/);
+});
+
+test("V11: hide TIDAK PERNAH menampilkan raw actor id — pola {item.actor} tidak dipakai di baris riwayat mana pun (masih actorName/formatPeriodLockHistoryLine seperti V8)", () => {
+  assert.doesNotMatch(page, /\{item\.actor\}/);
 });

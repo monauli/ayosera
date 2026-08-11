@@ -20,6 +20,10 @@ import {
   canLockAfterSave,
   MATCH_STATUS_TONE,
   formatPeriodLockHistoryLine,
+  isHistoryEntryVisible,
+  resolveBeritaAcaraVerifiedComponent,
+  hasSavedBeritaAcaraAnalysis,
+  restoreBeritaAcaraAnalysisFromLock,
 } from "./reconciliation-berita-acara-ui.ts";
 
 test("formatRupiah/formatSignedRupiah: format Indonesia, tanda eksplisit untuk nilai positif", () => {
@@ -252,4 +256,96 @@ test("buildBeritaAcaraCards: selisihSistemLabel TETAP bertanda (kontras dengan n
   const negatif = buildBeritaAcaraCards({ systemDifference: -739_999, nominal: 740_000, direction: "PENGURANGAN", matchStatus: "COCOK" });
   assert.equal(positif.selisihSistemLabel, "+Rp740.000");
   assert.equal(negatif.selisihSistemLabel, "-Rp739.999");
+});
+
+// ---------------------------------------------------------------------------
+// V11 Goal 8-11: isHistoryEntryVisible — soft-delete per-item, dipakai
+// menyaring render Riwayat Aktivitas TANPA menyentuh data mentah.
+// ---------------------------------------------------------------------------
+test("isHistoryEntryVisible: hiddenAt null -> visible; hiddenAt terisi (string ISO dari API atau Date) -> tersembunyi", () => {
+  assert.equal(isHistoryEntryVisible({ hiddenAt: null }), true);
+  assert.equal(isHistoryEntryVisible({ hiddenAt: "2026-08-11T00:00:00.000Z" }), false);
+  assert.equal(isHistoryEntryVisible({ hiddenAt: new Date() }), false);
+});
+
+// ---------------------------------------------------------------------------
+// V11 test wajib #1/#2/#6/#7: resolveBeritaAcaraVerifiedComponent — component
+// (COURT/PICKLEBALL) ikut "Cocok + Berita Acara" HANYA saat ia SATU-SATUNYA
+// yang PERLU_DICEK. Guard ambiguitas: dua-duanya PERLU_DICEK bersamaan ->
+// TIDAK ditempelkan ke siapa pun (masih Perlu Dicek, tidak ditebak).
+// ---------------------------------------------------------------------------
+test("Maret: hanya PICKLEBALL PERLU_DICEK, COURT sudah COCOK sendiri -> BA ditempelkan HANYA ke pickleball", () => {
+  const result = resolveBeritaAcaraVerifiedComponent({ court: { status: "COCOK" }, pickleball: { status: "PERLU_DICEK" } }, true);
+  assert.deepEqual(result, { court: false, pickleball: true });
+});
+
+test("April (skenario simetris): hanya COURT PERLU_DICEK -> BA ditempelkan HANYA ke court", () => {
+  const result = resolveBeritaAcaraVerifiedComponent({ court: { status: "PERLU_DICEK" }, pickleball: { status: "COCOK" } }, true);
+  assert.deepEqual(result, { court: true, pickleball: false });
+});
+
+test("test wajib #7: dua component PERLU_DICEK bersamaan -> AMBIGU, tidak ditempelkan ke siapa pun (tetap Perlu Dicek keduanya)", () => {
+  const result = resolveBeritaAcaraVerifiedComponent({ court: { status: "PERLU_DICEK" }, pickleball: { status: "PERLU_DICEK" } }, true);
+  assert.deepEqual(result, { court: false, pickleball: false });
+});
+
+test("test wajib #6: kedua component sudah COCOK sendiri (toleransi biasa) -> tidak perlu badge BA di component mana pun", () => {
+  const result = resolveBeritaAcaraVerifiedComponent({ court: { status: "COCOK" }, pickleball: { status: "COCOK" } }, true);
+  assert.deepEqual(result, { court: false, pickleball: false });
+});
+
+test("beritaAcaraVerified=false (belum Simpan/belum server-verified) -> tidak pernah menempelkan BA ke component apa pun, terlepas status masing-masing", () => {
+  const result = resolveBeritaAcaraVerifiedComponent({ court: { status: "PERLU_DICEK" }, pickleball: { status: "COCOK" } }, false);
+  assert.deepEqual(result, { court: false, pickleball: false });
+});
+
+// ---------------------------------------------------------------------------
+// V11 test wajib #9-15: RESTORE LAST SAVED STATE — hasSavedBeritaAcaraAnalysis
+// menentukan apakah reopen detail boleh melewati OCR ulang (analyzeAttachment
+// di page.tsx) dan langsung hydrate dari lock tersimpan.
+// ---------------------------------------------------------------------------
+test("hasSavedBeritaAcaraAnalysis: lock null -> false (belum ada apa pun untuk direstore)", () => {
+  assert.equal(hasSavedBeritaAcaraAnalysis(null), false);
+});
+
+test("hasSavedBeritaAcaraAnalysis: baru upload, belum pernah Simpan (verifiedMatchStatus/nominal/direction semua null) -> false, OCR baru boleh jalan", () => {
+  assert.equal(hasSavedBeritaAcaraAnalysis({ verifiedMatchStatus: null, beritaAcaraNominal: null, beritaAcaraDirection: null, adjustmentReason: null }), false);
+});
+
+test("hasSavedBeritaAcaraAnalysis: sudah pernah Simpan dengan hasil COCOK -> true, TIDAK boleh OCR ulang", () => {
+  assert.equal(hasSavedBeritaAcaraAnalysis({ verifiedMatchStatus: "COCOK", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN", adjustmentReason: "Penyesuaian" }), true);
+});
+
+test("hasSavedBeritaAcaraAnalysis: sudah pernah Simpan tapi hasil PERLU_REVIEW (OCR gagal saat itu, tetap disimpan) -> true juga, reopen TIDAK mengulang OCR", () => {
+  assert.equal(hasSavedBeritaAcaraAnalysis({ verifiedMatchStatus: "PERLU_REVIEW", beritaAcaraNominal: null, beritaAcaraDirection: null, adjustmentReason: "Diisi manual" }), true);
+});
+
+test("restoreBeritaAcaraAnalysisFromLock (Maret): hydrate persis dari lock tersimpan — nominal Rp740.000, PENAMBAHAN, COCOK, alasan tersimpan, TANPA OCR", () => {
+  const restored = restoreBeritaAcaraAnalysisFromLock(
+    { verifiedMatchStatus: "COCOK", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN", adjustmentReason: "Pembayaran di muka diakui Maret" },
+    740_000,
+  );
+  assert.deepEqual(restored, {
+    systemDifference: 740_000,
+    nominal: 740_000,
+    direction: "PENAMBAHAN",
+    reason: "Pembayaran di muka diakui Maret",
+    parseStatus: "OK",
+    matchStatus: "COCOK",
+    ocrSource: "restored-from-database",
+  });
+});
+
+test("restoreBeritaAcaraAnalysisFromLock (April): systemDifference dikirim eksplisit oleh caller (selisih periode SAAT INI), bukan diturunkan dari nominal BA", () => {
+  const restored = restoreBeritaAcaraAnalysisFromLock(
+    { verifiedMatchStatus: "COCOK", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN", adjustmentReason: "Sudah diakui bulan Maret" },
+    -739_999,
+  );
+  assert.equal(restored.systemDifference, -739_999);
+  assert.equal(restored.matchStatus, "COCOK");
+});
+
+test("restoreBeritaAcaraAnalysisFromLock: verifiedMatchStatus null (defensif, tidak seharusnya terjadi bila hasSavedBeritaAcaraAnalysis sudah true) -> fallback PERLU_REVIEW, tidak pernah melempar", () => {
+  const restored = restoreBeritaAcaraAnalysisFromLock({ verifiedMatchStatus: null, beritaAcaraNominal: 740_000, beritaAcaraDirection: null, adjustmentReason: null }, 740_000);
+  assert.equal(restored.matchStatus, "PERLU_REVIEW");
 });

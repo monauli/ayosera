@@ -5,6 +5,8 @@ import {
   applyLockedOmzetPresentation,
   cleanupOmzetPeriodUploadHistory,
   computeCleanedUploadHistory,
+  computeHiddenHistory,
+  hideOmzetPeriodHistoryEntry,
   isBeritaAcaraVerifiedUnlocked,
   lockOmzetPeriodFinalization,
   OmzetPeriodLockError,
@@ -436,7 +438,7 @@ test("applyLockedOmzetPresentation: cabang locked TETAP tidak berubah (collapse 
 // ---------------------------------------------------------------------------
 
 function historyEntry(action: ReconciliationOmzetPeriodLockDocument["history"][number]["action"], extra: Partial<ReconciliationOmzetPeriodLockDocument["history"][number]> = {}) {
-  return { action, actor: "supervisor-a", timestamp: new Date(), reason: null, before: {}, after: {}, ...extra };
+  return { action, actor: "supervisor-a", timestamp: new Date(), reason: null, before: {}, after: {}, hiddenAt: null, hiddenBy: null, ...extra };
 }
 
 test("computeCleanedUploadHistory: test wajib #12/#13 — banyak upload duplikat -> hanya upload TERAKHIR (aktif) yang dipertahankan", () => {
@@ -520,4 +522,87 @@ test("cleanupOmzetPeriodUploadHistory: version basi (konflik konkuren) -> CONFLI
   const { lock: firstUpload } = await upload(f);
   await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment, expectedVersion: firstUpload.version }, f.context);
   await assert.rejects(() => cleanupOmzetPeriodUploadHistory({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: firstUpload.version }, f.context), OmzetPeriodLockError);
+});
+
+// ---------------------------------------------------------------------------
+// V11 Goal 8-11: "×" per-item pada Riwayat Aktivitas — computeHiddenHistory
+// (murni) dan hideOmzetPeriodHistoryEntry (integrasi via fixture). SOFT
+// DELETE: entri asli TIDAK PERNAH hilang dari array, hanya ditandai
+// hiddenAt/hiddenBy — beda dari computeCleanedUploadHistory (V10, HARD
+// remove) di atas.
+// ---------------------------------------------------------------------------
+
+test("computeHiddenHistory: test wajib #27 — hanya entri di index target yang dapat hiddenAt/hiddenBy, entri lain (isi & urutan) TIDAK berubah sama sekali", () => {
+  const now = new Date("2026-08-11T14:32:00.000Z");
+  const history = [historyEntry("upload"), historyEntry("preview", { reason: "Pembulatan" }), historyEntry("lock")];
+  const result = computeHiddenHistory(history, 1, "supervisor-a", now);
+  assert.equal(result.length, 3);
+  assert.deepEqual(result[0], history[0], "entri index 0 sama sekali tidak disentuh");
+  assert.equal(result[1].hiddenAt, now);
+  assert.equal(result[1].hiddenBy, "supervisor-a");
+  assert.equal(result[1].reason, "Pembulatan", "field asli entri yang di-hide tetap utuh — hanya menambahkan hiddenAt/hiddenBy");
+  assert.deepEqual(result[2], history[2], "entri index 2 sama sekali tidak disentuh");
+});
+
+test("computeHiddenHistory: index di luar jangkauan -> array dikembalikan tanpa ada yang berubah (guard, dipanggil pemanggil yang sudah validasi bounds)", () => {
+  const history = [historyEntry("upload")];
+  const result = computeHiddenHistory(history, 99, "supervisor-a", new Date());
+  assert.deepEqual(result, history);
+});
+
+test("hideOmzetPeriodHistoryEntry: test wajib #22/#25/#26/#27 — sembunyikan satu entri, tersimpan (survive refresh), entri lain & attachment aktif tidak berubah", async () => {
+  const f = fixture();
+  const { lock: firstUpload } = await upload(f);
+  const preview = await previewForLock(f, firstUpload.version);
+  const result = await hideOmzetPeriodHistoryEntry({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: preview.lock.version, entryIndex: 0 }, f.context);
+  assert.ok(result.history[0].hiddenAt, "entri upload (index 0) harus tersembunyi");
+  assert.equal(result.history[0].hiddenBy, "supervisor-a");
+  assert.equal(result.history[1].hiddenAt, null, "entri preview (index 1) TIDAK ikut tersembunyi");
+  assert.equal(result.attachment?.fileName, attachment.fileName, "attachment aktif tidak berubah oleh hide");
+  assert.equal(result.version, preview.lock.version + 1);
+  // "refresh" = findOne baru, terpisah dari nilai yang dikembalikan langsung.
+  const reloaded = await f.context.locks.findOne({ _id: "1:2026-06" });
+  assert.ok(reloaded?.history[0].hiddenAt, "hide harus persist setelah reload, bukan cuma state React");
+});
+
+test("hideOmzetPeriodHistoryEntry: test wajib #27 — event asli (action/actor/reason/before/after) TIDAK dihapus permanen, hanya ditandai hidden", async () => {
+  const { f, lock } = await upload();
+  const result = await hideOmzetPeriodHistoryEntry({ storeId: 1, period: "2026-06", actor: "supervisor-b", expectedVersion: lock.version, entryIndex: 0 }, f.context);
+  assert.equal(result.history.length, 1, "entri TIDAK dihapus dari array — cuma di-flag");
+  assert.equal(result.history[0].action, "upload");
+  assert.equal(result.history[0].actor, "supervisor-a", "actor ASLI (yang mengunggah) tidak berubah — hiddenBy beda dari actor");
+  assert.equal(result.history[0].hiddenBy, "supervisor-b", "hiddenBy mencatat siapa yang menyembunyikan, terpisah dari actor asli");
+});
+
+test("hideOmzetPeriodHistoryEntry: periode tidak ditemukan -> NOT_FOUND", async () => {
+  const f = fixture();
+  await assert.rejects(() => hideOmzetPeriodHistoryEntry({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: 1, entryIndex: 0 }, f.context), OmzetPeriodLockError);
+});
+
+test("hideOmzetPeriodHistoryEntry: entryIndex di luar jangkauan -> NOT_FOUND, bukan crash", async () => {
+  const { f, lock } = await upload();
+  await assert.rejects(() => hideOmzetPeriodHistoryEntry({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, entryIndex: 99 }, f.context), OmzetPeriodLockError);
+});
+
+test("hideOmzetPeriodHistoryEntry: entryIndex negatif/bukan integer -> ditolak sebagai VALIDATION, tidak pernah menyentuh DB", async () => {
+  const { f, lock } = await upload();
+  await assert.rejects(() => hideOmzetPeriodHistoryEntry({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, entryIndex: -1 }, f.context), OmzetPeriodLockError);
+  await assert.rejects(() => hideOmzetPeriodHistoryEntry({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, entryIndex: 1.5 }, f.context), OmzetPeriodLockError);
+});
+
+test("hideOmzetPeriodHistoryEntry: version basi (konflik konkuren) -> CONFLICT, bukan silent overwrite", async () => {
+  const f = fixture();
+  const { lock: firstUpload } = await upload(f);
+  await uploadOmzetPeriodLockAttachment({ storeId: 1, period: "2026-06", actor: "supervisor-a", attachment, expectedVersion: firstUpload.version }, f.context);
+  await assert.rejects(() => hideOmzetPeriodHistoryEntry({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: firstUpload.version, entryIndex: 0 }, f.context), OmzetPeriodLockError);
+});
+
+test("hideOmzetPeriodHistoryEntry: hide TIDAK merusak precondition lock (last audit entry) — Simpan lalu Kunci setelah entri LAIN disembunyikan tetap sukses", async () => {
+  const f = fixture();
+  const { lock: firstUpload } = await upload(f);
+  await hideOmzetPeriodHistoryEntry({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: firstUpload.version, entryIndex: 0 }, f.context);
+  const reloaded = await f.context.locks.findOne({ _id: "1:2026-06" });
+  const preview = await previewForLock(f, reloaded!.version);
+  const locked = await lockOmzetPeriodFinalization({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: preview.lock.version, original: june, finalAgreedAmount: june.olsera, adjustmentReason: "Pembulatan" }, f.context);
+  assert.equal(locked.status, "locked", "hide entri upload lama tidak boleh menghalangi alur Simpan -> Kunci berikutnya");
 });
