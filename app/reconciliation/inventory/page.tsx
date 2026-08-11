@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, FileSearch, Loader2, RefreshCw, Save, Search, X } from "lucide-react";
+import { AlertTriangle, FileSearch, Loader2, Moon, RefreshCw, Save, Search, Sun, X } from "lucide-react";
 import { visibleInventoryRows } from "@/lib/olsera-inventory-ui";
+import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 type OpnameStatus = "BELUM_DIISI" | "COCOK" | "PERLU_DICEK" | "BUTUH_ADJUST_MANUAL";
 
@@ -94,6 +95,9 @@ function StatusBadge({ status }: { status: OpnameStatus }) {
 
 export default function InventoryOpnamePage() {
   const initial = currentJakartaYearMonth();
+  // Reuse tema global AYOSERA (localStorage key "ayo-mode", sama seperti
+  // app/page.tsx dan app/reconciliation/page.tsx) — bukan mekanisme baru.
+  const [mode, setMode] = useState<ThemeMode>("light");
   const [year, setYear] = useState(String(initial.year));
   const [month, setMonth] = useState(String(initial.month));
   const [user, setUser] = useState<User | null>(null);
@@ -114,6 +118,12 @@ export default function InventoryOpnamePage() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setUser(d?.user ?? null))
       .catch(() => setUser(null));
+  }, []);
+  useEffect(() => {
+    const initialMode = readInitialThemeMode();
+    setMode(initialMode);
+    document.documentElement.setAttribute("data-mode", initialMode);
+    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, initialMode);
   }, []);
 
   const supervisor = user?.role === "supervisor";
@@ -246,11 +256,29 @@ export default function InventoryOpnamePage() {
           <h1>Rekonsiliasi Inventori dengan Berita Acara</h1>
           <p>Mencocokkan snapshot inventori bulanan Olsera dengan stok fisik hasil stock opname (input manual).</p>
         </div>
-        {supervisor && data && (
-          <button className="recon-button" onClick={() => void save()} disabled={saving}>
-            {saving ? <Loader2 className="spin" /> : <Save />} Simpan Semua
+        <div style={{ display: "flex", gap: ".5rem" }}>
+          {supervisor && data && (
+            <button className="recon-button" onClick={() => void save()} disabled={saving}>
+              {saving ? <Loader2 className="spin" /> : <Save />} Simpan Semua
+            </button>
+          )}
+          <button
+            type="button"
+            className="recon-button secondary"
+            aria-label={mode === "dark" ? "Ganti ke Light Mode" : "Ganti ke Dark Mode"}
+            title={mode === "dark" ? "Light Mode" : "Dark Mode"}
+            onClick={() =>
+              setMode((current) => {
+                const next: ThemeMode = current === "dark" ? "light" : "dark";
+                document.documentElement.setAttribute("data-mode", next);
+                window.localStorage.setItem(THEME_MODE_STORAGE_KEY, next);
+                return next;
+              })
+            }
+          >
+            {mode === "dark" ? <Sun /> : <Moon />}
           </button>
-        )}
+        </div>
       </header>
 
       <section className="recon-filters" aria-label="Pilih periode">

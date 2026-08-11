@@ -2,8 +2,9 @@
 
 import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileCheck, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileCheck, FileSearch, Lock, Moon, Paperclip, RefreshCw, Sun, X } from "lucide-react";
 import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
+import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 import { analyzeBeritaAcaraFileClient, STATUS_READING } from "@/lib/reconciliation-berita-acara-client-ocr";
 import {
   formatRupiah,
@@ -328,6 +329,13 @@ function CollapsibleSection({ title, children, defaultOpen = false, warning = fa
 }
 
 export default function ReconciliationPage() {
+  // Reuse tema global AYOSERA (SATU sumber kebenaran: lib/theme-mode.ts,
+  // localStorage key "ayo-mode" yang sama dipakai app/page.tsx & app/login) —
+  // BUKAN state/localStorage tema baru khusus halaman ini. Halaman Rekonsiliasi
+  // sebelumnya tidak punya toggle sendiri: `data-mode` di <html> tetap ikut
+  // nilai global (recon-*/--rd-* CSS sudah mendukung dark mode dengan benar),
+  // tapi user tidak punya cara melihat/mengganti mode dari halaman ini.
+  const [mode, setMode] = useState<ThemeMode>("light");
   const [user, setUser] = useState<User | null>(null);
   const [items, setItems] = useState<OmzetResult[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -337,6 +345,7 @@ export default function ReconciliationPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [finalization, setFinalization] = useState<PeriodLock | null>(null);
+  const beritaAcaraFileInputId = useId();
   const [finalFile, setFinalFile] = useState<File | null>(null);
   const [finalAmount, setFinalAmount] = useState("");
   const [finalReason, setFinalReason] = useState("");
@@ -422,6 +431,12 @@ export default function ReconciliationPage() {
 
   useEffect(() => {
     void refresh();
+  }, []);
+  useEffect(() => {
+    const initialMode = readInitialThemeMode();
+    setMode(initialMode);
+    document.documentElement.setAttribute("data-mode", initialMode);
+    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, initialMode);
   }, []);
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -703,6 +718,22 @@ export default function ReconciliationPage() {
           <button className="recon-button secondary" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw className={loading ? "spin" : ""} /> Muat ulang
           </button>
+          <button
+            type="button"
+            className="recon-button secondary"
+            aria-label={mode === "dark" ? "Ganti ke Light Mode" : "Ganti ke Dark Mode"}
+            title={mode === "dark" ? "Light Mode" : "Dark Mode"}
+            onClick={() =>
+              setMode((current) => {
+                const next: ThemeMode = current === "dark" ? "light" : "dark";
+                document.documentElement.setAttribute("data-mode", next);
+                window.localStorage.setItem(THEME_MODE_STORAGE_KEY, next);
+                return next;
+              })
+            }
+          >
+            {mode === "dark" ? <Sun /> : <Moon />}
+          </button>
         </div>
       </header>
 
@@ -899,11 +930,21 @@ export default function ReconciliationPage() {
                       {analysis && <BeritaAcaraResultCards analysis={analysis} />}
                       {analysis?.matchStatus === "TIDAK_COCOK" && <p className="recon-error"><AlertTriangle size={14} /> Nominal/arah Berita Acara TIDAK cocok dengan selisih sistem. Periksa dokumen sebelum melanjutkan; preview dan lock ditahan sampai direview.</p>}
                       {analysis?.matchStatus === "PERLU_REVIEW" && <p className="recon-special"><AlertTriangle size={14} /> Berita Acara perlu direview manual (nominal/arah tidak terbaca otomatis, atau OCR belum yakin). Isi field di bawah secara manual.</p>}
-                      <div className="recon-actions">
-                        <label className="recon-upload-label">Pilih File
-                          <input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" disabled={finalBusy} onChange={(event) => { setFinalFile(event.target.files?.[0] ?? null); setUploadSuccessMessage(""); }} />
-                        </label>
-                        <button className="recon-button secondary" disabled={!finalFile || finalBusy} onClick={() => void uploadFinalAttachment()}><Paperclip size={14} /> Upload File</button>
+                      <div className="recon-file-picker">
+                        <div className="recon-actions">
+                          <input
+                            id={beritaAcaraFileInputId}
+                            type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                            className="recon-file-input-hidden"
+                            disabled={finalBusy}
+                            onChange={(event) => { setFinalFile(event.target.files?.[0] ?? null); setUploadSuccessMessage(""); }}
+                          />
+                          <label htmlFor={beritaAcaraFileInputId} className={`recon-button secondary recon-file-trigger${finalBusy ? " is-disabled" : ""}`}>
+                            <Paperclip size={14} /> Pilih File
+                          </label>
+                          <button className="recon-button secondary" disabled={!finalFile || finalBusy} onClick={() => void uploadFinalAttachment()}><Paperclip size={14} /> Upload File</button>
+                        </div>
+                        {finalFile && <p className="recon-file-name">{finalFile.name}</p>}
                       </div>
                       {uploadSuccessMessage && <p className="recon-lock-summary">{uploadSuccessMessage}</p>}
                       <label className="recon-upload-label">Nominal final disepakati
