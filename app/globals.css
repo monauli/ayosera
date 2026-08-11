@@ -594,6 +594,25 @@ th[scope],
   box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.9), 0 0 34px -24px rgba(229, 231, 235, 0.25);
 }
 
+/* P0 fix: petunjuk visual bahwa tabel (mis. Transaksi AYO, min-w-[1000px])
+   bisa digeser horizontal — fade tipis di tepi kanan wrapper overflow-x-auto
+   supaya kolom yang masih ada di luar area terlihat ("nominal tidak hilang"),
+   murni visual, tidak mengubah data/kolom. Warna fade mengikuti gradient
+   kartu (--rd-card-to) yang membungkusnya supaya menyatu di kedua mode. */
+.rd-table-scroll-wrap {
+  position: relative;
+}
+.rd-table-scroll-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2rem;
+  pointer-events: none;
+  background: linear-gradient(to left, rgb(var(--rd-card-to)), transparent);
+}
+
 /* --- Tabel premium --- */
 .rd-table thead tr:first-child {
   border-bottom: 1px solid rgb(var(--rd-border) / calc(var(--rd-border-alpha) - 0.01));
@@ -743,6 +762,17 @@ th[scope],
 }
 [data-mode="light"] .rd-shell .inv-panel .text-amber-300 {
   color: rgb(146 64 14); /* amber-800 */
+}
+
+/* P0 fix: banner "Perlu Dicek — diagnostic sumber" (Laporan Keuangan) —
+   text-amber-100 di atas bg-amber-400/10 didesain untuk latar gelap; di
+   Light Mode keduanya jadi pucat-di-atas-pucat dan nyaris tidak terbaca.
+   Makna/warna warning (amber) tetap dipertahankan, hanya kontrasnya yang
+   diperbaiki lewat amber-50/amber-900. */
+[data-mode="light"] .rd-shell .fin-diagnostic-warning {
+  background-color: rgb(255 251 235); /* amber-50 */
+  border-color: rgb(217 119 6 / 0.35); /* amber-600, jelas di atas amber-50 */
+  color: rgb(120 53 15); /* amber-900 */
 }
 [data-mode="light"] .rd-shell .border-white\/5,
 [data-mode="light"] .rd-shell .border-white\/10,

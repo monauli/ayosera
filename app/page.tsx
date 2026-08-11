@@ -27,6 +27,7 @@ import {
   Users,
   Webhook,
   Clock,
+  MoveHorizontal,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -2195,7 +2196,20 @@ export default function DashboardPage() {
           )}
 
           {activeNavAllowed && activeNav === "Audit" && (
-            <div className="rd-legacy p-4 sm:p-5">
+            // P0 fix: sebelumnya dibungkus .rd-legacy (permukaan TERANG yang
+            // sengaja fixed/tidak ikut toggle [data-mode], dipakai untuk
+            // halaman lama seperti Transaksi/Olsera). PrivateIntegrationMonitor
+            // di bawah didesain dark-first (overlay translucent bg-cyan-950/
+            // bg-black/10 + teks text-slate-100/400 terang) — sama seperti pola
+            // DashboardOverview (components/redesign/dashboard-overview.tsx)
+            // yang TIDAK dibungkus .rd-legacy. Dibungkus .rd-legacy membuat
+            // overlay translucent itu hanya menyamarkan warna putih (nyaris
+            // tak terlihat) dan teks terang jadi nyaris tak kontras di atasnya
+            // — root cause "rusak di Dark Mode". Konsisten dengan Dashboard:
+            // biarkan komponen duduk langsung di atas .rd-shell (adaptif lewat
+            // override [data-mode="light"] .rd-shell .text-slate-* yang sudah
+            // ada di globals.css), bukan di dalam .rd-legacy.
+            <div className="p-4 sm:p-5">
               <p className="text-sm text-slate-400">
                 Membandingkan data AYO/Olsera dengan database internal untuk mendeteksi transaksi yang hilang
                 atau tidak sinkron. Sebagian aksi di sini (mis. &quot;Tutup Gap&quot;) dapat memperbaiki data dan
@@ -2351,7 +2365,19 @@ export default function DashboardPage() {
 
           <section className="mt-8">
             <div className="rd-card rd-enter relative rounded-2xl p-5" style={{ animationDelay: "340ms" }}>
-                <div className="overflow-x-auto">
+                {/* P0 fix: tabel butuh min-w-[1000px] (9 kolom termasuk
+                    Nominal/Status/Perubahan di sisi kanan) sehingga di lebar
+                    layar yang lebih sempit dari itu tabel harus digeser
+                    horizontal — sebelumnya tidak ada petunjuk visual sama
+                    sekali, jadi kolom Nominal terlihat seperti "hilang".
+                    Tambahan di sini murni petunjuk visual (teks + fade tepi
+                    kanan lewat class rd-table-scroll-wrap), TIDAK mengubah
+                    data/kolom/urutan tabel. */}
+                <p className="mb-2 flex items-center gap-1.5 text-xs text-slate-400">
+                  <MoveHorizontal className="h-3.5 w-3.5 shrink-0" />
+                  Geser tabel ke kanan untuk melihat kolom Nominal, Status, dan Perubahan.
+                </p>
+                <div className="rd-table-scroll-wrap overflow-x-auto">
                   <table className="rd-table w-full min-w-[1000px] text-sm">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
