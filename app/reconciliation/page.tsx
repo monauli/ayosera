@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileSearch, Lock, Paperclip, RefreshCw, X } from "lucide-react";
 import { reconciliationOmzetUiStatus } from "@/lib/reconciliation-omzet-ui";
@@ -269,7 +269,28 @@ export default function ReconciliationPage() {
   // nextReasonAfterAnalysis di lib/reconciliation-berita-acara-ui.ts).
   // Direset ke false setiap kali dokumen/periode baru dibuka — itu siklus
   // analisis baru, bukan edit atas hasil yang sama.
-  const [reasonEditedByUser, setReasonEditedByUser] = useState(false);
+  //
+  // ROOT CAUSE V9 (alasan penyesuaian tetap kosong walau parser sudah
+  // berhasil dapat reason): field ini SEBELUMNYA `useState` biasa. openDetail
+  // dan uploadFinalAttachment memanggil setReasonEditedByUser(false) untuk
+  // MERESET status "sudah diedit" sebelum menjalankan analisis baru
+  // (analyzeAttachment/analyzeFileClient, keduanya async & butuh beberapa
+  // detik untuk OCR sungguhan) — tapi applyAnalysisResult (dipanggil setelah
+  // OCR selesai) membaca `reasonEditedByUser` lewat closure JS biasa, yang
+  // TERIKAT ke snapshot state pada render SAAT fungsi async itu mulai
+  // dipanggil, BUKAN nilai ter-update. Jadi kalau reasonEditedByUser sempat
+  // true di render manapun sebelumnya (mis. user pernah mengetik alasan
+  // manual untuk periode/dokumen LAIN dalam sesi halaman yang sama), setiap
+  // analisis OCR berikutnya — walau parser SUDAH punya `result.reason` yang
+  // benar — akan tetap dianggap "sudah diedit user" oleh closure basi itu,
+  // sehingga nextReasonAfterAnalysis mengembalikan `current` (kosong) alih-
+  // alih hasil parser. useRef dipakai di sini SENGAJA (bukan useState): nilai
+  // ref dibaca langsung dari objek ref saat itu juga (live), tidak pernah
+  // "basi" lewat closure — pas untuk flag yang HARUS dibaca akurat di dalam
+  // callback async yang mulai berjalan sebelum reset-nya sempat ter-render
+  // ulang. Field ini TIDAK PERNAH dipakai untuk render (lihat JSX di bawah),
+  // jadi aman sepenuhnya jadi ref (tidak butuh re-render saat berubah).
+  const reasonEditedByUserRef = useRef(false);
   const [showFinalLockConfirm, setShowFinalLockConfirm] = useState(false);
   const [showUnlock, setShowUnlock] = useState(false);
   const [unlockReason, setUnlockReason] = useState("");
@@ -304,7 +325,7 @@ export default function ReconciliationPage() {
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
-    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage(""); setReasonEditedByUser(false);
+    setFinalization(null); setFinalFile(null); setFinalAmount(""); setFinalReason(""); setFinalPreview(null); setFinalError(""); setShowFinalLockConfirm(false); setShowUnlock(false); setUnlockReason(""); setAnalysis(null); setAnalysisError(""); setUploadSuccessMessage(""); setFinalSaveMessage(""); reasonEditedByUserRef.current = false;
     try {
       const response = await fetch(`/api/reconciliation/court-revenue/${period}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
@@ -328,7 +349,7 @@ export default function ReconciliationPage() {
   };
 
   // Terapkan hasil analisis (dari jalur mana pun) ke state UI: alasan
-  // (menghormati reasonEditedByUser — Goal 6/CRITICAL, test wajib #13) dan
+  // (menghormati reasonEditedByUserRef — Goal 6/CRITICAL, test wajib #13) dan
   // nominal final (Goal 7 — HANYA saat COCOK, dihitung dari
   // computeAutoFinalAgreedAmount yang murni menurunkan angka INPUT untuk
   // logika finalisasi yang SUDAH ADA; previewOmzetPeriodLock di
@@ -337,7 +358,7 @@ export default function ReconciliationPage() {
   // lib/reconciliation-berita-acara-ui.ts).
   const applyAnalysisResult = (result: BeritaAcaraAnalysis, originalOlseraAmount: number) => {
     setAnalysis(result);
-    setFinalReason((current) => nextReasonAfterAnalysis({ current, userEdited: reasonEditedByUser, parsedReason: result.reason }));
+    setFinalReason((current) => nextReasonAfterAnalysis({ current, userEdited: reasonEditedByUserRef.current, parsedReason: result.reason }));
     const autoFinalAmount = computeAutoFinalAgreedAmount({ originalOlseraAmount, analysis: result });
     if (autoFinalAmount !== null) setFinalAmount(String(autoFinalAmount));
     setFinalPreview(null);
@@ -418,7 +439,7 @@ export default function ReconciliationPage() {
     if (!finalFile) return; setFinalBusy(true); setFinalError(""); setUploadSuccessMessage(""); setFinalSaveMessage("");
     // Dokumen baru diunggah = siklus analisis baru: edit alasan dari dokumen
     // SEBELUMNYA tidak relevan lagi untuk hasil OCR dokumen ini (Goal 6).
-    setReasonEditedByUser(false);
+    reasonEditedByUserRef.current = false;
     try { const uploadedFile = finalFile; const form = new FormData(); form.set("file", finalFile); if (finalization) form.set("version", String(finalization.version)); const data = await finalizationRequest("upload", { method: "POST", body: form }); setFinalization(data.data); setFinalFile(null); setFinalPreview(null); setShowFinalLockConfirm(false); setUploadSuccessMessage("Berita Acara berhasil diunggah"); void analyzeFileClient(uploadedFile); }
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal mengunggah berita acara."); }
     finally { setFinalBusy(false); }
@@ -663,7 +684,7 @@ export default function ReconciliationPage() {
                         {finalAmount.trim() !== "" && Number.isFinite(Number(finalAmount)) && <small className="recon-before">{formatRupiah(Number(finalAmount))}</small>}
                       </label>
                       <label className="recon-upload-label">Alasan penyesuaian
-                        <textarea value={finalReason} disabled={finalBusy || !finalization?.attachment} onChange={(event) => { setFinalReason(event.target.value); setReasonEditedByUser(true); setFinalPreview(null); setShowFinalLockConfirm(false); setFinalSaveMessage(""); }} />
+                        <textarea value={finalReason} disabled={finalBusy || !finalization?.attachment} onChange={(event) => { setFinalReason(event.target.value); reasonEditedByUserRef.current = true; setFinalPreview(null); setShowFinalLockConfirm(false); setFinalSaveMessage(""); }} />
                       </label>
                       <div className="recon-actions">
                         <button className="recon-button secondary" disabled={!canSaveFinalization} onClick={() => void previewFinalization()}>Simpan</button>

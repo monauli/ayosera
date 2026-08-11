@@ -130,17 +130,18 @@ test("V7: 3 kartu hasil (Selisih Sistem/Nominal Berita Acara/Hasil Pencocokan) d
 
 test("V7: hasil analisis (nominal final + alasan) benar-benar diterapkan ke state lewat applyAnalysisResult, bukan cuma disimpan tanpa dipakai (Goal 6/7)", () => {
   assert.match(page, /const applyAnalysisResult = \(result: BeritaAcaraAnalysis, originalOlseraAmount: number\) => \{/);
-  assert.match(page, /nextReasonAfterAnalysis\(\{ current, userEdited: reasonEditedByUser, parsedReason: result\.reason \}\)/);
+  assert.match(page, /nextReasonAfterAnalysis\(\{ current, userEdited: reasonEditedByUserRef\.current, parsedReason: result\.reason \}\)/);
   assert.match(page, /computeAutoFinalAgreedAmount\(\{ originalOlseraAmount, analysis: result \}\)/);
   assert.match(page, /applyAnalysisResult\(data\.data as BeritaAcaraAnalysis, originalOlseraAmount\)/);
   assert.match(page, /applyAnalysisResult\(result, detail\?\.olseraTotal \?\? 0\)/);
 });
 
-test("V7: edit manual alasan dilacak (reasonEditedByUser) dan direset saat dokumen/periode baru (Goal 6/CRITICAL)", () => {
-  assert.match(page, /const \[reasonEditedByUser, setReasonEditedByUser\] = useState\(false\);/);
-  assert.match(page, /setFinalReason\(event\.target\.value\); setReasonEditedByUser\(true\)/);
-  assert.match(page, /setReasonEditedByUser\(false\);\s*try \{ const uploadedFile = finalFile;/);
-  assert.match(page, /setReasonEditedByUser\(false\);\s*try \{\s*const response = await fetch\(`\/api\/reconciliation\/court-revenue\/\$\{period\}`/);
+test("V7/V9: edit manual alasan dilacak (reasonEditedByUserRef) dan direset saat dokumen/periode baru (Goal 6/CRITICAL) — ref, bukan state (root cause V9)", () => {
+  assert.match(page, /const reasonEditedByUserRef = useRef\(false\);/);
+  assert.match(page, /setFinalReason\(event\.target\.value\); reasonEditedByUserRef\.current = true/);
+  // Reset HARUS terjadi SEBELUM upload/OCR baru dimulai (siklus analisis baru).
+  assert.match(page, /reasonEditedByUserRef\.current = false;\s*\n\s*try \{ const uploadedFile = finalFile;/);
+  assert.match(page, /setFinalReason\(""\);[\s\S]{0,400}reasonEditedByUserRef\.current = false;/, "reset di openDetail harus ada sebelum analyzeAttachment dipanggil");
 });
 
 test("V7: gating Simpan/Kunci memakai fungsi murni yang bisa dites (canSaveBeritaAcaraFinalization/canLockAfterSave), bukan kondisi ad-hoc di JSX (Goal 8/9)", () => {
@@ -164,4 +165,46 @@ test("detail reconciliation stays compact: desktop 2+1 grid, accessible disclosu
   assert.match(styles, /\.recon-sport-sections\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(styles, /\.recon-sport-card-wide\{grid-column:1 \/ -1\}/);
   assert.match(styles, /@media \(max-width:720px\)\{\.recon-sport-sections\{grid-template-columns:1fr!important\}/);
+});
+
+// ---------------------------------------------------------------------------
+// V9 Goal ROOT CAUSE: reasonEditedByUser HARUS `useRef` (dibaca live di dalam
+// closure async setelah OCR selesai), BUKAN `useState` (nilai basi lewat
+// closure — root cause "alasan penyesuaian tetap kosong" V9, lihat komentar
+// panjang di app/reconciliation/page.tsx tepat di atas deklarasinya). Kalau
+// ini regresi balik ke useState, bug lama kembali: reset ke false via
+// setReasonEditedByUser(false) di openDetail/uploadFinalAttachment tidak
+// pernah terlihat oleh applyAnalysisResult yang closure-nya sudah terikat ke
+// render sebelum reset itu di-flush.
+// ---------------------------------------------------------------------------
+test("V9 ROOT CAUSE: reasonEditedByUser adalah useRef (bukan useState) — mencegah closure basi yang membuat alasan auto-fill gagal", () => {
+  assert.match(page, /const reasonEditedByUserRef = useRef\(false\);/);
+  assert.doesNotMatch(page, /const \[reasonEditedByUser, setReasonEditedByUser\] = useState\(false\);/, "regresi ke useState -> closure basi, root cause V9 kembali");
+  // Reset (openDetail, uploadFinalAttachment) dan tulis (onChange textarea)
+  // HARUS langsung menulis .current (synchronous), bukan lewat setState.
+  assert.match(page, /reasonEditedByUserRef\.current = false;/);
+  assert.match(page, /reasonEditedByUserRef\.current = true;/);
+  // applyAnalysisResult HARUS membaca .current (live), bukan variabel state basi.
+  assert.match(page, /userEdited: reasonEditedByUserRef\.current, parsedReason: result\.reason/);
+});
+
+// ---------------------------------------------------------------------------
+// V9 Goal 1: card "Nominal Berita Acara" TIDAK bertanda +/- (beda dari
+// "Selisih Sistem" yang tetap bertanda) — lihat
+// lib/reconciliation-berita-acara-ui.test.ts untuk test logika murninya;
+// test di sini mengunci WIRING label kartu di JSX tidak berubah nama/urutan.
+// ---------------------------------------------------------------------------
+test("V9 Goal 1: kartu 'Nominal Berita Acara' memakai cards.nominalBeritaAcaraLabel (sumber kebenaran tunggal, tanpa tanda dihitung di lib)", () => {
+  assert.match(page, /<span>Nominal Berita Acara<\/span>\s*<b>\{cards\.nominalBeritaAcaraLabel\}<\/b>/);
+});
+
+// ---------------------------------------------------------------------------
+// V9 Goal 6: tombol Simpan HARUS mengirim finalReason (state textarea) apa
+// adanya, dan refresh (openDetail) HARUS memuat ulang adjustmentReason dari
+// server — memastikan alasan yang terlihat di textarea benar-benar yang
+// tersimpan dan bertahan setelah reload.
+// ---------------------------------------------------------------------------
+test("V9 Goal 6: Simpan (previewFinalization) mengirim adjustmentReason: finalReason; openDetail memuat ulang adjustmentReason tersimpan setelah refresh", () => {
+  assert.match(page, /adjustmentReason: finalReason/);
+  assert.match(page, /setFinalReason\(data\.data\.periodLock\?\.adjustmentReason \?\?/);
 });

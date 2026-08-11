@@ -67,14 +67,14 @@ const APRIL_OCR_TEXT =
   "dikurangkan dari pendapatan penggunaan lapangan bulan April.\n\n" +
   "Ditandatangani oleh Supervisor Operasional.";
 
-test("Maret end-to-end: parser real -> kartu benar (Selisih Sistem +Rp740.000, Nominal BA +Rp740.000, COCOK/ok)", () => {
+test("Maret end-to-end: parser real -> kartu benar (Selisih Sistem +Rp740.000 bertanda, Nominal BA Rp740.000 TANPA tanda, COCOK/ok)", () => {
   const parsed = parseBeritaAcaraText(MARET_OCR_TEXT, 0.9);
   assert.equal(parsed.status, "OK");
   const systemDifference = 740_000;
   const matchStatus = matchBeritaAcaraToSystemDifference(systemDifference, parsed);
   const cards = buildBeritaAcaraCards({ systemDifference, nominal: parsed.nominal, direction: parsed.direction, matchStatus });
-  assert.equal(cards.selisihSistemLabel, "+Rp740.000");
-  assert.equal(cards.nominalBeritaAcaraLabel, "+Rp740.000");
+  assert.equal(cards.selisihSistemLabel, "+Rp740.000", "Selisih Sistem TETAP bertanda arah");
+  assert.equal(cards.nominalBeritaAcaraLabel, "Rp740.000", "V9: Nominal Berita Acara TIDAK bertanda, walau direction PENAMBAHAN");
   assert.equal(cards.matchLabel, "COCOK");
   assert.equal(cards.matchTone, "ok");
 });
@@ -93,17 +93,18 @@ test("Maret end-to-end: alasan auto-fill berasal dari teks dokumen sungguhan (bu
   assert.match(reason, /Maret/);
 });
 
-test("April end-to-end: parser real -> kartu benar (Nominal BA -Rp740.000/PENGURANGAN, selisih sistem -739.999, COCOK dalam toleransi Rp1)", () => {
+test("April end-to-end: parser real -> kartu benar (Nominal BA Rp740.000 TANPA tanda meski PENGURANGAN, selisih sistem -739.999 bertanda, COCOK dalam toleransi Rp1)", () => {
   const parsed = parseBeritaAcaraText(APRIL_OCR_TEXT, 0.9);
   assert.equal(parsed.status, "OK");
   assert.equal(parsed.direction, "PENGURANGAN");
   const systemDifference = -739_999;
   const matchStatus = matchBeritaAcaraToSystemDifference(systemDifference, parsed);
   const cards = buildBeritaAcaraCards({ systemDifference, nominal: parsed.nominal, direction: parsed.direction, matchStatus });
-  assert.equal(cards.selisihSistemLabel, "-Rp739.999");
-  assert.equal(cards.nominalBeritaAcaraLabel, "-Rp740.000");
+  assert.equal(cards.selisihSistemLabel, "-Rp739.999", "Selisih Sistem TETAP bertanda arah");
+  assert.equal(cards.nominalBeritaAcaraLabel, "Rp740.000", "V9: Nominal Berita Acara TIDAK bertanda '-', walau direction PENGURANGAN");
   assert.equal(cards.matchLabel, "COCOK");
   assert.equal(cards.matchTone, "ok");
+  assert.equal(matchStatus, "COCOK", "direction PENGURANGAN TETAP dipakai INTERNAL untuk pencocokan, hanya label yang tidak bertanda");
 });
 
 test("April end-to-end: alasan auto-fill menyebut Maret dan April dari teks dokumen sungguhan", () => {
@@ -228,4 +229,27 @@ test("formatPeriodLockHistoryLine: unlock -> 'Periode dibuka kembali oleh <nama>
 test("formatPeriodLockHistoryLine: actorName fallback 'User' (dari resolver, bukan di sini) tetap dirender apa adanya, bukan raw id", () => {
   const line = formatPeriodLockHistoryLine({ action: "upload", actorName: "User", reason: null });
   assert.equal(line.summary, "Berita Acara diunggah oleh User");
+});
+
+// ---------------------------------------------------------------------------
+// V9 Goal 1: "Nominal Berita Acara" SELALU nilai absolut tanpa tanda, TIDAK
+// PEDULI direction — beda dengan "Selisih Sistem" yang tetap bertanda
+// (formatSignedRupiah). direction TETAP dipakai internal (matchStatus di sini
+// dihitung dari direction sungguhan lewat matchBeritaAcaraToSystemDifference
+// di test end-to-end Maret/April di atas) — hanya representasi label yang
+// berubah, bukan logikanya.
+// ---------------------------------------------------------------------------
+test("buildBeritaAcaraCards: nominalBeritaAcaraLabel TIDAK PERNAH berawalan '+'/'-' untuk PENAMBAHAN maupun PENGURANGAN", () => {
+  const penambahan = buildBeritaAcaraCards({ systemDifference: 740_000, nominal: 740_000, direction: "PENAMBAHAN", matchStatus: "COCOK" });
+  const pengurangan = buildBeritaAcaraCards({ systemDifference: -740_000, nominal: 740_000, direction: "PENGURANGAN", matchStatus: "COCOK" });
+  assert.equal(penambahan.nominalBeritaAcaraLabel, "Rp740.000");
+  assert.equal(pengurangan.nominalBeritaAcaraLabel, "Rp740.000");
+  assert.equal(penambahan.nominalBeritaAcaraLabel, pengurangan.nominalBeritaAcaraLabel, "label kartu nominal harus identik terlepas dari direction");
+});
+
+test("buildBeritaAcaraCards: selisihSistemLabel TETAP bertanda (kontras dengan nominalBeritaAcaraLabel yang tidak bertanda)", () => {
+  const positif = buildBeritaAcaraCards({ systemDifference: 740_000, nominal: 740_000, direction: "PENAMBAHAN", matchStatus: "COCOK" });
+  const negatif = buildBeritaAcaraCards({ systemDifference: -739_999, nominal: 740_000, direction: "PENGURANGAN", matchStatus: "COCOK" });
+  assert.equal(positif.selisihSistemLabel, "+Rp740.000");
+  assert.equal(negatif.selisihSistemLabel, "-Rp739.999");
 });

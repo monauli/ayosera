@@ -74,11 +74,16 @@ export type BeritaAcaraCards = {
   matchTone: StatusTone;
 };
 
+// V9: "Selisih Sistem" TETAP bertanda (formatSignedRupiah — arah selisih di
+// sistem, mis. "+Rp740.000"/"-Rp739.999"). "Nominal Berita Acara" SEKARANG
+// SELALU nilai absolut TANPA tanda (mis. "Rp740.000" untuk PENAMBAHAN maupun
+// PENGURANGAN) — dokumen BA menyatakan nominal, bukan selisih; arah
+// (PENAMBAHAN/PENGURANGAN) TETAP dipakai INTERNAL untuk pencocokan
+// (matchBeritaAcaraToSystemDifference) dan nominal final auto
+// (computeAutoFinalAgreedAmount) — logika arah TIDAK dihapus, hanya tidak
+// lagi dipakai untuk memilih tanda di label kartu ini.
 export function buildBeritaAcaraCards(analysis: BeritaAcaraAnalysisLike): BeritaAcaraCards {
-  const nominalBeritaAcaraLabel =
-    analysis.nominal !== null
-      ? `${analysis.direction === "PENGURANGAN" ? "-" : "+"}${formatRupiah(analysis.nominal)}`
-      : "Tidak terbaca";
+  const nominalBeritaAcaraLabel = analysis.nominal !== null ? formatRupiah(analysis.nominal) : "Tidak terbaca";
   return {
     selisihSistemLabel: formatSignedRupiah(analysis.systemDifference),
     nominalBeritaAcaraLabel,
