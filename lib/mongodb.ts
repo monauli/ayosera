@@ -316,6 +316,7 @@ export type ReconciliationOmzetPeriodLockDocument = {
   verifiedMatchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | null;
   beritaAcaraNominal: number | null;
   beritaAcaraDirection: "PENAMBAHAN" | "PENGURANGAN" | null;
+  beritaAcaraPeriod?: string | null;
   // V11: soft-delete/hide SATU entri riwayat dari tampilan (supervisor-only,
   // lihat hideOmzetPeriodHistoryEntry di lib/reconciliation-omzet-period-lock.ts)
   // TANPA PERNAH menghapusnya secara fisik dari array — event asli

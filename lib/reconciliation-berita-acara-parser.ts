@@ -20,6 +20,7 @@ export type BeritaAcaraParseStatus = "OK" | "PERLU_REVIEW";
 export type BeritaAcaraParseResult = {
   nominal: number | null;
   direction: BeritaAcaraDirection | null;
+  period: string | null;
   reason: string | null;
   status: BeritaAcaraParseStatus;
   rawText: string;
@@ -59,7 +60,19 @@ function cleanOcrWhitespace(s: string): string {
   return s
     .replace(/[ \t]+/g, " ")
     .replace(/\s*\n\s*/g, " ")
+    .replace(/(?:\/\s*4\s*\||\|\s*4\s*\/)/g, " ")
+    .replace(/\b(?:halaman|page|hlm\.?)\s*\d+(?:\s*dari\s*\d+)?\b/gi, " ")
+    .replace(/\b(?:row|baris|tabel)\s*\d+\b/gi, " ")
+    .replace(/[|]+/g, " ")
     .trim();
+}
+
+const MONTHS: Record<string, string> = { januari: "01", februari: "02", maret: "03", april: "04", mei: "05", juni: "06", juli: "07", agustus: "08", september: "09", oktober: "10", november: "11", desember: "12" };
+function extractPeriod(text: string): string | null {
+  const numeric = text.match(/\b(20\d{2})[-\/]?(0[1-9]|1[0-2])\b/);
+  if (numeric) return `${numeric[1]}-${numeric[2]}`;
+  const named = text.match(new RegExp(`\\b(${Object.keys(MONTHS).join("|")})\\s+(20\\d{2})\\b`, "i"));
+  return named ? `${named[2]}-${MONTHS[named[1].toLowerCase()]}` : null;
 }
 
 /**
@@ -140,17 +153,18 @@ export function parseBeritaAcaraText(rawText: string, ocrConfidence?: number | n
   const text = rawText ?? "";
   const { nominal, matchIndex } = extractNominal(text);
   const direction = extractDirection(text);
+  const period = extractPeriod(text);
   const reason = extractReason(text, matchIndex);
   const lowConfidence = typeof ocrConfidence === "number" && ocrConfidence < MIN_OCR_CONFIDENCE;
   const status: BeritaAcaraParseStatus = nominal !== null && direction !== null && reason !== null && !lowConfidence ? "OK" : "PERLU_REVIEW";
-  return { nominal, direction, reason, status, rawText: text };
+  return { nominal, direction, period, reason, status, rawText: text };
 }
 
 // ---------------------------------------------------------------------------
 // Pencocokan BA vs selisih sistem (Langkah 4)
 // ---------------------------------------------------------------------------
 
-export type BeritaAcaraMatchStatus = "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW";
+export type BeritaAcaraMatchStatus = "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | "SALAH_PERIODE";
 
 export const BA_MATCH_TOLERANCE_RUPIAH = 1;
 
@@ -166,8 +180,11 @@ export const BA_MATCH_TOLERANCE_RUPIAH = 1;
  */
 export function matchBeritaAcaraToSystemDifference(
   systemDifference: number,
-  ba: { nominal: number | null; direction: BeritaAcaraDirection | null },
+  ba: { nominal: number | null; direction: BeritaAcaraDirection | null; period?: string | null },
+  expectedPeriod?: string,
 ): BeritaAcaraMatchStatus {
+  if (expectedPeriod && !ba.period) return "PERLU_REVIEW";
+  if (expectedPeriod && ba.period && ba.period !== expectedPeriod) return "SALAH_PERIODE";
   if (ba.nominal === null || ba.direction === null) return "PERLU_REVIEW";
   if (ba.direction === "PENAMBAHAN") {
     if (systemDifference <= 0) return "TIDAK_COCOK"; // arah salah

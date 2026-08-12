@@ -55,13 +55,14 @@ export async function POST(_request: Request, context: { params: Promise<{ perio
     }
 
     const parsed = parseBeritaAcaraText(ocr.text, ocr.confidence);
-    const matchStatus = parsed.status === "OK" ? matchBeritaAcaraToSystemDifference(systemDifference, parsed) : "PERLU_REVIEW";
+    const matchStatus = parsed.status === "OK" ? matchBeritaAcaraToSystemDifference(systemDifference, parsed, period) : "PERLU_REVIEW";
 
     return NextResponse.json({
       data: {
         systemDifference,
         nominal: parsed.nominal,
         direction: parsed.direction,
+        period: parsed.period,
         reason: parsed.reason,
         parseStatus: parsed.status,
         matchStatus,

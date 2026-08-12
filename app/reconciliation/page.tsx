@@ -51,7 +51,7 @@ type SportReconciliation = { court: SportComparison; pickleball: SportComparison
 // ini disembunyikan dari render, TAPI datanya TETAP ada apa adanya untuk
 // audit (TIDAK PERNAH hard-delete, lihat hideOmzetPeriodHistoryEntry di
 // lib/reconciliation-omzet-period-lock.ts).
-type PeriodLock = { status: "draft" | "locked" | "unlocked"; version: number; originalAyoAmount: number | null; originalOlseraAmount: number | null; originalDifference: number | null; finalAgreedAmount: number | null; adjustmentAmount: number | null; adjustmentReason: string | null; verifiedMatchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | null; beritaAcaraNominal: number | null; beritaAcaraDirection: "PENAMBAHAN" | "PENGURANGAN" | null; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: string; uploadedBy: string; uploadedByName: string } | null; lockedAt: string | null; lockedBy: string | null; lockedByName: string; unlockedAt: string | null; unlockedBy: string | null; unlockedByName: string; history: Array<{ action: string; actor: string; actorName: string; timestamp: string; reason: string | null; hiddenAt: string | null }> };
+type PeriodLock = { status: "draft" | "locked" | "unlocked"; version: number; originalAyoAmount: number | null; originalOlseraAmount: number | null; originalDifference: number | null; finalAgreedAmount: number | null; adjustmentAmount: number | null; adjustmentReason: string | null; verifiedMatchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | "SALAH_PERIODE" | null; beritaAcaraNominal: number | null; beritaAcaraDirection: "PENAMBAHAN" | "PENGURANGAN" | null; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: string; uploadedBy: string; uploadedByName: string } | null; lockedAt: string | null; lockedBy: string | null; lockedByName: string; unlockedAt: string | null; unlockedBy: string | null; unlockedByName: string; history: Array<{ action: string; actor: string; actorName: string; timestamp: string; reason: string | null; hiddenAt: string | null }> };
 type EvidenceType = "shifted-period" | "wrong-amount" | "duplicate" | "reversal" | "correction" | "wrong-account";
 /** Penanda note yang dikunci LANGSUNG dari status Cocok (selisih Rp0), TANPA penjelasan manual — lihat lib/reconciliation-omzet-ledger.ts OMZET_LOCK_WITHOUT_EXPLANATION_MARKER. TIDAK muncul di dropdown "Jenis bukti" (bukan kategori bukti sungguhan). */
 const LOCK_WITHOUT_EXPLANATION_MARKER = "matched-no-explanation" as const;
@@ -91,8 +91,9 @@ type BeritaAcaraAnalysis = {
   nominal: number | null;
   direction: "PENAMBAHAN" | "PENGURANGAN" | null;
   reason: string | null;
+  period?: string | null;
   parseStatus: "OK" | "PERLU_REVIEW";
-  matchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW";
+  matchStatus: "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | "SALAH_PERIODE";
   ocrSource: string;
 };
 
@@ -595,7 +596,7 @@ export default function ReconciliationPage() {
       // (matchBeritaAcaraToSystemDifference terhadap selisih sistem server,
       // bukan klaim client) — inilah yang membuat status tabel utama bisa
       // langsung "Cocok" begitu Simpan sukses, tanpa menunggu Kunci Periode.
-      const data = await finalizationRequest("preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason, beritaAcaraNominal: analysis?.nominal ?? null, beritaAcaraDirection: analysis?.direction ?? null }) });
+      const data = await finalizationRequest("preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason, beritaAcaraNominal: analysis?.nominal ?? null, beritaAcaraDirection: analysis?.direction ?? null, beritaAcaraPeriod: analysis?.period ?? null }) });
       setFinalPreview(data.data);
       setFinalization(data.lock);
       setFinalSaveMessage("Finalisasi berhasil disimpan.");
@@ -930,6 +931,7 @@ export default function ReconciliationPage() {
                       {analysis && <BeritaAcaraResultCards analysis={analysis} />}
                       {analysis?.matchStatus === "TIDAK_COCOK" && <p className="recon-error"><AlertTriangle size={14} /> Nominal/arah Berita Acara TIDAK cocok dengan selisih sistem. Periksa dokumen sebelum melanjutkan; preview dan lock ditahan sampai direview.</p>}
                       {analysis?.matchStatus === "PERLU_REVIEW" && <p className="recon-special"><AlertTriangle size={14} /> Berita Acara perlu direview manual (nominal/arah tidak terbaca otomatis, atau OCR belum yakin). Isi field di bawah secara manual.</p>}
+                      {analysis?.matchStatus === "SALAH_PERIODE" && <p className="recon-error"><AlertTriangle size={14} /> Periode Berita Acara tidak sesuai dengan periode yang sedang dibuka. Periksa dokumen sebelum melanjutkan.</p>}
                       <div className="recon-file-picker">
                         <div className="recon-actions">
                           <input

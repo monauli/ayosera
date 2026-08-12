@@ -34,6 +34,14 @@ Audit bersifat read-only. Tidak ada database, snapshot, alias, source code, comm
 
 ## Hasil
 
+## Validasi BA Rekonsiliasi Omzet — 2026-08-12
+
+Validasi BA kini memeriksa periode, arah penyesuaian, nominal dengan tolerance existing Rp1, dan alasan yang sudah dibersihkan dari noise OCR. Periode salah menghasilkan `Salah Periode`; periode tidak terbaca, alasan tidak relevan, atau sinyal ambigu menghasilkan `Perlu Dicek`. Tidak ada auto-lock atau auto-adjust.
+
+Regression tests mencakup BA benar, nominal salah, arah salah, bulan salah, periode hilang, dan alasan OCR rusak. Targeted tests 78/78 PASS, type-check PASS, build PASS, dan `git diff --check` PASS.
+
+Scope hanya parser/UI/API finalisasi BA dan penyimpanan metadata periode BA; tidak menyentuh Inventory, Financial, YONEX, atau ODEA.
+
 Selisih yang harus dijelaskan:
 
 - LABERS: +1 qty / Rp21.250
@@ -385,3 +393,41 @@ Next step: implement and test the generic historical-stale-period selector plus 
 - UI reconciliation, inventory, menu Pengguna, finalisasi, upload, lock/unlock, reset/hide/cleanup mengikuti status authenticated, bukan role supervisor.
 - Validation PASS: permission audit tests 25/25, users tests 5/5, reconciliation endpoint suite PASS 75/75, auth-base-url 6/6, typecheck PASS, build PASS, `git diff --check` PASS.
 - Login/authentication tidak diubah; tidak ada perubahan database manual.
+## 2026-08-12 — Validator otomatis Kategori Penjualan: blocker source independen
+
+- Audit source selesai. `syncOlseraSalesByCategory` mengambil order detail dari Olsera, menyimpan ke `olsera_order_items`, lalu aggregate kategori dibentuk dari baris yang sama. `olsera_sales_by_category` juga merupakan hasil turunan AYOSERA dari source tersebut.
+- Tidak ditemukan endpoint/response Olsera independen yang menyediakan total qty, nominal, dan breakdown kategori untuk dibandingkan otomatis dengan aggregate AYOSERA.
+- Karena itu validator status `Cocok/Perlu Dicek/Data bulan berjalan belum lengkap` belum diimplementasikan; membuatnya sekarang akan menjadi perbandingan AYOSERA terhadap data AYOSERA sendiri dan berisiko false PASS.
+- Correction resmi Februari tetap tidak disentuh. Inventory, Financial, YONEX, dan ODEA tidak disentuh.
+- Tidak ada code/database/schedule change, test/build/commit/push pada tugas ini.
+- Blocker/next step: sediakan export/API Olsera independen yang memuat total qty, nominal, dan kategori; setelah itu validator read-only dapat ditambahkan dengan aturan current month selalu `Data bulan berjalan belum lengkap`.
+## 2026-08-12 — Audit YONEX SHORTS MEN inventory (read-only)
+
+Produk: `YONEX SHORTS MEN # SM-J035-2906-RW1-S`; alias lama `106743815` → canonical `118420650`.
+
+### Bukti yang ditemukan
+
+- `olsera_order_items` menyimpan sales dengan alias lama/canonical: Feb **9 qty / Rp1.080.000** (8 baris), Mar 3, Apr 4, Mei 2, Jun **3 qty / Rp360.000** (2 baris), Jul **1 qty / Rp120.000** (1 baris). Jadi angka Feb 11 belum terbukti dari database saat ini; ada selisih 2 qty yang membutuhkan source/export Olsera untuk dibuktikan.
+- `olsera_inventory_movements`: hanya 1 baris valid, 2026-07-03, `qtyChange -1`, reference `DF0226070300008313`, productId `118420650`. Tidak ada movement lama untuk Feb–Jun.
+- `olsera_inventory_monthly_snapshots`: Feb–Mei opening/closing 4, incoming 0, sales 0, source `carry-forward`, dengan diagnosis tidak ada stockmovement API. Ini adalah carry-forward, bukan anchor fisik terbukti.
+- Juni: opening 4, sales 3, closing 1, source `baseline-file` dari `INVENTORI.xlsx` sheet JUNI'26; ini bukti baseline closing/penjualan Juni, tetapi tidak membuktikan opening Februari 20/24.
+- Juli: opening 1, incoming 1, sales 1, closing 1, source `stockmovement-forward`; incoming 1 berasal dari perhitungan stockmovement, tetapi hanya satu movement sale tersimpan dan tidak ada bukti purchase/incoming mentah yang bisa ditelusuri.
+- Agustus: opening 1, incoming 0, sales 0, closing 1, source `carry-forward`; bulan berjalan belum menjadi anchor final.
+- `inventoryStockOpnameReconciliations`: tidak ada opname untuk produk ini. Tidak ditemukan dokumen purchase/incoming independen. Snapshot harian yang ditemukan hanya snapshot stok produk baru pada Juli–Agustus dan tidak membuktikan opening Februari.
+
+### Timeline terbukti
+
+| Periode | Sales terbukti | Arus stok terbukti | Kesimpulan |
+|---|---:|---|---|
+| Feb | 9 | opening 4 hanya carry-forward | pergerakan lama tidak ditemukan; angka 20/24 dan sales 11 belum terbukti |
+| Mar–Mei | 3 / 4 / 2 | carry-forward 4 | pergerakan lama tidak ditemukan |
+| Jun | 3 | baseline closing 1; opening snapshot 4 | baseline file terbukti, opening awal rantai tidak |
+| Jul | 1 | satu sale -1; incoming 1 dihitung snapshot | incoming source mentah tidak ditemukan |
+| Aug | 0 | carry-forward opening/closing 1 | bulan berjalan, belum final |
+
+### Rekomendasi fix exact
+
+- Jangan write/rebuild atau mengubah opening/incoming sekarang.
+- Minta/export Olsera resmi yang memuat stok akhir Februari atau stock opname/purchase/incoming untuk SKU ini, serta rincian dua sales Februari yang belum ada.
+- Setelah anchor resmi tersedia, lakukan dry-run chain Feb–Aug dengan alias `106743815`/`118420650`, lalu minta approval terpisah sebelum write. Status saat ini: **pergerakan lama tidak ditemukan; opening 20/24 belum terbukti**.
+- Tidak ada database write. Inventory lain, Sales aggregate, Financial, YONEX data source, dan ODEA tidak diubah.

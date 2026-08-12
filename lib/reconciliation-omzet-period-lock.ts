@@ -105,7 +105,7 @@ export async function uploadOmzetPeriodLockAttachment(input: { storeId: number; 
   return document;
 }
 
-export function previewOmzetPeriodLock(input: { original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown; attachment: PeriodLockAttachment | null; beritaAcaraNominal?: unknown; beritaAcaraDirection?: unknown }) {
+export function previewOmzetPeriodLock(input: { original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown; attachment: PeriodLockAttachment | null; beritaAcaraNominal?: unknown; beritaAcaraDirection?: unknown; beritaAcaraPeriod?: unknown; expectedPeriod?: string }) {
   const finalAgreedAmount = integer(input.finalAgreedAmount, "Nominal final");
   const adjustmentReason = text(input.adjustmentReason, "Alasan penyesuaian");
   if (!input.attachment) throw new OmzetPeriodLockError("Berita acara wajib diunggah sebelum preview.", "NOT_FOUND");
@@ -118,17 +118,18 @@ export function previewOmzetPeriodLock(input: { original: OmzetOriginalAmounts; 
   // nominal/arah apa pun, tapi status "Cocok karena Berita Acara" di tabel
   // utama hanya benar-benar valid kalau klaim itu memang cocok dengan
   // selisih sistem sungguhan — mencegah status Cocok dipalsukan.
-  const verifiedMatchStatus: BeritaAcaraMatchStatus = matchBeritaAcaraToSystemDifference(input.original.difference, { nominal: beritaAcaraNominal, direction: beritaAcaraDirection });
-  return { ...input.original, finalAgreedAmount, adjustmentAmount: finalAgreedAmount - input.original.olsera, adjustmentReason, attachment: input.attachment, beritaAcaraNominal, beritaAcaraDirection, verifiedMatchStatus, lockedDisplay: { ayo: finalAgreedAmount, olsera: finalAgreedAmount, difference: 0, status: "COCOK_TERKUNCI" as const } };
+  const beritaAcaraPeriod = typeof input.beritaAcaraPeriod === "string" && /^\d{4}-\d{2}$/.test(input.beritaAcaraPeriod) ? input.beritaAcaraPeriod : null;
+  const verifiedMatchStatus: BeritaAcaraMatchStatus = matchBeritaAcaraToSystemDifference(input.original.difference, { nominal: beritaAcaraNominal, direction: beritaAcaraDirection, period: beritaAcaraPeriod }, input.expectedPeriod);
+  return { ...input.original, finalAgreedAmount, adjustmentAmount: finalAgreedAmount - input.original.olsera, adjustmentReason, attachment: input.attachment, beritaAcaraNominal, beritaAcaraDirection, beritaAcaraPeriod, verifiedMatchStatus, lockedDisplay: { ayo: finalAgreedAmount, olsera: finalAgreedAmount, difference: 0, status: "COCOK_TERKUNCI" as const } };
 }
 
 /** Records a non-locking preview in the append-only audit trail. */
-export async function recordOmzetPeriodLockPreview(input: { storeId: number; period: string; actor: string; expectedVersion: unknown; original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown; beritaAcaraNominal?: unknown; beritaAcaraDirection?: unknown }, context?: OmzetPeriodLockContext) {
+export async function recordOmzetPeriodLockPreview(input: { storeId: number; period: string; actor: string; expectedVersion: unknown; original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown; beritaAcaraNominal?: unknown; beritaAcaraDirection?: unknown; beritaAcaraPeriod?: unknown }, context?: OmzetPeriodLockContext) {
   const source = await contextOrDefault(context);
   const expectedVersion = integer(input.expectedVersion, "Versi");
   const id = `${input.storeId}:${input.period}`;
   const current = await source.locks.findOne({ _id: id });
-  const preview = previewOmzetPeriodLock({ ...input, attachment: current?.attachment ?? null });
+  const preview = previewOmzetPeriodLock({ ...input, expectedPeriod: input.beritaAcaraPeriod !== undefined ? input.period : undefined, beritaAcaraPeriod: input.beritaAcaraPeriod ?? current?.beritaAcaraPeriod, attachment: current?.attachment ?? null });
   if (!current) throw new OmzetPeriodLockError("Berita acara wajib diunggah sebelum preview.", "NOT_FOUND");
   if (current.status === "locked") throw new OmzetPeriodLockError("Periode sudah terkunci.", "LOCKED");
   const now = new Date();
@@ -157,6 +158,7 @@ export async function recordOmzetPeriodLockPreview(input: { storeId: number; per
         verifiedMatchStatus: preview.verifiedMatchStatus,
         beritaAcaraNominal: preview.beritaAcaraNominal,
         beritaAcaraDirection: preview.beritaAcaraDirection,
+        beritaAcaraPeriod: preview.beritaAcaraPeriod,
         originalAyoAmount: input.original.ayo,
         originalOlseraAmount: input.original.olsera,
         originalDifference: input.original.difference,
@@ -174,7 +176,7 @@ export async function recordOmzetPeriodLockPreview(input: { storeId: number; per
 }
 
 export async function lockOmzetPeriodFinalization(input: { storeId: number; period: string; actor: string; expectedVersion: unknown; original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown }, context?: OmzetPeriodLockContext) {
-  const source = await contextOrDefault(context); const expectedVersion = integer(input.expectedVersion, "Versi"); const preview = previewOmzetPeriodLock({ ...input, attachment: (await source.locks.findOne({ _id: `${input.storeId}:${input.period}` }))?.attachment ?? null }); const now = new Date(); const id = `${input.storeId}:${input.period}`; const current = await source.locks.findOne({ _id: id });
+  const source = await contextOrDefault(context); const expectedVersion = integer(input.expectedVersion, "Versi"); const current = await source.locks.findOne({ _id: `${input.storeId}:${input.period}` }); const preview = previewOmzetPeriodLock({ ...input, expectedPeriod: current?.beritaAcaraPeriod !== undefined ? input.period : undefined, beritaAcaraPeriod: current?.beritaAcaraPeriod, attachment: current?.attachment ?? null }); const now = new Date(); const id = `${input.storeId}:${input.period}`;
   if (!current?.attachment) throw new OmzetPeriodLockError("Berita acara wajib diunggah sebelum lock.", "NOT_FOUND");
   if (current.status === "locked") throw new OmzetPeriodLockError("Periode sudah terkunci.", "LOCKED");
   const lastAudit = current.history.at(-1);

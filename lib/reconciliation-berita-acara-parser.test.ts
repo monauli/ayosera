@@ -113,3 +113,19 @@ test("matcher: nominal atau direction null -> PERLU_REVIEW, bukan TIDAK_COCOK", 
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: null, direction: "PENAMBAHAN" }), "PERLU_REVIEW");
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: null }), "PERLU_REVIEW");
 });
+
+test("validasi BA lengkap: periode, arah, nominal, dan toleransi", () => {
+  const ba = parseBeritaAcaraText("Berita Acara Maret 2026\nPENAMBAHAN Rp740.000\nAlasan: koreksi selisih");
+  assert.equal(ba.period, "2026-03");
+  assert.equal(matchBeritaAcaraToSystemDifference(740_000, ba, "2026-03"), "COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(741_500, ba, "2026-03"), "TIDAK_COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { ...ba, direction: "PENGURANGAN" }, "2026-03"), "TIDAK_COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(740_000, ba, "2026-04"), "SALAH_PERIODE");
+  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { ...ba, period: null }, "2026-03"), "PERLU_REVIEW");
+});
+
+test("reason OCR dibersihkan tanpa menghilangkan alasan yang relevan", () => {
+  const ba = parseBeritaAcaraText("Maret 2026 / 4 |\nPENAMBAHAN Rp740.000\nAlasan: koreksi selisih tabel 12 halaman 3 dari 4 | row 8");
+  assert.equal(ba.reason, "koreksi selisih");
+  assert.ok(!ba.reason?.match(/\/\s*4|\||halaman|row|tabel/i));
+});

@@ -29,6 +29,7 @@ export const MATCH_STATUS_LABEL: Record<BeritaAcaraMatchStatus, string> = {
   COCOK: "COCOK",
   TIDAK_COCOK: "TIDAK COCOK",
   PERLU_REVIEW: "PERLU REVIEW",
+  SALAH_PERIODE: "SALAH PERIODE",
 };
 
 // Reuse SATU-SATUNYA skema warna status yang sudah ada di halaman ini
@@ -40,6 +41,7 @@ export const MATCH_STATUS_TONE: Record<BeritaAcaraMatchStatus, StatusTone> = {
   COCOK: "ok",
   TIDAK_COCOK: "danger",
   PERLU_REVIEW: "warn",
+  SALAH_PERIODE: "danger",
 };
 
 // ---------------------------------------------------------------------------
