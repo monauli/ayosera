@@ -788,6 +788,57 @@ th[scope],
 [data-mode="light"] .rd-shell .hover\:bg-white\/10:hover {
   background-color: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
 }
+
+/* Phase 5B P1 fix: "Monitoring Integritas Data" / "Kesehatan Koneksi"
+   (components/private-integration-monitor.tsx) adalah dark-first — kartu
+   `bg-black/10,/20` dan banner `bg-cyan-950/20`/`bg-amber-950/10`/
+   `bg-rose-950/10` beserta teks pastelnya didesain untuk latar gelap. Di
+   Light Mode itu jadi wash abu pucat (bg-black di atas latar terang) dan
+   border/teks pastel nyaris tak berkontras. Scope KHUSUS `.pim-panel`
+   (ditambahkan hanya di komponen ini) supaya TIDAK mengubah bg-black/
+   border-*-300/text-*-300 di komponen lain yang belum terbukti bermasalah.
+   Dark Mode tidak disentuh (aturan ini hanya berlaku [data-mode="light"]). */
+[data-mode="light"] .rd-shell .pim-panel.bg-black\/10,
+[data-mode="light"] .rd-shell .pim-panel .bg-black\/10 {
+  background-color: rgb(var(--rd-surface) / var(--rd-surface-alpha));
+}
+[data-mode="light"] .rd-shell .pim-panel.bg-black\/20,
+[data-mode="light"] .rd-shell .pim-panel .bg-black\/20 {
+  background-color: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
+}
+[data-mode="light"] .rd-shell .pim-panel.bg-cyan-950\/20 {
+  background-color: rgb(207 250 254); /* cyan-100 */
+}
+[data-mode="light"] .rd-shell .pim-panel.border-cyan-300\/20 {
+  border-color: rgb(103 232 249); /* cyan-300 */
+}
+[data-mode="light"] .rd-shell .pim-panel.bg-amber-950\/10 {
+  background-color: rgb(255 251 235); /* amber-50, sama seperti .fin-diagnostic-warning */
+}
+[data-mode="light"] .rd-shell .pim-panel.border-amber-300\/20 {
+  border-color: rgb(217 119 6 / 0.35); /* amber-600, sama seperti .fin-diagnostic-warning */
+}
+[data-mode="light"] .rd-shell .pim-panel.bg-rose-950\/10 {
+  background-color: rgb(255 228 230); /* rose-100 */
+}
+[data-mode="light"] .rd-shell .pim-panel.border-rose-300\/20 {
+  border-color: rgb(253 164 175); /* rose-300 */
+}
+[data-mode="light"] .rd-shell .pim-panel .text-cyan-200 {
+  color: rgb(22 78 99); /* cyan-900 */
+}
+[data-mode="light"] .rd-shell .pim-panel .text-emerald-300 {
+  color: rgb(6 78 59); /* emerald-900 */
+}
+[data-mode="light"] .rd-shell .pim-panel .text-rose-200,
+[data-mode="light"] .rd-shell .pim-panel .text-rose-300 {
+  color: rgb(136 19 55); /* rose-900 */
+}
+[data-mode="light"] .rd-shell .pim-panel .text-amber-200,
+[data-mode="light"] .rd-shell .pim-panel .text-amber-300,
+[data-mode="light"] .rd-shell .pim-panel .text-amber-300\/80 {
+  color: rgb(120 53 15); /* amber-900 */
+}
 /* Grid/dotted background hero — sangat tipis di kedua mode, garis mengikuti --rd-grid-line. */
 [data-mode="light"] .rd-bg-grid {
   background-image:
@@ -828,7 +879,16 @@ th[scope],
 .recon-readiness { max-width:1500px; margin:0 auto 1rem; display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:.55rem; padding:.75rem; border:1px solid rgb(59 130 246 / .25); border-radius:.75rem; background:rgb(59 130 246 / .05); }.recon-readiness div { min-width:0; }.recon-readiness span { display:block; color:rgb(var(--rd-text-muted)); font-size:.68rem; }.recon-readiness b { display:block; overflow-wrap:anywhere; color:rgb(var(--rd-text-secondary)); font-size:.78rem; margin-top:.15rem; }
 .recon-table-wrap,.recon-skeleton,.recon-empty { max-width:1500px; margin:0 auto; border:1px solid rgb(var(--rd-card-border)); border-radius:.875rem; background:linear-gradient(180deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); }.recon-table-wrap { overflow:hidden; }.recon-table { width:100%; border-collapse:collapse; font-size:.8125rem; }.recon-table th { background:rgb(var(--rd-surface) / var(--rd-surface-alpha)); color:rgb(var(--rd-text-tertiary)); text-align:left; font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; }.recon-table th,.recon-table td { padding:.7rem .75rem; border-bottom:1px solid rgb(var(--rd-border) / calc(var(--rd-border-alpha) / 2)); vertical-align:top; }.recon-table tr:last-child td { border:0; }.recon-table strong,.recon-table code { overflow-wrap:anywhere; color:rgb(var(--rd-text)); }.recon-table small { display:block; margin-top:.2rem; color:rgb(var(--rd-text-muted)); }.recon-badge { display:inline-flex; align-items:center; border:1px solid; border-radius:999px; padding:.15rem .45rem; font-size:.69rem; font-weight:650; white-space:nowrap; }.recon-badge-danger { border-color:rgb(225 29 72 / .4); background:rgb(225 29 72 / .1); color:rgb(190 18 60); }.recon-badge-warn { border-color:rgb(217 119 6 / .4); background:rgb(245 158 11 / .1); color:rgb(154 52 18); }.recon-badge-ok { border-color:rgb(5 150 105 / .4); background:rgb(16 185 129 / .1); color:rgb(6 95 70); }.recon-badge-neutral { border-color:rgb(var(--rd-border) / .35); background:rgb(var(--rd-surface) / var(--rd-surface-alpha)); color:rgb(var(--rd-text-secondary)); }[data-mode="dark"] .recon-badge-danger{color:rgb(253 164 175)}[data-mode="dark"] .recon-badge-warn{color:rgb(253 230 138)}[data-mode="dark"] .recon-badge-ok{color:rgb(110 231 183)}
 .recon-button,.recon-link,.recon-pagination button { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; border:0; border-radius:.45rem; background:rgb(225 29 72); color:#fff; padding:.55rem .75rem; font-size:.8125rem; font-weight:650; cursor:pointer; }.recon-button svg,.recon-pagination svg { width:1rem; }.recon-button:hover,.recon-pagination button:hover { background:rgb(190 18 60); }.recon-button:disabled,.recon-pagination button:disabled { cursor:not-allowed; opacity:.45; }.recon-button.secondary { background:rgb(var(--rd-surface) / var(--rd-surface-alpha-strong)); color:rgb(var(--rd-text-secondary)); border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha)); }.recon-button.danger { background:rgb(159 18 57); }.recon-link { background:transparent; color:rgb(225 29 72); padding:0; }.recon-link:hover { text-decoration:underline; }.recon-empty,.recon-skeleton { min-height:10rem; padding:2rem; display:grid; place-items:center; text-align:center; color:rgb(var(--rd-text-tertiary)); }.recon-empty svg { width:2rem; height:2rem; color:rgb(var(--rd-text-muted)); }.recon-pagination { max-width:1500px; margin:1rem auto; display:flex; justify-content:flex-end; align-items:center; gap:.6rem; color:rgb(var(--rd-text-tertiary)); font-size:.8125rem; }.recon-pagination button { background:rgb(var(--rd-surface) / var(--rd-surface-alpha-strong)); color:rgb(var(--rd-text-secondary)); border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha)); }
-.recon-mobile-list { display:none; }.recon-drawer { position:fixed; inset:0 0 0 auto; z-index:80; width:min(760px,100vw); overflow:auto; border-left:1px solid rgb(var(--rd-card-border)); background:rgb(var(--rd-panel-bg) / var(--rd-panel-alpha)); box-shadow:-20px 0 60px rgb(0 0 0 / .25); }.recon-drawer-head { position:sticky; top:0; z-index:1; display:flex; justify-content:space-between; gap:1rem; padding:1rem 1.25rem; border-bottom:1px solid rgb(var(--rd-card-border)); background:rgb(var(--rd-panel-bg) / .98); }.recon-drawer-head h2 { margin:.15rem 0 0; color:rgb(var(--rd-text)); font-size:1.05rem; overflow-wrap:anywhere; }.recon-drawer-head button { align-self:start; border:0; background:transparent; color:rgb(var(--rd-text-secondary)); cursor:pointer; }.recon-drawer-head svg { width:1.3rem; }.recon-eyebrow { margin:0; color:rgb(225 29 72); font-size:.68rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }.recon-drawer-body { padding:1.25rem; }.recon-drawer-body h3 { margin:1.25rem 0 .5rem; color:rgb(var(--rd-text)); font-size:.92rem; }.recon-detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.6rem; }.recon-detail-grid>div { padding:.65rem; border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha)); border-radius:.5rem; }.recon-detail-grid span { display:block; color:rgb(var(--rd-text-muted)); font-size:.68rem; }.recon-detail-grid b,.recon-detail-grid code { display:block; margin-top:.2rem; color:rgb(var(--rd-text-secondary)); font-size:.75rem; overflow-wrap:anywhere; }.recon-json-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; }.recon-json { border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha)); border-radius:.5rem; padding:.55rem .65rem; }.recon-json summary { cursor:pointer; color:rgb(var(--rd-text-secondary)); font-size:.78rem; }.recon-json pre { overflow:auto; margin:.65rem 0 0; color:rgb(var(--rd-text-tertiary)); font-size:.68rem; white-space:pre-wrap; overflow-wrap:anywhere; }.recon-resolution { display:flex; justify-content:space-between; gap:1rem; border-top:1px solid rgb(var(--rd-card-border)); }.recon-actions { display:flex; gap:.5rem; align-items:center; }.recon-form { display:grid; gap:.7rem; margin-top:1rem; padding:1rem; border:1px solid rgb(225 29 72 / .3); border-radius:.65rem; background:rgb(225 29 72 / .04); }.recon-form h3 { margin:0; }.recon-before,.recon-error { margin:0; font-size:.78rem; color:rgb(var(--rd-text-tertiary)); }.recon-error { color:rgb(225 29 72); }.recon-history { display:grid; gap:.45rem; padding:0; list-style:none; }.recon-history li { display:grid; gap:.2rem; padding:.65rem; border-left:2px solid rgb(225 29 72 / .55); background:rgb(var(--rd-surface) / var(--rd-surface-alpha)); font-size:.75rem; }.recon-history span,.recon-history small { color:rgb(var(--rd-text-tertiary)); overflow-wrap:anywhere; }.spin { animation:recon-spin 1s linear infinite; }@keyframes recon-spin{to{transform:rotate(360deg)}}
+.recon-mobile-list { display:none; }.recon-drawer { position:fixed; inset:0 0 0 auto; z-index:80; width:min(760px,100vw); overflow:auto; border-left:1px solid rgb(var(--rd-card-border)); background:rgb(var(--rd-panel-bg) / var(--rd-panel-alpha)); box-shadow:-20px 0 60px rgb(0 0 0 / .25); }
+/* Phase 5B P1 fix: --rd-panel-alpha di Dark Mode adalah 0.98 (dipakai bersama
+   .rd-panel dropdown yang SENGAJA translucent+blur — tidak diubah di sini
+   supaya dropdown lain tidak ikut berubah). .recon-drawer adalah overlay
+   PENUH yang harus menutup total konten di belakangnya; 2% transparansi
+   membuatnya dikompositkan sebagai layer alpha-blend di Dark Mode saja
+   (Light Mode --rd-panel-alpha sudah 1), dan berganti bulan tanpa remount
+   (lihat key={selectedPeriod} di page.tsx) memicu ghosting nilai bulan
+   sebelumnya. Override KHUSUS drawer ini: opaque penuh di Dark Mode. */
+[data-mode="dark"] .recon-drawer { background: rgb(var(--rd-panel-bg) / 1); }.recon-drawer-head { position:sticky; top:0; z-index:1; display:flex; justify-content:space-between; gap:1rem; padding:1rem 1.25rem; border-bottom:1px solid rgb(var(--rd-card-border)); background:rgb(var(--rd-panel-bg) / .98); }.recon-drawer-head h2 { margin:.15rem 0 0; color:rgb(var(--rd-text)); font-size:1.05rem; overflow-wrap:anywhere; }.recon-drawer-head button { align-self:start; border:0; background:transparent; color:rgb(var(--rd-text-secondary)); cursor:pointer; }.recon-drawer-head svg { width:1.3rem; }.recon-eyebrow { margin:0; color:rgb(225 29 72); font-size:.68rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }.recon-drawer-body { padding:1.25rem; }.recon-drawer-body h3 { margin:1.25rem 0 .5rem; color:rgb(var(--rd-text)); font-size:.92rem; }.recon-detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.6rem; }.recon-detail-grid>div { padding:.65rem; border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha)); border-radius:.5rem; }.recon-detail-grid span { display:block; color:rgb(var(--rd-text-muted)); font-size:.68rem; }.recon-detail-grid b,.recon-detail-grid code { display:block; margin-top:.2rem; color:rgb(var(--rd-text-secondary)); font-size:.75rem; overflow-wrap:anywhere; }.recon-json-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; }.recon-json { border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha)); border-radius:.5rem; padding:.55rem .65rem; }.recon-json summary { cursor:pointer; color:rgb(var(--rd-text-secondary)); font-size:.78rem; }.recon-json pre { overflow:auto; margin:.65rem 0 0; color:rgb(var(--rd-text-tertiary)); font-size:.68rem; white-space:pre-wrap; overflow-wrap:anywhere; }.recon-resolution { display:flex; justify-content:space-between; gap:1rem; border-top:1px solid rgb(var(--rd-card-border)); }.recon-actions { display:flex; gap:.5rem; align-items:center; }.recon-form { display:grid; gap:.7rem; margin-top:1rem; padding:1rem; border:1px solid rgb(225 29 72 / .3); border-radius:.65rem; background:rgb(225 29 72 / .04); }.recon-form h3 { margin:0; }.recon-before,.recon-error { margin:0; font-size:.78rem; color:rgb(var(--rd-text-tertiary)); }.recon-error { color:rgb(225 29 72); }.recon-history { display:grid; gap:.45rem; padding:0; list-style:none; }.recon-history li { display:grid; gap:.2rem; padding:.65rem; border-left:2px solid rgb(225 29 72 / .55); background:rgb(var(--rd-surface) / var(--rd-surface-alpha)); font-size:.75rem; }.recon-history span,.recon-history small { color:rgb(var(--rd-text-tertiary)); overflow-wrap:anywhere; }.spin { animation:recon-spin 1s linear infinite; }@keyframes recon-spin{to{transform:rotate(360deg)}}
 .recon-sport-sections{display:grid;gap:.8rem}.recon-sport-card{border:1px solid rgb(var(--rd-card-border));border-radius:.65rem;background:rgb(var(--rd-surface) / var(--rd-surface-alpha));padding:.8rem}.recon-sport-card h3{margin:0 0 .65rem;color:rgb(var(--rd-text));font-size:.82rem;letter-spacing:.06em}
 .recon-finalization{display:grid;gap:.7rem;margin-top:1rem;padding:1rem;border:1px solid rgb(59 130 246 / .35);border-radius:.65rem;background:rgb(59 130 246 / .05)}.recon-finalization h3{margin:0}.recon-upload-label{display:grid;gap:.3rem;color:rgb(var(--rd-text-tertiary));font-size:.75rem;font-weight:600}.recon-upload-label input,.recon-upload-label textarea{min-width:0;border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha));border-radius:.45rem;background:rgb(var(--rd-surface) / var(--rd-surface-alpha));color:rgb(var(--rd-text-secondary));padding:.55rem .65rem;font:inherit;font-weight:400}.recon-upload-label textarea{min-height:3.5rem;resize:vertical}
 /* P0 fix: "Pilih File" native <input type=file> terlihat seperti input biasa

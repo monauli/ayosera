@@ -545,9 +545,38 @@ export interface LedgerDetailEntry {
   description: string;
   debit: number;
   credit: number;
-  /** Saldo berjalan dari sumber (Olsera famount), bukan hasil hitung ulang. */
+  /** Saldo berjalan DIHITUNG (Saldo Awal + kumulatif debit-kredit) — lihat computeRunningLedgerBalances. */
   balance: number | null;
   isOpeningBalance: boolean;
+}
+
+export interface RunningLedgerRow {
+  debit: number;
+  credit: number;
+  isOpeningBalance: boolean;
+  balance?: number | null;
+}
+
+/**
+ * Phase 5B P0 fix: Olsera `famount` TIDAK reliable sebagai saldo berjalan per
+ * baris transaksi (terbukti dari produksi — famount baris transaksi ternyata
+ * hanya mencerminkan nominal movement baris itu sendiri, bukan posisi
+ * kumulatif akun). Hanya baris saldo awal yang bisa dipercaya membawa posisi
+ * akun sungguhan dari Olsera. Fungsi ini SATU-SATUNYA titik hitung saldo
+ * berjalan — dipakai buildLedgerDetailGroups, buildLedgerAccountDetail, DAN
+ * route snapshot/ledger (UI) — supaya UI/Excel/PDF/"Download Akun Ini" selalu
+ * memakai formula yang sama: saldo[i] = saldo awal + Σ(debit-kredit) baris
+ * 0..i, TIDAK ADA rule khusus per akun. `rows` HARUS sudah terurut saldo awal
+ * dulu lalu tanggal transaksi menaik (urutan sumber existing, tidak diubah).
+ */
+export function computeRunningLedgerBalances<T extends RunningLedgerRow>(rows: readonly T[]): (T & { balance: number })[] {
+  let running = 0;
+  return rows.map((row) => {
+    running = row.isOpeningBalance
+      ? (typeof row.balance === "number" && Number.isFinite(row.balance) ? row.balance : 0)
+      : running + row.debit - row.credit;
+    return { ...row, balance: running };
+  });
 }
 export interface LedgerDetailGroup {
   code: string;
@@ -594,14 +623,14 @@ export function buildLedgerDetailGroups(
     // dari seluruh baris (baris nol tidak mengubah jumlah).
     if (!isHiddenZeroLedgerRow(debit, credit, isOpening)) {
       const display = deriveLedgerRowDisplay(entry);
-      const balance = typeof entry.balance === "number" && Number.isFinite(entry.balance) ? entry.balance : null;
+      const rawBalance = typeof entry.balance === "number" && Number.isFinite(entry.balance) ? entry.balance : null;
       group.entries.push({
         date: isOpening ? "Saldo Awal" : display.date,
         transactionNo: display.transactionNo,
         description: display.description,
         debit,
         credit,
-        balance,
+        balance: rawBalance,
         isOpeningBalance: isOpening,
       });
     }
@@ -609,6 +638,13 @@ export function buildLedgerDetailGroups(
       group.totalDebit += debit;
       group.totalCredit += credit;
     }
+  }
+
+  // Saldo berjalan dihitung PER AKUN (baris nol/tersembunyi tidak mengubah
+  // jumlah karena debit=kredit=0, aman diabaikan di sini).
+  for (const code of order) {
+    const group = groups.get(code)!;
+    group.entries = computeRunningLedgerBalances(group.entries);
   }
 
   return order.map((code) => groups.get(code)!);
@@ -649,7 +685,7 @@ export interface LedgerAccountDetailReport {
   totalCredit: number;
   /** = totalDebit - totalCredit, sama seperti "Pergerakan Periode" di UI. */
   movement: number;
-  /** Saldo berjalan baris transaksi terakhir; fallback openingBalance + movement bila tidak tersedia. */
+  /** = openingBalance + movement (dihitung deterministik, lihat computeRunningLedgerBalances). */
   endingBalance: number;
 }
 
@@ -673,8 +709,7 @@ export function buildLedgerAccountDetail(
   let openingBalance = 0;
   let totalDebit = 0;
   let totalCredit = 0;
-  let lastBalance: number | null = null;
-  const detailEntries: LedgerDetailEntry[] = [];
+  const rawEntries: LedgerDetailEntry[] = [];
 
   for (const entry of rows) {
     if (!name && entry.accountName) name = decodeFinancialHtmlEntities(String(entry.accountName).trim());
@@ -690,25 +725,30 @@ export function buildLedgerAccountDetail(
 
     totalDebit += debit;
     totalCredit += credit;
-    if (balanceValue !== null) lastBalance = balanceValue;
 
     if (isHiddenZeroLedgerRow(debit, credit, false)) continue; // Fitur 2
 
     const display = deriveLedgerRowDisplay(entry);
-    detailEntries.push({
+    rawEntries.push({
       date: display.date,
       transactionNo: display.transactionNo,
       description: display.description,
       debit,
       credit,
-      balance: balanceValue,
+      balance: null,
       isOpeningBalance: false,
     });
   }
 
   if (!name) name = decodeFinancialHtmlEntities(accountNameByCode.get(code) ?? "");
   const movement = totalDebit - totalCredit;
-  const endingBalance = lastBalance !== null ? lastBalance : openingBalance + movement;
+  const endingBalance = openingBalance + movement;
+  // Saldo awal disuntikkan sebagai baris semu untuk menyamai saldo (dibuang setelahnya) — computeRunningLedgerBalances SATU-SATUNYA titik hitung, sama dengan buildLedgerDetailGroups.
+  const seeded = computeRunningLedgerBalances<LedgerDetailEntry>([
+    { date: "Saldo Awal", transactionNo: "-", description: "-", debit: 0, credit: 0, balance: openingBalance, isOpeningBalance: true },
+    ...rawEntries,
+  ]);
+  const detailEntries = seeded.slice(1);
 
   return { code: code || "-", name: name || "-", openingBalance, entries: detailEntries, totalDebit, totalCredit, movement, endingBalance };
 }

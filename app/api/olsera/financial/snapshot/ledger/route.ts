@@ -1,5 +1,6 @@
 import { validatePeriod } from "@/lib/olsera-financial-core";
-import { getFinancialLedgerMovementTotals, listFinancialAccounts, listFinancialLedgerEntriesPage } from "@/lib/olsera-financial-store";
+import { computeRunningLedgerBalances } from "@/lib/olsera-financial-export-core";
+import { getFinancialLedgerMovementTotals, listAllFinancialLedgerEntriesForAccount, listFinancialAccounts } from "@/lib/olsera-financial-store";
 import { guard, json, isDatabaseTimeoutError, withDatabaseRetry } from "../../_shared";
 import { withTimeout } from "@/lib/with-timeout";
 
@@ -33,13 +34,25 @@ export async function GET(req: Request) {
     const page = Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1));
     const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(url.searchParams.get("limit")) || 50)));
 
-    const [{ data, total }, movementTotals, accounts] = await withDatabaseRetry(() =>
+    const [allRows, movementTotals, accounts] = await withDatabaseRetry(() =>
       Promise.all([
-        timed("ledgerQuery", listFinancialLedgerEntriesPage(period, accountCode, page, limit)),
+        timed("ledgerQuery", listAllFinancialLedgerEntriesForAccount(period, accountCode)),
         timed("movementTotals", getFinancialLedgerMovementTotals(period, accountCode)),
         timed("accounts", listFinancialAccounts()),
       ]),
     );
+
+    // Phase 5B P0 fix: saldo berjalan HARUS dihitung dari seluruh baris akun
+    // (saldo awal + kumulatif debit-kredit berurutan), BUKAN row.balance
+    // (famount) mentah per halaman — computeRunningLedgerBalances SATU-SATUNYA
+    // titik hitung, sama dipakai Excel & PDF (lib/olsera-financial-export-core.ts)
+    // supaya UI/Excel/PDF tidak pernah berbeda formula. Diambil TANPA
+    // pagination lalu dipotong di memori supaya saldo baris N tidak pernah
+    // hilang konteks baris 1..N-1 dari halaman sebelumnya.
+    const withBalances = computeRunningLedgerBalances(allRows);
+    const total = withBalances.length;
+    const start = (page - 1) * limit;
+    const data = withBalances.slice(start, start + limit);
 
     const account = accounts.find((row: any) => row.accountCode === accountCode);
     const accountName = account?.accountName ?? data.find((row) => row.accountName)?.accountName ?? null;

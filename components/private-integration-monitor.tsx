@@ -103,7 +103,7 @@ export function PrivateIntegrationMonitor() {
 
   if (state.kind === "loading") {
     return (
-      <section className="mt-6 flex items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4 text-sm text-slate-400">
+      <section className="pim-panel mt-6 flex items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4 text-sm text-slate-400">
         <Loader2 className="h-4 w-4 animate-spin" /> Memuat status integrasi...
       </section>
     );
@@ -111,7 +111,7 @@ export function PrivateIntegrationMonitor() {
 
   if (state.kind === "unauthenticated") {
     return (
-      <section className="mt-6 flex items-start gap-3 rounded-xl border border-amber-300/20 bg-amber-950/10 p-4">
+      <section className="pim-panel mt-6 flex items-start gap-3 rounded-xl border border-amber-300/20 bg-amber-950/10 p-4">
         <Lock className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
         <p className="text-sm text-amber-200">Sesi login tidak ditemukan. Silakan login ulang untuk mengakses modul ini.</p>
       </section>
@@ -120,7 +120,7 @@ export function PrivateIntegrationMonitor() {
 
   if (state.kind === "forbidden") {
     return (
-      <section className="mt-6 flex items-start gap-3 rounded-xl border border-amber-300/20 bg-amber-950/10 p-4">
+      <section className="pim-panel mt-6 flex items-start gap-3 rounded-xl border border-amber-300/20 bg-amber-950/10 p-4">
         <Lock className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
         <div className="text-sm text-amber-200">
           <p>Akun ini belum memiliki akses ke modul Audit &amp; Sinkronisasi.</p>
@@ -132,7 +132,7 @@ export function PrivateIntegrationMonitor() {
 
   if (state.kind === "error") {
     return (
-      <section className="mt-6 flex items-start gap-3 rounded-xl border border-rose-300/20 bg-rose-950/10 p-4">
+      <section className="pim-panel mt-6 flex items-start gap-3 rounded-xl border border-rose-300/20 bg-rose-950/10 p-4">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
         <div className="text-sm text-rose-200">
           <p>Gagal memuat status integrasi. Coba lagi beberapa saat lagi.</p>
@@ -149,7 +149,7 @@ export function PrivateIntegrationMonitor() {
   const otherHealth = health.filter((item) => item.source !== "ayo-mobile");
 
   return (
-    <section className="mt-6 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4">
+    <section className="pim-panel mt-6 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-slate-100">Monitoring Integritas Data</h2>

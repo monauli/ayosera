@@ -13,6 +13,8 @@ import {
   buildLedgerAccountDetail,
   buildLedgerDetailGroups,
   buildLedgerSummaryRows,
+  computeRunningLedgerBalances,
+  type RunningLedgerRow,
   buildProfitLossLines,
   decodeFinancialHtmlEntities,
   draftReportNotice,
@@ -358,6 +360,81 @@ test("Buku Besar Detail: seluruh baris dikelompokkan per akun, tidak ada yang hi
   }
 });
 
+// ---- Phase 5B P0 regresi: kolom Saldo HARUS running balance, bukan famount --
+// mentah per baris. Bukti produksi: akun BANK BCA 7195-332266, periode
+// 2026-07, Saldo Awal Rp556.986.758,71, transaksi pertama Debit
+// Rp2.011.818,00 — UI menampilkan Saldo Rp2.011.818,00 (movement baris itu
+// sendiri), padahal seharusnya Rp558.998.576,71 (running balance). Fixture di
+// bawah memakai contoh produksi HANYA untuk regresi test — logika produksi
+// (computeRunningLedgerBalances/buildLedgerDetailGroups/buildLedgerAccountDetail)
+// TIDAK mengandung rule khusus akun apa pun (diverifikasi juga oleh test kode
+// akun generik lain di file ini).
+
+test("computeRunningLedgerBalances: saldo awal menjadi seed, debit menambah, kredit mengurangi (convention existing: movement = debit - kredit)", () => {
+  const rows = computeRunningLedgerBalances<RunningLedgerRow>([
+    { isOpeningBalance: true, debit: 0, credit: 0, balance: 556986758.71 },
+    { isOpeningBalance: false, debit: 2011818.0, credit: 0 },
+    { isOpeningBalance: false, debit: 0, credit: 500000 },
+    { isOpeningBalance: false, debit: 1000, credit: 0 },
+  ]);
+  assert.equal(rows[0].balance, 556986758.71); // Saldo Awal tidak berubah
+  assert.equal(rows[1].balance, 558998576.71); // 556986758.71 + 2011818.00 — angka regresi PRD persis
+  assert.equal(rows[2].balance, 558498576.71); // kredit MENGURANGI saldo (convention existing: movement = debit - kredit)
+  assert.equal(rows[3].balance, 558499576.71); // baris berurutan berikutnya tetap kumulatif dari baris sebelumnya
+});
+
+test("computeRunningLedgerBalances: tanpa baris saldo awal, seed dimulai dari 0 (tidak menebak opening)", () => {
+  const rows = computeRunningLedgerBalances<RunningLedgerRow>([
+    { isOpeningBalance: false, debit: 100, credit: 0 },
+    { isOpeningBalance: false, debit: 0, credit: 40 },
+  ]);
+  assert.equal(rows[0].balance, 100);
+  assert.equal(rows[1].balance, 60);
+});
+
+test("computeRunningLedgerBalances: baris saldo awal tanpa famount valid (null/NaN) tidak meracuni akumulasi (seed 0, bukan NaN)", () => {
+  const rows = computeRunningLedgerBalances<RunningLedgerRow>([
+    { isOpeningBalance: true, debit: 0, credit: 0, balance: null },
+    { isOpeningBalance: false, debit: 500, credit: 0 },
+  ]);
+  assert.equal(rows[0].balance, 0);
+  assert.equal(rows[1].balance, 500);
+});
+
+test("buildLedgerDetailGroups: regresi produksi BANK BCA — Saldo per baris adalah running balance, urutan transaksi tidak berubah, TIDAK ada rule khusus akun (kode akun generik diuji sama)", () => {
+  for (const accountCode of ["11105", "99999-generik"]) {
+    const entries: LedgerEntryInput[] = [
+      { accountCode, accountName: "Akun Uji", isOpeningBalance: true, description: "Saldo awal", debit: 0, credit: 0, balance: 556986758.71 },
+      { accountCode, accountName: "Akun Uji", transactionDate: "2026-07-01", transactionNo: "JU-1", description: "Transaksi 1", debit: 2011818.0, credit: 0, balance: 2011818.0 },
+      { accountCode, accountName: "Akun Uji", transactionDate: "2026-07-02", transactionNo: "JU-2", description: "Transaksi 2 (kredit)", debit: 0, credit: 500000, balance: 500000 },
+    ];
+    const [group] = buildLedgerDetailGroups(entries);
+    assert.equal(group.entries.length, 3);
+    assert.equal(group.entries[0].balance, 556986758.71); // Saldo Awal
+    assert.equal(group.entries[1].balance, 558998576.71); // running, BUKAN famount mentah (2011818.00 — nilai bug lama)
+    assert.equal(group.entries[2].balance, 558498576.71); // kredit mengurangi running balance sebelumnya
+    // Urutan transaksi (transactionNo) tidak berubah oleh perbaikan saldo.
+    assert.deepEqual(group.entries.map((e) => e.transactionNo), ["-", "JU-1", "JU-2"]);
+  }
+});
+
+test("buildLedgerAccountDetail: regresi produksi BANK BCA — saldo per baris + saldo akhir konsisten dengan buildLedgerDetailGroups (satu formula)", () => {
+  const entries: LedgerEntryInput[] = [
+    { accountCode: "11105", accountName: "BANK BCA 7195-332266", isOpeningBalance: true, description: "Saldo awal", debit: 0, credit: 0, balance: 556986758.71 },
+    { accountCode: "11105", accountName: "BANK BCA 7195-332266", transactionDate: "2026-07-01", transactionNo: "JU-1", description: "Transaksi 1", debit: 2011818.0, credit: 0, balance: 2011818.0 },
+    { accountCode: "11105", accountName: "BANK BCA 7195-332266", transactionDate: "2026-07-02", transactionNo: "JU-2", description: "Transaksi 2 (kredit)", debit: 0, credit: 500000, balance: 500000 },
+  ];
+  const detail = buildLedgerAccountDetail(entries, "11105");
+  assert.equal(detail.openingBalance, 556986758.71);
+  assert.equal(detail.entries[0].balance, 558998576.71);
+  assert.equal(detail.entries[1].balance, 558498576.71);
+  assert.equal(detail.endingBalance, 558498576.71);
+  // UI (buildLedgerDetailGroups) dan Excel/PDF "Download Akun Ini" (buildLedgerAccountDetail) harus sepakat persis.
+  const [group] = buildLedgerDetailGroups(entries);
+  assert.equal(detail.entries[0].balance, group.entries[1].balance);
+  assert.equal(detail.entries[1].balance, group.entries[2].balance);
+});
+
 // ---- Regresi komplain: Total Kredit HARUS TIDAK ikut Total Debit -----------
 // Kasus nyata: Debit total Rp20.614.923,86, Kredit transaksi Rp1.275.576,14 —
 // Total Pergerakan Kredit sempat salah menampilkan Rp20.614.923,86 (= Debit).
@@ -457,9 +534,11 @@ test("Excel ledger mempertahankan dua desimal, pengaturan cetak, kolom Saldo ter
   assert.equal(detail.getRow(5).getCell(6).value, "Saldo");
   // Total Pergerakan adalah total movement (SUM Debit/SUM Kredit) — kolom Saldo (6) sengaja tidak diisi di baris ini.
   assert.equal(totalRow!.getCell(6).value, null);
-  // Saldo berjalan (dari sumber Olsera famount) tampil per baris transaksi.
+  // Baris 7 = Saldo Awal akun 11105 (famount sumber, dipakai sebagai seed saldo berjalan).
   assert.equal(detail.getRow(7).getCell(6).value, 1000000);
   assert.equal(detail.getRow(7).getCell(3).alignment?.wrapText, true);
+  // Phase 5B P0 fix: baris transaksi pertama (debit 500000) = saldo berjalan DIHITUNG (opening + debit), bukan famount fixture mentah (1000000, bug lama).
+  assert.equal(detail.getRow(8).getCell(6).value, 1000000 + 500000);
   assert.equal(detail.pageSetup.printTitlesRow, "5:5");
 });
 
@@ -659,7 +738,12 @@ test("buildLedgerAccountDetail: hanya akun terpilih, seluruh transaksinya ikut, 
   assert.equal(detail.totalDebit, 37500000); // = 75 * 500000, BUKAN gabungan 3 akun (yang akan 3x lipat)
   assert.equal(detail.totalCredit, 22500000);
   assert.equal(detail.movement, 15000000);
-  assert.equal(detail.endingBalance, 1149000); // balance baris transaksi terakhir (i=149): 1000000 + 149*1000
+  // Phase 5B P0 fix: endingBalance = openingBalance + movement (dihitung), BUKAN famount baris terakhir fixture (1149000 — nilai itu adalah bug lama).
+  assert.equal(detail.endingBalance, 1000000 + 15000000);
+  // Saldo berjalan per baris juga harus akumulatif, bukan famount mentah: baris pertama (debit 500000) = opening + 500000.
+  assert.equal(detail.entries[0].balance, 1000000 + 500000);
+  assert.equal(detail.entries[1].balance, 1000000 + 500000 - 300000);
+  assert.equal(detail.entries[detail.entries.length - 1].balance, detail.endingBalance);
 });
 
 test("buildLedgerAccountDetail: baris debit=0 kredit=0 dibuang, baris satu sisi & saldo awal tetap tampil", () => {

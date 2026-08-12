@@ -827,7 +827,7 @@ export default function ReconciliationPage() {
       )}
 
       {selectedPeriod && (
-        <aside className="recon-drawer" role="dialog" aria-modal="true" aria-label="Detail rekonsiliasi bulan">
+        <aside key={selectedPeriod} className="recon-drawer" role="dialog" aria-modal="true" aria-label="Detail rekonsiliasi bulan">
           <div className="recon-drawer-head">
             <div>
               <p className="recon-eyebrow">Detail Rekonsiliasi Omzet</p>
