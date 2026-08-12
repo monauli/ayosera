@@ -361,3 +361,27 @@ Next step: implement and test the generic historical-stale-period selector plus 
 - Full audit tetap PASS: current unfinished prioritas pertama; historical stale diproses setelah current; running selalu resume; loop dibatasi step/deadline; Sales/Inventory tidak terdampak; scope tetap Financial cron, telemetry, tests, Mongo telemetry collection/index, dan handoff.
 - Validation PASS: Financial cron 55/55, time-budget 9/9, typecheck, build, dan `git diff --check`.
 - Status: `SAFE TO PUSH`. Belum push pada audit ini.
+## 2026-08-12 — Read-only audit Cron Sales failure
+
+- Audit production log/telemetry tidak dapat diselesaikan dari home PC karena DNS SRV Mongo gagal: `querySrv ECONNREFUSED _mongodb._tcp.cluster0.dqvtxp8.mongodb.net`.
+- Collection/log yang akan diaudit sudah teridentifikasi: `olsera_sync_log` (status, waktu, expected vs processed, failed order ringkas), `olsera_sync_state` (checkpoint terakhir), dan `olsera_order_items` (kelengkapan/duplicate berdasarkan `_id`). Endpoint production adalah Cron Sales `/api/cron/olsera/sales`; kode juga memakai distributed lock Sales.
+- Karena read path production terblokir, waktu failure, HTTP/error exact, keberhasilan catch-up, serta audit missing/duplicate belum dapat dibuktikan. Status audit: `BLOCKED — NOT PASS`; tidak ada fix yang diterapkan.
+- Tidak ada code, database, schedule, atau cron config yang diubah.
+- Next step aman: ulangi audit read-only setelah DNS/Mongo reachable, lalu bandingkan failure log dengan run berikutnya dan expected/processed serta duplicate `_id`.
+## 2026-08-12 — Cron Sales failure audit (read-only, fallback bootstrap)
+
+- Bootstrap aplikasi `mongodb-dns` + `withMongo` berhasil membaca production; tidak memakai raw Mongo connection.
+- Ditemukan 17 historical `failed` runs. Penyebab yang tersimpan: hari tidak tuntas (terutama 2026-06-01/2026-08-01..07) dan satu rangkaian autentikasi Olsera HTTP 401; tidak ada raw credential/token yang dipakai dalam laporan.
+- Run terbaru setelah failure sehat: 20 run terakhir berstatus `success`; masing-masing `expectedOrderCount` sama dengan `processedOrderCount` (53–66), `failedOrderCount=0`.
+- Checkpoint Sales: `2026-08-12`. `olsera_order_items` terbaca 13.756 dokumen; duplicate `_id` terdeteksi 0.
+- Tidak terlihat evidence missing/duplicate setelah failure; run berikutnya berhasil catch-up berdasarkan expected vs processed dan checkpoint maju.
+- Status: **PASS — failure bersifat sementara/historis, data tetap lengkap berdasarkan audit read-only**. Tidak perlu fix.
+- Tidak ada code, database, schedule, atau cron config yang diubah.
+## 2026-08-12 — Samakan permission user login dengan supervisor
+
+- Semua user yang berhasil login kini menerima seluruh `APP_MODULES`, sehingga menu/UI module gating tidak lagi membatasi user berdasarkan role.
+- `requireSupervisor()` dipertahankan sebagai kompatibilitas nama API tetapi sekarang hanya memvalidasi authenticated user; authentication, session, dan disabled-account behavior tetap aktif.
+- Supervisor-only backend gates untuk finalisasi, lock/unlock, upload BA, readiness/write actions, reservations, fields sync, payment backfill, dan user-management routes kini menerima user terautentikasi secara konsisten.
+- UI reconciliation, inventory, menu Pengguna, finalisasi, upload, lock/unlock, reset/hide/cleanup mengikuti status authenticated, bukan role supervisor.
+- Validation PASS: permission audit tests 25/25, users tests 5/5, reconciliation endpoint suite PASS 75/75, auth-base-url 6/6, typecheck PASS, build PASS, `git diff --check` PASS.
+- Login/authentication tidak diubah; tidak ada perubahan database manual.

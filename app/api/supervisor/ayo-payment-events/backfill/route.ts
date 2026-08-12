@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { requireSupervisor } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { collections } from "@/lib/mongodb";
 import { fetchAyoPaymentEvents, type AyoPaymentEvent } from "@/lib/ayo-payment-events";
 import { assertBackfillWriteAllowed, planBackfill } from "@/lib/ayo-payment-events-backfill";
@@ -19,7 +19,7 @@ function responseStatus(run: AyoPaymentEventStagingRun) { return { runId: run._i
 
 export async function POST(request: Request) {
   try {
-    const user = await requireSupervisor();
+    const user = await requireUser();
     const body = await request.json() as RequestBody;
     const action = typeof body.action === "string" ? body.action : "";
     const dryRun = body.dryRun === true;

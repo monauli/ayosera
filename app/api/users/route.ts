@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { APP_MODULES, auth, requireSupervisor } from "@/lib/auth";
+import { APP_MODULES, auth, requireUser } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { toPublicUser, usernameFromEmail, USERNAME_REGEX, type UserDoc } from "@/lib/users";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    await requireSupervisor();
+    await requireUser();
     const db = await getDb();
     const docs = await db.collection<UserDoc>("user").find({}).sort({ createdAt: 1 }).toArray();
     return NextResponse.json({ users: docs.map(toPublicUser) }, { headers: NO_CACHE_HEADERS });
@@ -36,7 +36,7 @@ const createSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    await requireSupervisor();
+    await requireUser();
     const body = createSchema.parse(await request.json());
     const email = body.email.toLowerCase();
 

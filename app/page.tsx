@@ -1762,7 +1762,7 @@ export default function DashboardPage() {
     olseraLabersExportMessage,
   ].filter(Boolean);
 
-  const isSupervisor = sessionUser?.role === "supervisor";
+  const isSupervisor = Boolean(sessionUser);
   // Aksi sync tidak lagi khusus supervisor — cukup punya modul terkait.
   // (allowedModules dari /api/auth/me sudah dinormalisasi; supervisor otomatis punya semua modul.)
   const canSyncAyo = ["dasbor", "transaksi"].some((module) => sessionUser?.allowedModules.includes(module));

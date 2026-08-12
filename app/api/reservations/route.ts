@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createAyoReservation } from "@/lib/ayo";
-import { requireSupervisor } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { normalizeBooking } from "@/lib/booking-mapper";
 import { collections, withMongo } from "@/lib/mongodb";
 
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   const startedAt = new Date();
 
   try {
-    await requireSupervisor();
+    await requireUser();
 
     const body = reservationSchema.parse(await request.json());
     const response = await createAyoReservation({

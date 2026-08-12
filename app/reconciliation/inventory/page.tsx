@@ -126,7 +126,7 @@ export default function InventoryOpnamePage() {
     window.localStorage.setItem(THEME_MODE_STORAGE_KEY, initialMode);
   }, []);
 
-  const supervisor = user?.role === "supervisor";
+  const supervisor = Boolean(user);
 
   const seedEdits = (rows: Row[]) => {
     const next: Record<string, Edit> = {};

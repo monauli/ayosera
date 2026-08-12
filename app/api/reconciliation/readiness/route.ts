@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSupervisor } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { getDb, collections } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { isReconciliationWriteEnabled } from "@/lib/reconciliation-operational-readiness";
@@ -7,7 +7,7 @@ import { isReconciliationWriteEnabled } from "@/lib/reconciliation-operational-r
 export const runtime = "nodejs"; export const dynamic = "force-dynamic";
 export async function GET() {
   try {
-    await requireSupervisor(); const db = await getDb(); const c = await collections();
+    await requireUser(); const db = await getDb(); const c = await collections();
     const [mongo, indexes, snapshot, run, audit] = await Promise.all([
       db.command({ ping: 1 }).then(() => "healthy").catch(() => "unavailable"),
       Promise.all([c.reconciliationRuns.listIndexes().toArray(), c.reconciliationFindings.listIndexes().toArray(), c.reconciliationManualResolutions.listIndexes().toArray(), c.reconciliationAuditLog.listIndexes().toArray()]).then((sets) => ({ status: "checked", count: sets.reduce((sum, set) => sum + set.length, 0) })).catch(() => ({ status: "unavailable", count: 0 })),

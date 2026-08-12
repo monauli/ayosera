@@ -690,7 +690,7 @@ export default function ReconciliationPage() {
   // component sama-sama PERLU_DICEK -> tidak ditempelkan ke siapa pun).
   const componentVerified = detail ? resolveBeritaAcaraVerifiedComponent(detail.sportReconciliation, beritaAcaraVerified) : { court: false, pickleball: false };
 
-  const supervisor = user?.role === "supervisor";
+  const supervisor = Boolean(user);
   if (user && !user.allowedModules.includes("rekonsiliasi") && !supervisor) {
     return (
       <main className="recon-page">
@@ -966,7 +966,7 @@ export default function ReconciliationPage() {
                           dominan, HANYA muncul kalau memang ada sesuatu untuk
                           direset (attachment atau hasil verifikasi sudah
                           ada). Backend (reset/route.ts) tetap WAJIB
-                          requireSupervisor() sendiri — tautan ini hanya UX. */}
+                          requireUser() sendiri — tautan ini hanya UX. */}
                       {(finalization?.attachment || finalization?.verifiedMatchStatus) && (
                         <div className="recon-actions">
                           {!showResetConfirm ? (
@@ -1022,7 +1022,7 @@ export default function ReconciliationPage() {
                           "upload" (duplikat/percobaan lama untuk dibersihkan) — tombol
                           kecil (recon-link, bukan recon-button) supaya tidak dominan.
                           Backend (cleanup-upload-history/route.ts) tetap WAJIB
-                          requireSupervisor() sendiri — tombol ini hanya UX, bukan
+                          requireUser() sendiri — tombol ini hanya UX, bukan
                           satu-satunya lapisan otorisasi. */}
                       {supervisor && finalization.history.filter((item) => item.action === "upload").length > 1 && (
                         <div className="recon-actions">

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSupervisor } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { currentStoreId } from "@/lib/reconciliation-store";
 import { computeReconciliationRequestFingerprint, resolvePreWriteContext, validateReconciliationWrite } from "@/lib/reconciliation-operational-readiness";
@@ -8,7 +8,7 @@ export const runtime = "nodejs"; export const dynamic = "force-dynamic";
 const FIELDS = ["target", "period", "findingId", "runId", "dryRun", "explicitConfirmation", "idempotencyKey"] as const;
 export async function POST(request: Request) {
   try {
-    const user = await requireSupervisor();
+    const user = await requireUser();
     if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return NextResponse.json({ error: "Content-Type harus application/json." }, { status: 400, headers: NO_CACHE_HEADERS });
     const raw = await request.text(); if (new TextEncoder().encode(raw).byteLength > 8 * 1024) return NextResponse.json({ error: "Body request terlalu besar." }, { status: 400, headers: NO_CACHE_HEADERS });
     const body: unknown = JSON.parse(raw); if (!body || Array.isArray(body) || typeof body !== "object" || Object.keys(body).some((key) => !(FIELDS as readonly string[]).includes(key))) return NextResponse.json({ error: "Body preview tidak valid." }, { status: 400, headers: NO_CACHE_HEADERS });

@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { fetchAyoFields } from "@/lib/ayo";
-import { requireSupervisor } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { normalizeField } from "@/lib/booking-mapper";
 import { collections, withMongo } from "@/lib/mongodb";
 
 export async function POST() {
   const startedAt = new Date();
   try {
-    await requireSupervisor();
+    await requireUser();
 
     const response = await fetchAyoFields();
     const records = response.data.map(normalizeField).filter((field) => field.id);

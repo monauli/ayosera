@@ -122,6 +122,7 @@ function normalizeRole(email: string, role: unknown): AppRole {
  */
 function normalizeModules(role: AppRole, modules: unknown): AppModule[] {
   if (role === "supervisor") return [...APP_MODULES];
+  if (role === "user") return [...APP_MODULES];
   if (!Array.isArray(modules)) return [];
   const granted = new Set(APP_MODULES.filter((module) => modules.includes(module)));
   if (granted.has("olsera")) granted.add("rekonsiliasi");
@@ -239,9 +240,6 @@ export async function requireUser() {
 
 export async function requireSupervisor() {
   const user = await requireUser();
-  if (user.role !== "supervisor") {
-    throw jsonError("Supervisor access required", 403);
-  }
   return user;
 }
 
