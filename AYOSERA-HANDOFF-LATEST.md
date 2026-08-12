@@ -342,3 +342,22 @@ Next step: implement and test the generic historical-stale-period selector plus 
 - Production was not written, resumed, committed remotely, or pushed in this turn. Last known production state remains February `success` (cursor 85/85, finalized) and August `running` at ledger-details cursor 41/85, resumable and unchanged.
 - A fresh read-only DB confirmation from this PC was blocked by local DNS SRV failure: `querySrv ECONNREFUSED _mongodb._tcp.cluster0.dqvtxp8.mongodb.net`; no credentials or connection strings were exposed.
 - Next step: commit remains local only; verify the next production Financial invocation records telemetry and that historical February is not selected again after its success state.
+## 2026-08-12 — Cron Financial anti-starvation pushed
+
+- Commit `1af55c0` berhasil dipush ke `origin/main`.
+- Vercel dibiarkan auto-deploy; tidak ada deploy manual.
+- Tidak ada perubahan code/database tambahan setelah push fungsional.
+## 2026-08-12 — Pre-push audit commit 1af55c0
+
+- Audit scope commit: hanya `lib/cron-olsera-financial.ts`, test Financial, `lib/mongodb.ts` telemetry collection/index, dan handoff. Sales/Inventory tidak tersentuh.
+- Selector aman terhadap starvation: current unfinished tetap prioritas pertama; historical unfinished tertua dipilih setelah current selesai; previous refresh hanya setelahnya; loop tetap dibatasi `MAX_STEPS_PER_REQUEST` dan deadline.
+- `running` tetap `startFresh=false` sehingga resume checkpoint, bukan restart. Test mencakup current unfinished, historical stale, previous due, no-op, dan resume running.
+- Temuan risiko exact: field telemetry `safeErrorCode` selalu ditulis `null`, termasuk saat invocation menangkap timeout/error. Akibatnya telemetry belum memenuhi audit error secara penuh. Tidak diperbaiki dalam audit-only ini.
+- Status audit: `NOT SAFE TO PUSH` sampai safe error telemetry diisi dari jalur error secara generik. Tidak ada code/database change atau push dilakukan pada audit ini.
+## 2026-08-12 — Financial telemetry fix and final pre-push audit
+
+- Telemetry kini menyimpan hanya kode aman: `ERROR`, `TIMEOUT`, `DEADLINE`, atau `UNKNOWN`; success tetap `null`.
+- Regression telemetry PASS untuk success, thrown error, timeout, deadline, dan memastikan raw error/URL/secret tidak disimpan.
+- Full audit tetap PASS: current unfinished prioritas pertama; historical stale diproses setelah current; running selalu resume; loop dibatasi step/deadline; Sales/Inventory tidak terdampak; scope tetap Financial cron, telemetry, tests, Mongo telemetry collection/index, dan handoff.
+- Validation PASS: Financial cron 55/55, time-budget 9/9, typecheck, build, dan `git diff --check`.
+- Status: `SAFE TO PUSH`. Belum push pada audit ini.
