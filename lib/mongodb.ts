@@ -412,6 +412,23 @@ export type OlseraOrderItemDocument = {
   resolvedAt?: Date | null;
 };
 
+/** Historical Olsera sales corrections, kept separate from order items so
+ * returns never become inventory sale movements. */
+export type OlseraSalesCorrectionDocument = {
+  _id: string;
+  date: string;
+  orderNo: string;
+  itemName: string;
+  qty: number;
+  amount: number;
+  category: string;
+  correctionType: "return";
+  provenance: "official Olsera export / manual-verified";
+  note: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 /**
  * Override kategori manual untuk SATU item transaksi spesifik (bukan aturan
  * global per nama/product_id) — mis. konfirmasi langsung dari kasir untuk
@@ -904,6 +921,7 @@ export async function collections() {
     olseraSyncedDays: db.collection<OlseraSyncedDayDocument>("olsera_synced_days"),
     olseraProductCache: db.collection<OlseraProductCacheDocument>("olsera_product_cache"),
     olseraOrderItems: db.collection<OlseraOrderItemDocument>("olsera_order_items"),
+    olseraSalesCorrections: db.collection<OlseraSalesCorrectionDocument>("olsera_sales_corrections"),
     olseraProductAliases: db.collection<OlseraProductAliasDocument>("olsera_product_aliases"),
     olseraCategoryOverrides: db.collection<OlseraCategoryOverrideDocument>("olsera_category_overrides"),
     olseraInventoryProducts: db.collection<OlseraInventoryProductDocument>("olsera_inventory_products"),

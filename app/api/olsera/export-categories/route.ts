@@ -23,8 +23,9 @@ export async function GET(request: Request) {
     }
 
     const items = await withMongo(async () => {
-      const { olseraOrderItems } = await collections();
-      return olseraOrderItems
+      const { olseraOrderItems, olseraSalesCorrections } = await collections();
+      const [orderItems, corrections] = await Promise.all([
+        olseraOrderItems
         .find({ date: { $gte: start, $lte: end } })
         .sort({ orderDate: 1, orderNo: 1 })
         .project<{
@@ -71,7 +72,29 @@ export async function GET(request: Request) {
           resolvedCategoryName: 1,
           categoryResolutionStatus: 1,
         })
-        .toArray();
+        .toArray(),
+        olseraSalesCorrections.find({ date: { $gte: start, $lte: end } }).toArray(),
+      ]);
+      return [
+        ...orderItems,
+        ...corrections.map((correction) => ({
+          date: correction.date,
+          orderNo: correction.orderNo,
+          orderDate: `${correction.date} 00:00:00`,
+          customerName: null,
+          tableNo: null,
+          salesByName: "Historical correction",
+          itemName: correction.itemName,
+          qty: correction.qty,
+          amount: correction.amount,
+          costAmount: 0,
+          discount: 0,
+          addonPrice: 0,
+          originalCategoryName: correction.category,
+          resolvedCategoryName: correction.category,
+          categoryResolutionStatus: "resolved" as const,
+        })),
+      ];
     });
 
     if (!items.length) {

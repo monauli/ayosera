@@ -616,8 +616,18 @@ export async function syncOlseraSalesByCategory(
         // data lama yang benar dengan angka yang kurang.
         if (day.success) {
           await withMongo(async () => {
-            const { olseraSalesByCategory, olseraSyncedDays, olseraOrderItems } = await collections();
+            const { olseraSalesByCategory, olseraSyncedDays, olseraOrderItems, olseraSalesCorrections } = await collections();
             const syncedAt = new Date();
+            // Historical corrections are deliberately separate from order items:
+            // they affect sales reporting only and must never become inventory
+            // movements or be mislabeled as normal sales.
+            const corrections = await olseraSalesCorrections.find({ date }).toArray();
+            for (const correction of corrections) {
+              const entry = byCategory.get(correction.category) ?? { qty: 0, amount: 0, costAmount: 0 };
+              entry.qty += correction.qty;
+              entry.amount += correction.amount;
+              byCategory.set(correction.category, entry);
+            }
             if (byCategory.size) {
               await olseraSalesByCategory.bulkWrite(
                 [...byCategory.entries()].map(([category, agg]) => ({

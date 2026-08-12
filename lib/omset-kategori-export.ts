@@ -162,8 +162,8 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
   const end = `${month}-${String(dayCount).padStart(2, "0")}`;
 
   const { items, monthBookings } = await withMongo(async () => {
-    const { olseraOrderItems, bookings, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
-    const [itemRows, bookingRows, staged] = await Promise.all([
+    const { olseraOrderItems, olseraSalesCorrections, bookings, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
+    const [itemRows, correctionRows, bookingRows, staged] = await Promise.all([
       olseraOrderItems
         .find({ date: { $gte: start, $lte: end } })
         .project<{
@@ -193,6 +193,7 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
           categoryResolutionStatus: 1,
         })
         .toArray(),
+      olseraSalesCorrections.find({ date: { $gte: start, $lte: end } }).toArray(),
       bookings.find({ date: { $gte: start, $lte: end } }).toArray(),
       isPaymentEventsReadEnabled()
         ? readActiveStagedPaymentEvents(start, end, {
@@ -202,7 +203,24 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
         })
         : Promise.resolve(null),
     ]);
-    return { items: itemRows, monthBookings: canonicalOmsetCategoryBookings(bookingRows, staged?.events ?? null) };
+    return {
+      items: [
+        ...itemRows,
+        ...correctionRows.map((correction) => ({
+          date: correction.date,
+          itemName: correction.itemName,
+          amount: correction.amount,
+          productId: null,
+          variantId: null,
+          sku: null,
+          barcode: null,
+          originalCategoryName: correction.category,
+          resolvedCategoryName: correction.category,
+          categoryResolutionStatus: "resolved" as const,
+        })),
+      ],
+      monthBookings: canonicalOmsetCategoryBookings(bookingRows, staged?.events ?? null),
+    };
   });
 
   const zeros = () => new Array<number>(dayCount).fill(0);
