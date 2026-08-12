@@ -11,6 +11,7 @@ import {
 import { getInventoryConsistency } from "./olsera-inventory.ts";
 import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
+import { stripDuplicateSuffix } from "./olsera-inventory-monthly-snapshot-core.ts";
 
 const MONEY_FMT = '"IDR" #,##0';
 const HEADER_GRAY = "FFA6A6A6";
@@ -93,7 +94,10 @@ export async function buildInventoryStockWorkbook(filter: {
     }
     const row = sheet.addRow([
       sanitizeExcelCellValue(product.sku ?? "-"),
-      sanitizeExcelCellValue(product.name),
+      // Sufiks "duplicate" katalog Olsera (produk lama dibuat ulang dengan
+      // productId baru) dibersihkan untuk tampilan — generik, konsisten
+      // dengan export dua-sheet (lib/olsera-inventory-two-sheet-export.ts).
+      sanitizeExcelCellValue(stripDuplicateSuffix(product.name)),
       sanitizeExcelCellValue(product.variantName ?? "-"),
       sanitizeExcelCellValue(product.category),
       sanitizeExcelCellValue(product.uom ?? "-"),
@@ -232,7 +236,7 @@ export async function buildInventoryConsistencyWorkbook(): Promise<ExcelJS.Workb
   for (const item of rows) {
     const row = sheet.addRow([
       sanitizeExcelCellValue(item.sku ?? "-"),
-      sanitizeExcelCellValue(item.name),
+      sanitizeExcelCellValue(stripDuplicateSuffix(item.name)),
       sanitizeExcelCellValue(item.category),
       item.startSnapshotQty ?? NA,
       item.recordedSales ?? NA,

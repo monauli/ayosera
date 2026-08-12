@@ -5,6 +5,7 @@ import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument } f
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/olsera-inventory-core";
 import { isHiddenInventoryCategory } from "@/lib/olsera-inventory-ui";
+import { stripDuplicateSuffix } from "@/lib/olsera-inventory-monthly-snapshot-core";
 import { monthlyPeriodStatus, monthlyStockStatus, summarizeMonthlyInventory, type MonthlyInventoryUiRow } from "@/lib/olsera-inventory-monthly-ui";
 import { getInventorySyncStatus } from "@/lib/olsera-inventory";
 
@@ -66,7 +67,10 @@ export async function GET(request: Request) {
         ...base,
         id: snapshot._id,
         sku: snapshot.productSku ?? product?.sku ?? null,
-        name: product?.name ?? snapshot.productName,
+        // Sufiks "duplicate" dari katalog Olsera (produk lama yang dibuat
+        // ulang dengan productId baru) dibersihkan untuk tampilan — generik,
+        // sama seperti export dua-sheet (lib/olsera-inventory-two-sheet-export.ts).
+        name: stripDuplicateSuffix(product?.name ?? snapshot.productName),
         variantName: product?.variantName ?? null,
         category,
         storeName: product?.storeName ?? null,

@@ -231,14 +231,32 @@ test("buildTwoSheetInventoryRows: tidak ada produk duplikat walau katalog mentah
 
 // ---- Sorting & filter ----
 
-test("sortTwoSheetRows: A-Z case-insensitive, deterministik", () => {
-  const rows = [{ name: "zebra" }, { name: "Apel" }, { name: "mangga" }].map((r, i) => ({ ...r, key: String(i) } as TwoSheetInventoryRow));
+test("sortTwoSheetRows: dalam satu kategori, Produk A-Z case-insensitive, deterministik", () => {
+  const rows = [{ name: "zebra" }, { name: "Apel" }, { name: "mangga" }].map((r, i) => ({ ...r, key: String(i), category: "SAMA" } as TwoSheetInventoryRow));
   assert.deepEqual(sortTwoSheetRows(rows).map((r) => r.name), ["Apel", "mangga", "zebra"]);
 });
 
 test("sortTwoSheetRows: nama identik tetap urutan stabil lewat tie-break key", () => {
-  const rows = [{ name: "SAMA", key: "b" }, { name: "SAMA", key: "a" }] as TwoSheetInventoryRow[];
+  const rows = [{ name: "SAMA", key: "b", category: "X" }, { name: "SAMA", key: "a", category: "X" }] as TwoSheetInventoryRow[];
   assert.deepEqual(sortTwoSheetRows(rows).map((r) => r.key), ["a", "b"]);
+});
+
+test("sortTwoSheetRows: Kategori A-Z didahulukan sebelum Produk A-Z (produk 'Apel' di kategori 'Z' tetap di bawah produk 'Zebra' di kategori 'A')", () => {
+  const rows = [
+    { name: "Apel", key: "1", category: "Z-KATEGORI" },
+    { name: "Zebra", key: "2", category: "A-KATEGORI" },
+    { name: "Mangga", key: "3", category: "A-KATEGORI" },
+  ] as TwoSheetInventoryRow[];
+  const sorted = sortTwoSheetRows(rows);
+  assert.deepEqual(sorted.map((r) => `${r.category}/${r.name}`), ["A-KATEGORI/Mangga", "A-KATEGORI/Zebra", "Z-KATEGORI/Apel"]);
+});
+
+test("sortTwoSheetRows: kategori case-insensitive (locale id), sama seperti nama produk", () => {
+  const rows = [
+    { name: "P1", key: "1", category: "zebra" },
+    { name: "P2", key: "2", category: "Apel" },
+  ] as TwoSheetInventoryRow[];
+  assert.deepEqual(sortTwoSheetRows(rows).map((r) => r.category), ["Apel", "zebra"]);
 });
 
 test("filterTerjualRows: hanya salesQty > 0, null/0 tidak ikut", () => {

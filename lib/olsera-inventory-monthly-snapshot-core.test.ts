@@ -10,6 +10,7 @@ import { buildProductIdentityIndex, productKey, type InventoryProductInput, type
 import {
   buildMatchingContext,
   computeClosingFromOpeningForward,
+  computeClosingWithManualAdjustment,
   computeMonthlyStepBackward,
   computeMonthlyStepForward,
   computeOpeningFromClosingBackward,
@@ -135,6 +136,24 @@ test("computeOpeningFromClosingBackward: closing - incoming - return + sales + o
 test("computeClosingFromOpeningForward: opening + incoming + return - sales - outgoing", () => {
   const closing = computeClosingFromOpeningForward({ openingQty: 45, incomingQty: 24, returnQty: 0, salesQty: 46, outgoingQty: 2 });
   assert.equal(closing, 21);
+});
+
+test("computeClosingWithManualAdjustment: kasus ODEA ROSE Februari 2026 — Stok Awal 96 dikoreksi manual, gap +64 BUKAN incoming, closing tetap 130", () => {
+  const closing = computeClosingWithManualAdjustment({
+    openingQty: 96,
+    incomingQty: 0,
+    returnQty: 0,
+    salesQty: 30,
+    outgoingQty: 0,
+    manualAdjustmentQty: 64,
+  });
+  assert.equal(closing, 130);
+});
+
+test("computeClosingWithManualAdjustment: tanpa manualAdjustmentQty (null/undefined) hasil identik dengan computeClosingFromOpeningForward — produk lain (mis. ODEA RED) tidak terdampak", () => {
+  const flow = { openingQty: 45, incomingQty: 0, returnQty: 0, salesQty: 9, outgoingQty: 4 };
+  assert.equal(computeClosingWithManualAdjustment({ ...flow, manualAdjustmentQty: null }), computeClosingFromOpeningForward(flow));
+  assert.equal(computeClosingWithManualAdjustment(flow), computeClosingFromOpeningForward(flow));
 });
 
 test("computeOpeningFromClosingBackward dan computeClosingFromOpeningForward saling invers", () => {

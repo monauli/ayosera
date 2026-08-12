@@ -8,6 +8,7 @@ import {
   stockStatusFor,
   DEFAULT_LOW_STOCK_THRESHOLD,
 } from "@/lib/olsera-inventory-core";
+import { stripDuplicateSuffix } from "@/lib/olsera-inventory-monthly-snapshot-core";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,7 +74,14 @@ export async function GET(request: Request) {
         data: rows.map((doc: OlseraInventoryProductDocument) => ({
           id: doc._id,
           sku: doc.sku,
-          name: doc.name,
+          // Katalog Olsera kadang menyimpan produk lama sebagai entri baru
+          // dengan sufiks "duplicate" (lihat lib/olsera-inventory-monthly-snapshot-core.ts,
+          // kasus "YONEX SHORTS MEN # SM-J035-2906-RW1-S") — dibersihkan di
+          // sini juga (bukan hanya di export Buku Besar Inventori) supaya
+          // pencarian/tampilan Daftar Produk tidak membuat produk terlihat
+          // seperti duplikat/hilang. Generik untuk produk mana pun, bukan
+          // hardcode nama tertentu.
+          name: stripDuplicateSuffix(doc.name),
           variantName: doc.variantName,
           category: doc.category,
           uom: doc.uom,

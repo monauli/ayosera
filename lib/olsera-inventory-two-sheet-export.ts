@@ -157,9 +157,14 @@ export function buildTwoSheetInventoryRows(input: {
   });
 }
 
-/** A-Z case-insensitive (locale id), tie-break by key supaya hasil selalu deterministik walau ada nama identik. */
+/** Kategori A-Z, lalu Produk A-Z di dalam kategori yang sama (case-insensitive locale id), tie-break terakhir by key supaya hasil selalu deterministik walau ada nama identik. */
 export function sortTwoSheetRows(rows: readonly TwoSheetInventoryRow[]): TwoSheetInventoryRow[] {
-  return [...rows].sort((a, b) => a.name.localeCompare(b.name, "id", { sensitivity: "base" }) || a.key.localeCompare(b.key));
+  return [...rows].sort(
+    (a, b) =>
+      a.category.localeCompare(b.category, "id", { sensitivity: "base" }) ||
+      a.name.localeCompare(b.name, "id", { sensitivity: "base" }) ||
+      a.key.localeCompare(b.key),
+  );
 }
 
 /** Sheet Terjual: hanya salesQty > 0 (null/0/negatif tidak masuk). */

@@ -582,6 +582,16 @@ export type OlseraInventoryMonthlySnapshotDocument = {
   status: "complete" | "boundary-only" | "incomplete";
   diagnostics: string[];
   /**
+   * Koreksi manual Stok Awal (mis. hasil stock opname fisik) yang belum
+   * punya bukti incoming/return dari source Olsera — lihat
+   * computeClosingWithManualAdjustment di lib/olsera-inventory-monthly-snapshot-core.ts.
+   * TIDAK PERNAH ditulis otomatis oleh sync/rebuild; hanya lewat koreksi
+   * manual dengan provenance jelas di manualAdjustmentNote. BUKAN Barang
+   * Masuk Olsera — jangan pernah dicampur ke incomingQty.
+   */
+  manualAdjustmentQty?: number | null;
+  manualAdjustmentNote?: string | null;
+  /**
    * Lifecycle bulanan (lihat lib/olsera-inventory-monthly-snapshot-core.ts
    * getInventoryPeriodState + lib/olsera-inventory-monthly-snapshot-store.ts
    * ensureMonthlySnapshotChain): `null` = ditulis saat bulan ini masih

@@ -127,6 +127,28 @@ export function computeClosingFromOpeningForward(input: {
   return input.openingQty + input.incomingQty + input.returnQty - input.salesQty - input.outgoingQty;
 }
 
+/**
+ * Sama seperti computeClosingFromOpeningForward, tapi mengikutkan
+ * manualAdjustmentQty (koreksi Stok Awal manual-verified yang belum punya
+ * bukti incoming/return dari source Olsera — lihat OlseraInventoryMonthlySnapshotDocument
+ * di lib/mongodb.ts). Field ini terpisah dari incomingQty/returnQty supaya
+ * gap yang belum terbukti tidak pernah tercampur/disalahartikan sebagai
+ * Barang Masuk resmi Olsera. Bila manualAdjustmentQty null/undefined, hasil
+ * sama persis dengan computeClosingFromOpeningForward (produk lain tidak terdampak).
+ */
+export function computeClosingWithManualAdjustment(input: {
+  openingQty: number;
+  incomingQty: number;
+  returnQty: number;
+  salesQty: number;
+  outgoingQty: number;
+  manualAdjustmentQty?: number | null;
+}): number {
+  return (
+    computeClosingFromOpeningForward(input) + (input.manualAdjustmentQty ?? 0)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Nama tampil — hilangkan suffix literal "duplicate" (penanda manual staf
 // Olsera, terverifikasi live pada katalog nyata: "YONEX SHORTS MEN #
