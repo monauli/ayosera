@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { visibleFinancialSourceDiagnostics, type FinancialSourceDiagnostic } from "./olsera-financial-diagnostics-ui.ts";
+import { financialSourceWarningText, visibleFinancialSourceDiagnostics, type FinancialSourceDiagnostic } from "./olsera-financial-diagnostics-ui.ts";
 
 function diagnostic(overrides: Partial<FinancialSourceDiagnostic> = {}): FinancialSourceDiagnostic {
   return {
@@ -22,4 +22,9 @@ test("diagnostic sumber 0/0 seluruhnya tidak ditampilkan", () => {
 test("diagnostic sumber dengan nominal non-zero tetap ditampilkan", () => {
   const row = diagnostic({ detailCredit: 125_000 });
   assert.deepEqual(visibleFinancialSourceDiagnostics([diagnostic(), row]), [row]);
+});
+
+test("bulan berjalan memakai pesan ringan, historis tetap memakai judul diagnostic", () => {
+  assert.equal(financialSourceWarningText(true), "Data bulan berjalan belum lengkap.");
+  assert.equal(financialSourceWarningText(false), "Perlu Dicek — diagnostic sumber");
 });

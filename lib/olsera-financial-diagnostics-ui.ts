@@ -20,3 +20,7 @@ export function hasNonZeroDiagnosticAmount(row: FinancialSourceDiagnostic): bool
 export function visibleFinancialSourceDiagnostics(rows: readonly FinancialSourceDiagnostic[]): FinancialSourceDiagnostic[] {
   return rows.filter((row) => !NON_WARNING_STATUSES.has(row.status) && hasNonZeroDiagnosticAmount(row));
 }
+
+export function financialSourceWarningText(isCurrentPeriod: boolean): string {
+  return isCurrentPeriod ? "Data bulan berjalan belum lengkap." : "Perlu Dicek — diagnostic sumber";
+}

@@ -40,7 +40,7 @@ import {
   shouldApplyPeriodResponse,
   writePeriodToSearch,
 } from "@/lib/olsera-financial-period-state";
-import { visibleFinancialSourceDiagnostics } from "@/lib/olsera-financial-diagnostics-ui";
+import { financialSourceWarningText, visibleFinancialSourceDiagnostics } from "@/lib/olsera-financial-diagnostics-ui";
 
 const TITLE = "text-[16px] font-semibold tracking-tight text-slate-50";
 const DESC = "mt-1 text-[13.5px] leading-relaxed text-slate-400";
@@ -611,6 +611,7 @@ export function OlseraFinancialPanel() {
   const cf = snapshot?.reports.cashFlow ?? null;
   const summaryWarnings = visibleFinancialSourceDiagnostics(snapshot?.summaryDiagnostics ?? []);
   const subtotalWarning = hasSubtotalMismatch(bs) || hasSubtotalMismatch(pl) || hasSubtotalMismatch(cf);
+  const isCurrentPeriod = isCurrentJakartaPeriod(period);
 
   return (
     <div>
@@ -724,7 +725,12 @@ export function OlseraFinancialPanel() {
           khusus Light Mode di globals.css (pola sama seperti
           [data-mode="light"] .rd-shell .inv-panel .text-amber-300 yang
           sudah ada), tanpa mengubah wording atau makna status warning. */}
-      {(summaryWarnings.length > 0 || subtotalWarning) && (
+      {isCurrentPeriod && (summaryWarnings.length > 0 || subtotalWarning) && (
+        <section className="fin-diagnostic-warning rd-enter mb-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-[13px] text-amber-100">
+          <p className="font-semibold">{financialSourceWarningText(true)}</p>
+        </section>
+      )}
+      {!isCurrentPeriod && (summaryWarnings.length > 0 || subtotalWarning) && (
         <section className="fin-diagnostic-warning rd-enter mb-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-[13px] text-amber-100">
           <p className="font-semibold">Perlu Dicek — diagnostic sumber</p>
           {subtotalWarning && <p className="mt-1">Subtotal sumber Olsera tidak cocok dengan jumlah detail. Angka sumber tidak diubah otomatis.</p>}
