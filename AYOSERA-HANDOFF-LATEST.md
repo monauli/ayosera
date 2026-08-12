@@ -234,3 +234,10 @@ Final verified result:
 - CUSTOM: **1 / Rp20.000**
 
 In-memory category export verification produced the same 17-sheet totals and grand total. Targeted correction/provenance and export-safety tests passed. Typecheck passed; build/push/deployment verification pending.
+
+## Finalization status — 2026-08-12
+
+- Final targeted/relevant tests, typecheck, production build, and `git diff --check`: **PASS**.
+- Final commit pushed to `origin/main`: `3a0ee4b57691b49f949bbff0c62bec9ae43b25d7`.
+- GitHub CI for that commit: **success**.
+- Production February totals were verified against the production MongoDB state before push. Direct Vercel HTTP verification from the home PC remains unavailable because the configured production endpoint could not be reached; no production claim is made beyond the database verification.
