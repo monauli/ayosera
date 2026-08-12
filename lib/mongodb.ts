@@ -139,6 +139,7 @@ export type OlseraFinancialMonthlyReportDocument = { _id: string; storeId: numbe
 export type OlseraFinancialAccountDocument = { _id: string; storeId: number; accountId: string | number | null; accountCode: string | null; accountName: string | null; classification: string | null; parentId: string | number | null; isActive: boolean; rawPayload: Record<string, unknown>; syncedAt: Date; createdAt: Date; updatedAt: Date };
 export type OlseraFinancialLedgerEntryDocument = { _id: string; storeId: number; period: string; accountCode: string; accountName: string | null; transactionDate: string | null; formattedTransactionDate: string | null; transactionNo: string | null; description: string | null; debit: number; credit: number; balance: number | null; isOpeningBalance: boolean; rawPayload: Record<string, unknown>; syncedAt: Date; createdAt: Date; updatedAt: Date };
 export type OlseraFinancialSyncLogDocument = { _id: string; storeId: number; period: string; status: "running" | "success" | "partial" | "failed"; phase: "accounts" | "monthly-reports" | "ledger-details" | "reconcile" | "completed"; accountCursor: number; accountCodes: string[]; reportsCompleted: string[]; recordsProcessed: number; accountsProcessed: number; errorMessage: string | null; failedAccountCodes?: string[]; recoveredAccountCodes?: string[]; accountAttempts?: Array<{ code: string; attempts: number }>; finalized?: boolean; startedAt: Date; updatedAt: Date; completedAt: Date | null };
+export type OlseraFinancialCronInvocationDocument = { _id: string; cronRunId: string; period: string | null; status: string; startedAt: Date; finishedAt: Date; durationMs: number; stepsExecuted: number; checkpoint: number | null; safeErrorCode: string | null; stopReason: string | null };
 export type FinancialEmptyLedgerObservation = { runId: string; invocationId: string; observedAt: Date; rowCount: number; sourceStatus: "success-empty" };
 export type FinancialEmptyLedgerConfirmationDocument = { _id: string; storeId: number; period: string; accountCode: string; status: "candidate" | "confirmed" | "cancelled"; observations: FinancialEmptyLedgerObservation[]; confirmedAt: Date | null; lastNonEmptyAt: Date | null; updatedAt: Date; createdAt: Date };
 export type FinancialStaleCleanupAuditDocument = { _id: string; storeId: number; period: string; accountCode: string; runId: string; reason: string; firstCheck: FinancialEmptyLedgerObservation; secondCheck: FinancialEmptyLedgerObservation; deletedCount: number; succeeded: boolean; createdAt: Date };
@@ -934,6 +935,7 @@ export async function collections() {
     olseraFinancialAccounts: db.collection<OlseraFinancialAccountDocument>("olsera_financial_accounts"),
     olseraFinancialLedgerEntries: db.collection<OlseraFinancialLedgerEntryDocument>("olsera_financial_ledger_entries"),
     olseraFinancialSyncLogs: db.collection<OlseraFinancialSyncLogDocument>("olsera_financial_sync_logs"),
+    olseraFinancialCronInvocations: db.collection<OlseraFinancialCronInvocationDocument>("olsera_financial_cron_invocations"),
     olseraFinancialEmptyLedgerConfirmations: db.collection<FinancialEmptyLedgerConfirmationDocument>("olsera_financial_empty_ledger_confirmations"),
     olseraFinancialStaleCleanupAudits: db.collection<FinancialStaleCleanupAuditDocument>("olsera_financial_stale_cleanup_audits"),
     olseraSyncLocks: db.collection<OlseraSyncLockDocument>("olsera_sync_locks"),
@@ -992,6 +994,7 @@ async function createIndexes() {
     olseraFinancialAccounts,
     olseraFinancialLedgerEntries,
     olseraFinancialSyncLogs,
+    olseraFinancialCronInvocations,
     olseraSyncLocks,
     reconciliationRuns,
     reconciliationFindings,
@@ -1065,6 +1068,8 @@ async function createIndexes() {
     olseraFinancialSyncLogs.createIndex({ startedAt: -1 }),
     olseraFinancialSyncLogs.createIndex({ storeId: 1, period: 1 }),
     olseraFinancialSyncLogs.createIndex({ status: 1, updatedAt: -1 }),
+    olseraFinancialCronInvocations.createIndex({ startedAt: -1 }),
+    olseraFinancialCronInvocations.createIndex({ period: 1, startedAt: -1 }),
     olseraFinancialEmptyLedgerConfirmations.createIndex({ storeId: 1, period: 1, accountCode: 1 }, { unique: true }),
     olseraFinancialStaleCleanupAudits.createIndex({ storeId: 1, period: 1, accountCode: 1, createdAt: -1 }),
     // TTL jaga-jaga: dokumen lock singleton dibersihkan otomatis lama setelah

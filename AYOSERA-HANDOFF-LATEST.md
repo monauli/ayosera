@@ -248,3 +248,97 @@ In-memory category export verification produced the same 17-sheet totals and gra
 - `Pembagian Hasil LABERS` now consumes the same correction source before calculating the percentage split.
 - February generated export verification: Rincian **1.439 / Rp62.367.200**; LABERS **Rp14.491.200**; Padel 17,5% **Rp2.535.960**; Labers 82,5% **Rp11.955.240**; `Custom` remains `CUSTOM`.
 - Export regression tests, relevant tests, typecheck, build, and `git diff --check`: **PASS**. No category aggregate, other month, YONEX, ODEA, or inventory logic was changed.
+
+## Final Cron Sales audit — 2026-08-12
+
+Read-only audit only; no schedule, code, database, or cron configuration changed.
+
+- Production endpoint: `POST /api/cron/olsera/sales`, protected by `CRON_SECRET`, distributed sales lock, and `maxDuration=300` seconds.
+- Actual recent execution: healthy, approximately every 10 minutes. The latest 10 runs on 2026-08-12 were all `success`; each had `expectedOrderCount == processedOrderCount` (56–63 orders).
+- Latest run: 2026-08-12 15:00:30Z–15:01:13Z, duration **43.076s**, 63/63 orders, no error.
+- Latest checkpoint: `olsera_sync_state.lastFullySyncedDate = 2026-08-12`; latest item and category aggregate writes have `syncedAt = 2026-08-12T15:01:11.320Z`.
+- Data freshness: current-day data is present through the latest successful run; no observed stale day in the recent checkpoint list.
+- Timeout/error audit: no recent sync log error, partial, failed status, or timeout observed. Durations were approximately 33–43 seconds, below the 300-second endpoint limit.
+- Duplicate/concurrency audit: no active Sales lock remains; recent runs are sequential at roughly 10-minute intervals and no overlapping run was observed. Repeated same-day sync is expected because the cron uses `force: true`.
+- Schedule configuration finding: `vercel.json` contains only `/api/cron/sync` at `0 17 * * *`; it does **not** declare the Sales 10-minute schedule. The Sales endpoint source documents cron-job.org as the scheduler, and production logs confirm that external schedule is currently active. If cron-job.org is not the intended source of truth, the external schedule must be audited separately; no fix was applied here.
+
+**Cron Sales status: PASS for runtime health and data freshness; SCHEDULE CONFIGURATION: NOT VERIFIED IN REPOSITORY (external 10-minute scheduler is evidenced by production logs).**
+
+## Final Cron Inventory audit — 2026-08-12
+
+Read-only audit only; no schedule, code, database, or cron configuration changed.
+
+- Production endpoint: `POST /api/cron/olsera/inventory`, protected by `CRON_SECRET`, distributed lock, `maxDuration=300s`, and an in-invocation step loop with a 45-second safety buffer.
+- Expected schedule `minute :25`: **confirmed in production**. The 10 latest runs started at `05:57` (older recovery run), then `06:25`, `07:25`, `08:25`, `09:25`, `10:25`, `11:25`, `12:25`, `13:25`, and `14:25` UTC on 2026-08-12.
+- 10 latest runs: **10/10 success**, phase `done`, no `partial`, `failed`, or error status. Each processed 2 days (`2026-08-11`..`2026-08-12`) with zero failed dates.
+- Latest run: started `14:25:09Z`, completed `14:25:17Z`, duration **8.127s**.
+- Recent duration range: approximately **8.1–10.2s**; safely below the 300-second route limit and the 255-second loop budget.
+- Inventory checkpoint: `lastSuccessfulSyncAt=2026-08-12T14:25:18.156Z`, `lastSyncedDate=2026-08-12`, `historyCoverage=snapshot-only`, earliest available date `2026-02-04`.
+- Timeout/overlap/lock audit: no timeout, failed step, stale running run, or active lock observed. Inventory sync runs are sequential; no duplicate active run or overlap found.
+- Data freshness: current through `2026-08-12`; the latest completed run covered both yesterday and today, so no data-tailing condition was observed.
+- Cron Sales collision audit: Sales runs at approximately `:00`, `:10`, `:20`, `:30`, etc.; Inventory runs at `:25`. The observed schedules do not overlap. The shared lock mechanism is available as an additional guard.
+- Repository schedule note: `vercel.json` does not declare this endpoint; route documentation identifies external cron-job.org scheduling at hourly frequency. Production timing confirms the expected `:25` schedule.
+
+**Cron Inventory status: PASS.**
+
+## Final Cron Financial audit — 2026-08-12
+
+Read-only audit only; no schedule, code, database, or cron configuration changed.
+
+- Production endpoint: `POST /api/cron/olsera/financial`, protected by `CRON_SECRET`, `maxDuration=300s`, distributed lock, and checkpointed `start/step` resume per financial period.
+- Expected schedule `minute :45`: recent financial checkpoint updates occur at `14:45:28Z`, consistent with the expected external scheduler timing. `vercel.json` does not declare this endpoint; route documentation identifies cron-job.org as the scheduler.
+- **10-run limitation:** the production collection `olsera_financial_sync_logs` stores one document per period/run identity (`financial:{store}:{period}`), not one immutable record per cron invocation. Therefore an exact list of the 10 latest invocations, their HTTP statuses, and per-invocation durations is not available from the current persisted audit data.
+- Current period `2026-08`: **running**, phase `ledger-details`, account cursor **41/85**, accounts processed 41, records processed 3,832, last updated `2026-08-12T14:45:28.858Z`; no error or failed account recorded. It is resumable, but not complete.
+- Previous period `2026-02`: **running**, phase `monthly-reports`, cursor 0, records 0, last updated `2026-08-11T10:18:11.702Z`; no error recorded, but it has made no progress for more than a day and is stale relative to the documented 4-hour observability threshold. This is data tertinggal and prevents a PASS.
+- Completed periods: March–July 2026 are `success`/`completed`; their recorded full-run durations range from approximately **51s to 61,193s** (July was a long checkpointed/resumed run, not one runtime invocation).
+- Timeout/runtime: no explicit timeout/error is recorded in the persisted period documents. Per-invocation runtime cannot be proven from this schema; the route's internal budget is ~21s and `maxDuration` is 300s, with checkpoint resume designed for longer periods.
+- Resume: checkpoint design is present and current August progress confirms resume-based operation. February's unchanged checkpoint shows that resume has not advanced that period recently.
+- Overlap/duplicate/stale lock: no active `olsera_sync_locks` record was observed at audit time. No duplicate active financial run can be established from the one-document-per-period schema; the two `running` periods are distinct periods, not duplicate run IDs.
+- Collision audit: Sales runs around `:00/:10/...` and Inventory at `:25`; Financial at `:45` does not overlap their observed start times. The shared lock remains an additional guard.
+
+**Cron Financial status: NOT PASS.** Root cause is an unfinished/stale February financial checkpoint (`2026-02`) plus insufficient persisted per-invocation telemetry to verify exactly 10 runs and their durations. Required fix is an operational resume/retry investigation and, separately, durable invocation-level cron telemetry; no fix was applied in this audit.
+
+## Stale Cron Financial February diagnosis — 2026-08-12
+
+Read-only diagnosis; no production resume/write was executed.
+
+- The stale February document is `financial:324175:2026-02`, still `status=running`, `phase=monthly-reports`, `accountCursor=0`, `updatedAt=2026-08-11T10:18:11.702Z`.
+- The generic selector currently considers only `currentPeriod` and `previousPeriod`. While August is unfinished, `selectFinancialCronTarget` always returns current August first. February is therefore starved behind August; after the calendar advances, February may fall outside the two-period window entirely and remain orphaned.
+- This is not safe to solve by calling `startFinancialSync` for February: that would create/restart a run rather than resume the existing checkpoint. The safe operation is `stepFinancialSync("financial:324175:2026-02", ...)` against the existing run, preserving any valid checkpoint/data.
+- No active lock or explicit error was observed. The state is resumable, but stale; the exact blocker inside the `monthly-reports` step requires one controlled resume attempt to surface the upstream/database error.
+
+### Proposed generic code fix — awaiting approval before production resume
+
+1. Add a persisted invocation audit collection/document path for Financial cron runs (`runId`, target period, started/finished timestamps, status, steps, checkpoint, stop reason, safe error code), without storing credentials or raw upstream payloads.
+2. Extend automatic target selection to include the oldest unfinished/stale financial period, not only current/previous, while retaining current/previous refresh behavior. Existing `running` runs resume via `stepFinancialSync`; only finalized partial/failed runs may use the existing fresh-start cooldown rules.
+3. Add regression tests proving an unfinished historical period cannot starve forever behind an unfinished current period and that stale `running` resumes rather than restarts.
+
+### Exact production action requiring approval
+
+After the generic fix is implemented and validated, run **one controlled read/write resume** for the existing run ID `financial:324175:2026-02` using the normal Financial sync step with its persisted checkpoint. This may write official Olsera monthly reports/ledger entries for February and update only that Financial run's checkpoint/log; it will not reset the run, overwrite unrelated periods, touch Sales/Inventory, or alter figures except from official Olsera responses.
+
+Approval is required before executing that production resume. Current status remains **BLOCKED pending approval**.
+
+## Financial February resume completed — 2026-08-12
+
+- Approved action executed against the existing run ID `financial:324175:2026-02` using `stepFinancialSync`; **`startFinancialSync` was not called** and no run reset/restart occurred.
+- Resume path: `monthly-reports` → `ledger-details` → `reconcile` → `completed`.
+- 24 sequential steps executed; all **85/85 accounts** processed; **5,862 ledger records**; failed accounts **0**; error **null**.
+- Final February status: **`success`**, `finalized=true`, checkpoint cursor **85**, completed `2026-08-12T15:28:14.373Z`.
+- Official February reports were refreshed from Olsera: balance sheet, profit/loss, cash flow, and ledger summary. Three report validations are true; profit/loss is stored as `validated=false` because the existing business validation did not match, but the payload is official Olsera data and no manual number change was made.
+- August was not touched: remains `running`, phase `ledger-details`, cursor **41/85**, `updatedAt=2026-08-12T14:45:28.858Z` before and after the February resume.
+- No Sales/Inventory data was changed by this action; no active lock remained after completion.
+
+**February resume status: PASS for checkpoint completion and official-data sync.**
+
+Next step: implement and test the generic historical-stale-period selector plus invocation telemetry. No generic selector was implemented in this action, and no push was made.
+## 2026-08-12 — Cron Financial anti-starvation fix (local, not pushed)
+
+- Root cause addressed generically: auto selector now evaluates current unfinished first, then the oldest unfinished historical period (including stale/running checkpoints), then current refresh due, previous refresh due, and finally no-op.
+- Existing `running` checkpoints are resumed through `stepFinancialSync`; no restart/reset or manual report-number edits were introduced.
+- Added per-invocation telemetry collection `olsera_financial_cron_invocations` with start/end time, duration, period, status, steps, checkpoint, safe error field, and stop reason. Telemetry failure is non-fatal to the sync response.
+- Added anti-starvation regression coverage: current priority, oldest historical selection, and running resume behavior.
+- Validation: `npm run test:cron-olsera-financial` PASS 52/52; `npm run test:financial-time-budget` PASS; `npm run type-check` PASS; `npm run build` PASS; `git diff --check` PASS.
+- Production was not written, resumed, committed remotely, or pushed in this turn. Last known production state remains February `success` (cursor 85/85, finalized) and August `running` at ledger-details cursor 41/85, resumable and unchanged.
+- A fresh read-only DB confirmation from this PC was blocked by local DNS SRV failure: `querySrv ECONNREFUSED _mongodb._tcp.cluster0.dqvtxp8.mongodb.net`; no credentials or connection strings were exposed.
+- Next step: commit remains local only; verify the next production Financial invocation records telemetry and that historical February is not selected again after its success state.

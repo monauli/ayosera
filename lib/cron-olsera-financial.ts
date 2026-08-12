@@ -48,6 +48,7 @@ import { getFinancialSyncLogForPeriod, type FinancialSyncRun } from "@/lib/olser
 import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-cron-lock";
 import { isDatabaseTimeoutError, withDatabaseRetry } from "@/lib/mongodb-errors";
+import { collections, withMongo } from "@/lib/mongodb";
 
 // Lock dipegang selama seluruh batch step (bukan hanya satu step) — lease
 // harus lebih longgar dari TIME_BUDGET_MS supaya tidak kedaluwarsa di
@@ -149,8 +150,38 @@ export type FinancialCronTarget = {
   period: string;
   /** true = panggil startFinancialSync (run baru/di-restart); false = lanjutkan run existing via stepFinancialSync. */
   startFresh: boolean;
-  reason: "current-unfinished" | "previous-unfinished" | "current-refresh-due" | "previous-refresh-due";
+  reason: "current-unfinished" | "previous-unfinished" | "historical-unfinished" | "current-refresh-due" | "previous-refresh-due";
 };
+
+export type HistoricalFinancialLog = FinancialSyncLogLite & Partial<FinancialSyncRun> & { period: string };
+
+export function selectFinancialCronTargetWithHistory(input: {
+  currentPeriod: string;
+  previousPeriod: string | null;
+  currentLog: FinancialSyncLogLite;
+  previousLog: FinancialSyncLogLite;
+  historicalLogs: HistoricalFinancialLog[];
+  now?: Date;
+}): FinancialCronTarget | null {
+  const now = input.now ?? new Date();
+  if (isFinancialPeriodUnfinished(input.currentLog, now)) {
+    return { period: input.currentPeriod, startFresh: financialPeriodNeedsFreshStart(input.currentLog, now), reason: "current-unfinished" };
+  }
+  const excluded = new Set([input.currentPeriod].filter(Boolean));
+  const historical = input.historicalLogs
+    .filter((log) => !excluded.has(log.period) && isFinancialPeriodUnfinished(log, now))
+    .sort((a, b) => a.period.localeCompare(b.period) || toTime(a.updatedAt) - toTime(b.updatedAt))[0];
+  if (historical) {
+    return { period: historical.period, startFresh: financialPeriodNeedsFreshStart(historical, now), reason: "historical-unfinished" };
+  }
+  if (isFinancialPeriodRefreshDue(input.currentLog, now, CURRENT_MONTH_REFRESH_INTERVAL_MS)) {
+    return { period: input.currentPeriod, startFresh: true, reason: "current-refresh-due" };
+  }
+  if (input.previousPeriod && isFinancialPeriodRefreshDue(input.previousLog, now, PREVIOUS_MONTH_REFRESH_INTERVAL_MS)) {
+    return { period: input.previousPeriod, startFresh: true, reason: "previous-refresh-due" };
+  }
+  return null;
+}
 
 /** true bila `log` "success" DAN sudah melewati `intervalMs` sejak selesai — boleh di-refresh ulang otomatis walau sudah pernah sukses. */
 function isFinancialPeriodRefreshDue(log: FinancialSyncLogLite, now: Date, intervalMs: number): boolean {
@@ -192,24 +223,9 @@ export function selectFinancialCronTarget(input: {
   now?: Date;
 }): FinancialCronTarget | null {
   const now = input.now ?? new Date();
-
-  if (isFinancialPeriodUnfinished(input.currentLog, now)) {
-    return { period: input.currentPeriod, startFresh: financialPeriodNeedsFreshStart(input.currentLog, now), reason: "current-unfinished" };
-  }
-
-  if (input.previousPeriod && isFinancialPeriodUnfinished(input.previousLog, now)) {
-    return { period: input.previousPeriod, startFresh: financialPeriodNeedsFreshStart(input.previousLog, now), reason: "previous-unfinished" };
-  }
-
-  if (isFinancialPeriodRefreshDue(input.currentLog, now, CURRENT_MONTH_REFRESH_INTERVAL_MS)) {
-    return { period: input.currentPeriod, startFresh: true, reason: "current-refresh-due" };
-  }
-
-  if (input.previousPeriod && isFinancialPeriodRefreshDue(input.previousLog, now, PREVIOUS_MONTH_REFRESH_INTERVAL_MS)) {
-    return { period: input.previousPeriod, startFresh: true, reason: "previous-refresh-due" };
-  }
-
-  return null;
+  if (isFinancialPeriodUnfinished(input.currentLog, now)) return { period: input.currentPeriod, startFresh: financialPeriodNeedsFreshStart(input.currentLog, now), reason: "current-unfinished" };
+  if (input.previousPeriod && isFinancialPeriodUnfinished(input.previousLog, now)) return { period: input.previousPeriod, startFresh: financialPeriodNeedsFreshStart(input.previousLog, now), reason: "previous-unfinished" };
+  return selectFinancialCronTargetWithHistory({ ...input, historicalLogs: [] });
 }
 
 export async function runOlseraFinancialCron(
@@ -258,6 +274,10 @@ export async function runOlseraFinancialCron(
   // dihitung ulang secara terpisah supaya kedua sisi selalu sepakat.
   const deadlineAt = startedAt + TIME_BUDGET_MS;
   let stepsExecuted = 0;
+  let telemetryPeriod: string | null = null;
+  let telemetryRun: Partial<FinancialSyncRun> | null = null;
+  let telemetrySafeErrorCode: "ERROR" | "TIMEOUT" | "DEADLINE" | "UNKNOWN" | null = null;
+  const telemetryStartedAt = new Date(startedAt);
   console.log(`[cron:olsera:financial] runId=${runId} period=${currentPeriod} startedAt=${new Date(startedAt).toISOString()}`);
   try {
     let period: string;
@@ -288,16 +308,21 @@ export async function runOlseraFinancialCron(
       }
       const stalePartial = existing?.finalized === true && Date.now() - new Date(existing.updatedAt ?? 0).getTime() >= PARTIAL_RESTART_COOLDOWN_MS;
       period = currentPeriod;
+      telemetryPeriod = period;
       startFresh = stalePartial || !existing;
     } else {
       // Mode auto (cron terjadwal): pelihara current + previous, pilih SATU
       // periode yang butuh kerja saat ini (lihat selectFinancialCronTarget).
-      const [currentLog, previousLog] = await Promise.all([
+      const [currentLog, previousLog, historicalLogs] = await Promise.all([
         getFinancialSyncLogForPeriod(currentPeriod),
         previousPeriod ? getFinancialSyncLogForPeriod(previousPeriod) : Promise.resolve(null),
+        withMongo(async () => {
+          const { olseraFinancialSyncLogs } = await collections();
+          return olseraFinancialSyncLogs.find({ status: { $in: ["running", "partial", "failed"] } }).toArray() as Promise<HistoricalFinancialLog[]>;
+        }),
       ]);
       const now = new Date();
-      const target = selectFinancialCronTarget({ currentPeriod, previousPeriod, currentLog, previousLog, now });
+      const target = selectFinancialCronTargetWithHistory({ currentPeriod, previousPeriod, currentLog, previousLog, historicalLogs, now });
       if (!target) {
         console.log(`[cron:olsera:financial] runId=${runId} current=${currentPeriod} previous=${previousPeriod ?? "-"} semua up to date — no-op.`);
         return {
@@ -316,15 +341,17 @@ export async function runOlseraFinancialCron(
           },
         };
       }
-      period = target.period;
+    period = target.period;
+      telemetryPeriod = period;
       startFresh = target.startFresh;
-      existing = target.period === currentPeriod ? currentLog : previousLog;
+      existing = target.period === currentPeriod ? currentLog : target.period === previousPeriod ? previousLog : (historicalLogs.find((log) => log.period === target.period) as FinancialSyncRun | null);
       staleRunningDetected = isFinancialSyncRunStale(existing, now);
       console.log(`[cron:olsera:financial] runId=${runId} target=${period} reason=${target.reason} startFresh=${startFresh} stale=${staleRunningDetected}`);
     }
 
     const { year: y, month: m } = { year: period.slice(0, 4), month: period.slice(5) };
     let run: FinancialSyncRun = startFresh || !existing ? await startFinancialSync(y, m) : existing;
+    telemetryRun = run;
 
     // Sequential SATU per satu (tidak pernah paralel) — berhenti begitu salah
     // satu kondisi berikut terpenuhi: run selesai (phase != "running"), batas
@@ -353,6 +380,7 @@ export async function runOlseraFinancialCron(
         };
       }
       run = stepped;
+      telemetryRun = run;
       stepsExecuted++;
       // "partial" BUKAN alasan berhenti selama run belum final: akun yang gagal
       // masih dijadwalkan retry pada step berikutnya (lib/olsera-financial-sync.ts).
@@ -368,6 +396,7 @@ export async function runOlseraFinancialCron(
     // waktu sudah di bawah ambang aman untuk memulai kerja baru, BUKAN
     // hanya "sudah lewat deadlineAt mentah".
     const stoppedForTimeBudget = !completed && deadlineAt - Date.now() <= MIN_REMAINING_MS_TO_START_WORK;
+    if (stoppedForTimeBudget) telemetrySafeErrorCode = "DEADLINE";
     console.log(
       `[cron:olsera:financial] runId=${runId} finishedAt=${new Date().toISOString()} period=${period} stepsExecuted=${stepsExecuted} status=${run.status} phase=${run.phase} stoppedForTimeBudget=${stoppedForTimeBudget}`,
     );
@@ -391,6 +420,7 @@ export async function runOlseraFinancialCron(
     };
   } catch (error) {
     if (isDatabaseTimeoutError(error)) {
+      telemetrySafeErrorCode = "TIMEOUT";
       console.error(`[cron:olsera:financial] runId=${runId} stepsExecuted=${stepsExecuted} safeErrorCode=mongodb-timeout`);
       return {
         status: 504,
@@ -398,6 +428,7 @@ export async function runOlseraFinancialCron(
       };
     }
     if (error instanceof FinancialClientError) {
+      telemetrySafeErrorCode = "ERROR";
       const status = error.safe.status === "connection-expired" ? "connection-expired" : "step-failed";
       console.error(`[cron:olsera:financial] runId=${runId} stepsExecuted=${stepsExecuted} safeErrorCode=${status}`);
       return {
@@ -406,6 +437,7 @@ export async function runOlseraFinancialCron(
       };
     }
     console.error(`[cron:olsera:financial] runId=${runId} stepsExecuted=${stepsExecuted} gagal`, error instanceof Error ? error.message : error);
+    telemetrySafeErrorCode = "UNKNOWN";
     return {
       status: 200,
       body: { success: false, mode: "cron", module: "financial", runId, period: currentPeriod, status: "step-failed", stepsExecuted, completed: false },
@@ -415,6 +447,27 @@ export async function runOlseraFinancialCron(
       await withDatabaseRetry(() => releaseOlseraSyncLock(runId));
     } catch (error) {
       console.error(`[cron:olsera:financial] runId=${runId} gagal release lock`, isDatabaseTimeoutError(error) ? "timeout" : "error");
+    }
+    try {
+      const finishedAt = new Date();
+      await withMongo(async () => {
+        const { olseraFinancialCronInvocations } = await collections();
+        await olseraFinancialCronInvocations.insertOne({
+          _id: `${runId}:${finishedAt.getTime()}`,
+          cronRunId: runId,
+          period: telemetryPeriod,
+          status: telemetryRun?.status ?? "no-op",
+          startedAt: telemetryStartedAt,
+          finishedAt,
+          durationMs: finishedAt.getTime() - startedAt,
+          stepsExecuted,
+          checkpoint: telemetryRun?.accountCursor ?? null,
+          safeErrorCode: telemetrySafeErrorCode,
+          stopReason: telemetryRun?.status === "success" ? "completed" : stepsExecuted ? "checkpointed" : "no-op",
+        });
+      });
+    } catch (error) {
+      console.error("[cron:olsera:financial] telemetry write failed", isDatabaseTimeoutError(error) ? "timeout" : "error");
     }
   }
 }

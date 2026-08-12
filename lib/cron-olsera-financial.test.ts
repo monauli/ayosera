@@ -13,7 +13,7 @@ mock.module("@/lib/olsera-sync", {
   namedExports: { todayJakarta: () => "2026-07-20" },
 });
 
-function fakeRun(overrides: Partial<Record<string, unknown>> = {}) {
+function fakeRun(overrides: Partial<Record<string, unknown>> = {}): any {
   return {
     _id: "financial:1:2026-07",
     status: "running",
@@ -22,6 +22,9 @@ function fakeRun(overrides: Partial<Record<string, unknown>> = {}) {
     accountsProcessed: 4,
     recordsProcessed: 40,
     period: "2026-07",
+    finalized: false,
+    updatedAt: new Date(),
+    completedAt: null,
     ...overrides,
   };
 }
@@ -29,6 +32,20 @@ function fakeRun(overrides: Partial<Record<string, unknown>> = {}) {
 const getFinancialSyncLogForPeriodMock = mock.fn(async (_period: string) => null as Record<string, unknown> | null);
 mock.module("@/lib/olsera-financial-store", {
   namedExports: { getFinancialSyncLogForPeriod: getFinancialSyncLogForPeriodMock },
+});
+
+const financialSyncLogsFindMock = mock.fn(() => ({
+  toArray: async () => [] as Record<string, unknown>[],
+}));
+const financialInvocationInsertMock = mock.fn(async (_doc: Record<string, unknown>) => ({ acknowledged: true }));
+mock.module("@/lib/mongodb", {
+  namedExports: {
+    withMongo: async <T>(handler: () => Promise<T>) => handler(),
+    collections: async () => ({
+      olseraFinancialSyncLogs: { find: financialSyncLogsFindMock },
+      olseraFinancialCronInvocations: { insertOne: financialInvocationInsertMock },
+    }),
+  },
 });
 
 const startFinancialSyncMock = mock.fn(async (_year: unknown, _month: unknown) =>
@@ -65,6 +82,7 @@ let selectFinancialCronTarget: typeof import("./cron-olsera-financial.ts").selec
 let isFinancialPeriodUnfinished: typeof import("./cron-olsera-financial.ts").isFinancialPeriodUnfinished;
 let financialPeriodNeedsFreshStart: typeof import("./cron-olsera-financial.ts").financialPeriodNeedsFreshStart;
 let isFinancialSyncRunStale: typeof import("./cron-olsera-financial.ts").isFinancialSyncRunStale;
+let selectFinancialCronTargetWithHistory: typeof import("./cron-olsera-financial.ts").selectFinancialCronTargetWithHistory;
 let FinancialClientError: typeof import("./olsera-financial-client.ts").FinancialClientError;
 
 before(async () => {
@@ -74,6 +92,7 @@ before(async () => {
   isFinancialPeriodUnfinished = cronModule.isFinancialPeriodUnfinished;
   financialPeriodNeedsFreshStart = cronModule.financialPeriodNeedsFreshStart;
   isFinancialSyncRunStale = cronModule.isFinancialSyncRunStale;
+  selectFinancialCronTargetWithHistory = cronModule.selectFinancialCronTargetWithHistory;
   FinancialClientError = (await import("./olsera-financial-client.ts")).FinancialClientError;
 });
 
@@ -84,6 +103,8 @@ function resetAll() {
   stepFinancialSyncMock.mock.resetCalls();
   acquireOlseraSyncLockMock.mock.resetCalls();
   releaseOlseraSyncLockMock.mock.resetCalls();
+  financialSyncLogsFindMock.mock.resetCalls();
+  financialInvocationInsertMock.mock.resetCalls();
 }
 
 test("401 bila header Authorization salah", async () => {
@@ -657,4 +678,80 @@ test("deadline BELUM tercapai -> beberapa step tetap berjalan sequential seperti
   assert.equal(res.body.completed, true);
   assert.equal(res.body.stoppedForTimeBudget, false, "selesai normal sebelum deadline -> bukan karena time budget");
   assert.equal(stepFinancialSyncMock.mock.callCount(), 4);
+});
+
+test("anti-starvation: current unfinished tetap mengalahkan historical unfinished", () => {
+  const now = new Date("2026-08-12T00:00:00Z");
+  const target = selectFinancialCronTargetWithHistory({
+    currentPeriod: "2026-08",
+    previousPeriod: "2026-07",
+    currentLog: fakeRun({ status: "running", finalized: false, completedAt: null, updatedAt: new Date("2026-08-11T23:00:00Z") }),
+    previousLog: { status: "success", finalized: true, updatedAt: now, completedAt: now },
+    historicalLogs: [{ ...fakeRun({ _id: "financial:1:2026-02", period: "2026-02", status: "running", finalized: false, updatedAt: new Date("2026-01-01T00:00:00Z") }), completedAt: null }],
+    now,
+  });
+  assert.equal(target?.period, "2026-08");
+  assert.equal(target?.reason, "current-unfinished");
+  assert.equal(target?.startFresh, false);
+});
+
+test("anti-starvation: historical unfinished tertua dipilih setelah current selesai", () => {
+  const now = new Date("2026-08-12T00:00:00Z");
+  const target = selectFinancialCronTargetWithHistory({
+    currentPeriod: "2026-08",
+    previousPeriod: "2026-07",
+    currentLog: { status: "success", finalized: true, updatedAt: now, completedAt: now },
+    previousLog: { status: "success", finalized: true, updatedAt: now, completedAt: now },
+    historicalLogs: [
+      { ...fakeRun({ _id: "financial:1:2026-06", period: "2026-06", status: "partial", finalized: true, updatedAt: new Date("2026-06-03T00:00:00Z") }), completedAt: null },
+      { ...fakeRun({ _id: "financial:1:2026-02", period: "2026-02", status: "running", finalized: false, updatedAt: new Date("2026-08-11T00:00:00Z") }), completedAt: null },
+      { ...fakeRun({ _id: "financial:1:2026-04", period: "2026-04", status: "failed", finalized: true, updatedAt: new Date("2026-04-03T00:00:00Z") }), completedAt: null },
+    ],
+    now,
+  });
+  assert.equal(target?.period, "2026-02");
+  assert.equal(target?.reason, "historical-unfinished");
+  assert.equal(target?.startFresh, false);
+});
+
+test("telemetry success menyimpan safeErrorCode null tanpa raw error", async () => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  stepFinancialSyncMock.mock.mockImplementation(async () => fakeRun({ status: "success", phase: "completed" }));
+  await runOlseraFinancialCron("Bearer test-secret");
+  const telemetry = financialInvocationInsertMock.mock.calls.at(-1)?.arguments[0] as Record<string, unknown>;
+  assert.equal(telemetry.safeErrorCode, null);
+  assert.equal("errorMessage" in telemetry, false);
+  assert.equal(JSON.stringify(telemetry).toLowerCase().includes("secret"), false);
+});
+
+test("telemetry thrown error memakai UNKNOWN dan tidak menyimpan raw error/secret", async () => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  stepFinancialSyncMock.mock.mockImplementation(async () => { throw new Error("secret-token https://private.example/abc"); });
+  await runOlseraFinancialCron("Bearer test-secret");
+  const telemetry = financialInvocationInsertMock.mock.calls.at(-1)?.arguments[0] as Record<string, unknown>;
+  assert.equal(telemetry.safeErrorCode, "UNKNOWN");
+  assert.equal(JSON.stringify(telemetry).includes("private.example"), false);
+  assert.equal(JSON.stringify(telemetry).includes("secret-token"), false);
+});
+
+test("telemetry timeout/deadline memakai kode pendek yang aman", async (t) => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  stepFinancialSyncMock.mock.mockImplementation(async () => { throw new MongoServerSelectionError("Server selection timed out after 5000 ms", {} as never); });
+  await runOlseraFinancialCron("Bearer test-secret");
+  const timeoutTelemetry = financialInvocationInsertMock.mock.calls.at(-1)?.arguments[0] as Record<string, unknown>;
+  assert.equal(timeoutTelemetry.safeErrorCode, "TIMEOUT");
+
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  stepFinancialSyncMock.mock.mockImplementation(async () => {
+    t.mock.timers.tick(21_000);
+    return fakeRun({ status: "running", phase: "ledger-details" });
+  });
+  await runOlseraFinancialCron("Bearer test-secret");
+  const deadlineTelemetry = financialInvocationInsertMock.mock.calls.at(-1)?.arguments[0] as Record<string, unknown>;
+  assert.equal(deadlineTelemetry.safeErrorCode, "DEADLINE");
 });
