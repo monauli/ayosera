@@ -17,8 +17,10 @@ import {
   needsManualAdjust,
   resolveSystemClosingQty,
   summarizeOpname,
+  verifyStockOpnameBa,
   type OpnameStatus,
   type OpnameSummary,
+  type StockOpnameBaEntry,
 } from "./inventory-stock-opname.ts";
 import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
 
@@ -200,6 +202,8 @@ export type SaveInventoryOpnameBatchInput = {
   month: number;
   actor: { role: "supervisor" | "user"; email: string };
   entries: InventoryOpnameEntryInput[];
+  baOnlyDifferencesConfirmed?: boolean;
+  cutoff?: string;
 };
 
 function validateEntries(entries: unknown): InventoryOpnameEntryInput[] {
@@ -239,6 +243,17 @@ export async function saveInventoryOpnameBatch(
   const { snapshots, opname } = await resolveInventoryStockOpnameContext(context);
   const snapshotRows = await snapshots.find({ storeId, year, month }).toArray();
   const snapshotByKey = new Map(snapshotRows.map((snap) => [opnameKey(snap.productId, snap.variantId), snap]));
+
+  if (input.baOnlyDifferencesConfirmed !== undefined) {
+    const cutoff = input.cutoff ?? `${year}-${String(month).padStart(2, "0")}`;
+    const verification = verifyStockOpnameBa({
+      systemRows: snapshotRows.map((snap) => ({ productId: snap.productId, variantId: snap.variantId, systemClosingQty: resolveSystemClosingQty({ openingQty: snap.openingQty, incomingQty: snap.incomingQty, returnQty: snap.returnQty, salesQty: snap.salesQty, outgoingQty: snap.outgoingQty, closingQty: snap.closingQty }) })),
+      baEntries: entries.map((entry) => ({ productId: entry.productId, variantId: entry.variantId, physicalQty: entry.physicalQty, differenceQty: entry.physicalQty === null ? null : (snapshotByKey.get(opnameKey(entry.productId, entry.variantId))?.closingQty ?? null) === null ? null : entry.physicalQty - (snapshotByKey.get(opnameKey(entry.productId, entry.variantId))?.closingQty ?? 0), note: entry.note ?? null, cutoff })),
+      expectedCutoff: cutoff,
+      baOnlyDifferencesConfirmed: input.baOnlyDifferencesConfirmed,
+    });
+    if (!verification.canFinalize && input.baOnlyDifferencesConfirmed) throw new InventoryStockOpnameError(verification.reason ?? "BA belum lolos verifikasi.");
+  }
 
   const now = new Date();
   for (const entry of entries) {
@@ -293,4 +308,24 @@ export async function saveInventoryOpnameBatch(
   }
 
   return loadInventoryOpnameMonth({ storeId, year, month }, context);
+}
+
+export async function finalizeInventoryStockOpname(input: { storeId: number; year: number; month: number; actor: string; cutoff: string; baOnlyDifferencesConfirmed: boolean; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: Date; uploadedBy: string } }, context?: InventoryStockOpnameContext) {
+  if (!input.baOnlyDifferencesConfirmed) throw new InventoryStockOpnameError("Konfirmasi BA hanya memuat item yang selisih wajib dicentang.");
+  const result = await loadInventoryOpnameMonth({ storeId: input.storeId, year: input.year, month: input.month }, context);
+  const submitted = result.rows.filter((row) => row.physicalQty !== null);
+  if (!submitted.length || submitted.some((row) => row.manualAdjust || row.systemClosingQty === null || row.differenceQty === null || row.differenceQty === 0)) throw new InventoryStockOpnameError("Finalisasi diblokir: masih ada mismatch, mapping tidak pasti, atau item tanpa selisih.");
+  const { opname } = await resolveInventoryStockOpnameContext(context);
+  const now = new Date();
+  const eventId = `${input.storeId}:${input.year}:${String(input.month).padStart(2, "0")}:event`;
+  await opname.updateOne({ _id: eventId }, { $set: { _id: eventId, storeId: input.storeId, year: input.year, month: input.month, productId: 0, variantId: null, physicalQty: 0, systemClosingQty: null, differenceQty: null, status: "COCOK", note: null, updatedBy: input.actor, cutoff: input.cutoff, baOnlyDifferencesConfirmed: true, attachment: input.attachment, verificationResult: "PASS", lockedAt: now, lockedBy: input.actor, unlockedAt: null, unlockedBy: null, updatedAt: now }, $setOnInsert: { createdAt: now }, $push: { history: { action: "lock", actor: input.actor, reason: null, at: now } } }, { upsert: true });
+  return { status: "LOCKED" as const, cutoff: input.cutoff, verificationResult: "PASS" as const, lockedAt: now, lockedBy: input.actor, adjustmentApplied: false };
+}
+
+export async function unlockInventoryStockOpname(input: { storeId: number; year: number; month: number; actor: string; reason: string }, context?: InventoryStockOpnameContext) {
+  if (!input.reason.trim()) throw new InventoryStockOpnameError("Reason unlock wajib diisi.");
+  const { opname } = await resolveInventoryStockOpnameContext(context); const now = new Date();
+  const eventId = `${input.storeId}:${input.year}:${String(input.month).padStart(2, "0")}:event`;
+  await opname.updateOne({ _id: eventId }, { $set: { lockedAt: null, lockedBy: null, unlockedAt: now, unlockedBy: input.actor, updatedAt: now }, $push: { history: { action: "unlock", actor: input.actor, reason: input.reason.trim().slice(0, MAX_NOTE_LENGTH), at: now } } }, { upsert: false });
+  return { status: "UNLOCKED" as const, unlockedAt: now, unlockedBy: input.actor };
 }

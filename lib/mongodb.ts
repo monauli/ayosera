@@ -20,6 +20,15 @@ export type UserDocument = {
   role: "admin" | "viewer";
   createdAt: Date;
   updatedAt: Date;
+  cutoff?: string | null;
+  baOnlyDifferencesConfirmed?: boolean;
+  attachment?: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: Date; uploadedBy: string } | null;
+  verificationResult?: "PASS" | "PERLU_DICEK" | null;
+  lockedAt?: Date | null;
+  lockedBy?: string | null;
+  unlockedAt?: Date | null;
+  unlockedBy?: string | null;
+  history?: Array<{ action: "upload" | "finalize" | "lock" | "unlock"; actor: string; reason: string | null; at: Date }>;
 };
 
 export type BookingDocument = {

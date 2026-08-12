@@ -9,7 +9,43 @@ import {
   needsManualAdjust,
   resolveSystemClosingQty,
   summarizeOpname,
+  verifyStockOpnameBa,
 } from "./inventory-stock-opname.ts";
+
+test("BA item selisih valid cocok dengan stok Olsera", () => {
+  const result = verifyStockOpnameBa({ systemRows: [{ productId: 1, variantId: null, systemClosingQty: 10 }], baEntries: [{ productId: 1, variantId: null, physicalQty: 8, differenceQty: -2, note: "rusak", cutoff: "2026-08-13" }], expectedCutoff: "2026-08-13", baOnlyDifferencesConfirmed: true });
+  assert.equal(result.rows[0].status, "COCOK");
+  assert.equal(result.canFinalize, true);
+});
+
+test("item tidak ada di BA dianggap cocok", () => {
+  const result = verifyStockOpnameBa({ systemRows: [{ productId: 1, variantId: null, systemClosingQty: 10 }, { productId: 2, variantId: null, systemClosingQty: 4 }], baEntries: [{ productId: 1, variantId: null, physicalQty: 8, differenceQty: -2, note: null, cutoff: "2026-08-13" }], expectedCutoff: "2026-08-13", baOnlyDifferencesConfirmed: true });
+  assert.equal(result.canFinalize, true);
+  assert.equal(result.rows.length, 1);
+});
+
+test("angka BA vs Olsera mismatch menjadi PERLU_DICEK", () => {
+  const result = verifyStockOpnameBa({ systemRows: [{ productId: 1, variantId: null, systemClosingQty: 10 }], baEntries: [{ productId: 1, variantId: null, physicalQty: 8, differenceQty: -1, note: null, cutoff: "2026-08-13" }], expectedCutoff: "2026-08-13", baOnlyDifferencesConfirmed: true });
+  assert.equal(result.rows[0].status, "PERLU_DICEK");
+  assert.equal(result.canFinalize, false);
+});
+
+test("mapping produk ambigu/tidak ditemukan memblok finalisasi", () => {
+  const result = verifyStockOpnameBa({ systemRows: [{ productId: 1, variantId: null, systemClosingQty: 10 }], baEntries: [{ productId: 99, variantId: null, physicalQty: 8, differenceQty: -2, note: null, cutoff: "2026-08-13" }], expectedCutoff: "2026-08-13", baOnlyDifferencesConfirmed: true });
+  assert.equal(result.rows[0].mappingCertain, false);
+  assert.equal(result.canFinalize, false);
+});
+
+test("confirmation BA belum dicentang memblok finalisasi", () => {
+  const result = verifyStockOpnameBa({ systemRows: [], baEntries: [], expectedCutoff: "2026-08-13", baOnlyDifferencesConfirmed: false });
+  assert.equal(result.canFinalize, false);
+});
+
+test("verifikasi tidak melakukan double stock adjustment", () => {
+  const result = verifyStockOpnameBa({ systemRows: [{ productId: 1, variantId: null, systemClosingQty: 10 }], baEntries: [{ productId: 1, variantId: null, physicalQty: 8, differenceQty: -2, note: "koreksi", cutoff: "2026-08-13" }], expectedCutoff: "2026-08-13", baOnlyDifferencesConfirmed: true });
+  assert.equal(result.rows[0].systemClosingQty, 10);
+  assert.equal(result.rows[0].differenceQty, -2);
+});
 
 // 1. stok sistem 10, berita acara 10 -> Cocok
 test("status: stok sistem 10 dan berita acara 10 -> COCOK", () => {

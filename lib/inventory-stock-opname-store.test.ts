@@ -8,6 +8,8 @@ import {
   InventoryStockOpnameError,
   loadInventoryOpnameMonth,
   saveInventoryOpnameBatch,
+  finalizeInventoryStockOpname,
+  unlockInventoryStockOpname,
   type InventoryStockOpnameContext,
   type MinimalOpnameCollection,
   type MinimalReadCollection,
@@ -205,4 +207,17 @@ test("ringkasan bulan menghitung total selisih & tally status dari gabungan snap
   assert.equal(result.summary.perluDicek, 1);
   assert.equal(result.summary.belumDiisi, 1);
   assert.equal(result.summary.totalSelisihNegatif, -2);
+});
+
+test("end-to-end finalisasi lalu lock event tidak melakukan double adjustment", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
+  await saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8, note: "selisih fisik" }] }, ctx);
+  const locked = await finalizeInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, cutoff: "2026-05-31", baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email } }, ctx);
+  assert.equal(locked.status, "LOCKED");
+  assert.equal(locked.adjustmentApplied, false);
+  assert.equal(opname.store.size, 2, "satu row evidence + satu event lock, bukan adjustment Olsera");
+  const unlocked = await unlockInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, reason: "Koreksi pembacaan BA" }, ctx);
+  assert.equal(unlocked.status, "UNLOCKED");
+  assert.equal(opname.store.get("324175:2026:05:event")?.lockedAt, null);
 });

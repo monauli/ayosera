@@ -431,3 +431,35 @@ Produk: `YONEX SHORTS MEN # SM-J035-2906-RW1-S`; alias lama `106743815` → cano
 - Minta/export Olsera resmi yang memuat stok akhir Februari atau stock opname/purchase/incoming untuk SKU ini, serta rincian dua sales Februari yang belum ada.
 - Setelah anchor resmi tersedia, lakukan dry-run chain Feb–Aug dengan alias `106743815`/`118420650`, lalu minta approval terpisah sebelum write. Status saat ini: **pergerakan lama tidak ditemukan; opening 20/24 belum terbukti**.
 - Tidak ada database write. Inventory lain, Sales aggregate, Financial, YONEX data source, dan ODEA tidak diubah.
+
+## Verifikasi ulang histori YONEX dari source Olsera — 2026-08-12
+
+## Audit final ODEA ROSE — 2026-08-13
+
+## Implementasi checker Stock Opname — 2026-08-13
+
+Ditambahkan validasi minimum pada modul `inventory-stock-opname`: BA diperlakukan sebagai daftar item yang selisih saja; item yang tidak ada di BA tetap dianggap cocok; validasi memeriksa cutoff, mapping produk, stok sistem, stok fisik, dan selisih. Mapping tidak pasti atau angka berbeda menghasilkan `PERLU_DICEK` dan memblok finalisasi. Konfirmasi BA-only-differences wajib bila dikirim. Jalur verifikasi hanya membaca snapshot/source dan menyimpan bukti opname; tidak ada pemanggilan adjustment stok Olsera sehingga tidak terjadi double adjustment.
+
+Flow dilengkapi dengan upload BA/evidence ke Vercel Blob, finalisasi guarded oleh confirmation + seluruh validation, event lock terpisah dari source inventory, dan unlock dengan reason serta history audit. Event lock menyimpan cutoff, attachment, hasil verifikasi, user/waktu, dan tidak pernah memanggil adjustment Olsera.
+
+Regression tests inventory opname 28/28 PASS, type-check PASS, dan `git diff --check` PASS. Build penuh masih dijalankan sebelum commit/push.
+
+Audit read-only untuk old ID `106817649` dan ODEA ROSE `116138490`; ODEA RED `119043265` tetap terpisah.
+
+- Sales ledger yang terbukti: Feb 30, Mar 36, Apr 51, Mei 55, Jun 46.
+- Snapshot lama: Feb 96→130, Mar 130→94, Apr 94→43, Mei 43→45, Jun 45→21, Jul 21→32 dengan sales Jul 11.
+- Feb–Apr adalah snapshot `carry-forward` stale; incoming/closing bukan bukti Olsera independen. Juli `SOURCE_DATA_INCOMPLETE`: snapshot sales 11 vs ledger 9.
+- Old ID tidak memiliki snapshot/movement lokal pada audit Februari.
+- `+64` **tidak valid**: tidak ada movement Olsera yang membuktikan incoming/adjustment tersebut. Jangan membuat movement untuk menutup balance.
+
+Chain Feb–Jul **BELUM AMAN untuk rebuild**. Return, incoming, outgoing, dan closing belum terbukti lengkap. Minta export/API Olsera bertanggal untuk kedua ID yang memuat snapshot/stock opname dan movement bertipe incoming/return/outgoing/sale; join hanya old ID dengan ODEA ROSE, exclude ODEA RED, lalu dry-run sebelum approval write.
+
+Audit read-only ulang untuk old productId `106743815` dan new productId `118420650`, dengan keduanya diperlakukan sebagai satu SKU.
+
+- Old ID: tidak ditemukan snapshot atau movement lokal untuk Feb–Jul.
+- New ID: Feb–Mei hanya memiliki snapshot `carry-forward` (`openingQty=4`, `closingQty=4`, `salesQty=0`); ini bukan bukti Olsera dan tidak dipakai sebagai anchor.
+- Juni memiliki snapshot `baseline-file` (`openingQty=4`, `salesQty=3`, `closingQty=1`), tetapi ledger penjualan lokal membaca 0; sumber konflik, belum final.
+- Juli memiliki snapshot `stockmovement-forward` (`openingQty=1`, `salesQty=1`, `closingQty=1`) dan ledger membaca sales 1. Closing tidak dapat diverifikasi secara aritmetika tanpa incoming/outgoing mentah.
+- Audit live stockmovement agregat periode Feb–Jun berstatus OK, tetapi tidak membuktikan baris YONEX tertentu; audit Juli memiliki satu mismatch entity/qty.
+
+Kesimpulan: angka operator (termasuk opening 24/20 dan chain sales Feb–Jul) belum terbukti penuh dari source Olsera. Opening, incoming, outgoing, dan closing setiap bulan belum cukup aman untuk rebuild. Diperlukan export/API Olsera yang memuat order/detail sales, stock movement bertipe incoming/outgoing/sale, serta snapshot atau stock opname akhir bulan dengan productId/variantId/SKU, tanggal, dan qty. Tidak ada write/rebuild database.

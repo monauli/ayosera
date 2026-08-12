@@ -10,6 +10,52 @@
 
 export type OpnameStatus = "BELUM_DIISI" | "COCOK" | "PERLU_DICEK" | "BUTUH_ADJUST_MANUAL";
 
+export type StockOpnameBaEntry = {
+  productId: number | null;
+  variantId?: number | null;
+  physicalQty: number | null;
+  differenceQty: number | null;
+  note: string | null;
+  cutoff: string | null;
+};
+
+export type StockOpnameSystemRow = {
+  productId: number;
+  variantId: number | null;
+  systemClosingQty: number | null;
+  productName?: string;
+};
+
+export type StockOpnameVerificationRow = StockOpnameBaEntry & {
+  status: "COCOK" | "PERLU_DICEK";
+  systemClosingQty: number | null;
+  mappingCertain: boolean;
+};
+
+/** BA hanya memuat selisih; baris lain dianggap cocok tanpa membuat BA palsu. */
+export function verifyStockOpnameBa(input: {
+  systemRows: ReadonlyArray<StockOpnameSystemRow>;
+  baEntries: ReadonlyArray<StockOpnameBaEntry>;
+  expectedCutoff: string;
+  baOnlyDifferencesConfirmed: boolean;
+}): { rows: StockOpnameVerificationRow[]; canFinalize: boolean; reason: string | null } {
+  if (!input.baOnlyDifferencesConfirmed) return { rows: [], canFinalize: false, reason: "Konfirmasi BA hanya memuat item yang selisih wajib dicentang." };
+  const system = new Map(input.systemRows.map((row) => [`${row.productId}:${row.variantId ?? 0}`, row]));
+  const seen = new Set<string>();
+  const rows: StockOpnameVerificationRow[] = [];
+  for (const entry of input.baEntries) {
+    const mappingCertain = Number.isInteger(entry.productId) && system.has(`${entry.productId}:${entry.variantId ?? 0}`);
+    const key = `${entry.productId ?? "?"}:${entry.variantId ?? 0}`;
+    const source = mappingCertain ? system.get(key)! : null;
+    const expectedDifference = source?.systemClosingQty !== null && source?.systemClosingQty !== undefined && entry.physicalQty !== null ? entry.physicalQty - source.systemClosingQty : null;
+    const valid = mappingCertain && entry.cutoff === input.expectedCutoff && entry.physicalQty !== null && entry.differenceQty === expectedDifference && expectedDifference !== 0;
+    rows.push({ ...entry, systemClosingQty: source?.systemClosingQty ?? null, mappingCertain, status: valid ? "COCOK" : "PERLU_DICEK" });
+    seen.add(key);
+  }
+  const canFinalize = rows.length > 0 && rows.every((row) => row.status === "COCOK") && rows.every((row) => row.differenceQty !== 0) && seen.size === rows.length;
+  return { rows, canFinalize, reason: canFinalize ? null : "BA memiliki mismatch produk, cutoff, angka, atau selisih nol." };
+}
+
 export const OPNAME_STATUS_LABELS: Record<OpnameStatus, string> = {
   BELUM_DIISI: "Belum Diisi",
   COCOK: "Cocok",
