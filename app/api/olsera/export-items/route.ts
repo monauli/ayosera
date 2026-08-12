@@ -22,8 +22,9 @@ export async function GET(request: Request) {
     }
 
     const rows = await withMongo(async () => {
-      const { olseraOrderItems } = await collections();
-      return olseraOrderItems
+      const { olseraOrderItems, olseraSalesCorrections } = await collections();
+      const [orderItems, corrections] = await Promise.all([
+        olseraOrderItems
         .find({ date: { $gte: start, $lte: end } })
         .sort({ orderDate: 1, orderNo: 1 })
         .project<{
@@ -56,7 +57,27 @@ export async function GET(request: Request) {
           discount: 1,
           addonPrice: 1,
         })
-        .toArray();
+        .toArray(),
+        olseraSalesCorrections.find({ date: { $gte: start, $lte: end } }).toArray(),
+      ]);
+      return [
+        ...orderItems,
+        ...corrections.map((correction) => ({
+          date: correction.date,
+          orderNo: correction.orderNo,
+          orderDate: `${correction.date} 00:00:00`,
+          customerId: null,
+          customerName: null,
+          tableNo: null,
+          salesByName: "Historical correction",
+          itemName: correction.itemName,
+          qty: correction.qty,
+          amount: correction.amount,
+          costAmount: 0,
+          discount: 0,
+          addonPrice: 0,
+        })),
+      ];
     });
 
     const buffer = await buildOlseraItemWorkbook({ start, end, rows });

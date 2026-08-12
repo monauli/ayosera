@@ -241,3 +241,10 @@ In-memory category export verification produced the same 17-sheet totals and gra
 - Final commit pushed to `origin/main`: `3a0ee4b57691b49f949bbff0c62bec9ae43b25d7`.
 - GitHub CI for that commit: **success**.
 - Production February totals were verified against the production MongoDB state before push. Direct Vercel HTTP verification from the home PC remains unavailable because the configured production endpoint could not be reached; no production claim is made beyond the database verification.
+
+## February export correction finalization — 2026-08-12
+
+- `Rincian Penjualan` now merges the generic `olsera_sales_corrections` source, so approved historical returns render as negative rows; it does not hardcode February/order IDs in the export route.
+- `Pembagian Hasil LABERS` now consumes the same correction source before calculating the percentage split.
+- February generated export verification: Rincian **1.439 / Rp62.367.200**; LABERS **Rp14.491.200**; Padel 17,5% **Rp2.535.960**; Labers 82,5% **Rp11.955.240**; `Custom` remains `CUSTOM`.
+- Export regression tests, relevant tests, typecheck, build, and `git diff --check`: **PASS**. No category aggregate, other month, YONEX, ODEA, or inventory logic was changed.

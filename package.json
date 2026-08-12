@@ -54,6 +54,7 @@
     "test:external-fetch-timeout": "node --no-warnings --experimental-strip-types --test lib/external-fetch-timeout.test.ts",
     "test:olsera-resolver": "node --no-warnings --experimental-strip-types --test lib/olsera-category-resolver.test.ts",
     "test:olsera-sales-corrections": "node --no-warnings --experimental-strip-types --test lib/olsera-sales-corrections.test.ts",
+    "test:olsera-february-exports": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs --test lib/olsera-february-export-regression.test.ts",
     "test:olsera-addon": "node --no-warnings --experimental-strip-types --test lib/olsera-addon.test.ts",
     "test:olsera-export-addon": "node --no-warnings --experimental-strip-types --test lib/olsera-export-addon.test.ts",
     "test:olsera-sync-orchestrator": "node --no-warnings --experimental-strip-types --test lib/olsera-sync-orchestrator.test.ts",

@@ -59,8 +59,9 @@ export async function loadLabersSharingRows(month: string): Promise<LabersSharin
   const end = `${month}-${String(dayCount).padStart(2, "0")}`;
 
   const items = await withMongo(async () => {
-    const { olseraOrderItems } = await collections();
-    return olseraOrderItems
+    const { olseraOrderItems, olseraSalesCorrections } = await collections();
+    const [orderItems, corrections] = await Promise.all([
+      olseraOrderItems
       .find({ date: { $gte: start, $lte: end } })
       .project<{
         date: string;
@@ -92,7 +93,21 @@ export async function loadLabersSharingRows(month: string): Promise<LabersSharin
         resolvedCategoryName: 1,
         categoryResolutionStatus: 1,
       })
-      .toArray();
+      .toArray(),
+      olseraSalesCorrections.find({ date: { $gte: start, $lte: end }, category: CATEGORY }).toArray(),
+    ]);
+    return [
+      ...orderItems,
+      ...corrections.map((correction) => ({
+        date: correction.date,
+        itemName: correction.itemName,
+        qty: correction.qty,
+        amount: correction.amount,
+        addonPrice: 0,
+        resolvedCategoryName: CATEGORY,
+        categoryResolutionStatus: "resolved" as const,
+      })),
+    ];
   });
 
   const totalWithAddon = new Array<number>(dayCount).fill(0);
