@@ -184,9 +184,9 @@ async function fetchOrderIds(
   return ids;
 }
 
-type OrderItem = {
-  id: unknown;
-  product_id: unknown;
+export type OrderItem = {
+  id?: unknown;
+  product_id?: unknown;
   product_name?: string;
   product_variant_id?: unknown;
   product_variant_name?: string;
@@ -199,7 +199,35 @@ type OrderItem = {
   discount?: unknown;
   /** Nilai add-on per unit — SUDAH termasuk di `amount` (dibuktikan dari data nyata). */
   addon_price?: unknown;
+  category_id?: unknown;
+  category_name?: unknown;
+  product_category_id?: unknown;
+  product_category_name?: unknown;
+  return_qty?: unknown;
+  return_quantity?: unknown;
+  returned_qty?: unknown;
+  refund_qty?: unknown;
+  return_amount?: unknown;
+  return_total?: unknown;
+  returned_amount?: unknown;
+  refund_amount?: unknown;
 };
+
+export function normalizeOlseraItem(item: OrderItem) {
+  const qty = toNumber(item.qty);
+  const amount = toNumber(item.amount);
+  const returnQty = Math.max(0, toNumber(item.return_qty ?? item.return_quantity ?? item.returned_qty ?? item.refund_qty));
+  const returnAmount = Math.max(0, toNumber(item.return_amount ?? item.return_total ?? item.returned_amount ?? item.refund_amount));
+  return {
+    qty: qty < 0 ? qty : qty - returnQty,
+    amount: amount < 0 ? amount : amount - returnAmount,
+    originalCategoryId: (() => {
+      const id = toIdOrNull(item.category_id ?? item.product_category_id);
+      return id === null ? null : String(id);
+    })(),
+    originalCategoryName: toTextOrNull(item.category_name ?? item.product_category_name),
+  };
+}
 
 /** Read-only representation for the private gap audit. It deliberately shares
  * the authenticated client, list pagination, and detail mapper of this sync. */
@@ -511,6 +539,8 @@ export async function syncOlseraSalesByCategory(
               variantId: toIdOrNull(item.product_variant_id),
               sku: toTextOrNull(item.product_variant_sku) ?? toTextOrNull(item.product_sku),
               barcode: null,
+              originalCategoryId: normalizeOlseraItem(item).originalCategoryId,
+              originalCategoryName: normalizeOlseraItem(item).originalCategoryName,
               orderItemId: Number.isFinite(itemId) ? itemId : null,
             };
             const resolution = await resolveItemWithFallback(token, identity, resolverCtx, detailCache);
@@ -522,8 +552,9 @@ export async function syncOlseraSalesByCategory(
 
             const category = resolution.category;
             const entry = byCategory.get(category) ?? { qty: 0, amount: 0, costAmount: 0 };
-            entry.qty += toNumber(item.qty);
-            entry.amount += toNumber(item.amount);
+            const normalized = normalizeOlseraItem(item);
+            entry.qty += normalized.qty;
+            entry.amount += normalized.amount;
             entry.costAmount += toNumber(item.cost_amount);
             byCategory.set(category, entry);
 
@@ -545,8 +576,8 @@ export async function syncOlseraSalesByCategory(
                 tableNo: firstText(meta.table_no, meta.table_name, objectText(meta.table, ["number", "no", "name", "table_no"])),
                 salesByName: salesBy(meta),
                 itemName,
-                qty: toNumber(item.qty),
-                amount: toNumber(item.amount),
+                qty: normalized.qty,
+                amount: normalized.amount,
                 costAmount: toNumber(item.cost_amount),
                 discount: toNumber(item.discount),
                 addonPrice: addonResult.value,
@@ -557,8 +588,8 @@ export async function syncOlseraSalesByCategory(
                 sku: identity.sku ?? null,
                 barcode: null,
                 normalizedItemName: normalizeName(itemName),
-                originalCategoryId: null,
-                originalCategoryName: null,
+                originalCategoryId: normalized.originalCategoryId,
+                originalCategoryName: normalized.originalCategoryName,
                 resolvedProductId: resolution.resolvedProductId,
                 resolvedCategoryId: resolution.categoryId,
                 resolvedCategoryName: resolution.status === "resolved" ? resolution.category : null,

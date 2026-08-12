@@ -32,6 +32,7 @@ for (const fileName of [".env.local", ".env"]) {
 const { collections, withMongo, mongoClient } = await import("../lib/mongodb.ts");
 const { loadResolverContext, identityFromStoredItem } = await import("../lib/olsera-resolver-context.ts");
 const { resolveItemCategory, normalizeName, UNKNOWN_CATEGORY } = await import("../lib/olsera-category-resolver.ts");
+const { normalizeOlseraItem } = await import("../lib/olsera-sync.ts");
 const { OLSERA_SALES_BASELINE_DATE } = await import("../lib/olsera-baseline.ts");
 
 const START = process.argv[2] ?? OLSERA_SALES_BASELINE_DATE;
@@ -69,7 +70,15 @@ const categoryChangesByItem: string[] = [];
 const bulkOps: { updateOne: { filter: { _id: number }; update: { $set: Record<string, unknown> } } }[] = [];
 
 for (const item of items) {
-  const resolution = resolveItemCategory(identityFromStoredItem(item), ctx);
+  const normalized = normalizeOlseraItem({
+    ...(item.raw ?? {}),
+    qty: (item.raw as Record<string, unknown> | undefined)?.qty ?? item.qty,
+    amount: (item.raw as Record<string, unknown> | undefined)?.amount ?? item.amount,
+  });
+  const resolution = resolveItemCategory(
+    { ...identityFromStoredItem(item), originalCategoryId: normalized.originalCategoryId, originalCategoryName: normalized.originalCategoryName },
+    ctx,
+  );
   if (resolution.status === "unresolved") unresolvedCount++;
   const next = {
     normalizedItemName: normalizeName(item.itemName),
@@ -79,6 +88,10 @@ for (const item of items) {
     categoryResolutionMethod: resolution.method,
     categoryResolutionStatus: resolution.status,
     categoryResolutionReason: resolution.reason,
+    qty: normalized.qty,
+    amount: normalized.amount,
+    originalCategoryId: normalized.originalCategoryId,
+    originalCategoryName: normalized.originalCategoryName,
     // resolvedAt hanya relevan untuk manual_override; pertahankan nilai lama
     // bila sudah ada agar rerun tidak terus menggeser waktunya (idempoten).
     ...(resolution.method === "manual_override" ? { resolvedAt: item.resolvedAt ?? new Date() } : {}),
@@ -88,7 +101,10 @@ for (const item of items) {
     item.resolvedProductId !== next.resolvedProductId ||
     item.resolvedCategoryName !== next.resolvedCategoryName ||
     item.categoryResolutionMethod !== next.categoryResolutionMethod ||
-    item.categoryResolutionStatus !== next.categoryResolutionStatus;
+    item.categoryResolutionStatus !== next.categoryResolutionStatus ||
+    item.qty !== next.qty ||
+    item.amount !== next.amount ||
+    item.originalCategoryName !== next.originalCategoryName;
   if (!changed) continue;
   if (item.resolvedCategoryName !== next.resolvedCategoryName) {
     categoryChangesByItem.push(
@@ -130,8 +146,13 @@ for (const date of dates) {
     for (const item of dayItems) {
       const category = item.resolvedCategoryName ?? UNKNOWN_CATEGORY;
       const entry = next.get(category) ?? { qty: 0, amount: 0, costAmount: 0 };
-      entry.qty += item.qty;
-      entry.amount += item.amount;
+      const normalized = normalizeOlseraItem({
+        ...(item.raw ?? {}),
+        qty: (item.raw as Record<string, unknown> | undefined)?.qty ?? item.qty,
+        amount: (item.raw as Record<string, unknown> | undefined)?.amount ?? item.amount,
+      });
+      entry.qty += normalized.qty;
+      entry.amount += normalized.amount;
       entry.costAmount += item.costAmount;
       next.set(category, entry);
     }
