@@ -197,10 +197,16 @@ export type InventoryOpnameMonthResult = {
   month: number;
   rows: InventoryOpnameRow[];
   summary: OpnameSummary;
+  lock: { status: "LOCKED" | "UNLOCKED"; cutoff: string | null; cutoffDate: string | null; lockedBy: string | null; lockedAt: string | null; attachment: InventoryStockOpnameDocument["attachment"] } | null;
 };
 
 function opnameKey(productId: number, variantId: number | null): string {
   return `${productId}:${variantId ?? 0}`;
+}
+
+function lockState(doc: InventoryStockOpnameDocument | undefined): InventoryOpnameMonthResult["lock"] {
+  if (!doc?.lockedAt) return doc?.unlockedAt ? { status: "UNLOCKED", cutoff: doc.cutoff ?? null, cutoffDate: doc.cutoffDate ?? null, lockedBy: doc.lockedBy ?? null, lockedAt: null, attachment: doc.attachment ?? null } : null;
+  return { status: "LOCKED", cutoff: doc.cutoff ?? null, cutoffDate: doc.cutoffDate ?? null, lockedBy: doc.lockedBy ?? null, lockedAt: new Date(doc.lockedAt).toISOString(), attachment: doc.attachment ?? null };
 }
 
 export async function loadInventoryOpnameMonth(
@@ -264,7 +270,8 @@ export async function loadInventoryOpnameMonth(
 
   rows.sort((a, b) => a.productName.localeCompare(b.productName, "id"));
 
-  return { storeId, year, month, rows, summary: summarizeOpname(rows) };
+  const event = opnameRows.find((doc) => doc._id === `${storeId}:${year}:${String(month).padStart(2, "0")}:event`);
+  return { storeId, year, month, rows, summary: summarizeOpname(rows), lock: lockState(event) };
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +353,8 @@ export async function loadInventoryOpnameCutoff(
 
   rows.sort((a, b) => a.productName.localeCompare(b.productName, "id"));
 
-  return { storeId, year, month, cutoffDate: input.cutoffDate, startDate: fetched.startDate, endDate: fetched.endDate, rows, summary: summarizeOpname(rows), unmatchedOrAmbiguous: fetched.unmatchedOrAmbiguous };
+  const event = opnameRows.find((doc) => doc._id === `${storeId}:${year}:${String(month).padStart(2, "0")}:event`);
+  return { storeId, year, month, cutoffDate: input.cutoffDate, startDate: fetched.startDate, endDate: fetched.endDate, rows, summary: summarizeOpname(rows), unmatchedOrAmbiguous: fetched.unmatchedOrAmbiguous, lock: lockState(event) };
 }
 
 // ---------------------------------------------------------------------------

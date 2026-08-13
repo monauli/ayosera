@@ -1038,3 +1038,11 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 
 - No write/read-back verification or inventory export comparison was possible because the production database read timed out.
 - No commit/push was made for this blocked attempt.
+# UI Flow Rekonsiliasi Inventori — 2026-08-13
+
+- Menambahkan flow minimum di `/reconciliation/inventory`: upload BA PDF/JPG/PNG maksimal 4 MB, status file berhasil upload dan ganti file, checkbox BA-only-differences, tombol Finalisasi Stock Opname, status terkunci, dan Buka Kunci dengan alasan.
+- Endpoint existing yang direuse: `POST /api/reconciliation/inventory-opname/upload`, `POST /api/reconciliation/inventory-opname` action `finalize` dan `unlock`, serta `GET /api/reconciliation/inventory-opname` untuk refresh checker/status.
+- Menambahkan read-model `lock` ke hasil GET dari event lock existing agar UI dapat menampilkan cutoff, actor, waktu, dan attachment. Tidak mengubah formula checker, snapshot bulanan, cron, raw Olsera, atau adjustment stok.
+- File berubah: `app/reconciliation/inventory/page.tsx`, `lib/inventory-stock-opname-store.ts`, `lib/mongodb.ts`, dan handoff ini.
+- Flow code-level: Upload BA → checker existing → Finalisasi guarded oleh BA/cutoff/checkbox/status → Locked → Unlock dengan alasan → refresh status.
+- Validasi: `test:inventory-stock-opname` PASS (31 + 20), typecheck PASS, `git diff --check` PASS. Build Next dijalankan tetapi runner timeout tanpa error compile setelah menunggu 180 detik.

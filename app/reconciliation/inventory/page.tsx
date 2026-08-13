@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, FileSearch, Loader2, Moon, RefreshCw, Save, Search, Sun, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, Moon, RefreshCw, Save, Search, Sun, Unlock, X } from "lucide-react";
 import { visibleInventoryRows } from "@/lib/olsera-inventory-ui";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
@@ -46,7 +46,9 @@ type Summary = {
 // cutoffDate/startDate/endDate: HANYA terisi bila query pakai cutoff tanggal BA
 // (lihat lib/inventory-stock-opname-store.ts:loadInventoryOpnameCutoff) — kosong
 // (undefined) berarti Stok Akhir Sistem masih basis snapshot akhir bulan (perilaku lama).
-type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string };
+type Attachment = { url: string; fileName: string; mimeType: string; size: number; uploadedBy?: string; uploadedAt?: string };
+type LockState = { status: "LOCKED" | "UNLOCKED"; cutoff: string | null; cutoffDate: string | null; lockedBy: string | null; lockedAt: string | null; attachment: Attachment | null };
+type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string; lock: LockState | null };
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 type Edit = { physicalQty: number | null; note: string | null };
 
@@ -120,6 +122,13 @@ export default function InventoryOpnamePage() {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [baOnlyDifferencesConfirmed, setBaOnlyDifferencesConfirmed] = useState(false);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState("");
+  const [unlockReason, setUnlockReason] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -158,6 +167,7 @@ export default function InventoryOpnamePage() {
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || "Gagal memuat data rekonsiliasi inventori.");
       setData(result);
+      setAttachment(result.lock?.attachment ?? attachment);
       seedEdits(result.rows);
       setSelected(null);
     } catch (e) {
@@ -165,6 +175,67 @@ export default function InventoryOpnamePage() {
       setData(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const uploadBa = async (file: File) => {
+    setUploading(true);
+    setFinalizeError("");
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      form.set("year", year);
+      form.set("month", month);
+      const response = await fetch("/api/reconciliation/inventory-opname/upload", { method: "POST", body: form });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Gagal mengunggah Berita Acara.");
+      setAttachment(result.data);
+    } catch (e) {
+      setFinalizeError(e instanceof Error ? e.message : "Gagal mengunggah Berita Acara.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const finalize = async () => {
+    if (!data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed) return;
+    setFinalizing(true);
+    setFinalizeError("");
+    try {
+      const response = await fetch("/api/reconciliation/inventory-opname", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "finalize", year: Number(year), month: Number(month), cutoff: cutoffDate, cutoffDate, cutoffConfirmed, baOnlyDifferencesConfirmed, attachment }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Finalisasi gagal. Periksa kembali data checker.");
+      setSaveMessage("Stock Opname berhasil dikunci.");
+      await load();
+    } catch (e) {
+      setFinalizeError(e instanceof Error ? e.message : "Finalisasi gagal.");
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  const unlock = async () => {
+    if (!unlockReason.trim()) {
+      setFinalizeError("Alasan buka kunci wajib diisi.");
+      return;
+    }
+    setUnlocking(true);
+    setFinalizeError("");
+    try {
+      const response = await fetch("/api/reconciliation/inventory-opname", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "unlock", year: Number(year), month: Number(month), reason: unlockReason }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Gagal membuka kunci.");
+      setUnlockReason("");
+      setSaveMessage("Stock Opname berhasil dibuka kuncinya.");
+      await load();
+    } catch (e) {
+      setFinalizeError(e instanceof Error ? e.message : "Gagal membuka kunci.");
+    } finally {
+      setUnlocking(false);
     }
   };
 
@@ -336,6 +407,30 @@ export default function InventoryOpnamePage() {
           Stok Akhir Sistem dihitung persis pada cutoff <strong>{data.cutoffDate}</strong> (bukan akhir bulan kalender) — jendela query {data.startDate} s/d {data.endDate}.
         </p>
       )}
+
+      <section className="recon-filters recon-finalization" aria-label="Berita Acara dan finalisasi">
+        <label>
+          Berita Acara Stock Opname
+          <input type="file" accept="application/pdf,image/jpeg,image/png" disabled={!supervisor || uploading || data?.lock?.status === "LOCKED"} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} />
+        </label>
+        <div className="recon-finalization">
+          {attachment ? <p className="recon-lock-summary"><CheckCircle2 /> {attachment.fileName} — Berhasil diupload</p> : <p className="recon-readonly">PDF/JPG/PNG, maksimal 4 MB.</p>}
+          {attachment && data?.lock?.status !== "LOCKED" && <label className="recon-button secondary">Ganti file<input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} /></label>}
+        </div>
+        <label className="recon-check">
+          <input type="checkbox" checked={baOnlyDifferencesConfirmed} disabled={!supervisor || data?.lock?.status === "LOCKED"} onChange={(e) => setBaOnlyDifferencesConfirmed(e.target.checked)} /> Berita Acara hanya mencantumkan item yang memiliki selisih
+        </label>
+        <div className="recon-finalization">
+          {data?.lock?.status === "LOCKED" ? <>
+            <p className="recon-lock-summary"><LockKeyhole /> Stock Opname Terkunci</p>
+            <p className="recon-readonly">Cutoff: {data.lock.cutoffDate ?? data.lock.cutoff ?? "—"} · Difinalisasi oleh: {data.lock.lockedBy ?? "—"}{data.lock.lockedAt ? ` · ${new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(data.lock.lockedAt))}` : ""}</p>
+            <p className="recon-readonly">File BA: {data.lock.attachment?.fileName ?? attachment?.fileName ?? "—"}</p>
+            <p className="recon-readonly">Data pemeriksaan pada tanggal cutoff sudah dikunci. Transaksi inventori setelah tanggal tersebut tetap berjalan normal.</p>
+            {supervisor && <><input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Alasan buka kunci" /><button className="recon-button danger" onClick={() => void unlock()} disabled={unlocking}>{unlocking ? <Loader2 className="spin" /> : <Unlock />} Buka Kunci</button></>}
+          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
+        </div>
+      </section>
+      {finalizeError && <p className="recon-draft"><AlertTriangle /> {finalizeError}</p>}
 
       {saveMessage && <p className="recon-readonly">{saveMessage}</p>}
       {saveError && <p className="recon-draft"><AlertTriangle /> {saveError}</p>}

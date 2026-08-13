@@ -654,6 +654,16 @@ export type InventoryStockOpnameDocument = {
   updatedBy: string;
   createdAt: Date;
   updatedAt: Date;
+  lockedAt?: Date | null;
+  lockedBy?: string | null;
+  unlockedAt?: Date | null;
+  unlockedBy?: string | null;
+  cutoff?: string | null;
+  cutoffDate?: string | null;
+  attachment?: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: Date; uploadedBy: string } | null;
+  verificationResult?: "PASS" | null;
+  baOnlyDifferencesConfirmed?: boolean;
+  history?: Array<{ action: "lock" | "unlock"; actor: string; reason: string | null; at: Date }>;
 };
 
 export type OlseraInventoryStateDocument = {
