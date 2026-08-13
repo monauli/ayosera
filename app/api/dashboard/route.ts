@@ -13,6 +13,7 @@ import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
 import { buildDashboardPaymentMetrics, dashboardPaymentAmountsByBooking } from "@/lib/dashboard-payment-metrics";
 import { withCanonicalPaymentAmounts } from "@/lib/omzet-export";
+import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
 
 /**
  * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
@@ -84,9 +85,28 @@ export async function GET(request: Request) {
       const validatedPaymentEvents = isPaymentEventsReadEnabled() && canUsePaymentEvents
         ? await readActiveStagedPaymentEvents(explicitStart!, explicitEnd!, { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation })
         : null;
-      // Booking lama tetap menjadi dataset semua widget status, lapangan, detail,
-      // dan sesi. Payment events hanya menimpa dua metrik pembayaran/omzet.
-      const analyzedFiltered = filteredBookings.map(analyzeBooking);
+      // "today" widgets (revenueToday, hourlyTransactions) always look at the
+      // current Jakarta date regardless of the active filter, so their payment
+      // events are fetched separately for that exact date.
+      const todayPaymentEvents = isPaymentEventsReadEnabled()
+        ? await readActiveStagedPaymentEvents(today, today, { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation })
+        : null;
+
+      // Booking lama tetap menjadi dataset semua widget status, lapangan,
+      // sesi, dan customer. Nominal per-booking (revenue/omzet) di-overlay ke
+      // total payment event yang tervalidasi bila tersedia — booking tanpa
+      // payment event yang cocok tetap memakai bookings.total_price sebagai
+      // fallback (lihat lib/booking-payment-aggregate.ts), supaya booking
+      // dengan >1 payment event (split/bertahap) tidak lagi kehilangan
+      // payment sebelumnya di baris detail Dashboard.
+      const filteredBookingsWithPayments = validatedPaymentEvents
+        ? withBookingPaymentTotals(filteredBookings, aggregateBookingPayments(validatedPaymentEvents.events))
+        : filteredBookings;
+      const todayBookingsWithPayments = todayPaymentEvents
+        ? withBookingPaymentTotals(todayBookings, aggregateBookingPayments(todayPaymentEvents.events))
+        : todayBookings;
+
+      const analyzedFiltered = filteredBookingsWithPayments.map(analyzeBooking);
       const displayFiltered = analyzedFiltered.filter((item) => item.display);
       const revenueEligible = displayFiltered.filter((item) => !item.cancelled);
       const revenueFiltered = displayFiltered.reduce((sum, item) => sum + item.revenue, 0);
@@ -99,7 +119,7 @@ export async function GET(request: Request) {
         paymentEvents: validatedPaymentEvents?.events ?? null,
       });
 
-      const analyzedToday = todayBookings.map(analyzeBooking);
+      const analyzedToday = todayBookingsWithPayments.map(analyzeBooking);
       const displayToday = analyzedToday.filter((item) => item.display);
       const revenueToday = displayToday.reduce((sum, item) => sum + item.revenue, 0);
 

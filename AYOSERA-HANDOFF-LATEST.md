@@ -463,3 +463,124 @@ Audit read-only ulang untuk old productId `106743815` dan new productId `1184206
 - Audit live stockmovement agregat periode Feb–Jun berstatus OK, tetapi tidak membuktikan baris YONEX tertentu; audit Juli memiliki satu mismatch entity/qty.
 
 Kesimpulan: angka operator (termasuk opening 24/20 dan chain sales Feb–Jul) belum terbukti penuh dari source Olsera. Opening, incoming, outgoing, dan closing setiap bulan belum cukup aman untuk rebuild. Diperlukan export/API Olsera yang memuat order/detail sales, stock movement bertipe incoming/outgoing/sale, serta snapshot atau stock opname akhir bulan dengan productId/variantId/SKU, tanggal, dan qty. Tidak ada write/rebuild database.
+
+## Audit AYO Payment Agustus 2026 — partial payment hilang — 2026-08-13
+
+Audit read-only. Tidak ada database write, code change, commit, atau push. Koneksi MongoDB berhasil (bukan blocked); query hanya `find`/`aggregate` melalui script sementara di scratchpad, tidak disimpan di project.
+
+### Root cause generik
+
+AYOSERA memiliki dua jalur data payment yang tidak konsisten dipakai di seluruh konsumen:
+
+- **Jalur lama (`bookings` collection)** — unique key tunggal `booking_id`; setiap sync melakukan `updateOne({booking_id}, {$set: booking}, {upsert:true})`, sehingga payment event baru **menimpa** dokumen sebelumnya alih-alih menambah riwayat. Ini dipakai langsung oleh halaman **Transaksi** (`app/api/transactions/route.ts:87`) dan **Rekonsiliasi** (`app/api/reconciliation/court-revenue/[period]/_shared.ts`, tidak ada overlay payment-events sama sekali), serta baris detail per-booking di **Dashboard** (`app/api/dashboard/route.ts:87-100` — komentar kode sendiri menyatakan hanya dua metrik agregat yang dikoreksi, detail tetap pakai data lama).
+- **Jalur baru (`ayo_payment_event_staging_events` / `lib/ayo-payment-events.ts`)** — didesain benar dengan identity per payment event (`lib/ayo-payment-events.ts:80-88`, `booking_id:reservation_payment_id`, komentar eksplisit "never booking_id alone"), dan terbukti berfungsi benar saat diuji ulang terhadap data live. Namun hanya dipakai oleh Dashboard (metrik agregat saja) dan Export (`export/bulanan`, `export/harian`) — **tidak pernah dikoneksikan ke Transaksi maupun Rekonsiliasi**.
+
+Booking dengan lebih dari satu payment event (split/bertahap) kehilangan semua payment kecuali yang terakhir tersinkron, di setiap konsumen yang masih membaca `bookings` collection mentah. Ini bug laten di semua bulan, bukan spesifik Agustus — kemungkinan besar baru terlihat di Agustus karena pola split-payment AYO lebih sering muncul, sementara Juni–Juli sudah punya baseline resmi tervalidasi (`lib/ayo-payment-event-staging.ts:5-8`, hardcoded hanya periode 2026-06 dan 2026-07) yang kemungkinan sudah dikoreksi lewat backfill sebelum aktivasi pipeline baru (`activatedAt: 2026-08-05`).
+
+### Jumlah booking & payment terdampak (terverifikasi, window 2026-08-01 s/d 2026-08-13)
+
+- **1 booking** ditemukan dengan >1 payment event pada window yang ter-sync: `MN/2428/260809/0002994`.
+- **1 payment event** (Rp150.000) hilang dari `bookings` collection yang dipakai Transaksi/Rekonsiliasi.
+- **Total nominal dampak terverifikasi: Rp150.000** (booking menampilkan `total_price=50.000`, seharusnya `Rp200.000`).
+
+Angka ini **tidak bisa diklaim mewakili seluruh Agustus 1–31**: tanggal 14–31 Agustus belum terjadi (hari ini 2026-08-13), dan collection legacy `ayo_payment_events` kosong (0 dokumen, memang tidak pernah dipakai — lihat `lib/ayo-payment-events-sync.ts:51-57`, "deliberately inactive"). Untuk sisa bulan, jumlah booking/payment terdampak akan bertambah seiring waktu berjalan dan tidak bisa diproyeksikan dari data yang belum ada.
+
+### Kasus contoh MN/2428/260809/0002994 — dibuktikan dari data
+
+Source AYO (`ayo_payment_event_staging_events`, runId `ayo-sync:rolling`):
+- event `internal_reservation:MN/2428/260809/0002994:2742703` — amount **150000**, eventDate 2026-08-12.
+- event `internal_reservation:MN/2428/260809/0002994:2760168` — amount **50000**, eventDate 2026-08-12.
+
+`bookings` collection (dipakai halaman Transaksi):
+- `booking_id: MN/2428/260809/0002994`, `total_price: 50000`, `changeType: "updated"`.
+
+Payment Rp150.000 tertimpa tepat di `upsertBookingItems()` (`lib/booking-sync.ts:181-187`, cabang "updated", `$set: booking` tanpa riwayat/array). Pipeline payment-events baru, saat dijalankan manual dengan `AYO_PAYMENT_EVENTS_READ_ENABLED=true`, berhasil mengembalikan kedua event dengan benar — bug murni di sisi konsumen (Transaksi/Rekonsiliasi/detail Dashboard), bukan di pipeline baru.
+
+### Apakah source AYO lengkap?
+
+**Ya.** Kedua payment event (150rb dan 50rb, `reservation_payment_id` berbeda: 2742703 vs 2760168) benar-benar dikirim AYO API dan berhasil ditangkap pipeline payment-events. Data hilang murni di sisi AYOSERA (`bookings` collection legacy), bukan karena AYO gagal mengirim.
+
+### Perbandingan Agustus vs Juni–Juli
+
+Juni–Juli sudah divalidasi resmi sebagai baseline regression (`lib/ayo-payment-event-staging.ts:5-8`) dan kemungkinan sudah dibackfill sebelum pipeline baru diaktifkan (2026-08-05), sehingga Dashboard/Export tampak benar untuk periode itu. Kode Transaksi/Rekonsiliasi sendiri **tidak pernah berubah** untuk skenario ini pada bulan manapun — jadi perbedaan yang dirasakan bukan karena regresi kode di Agustus, melainkan bug lama yang baru terekspos karena pola split-payment AYO muncul/lebih sering di Agustus dan periode ini belum punya baseline resmi seperti Juni-Juli.
+
+### Rekomendasi fix generik paling minimum (belum diimplementasikan)
+
+1. Prioritas tertinggi: hentikan pemakaian `bookings.total_price` sebagai representasi nominal payment di `app/api/transactions/route.ts` dan `app/api/reconciliation/court-revenue/[period]/_shared.ts`; overlay dari `ayo_payment_event_staging_events` dengan pola yang sama seperti sudah dipakai `dashboard/route.ts` (agregat) dan `export/bulanan`, sehingga Dashboard, Transaksi, Export, dan Rekonsiliasi memakai satu sumber kebenaran yang sama.
+2. Perbaiki baris detail per-booking di Dashboard yang saat ini masih memakai `bookings` mentah (hanya metrik agregat yang dikoreksi).
+3. Jangan hardcode validasi baseline resmi hanya untuk Juni-Juli; buat mekanisme agar bulan berjalan bisa tervalidasi/teraktivasi secara rutin, bukan menunggu penambahan manual per bulan di kode.
+4. Jangka panjang: `bookings` collection tidak lagi dijadikan representasi payment; payment selalu diambil dari collection payment-events yang identity-nya per payment event, bukan per booking.
+
+### File:line bukti
+
+- `lib/booking-sync.ts:103,110,156-160,181-187` — penimpaan payment per `booking_id`.
+- `lib/booking-mapper.ts:4-29` — satu `total_price` per booking, tanpa riwayat.
+- `app/api/transactions/route.ts:87` — Transaksi baca `bookings` mentah tanpa overlay.
+- `app/api/reconciliation/court-revenue/[period]/_shared.ts` — tidak ada overlay payment-events.
+- `app/api/dashboard/route.ts:77-100` — hanya metrik agregat dikoreksi, detail tidak.
+- `app/api/transactions/export/bulanan/route.ts:50-57`, `export/harian/route.ts` — sudah benar, pakai payment-events.
+- `lib/ayo-payment-events.ts:80-88` — desain identity per payment yang benar.
+- `lib/ayo-payment-event-staging.ts:5-8,84-114` — baseline hardcoded hanya Juni-Juli.
+- `lib/ayo-payment-events-auto-sync.ts` — auto-sync rolling pengisi staging events.
+
+Status: **audit selesai, read-only, tidak ada perubahan database/kode/commit/push.** Perbaikan menunggu approval terpisah sebelum implementasi.
+
+## Fix AYO Payment partial-payment hilang — implementasi — 2026-08-13
+
+Implementasi generik atas root cause di audit sebelumnya. `bookings` collection TIDAK diubah strukturnya; hanya nominal/payment yang sekarang datang dari `ayo_payment_event_staging_events` di seluruh konsumen, dengan fallback ke `bookings.total_price` untuk booking yang belum tercakup pipeline payment-events.
+
+### Helper bersama baru
+
+`lib/booking-payment-aggregate.ts` (baru):
+
+- `aggregateBookingPayments(paymentEvents)` — dedup dulu per `event.identity` (`paymentEventIdentity()`, `lib/ayo-payment-events.ts:80-88`, never booking_id alone), lalu jumlahkan semua payment event per `booking_id` menjadi `{ totalAmount, paymentCount, events[] }`.
+- `withBookingPaymentTotals(bookings, aggregate)` — overlay `totalAmount` hasil agregasi ke `total_price` tiap booking; booking TANPA payment event yang cocok (periode di luar cakupan staging) tetap memakai `bookings.total_price` asli sebagai fallback — baris tidak pernah hilang/jadi Rp0 salah.
+
+### Konsumen yang diperbaiki
+
+- `app/api/transactions/route.ts` — Transaksi sekarang membaca `ayo_payment_event_staging_events` untuk rentang tanggal query (`date`/`start_date`+`end_date`) via `readActiveStagedPaymentEvents`, lalu overlay lewat `withBookingPaymentTotals(matched, aggregateBookingPayments(staged.events))` sebelum filter tampil/status.
+- `app/api/dashboard/route.ts` — baris detail per-booking (`analyzedFiltered`/`analyzedToday`, dipakai widget lapangan/sesi/status/customer) sekarang memakai `filteredBookingsWithPayments`/`todayBookingsWithPayments` hasil `withBookingPaymentTotals`, bukan `filteredBookings`/`todayBookings` mentah. Dua metrik agregat yang sudah benar sebelumnya (`buildDashboardPaymentMetrics`, `withCanonicalPaymentAmounts`) tidak diubah.
+- `app/api/transactions/export/harian/route.ts` — sebelumnya SATU-SATUNYA jalur export yang belum diverifikasi memakai payment-events secara eksplisit di audit; sekarang di-refactor memakai `withCanonicalPaymentAmounts` + `dashboardPaymentAmountsByBooking` (pola yang sama persis dengan `export/bulanan/route.ts`), dengan fallback booking lama bila staging tidak tersedia. `export/bulanan/route.ts` dan `lib/omset-kategori-export.ts` TIDAK diubah — sudah benar sejak awal.
+- **Rekonsiliasi**: audit sebelumnya menuding `app/api/reconciliation/court-revenue/[period]/_shared.ts`, tetapi file itu ternyata hanya berisi helper Berita Acara/lock (tidak menghitung nominal apa pun). Nominal court-revenue yang sebenarnya dihitung di `lib/reconciliation-court-revenue-source.ts` dan `lib/reconciliation-omzet-ledger.ts` — audit ulang membuktikan KEDUANYA sudah memanggil `readActiveStagedPaymentEvents` dan mengagregasi per `event.identity` dengan fallback booking mentah hanya saat staging benar-benar tidak tersedia (`lib/reconciliation-court-revenue-source.ts:74-100`, `lib/reconciliation-omzet-ledger.ts:314-332`). Rekonsiliasi tidak memerlukan perubahan kode tambahan; tidak ada nominal mentah `bookings.total_price` tanpa overlay yang tersisa di jalur ini.
+
+### Regression test baru — `lib/booking-payment-aggregate.test.ts` (8 test, semua PASS)
+
+1 payment event; 2 payment event (split, fixture `MN/2428/260809/0002994` HANYA sebagai contoh — helper sendiri tidak pernah bercabang pada booking_id tertentu); 3 payment event; booking tanpa payment event sama sekali (fallback, bukan Rp0); `paymentEvents` null (semua fallback); duplicate event/identity sama re-sync (tidak double count); campuran booking bertingkat (satu ter-agregat, satu fallback); serta test structural yang membuktikan Transaksi, Dashboard, Rekonsiliasi (court-revenue source + omzet ledger), dan Export semuanya memanggil `readActiveStagedPaymentEvents`/helper agregasi yang sama (bukan logika duplikat berbeda-beda).
+
+### Hasil test/typecheck/build
+
+- `npx tsx --conditions=react-server --test lib/booking-payment-aggregate.test.ts` — **8/8 PASS**.
+- `npm run test:ayo-payment-events` (termasuk helper baru, ditambahkan ke script ini di `package.json`) — **33/33 PASS**.
+- `npm run test:court-revenue-reconciliation` — **62/62 PASS**.
+- `npm run test:reconciliation-omzet-ledger` — **39/39 PASS**.
+- `npm run test:olsera-export-formula-safety` — **5/5 PASS** (export tidak berubah perilaku).
+- `npm run test:ayo-payment-events-backfill` — **1 test GAGAL, PRE-EXISTING, TIDAK TERKAIT** tugas ini (`lib/ayo-payment-events-backfill-route.test.ts` mengharapkan `requireSupervisor()` yang sudah dihapus oleh commit permission-alignment 2026-08-12 sebelumnya). Dibuktikan gagal juga di `HEAD` bersih SEBELUM perubahan task ini (`git stash` lalu jalankan ulang), jadi tidak diperbaiki di sini (di luar scope; regresi lama yang sudah ada).
+- `npm run type-check` — **PASS**, tanpa output error.
+- `npm run build` — **PASS** (`✓ Compiled successfully`, `✓ Generating static pages (24/24)`, exit code 0). Ada pesan `ENOENT ... _not-found/page.js.nft.json` pada tahap trace-collection akhir, tetapi build tetap exit 0 — pola dikenal sebagai isu Windows/next trace non-fatal, bukan kegagalan build.
+- `git diff --check` — **PASS**.
+
+### Validasi read-only production (script sementara di scratchpad, TIDAK disimpan di project, TIDAK menulis apa pun)
+
+Dijalankan lewat helper produksi yang sama (`lib/mongodb.ts`, `lib/ayo-payment-event-staging.ts`, `lib/booking-payment-aggregate.ts`) via koneksi read-only:
+
+- **`MN/2428/260809/0002994`**: `bookings.total_price` mentah **Rp50.000** (sama seperti sebelumnya, `bookings` TIDAK diubah); hasil helper `withBookingPaymentTotals` sekarang **Rp200.000** (2 payment event: Rp150.000 `reservation_payment_id 2742703` + Rp50.000 `reservation_payment_id 2760168`) — sama persis dengan temuan audit.
+- **Audit penuh Agustus 1–13 (734 booking)**: **733 booking nominalnya TIDAK berubah** (identik sebelum/sesudah fix), **1 booking berubah** — persis `MN/2428/260809/0002994`, satu-satunya booking dengan >1 payment event pada window ini (`paymentCount: 2`). Tidak ada satupun booking single-payment yang nominalnya berubah keliru akibat fix ini (cek eksplisit "changed tapi bukan multi-payment" = 0).
+- **Juni–Juli baseline** (`AYO_STAGING_PERIODS`, `lib/ayo-payment-event-staging.ts:5-8`, TIDAK diubah): live read `readActiveStagedPaymentEvents` untuk 2026-06 dan 2026-07 menghasilkan **1421 baris/Rp242.895.499** dan **1359 baris/Rp237.491.000** — identik dengan konstanta baseline. Tidak ada regresi.
+
+### Scope yang TIDAK disentuh
+
+Inventory, Financial, YONEX, ODEA, kategori Olsera, skema `bookings` (struktur tetap sama, hanya `total_price` yang di-overlay di memory saat response API — tidak pernah ditulis ulang ke database). Tidak ada write/manual repair ke database production; seluruh perbaikan lewat kode read-only (agregasi in-memory saat request).
+
+### File yang diubah
+
+- `lib/booking-payment-aggregate.ts` (baru)
+- `lib/booking-payment-aggregate.test.ts` (baru)
+- `app/api/transactions/route.ts`
+- `app/api/dashboard/route.ts`
+- `app/api/transactions/export/harian/route.ts`
+- `package.json` (tambah script `test:booking-payment-aggregate`, daftarkan test baru di `test:ayo-payment-events` dan `test:unit`)
+- `AYOSERA-HANDOFF-LATEST.md` (dokumen ini)
+
+### Status akhir
+
+**SELESAI DAN DIVERIFIKASI.** Semua gate wajib (test relevan, typecheck, build, `git diff --check`) PASS. Validasi read-only production membuktikan fix bekerja untuk kasus contoh maupun keseluruhan window Agustus 1–13, tanpa regresi Juni–Juli. Commit dan push mengikuti setelah section ini.

@@ -5,6 +5,9 @@ import { toTransactionRow } from "@/lib/booking-mapper";
 import { collections, withMongo } from "@/lib/mongodb";
 import { isCancelledTransaction, isDisplayEligibleTransaction } from "@/lib/revenue";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
+import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
+import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
 
 // Data transaksi selalu realtime: nonaktifkan cache Next.js/Vercel.
 export const dynamic = "force-dynamic";
@@ -81,12 +84,34 @@ export async function GET(request: Request) {
 
     const sortSpec = buildSort(searchParams.get("sort"), searchParams.get("dir"));
 
+    // Rentang tanggal eksplisit dipakai untuk mengambil payment events yang
+    // sama seperti Dashboard/Export — booking_id yang punya >1 payment event
+    // (split/bertahap) tidak lagi kehilangan payment sebelumnya (lihat
+    // bookings.total_price yang di-overwrite per sync, lib/booking-sync.ts).
+    const explicitDate = searchParams.get("date");
+    const explicitStart = explicitDate || searchParams.get("start_date");
+    const explicitEnd = explicitDate || searchParams.get("end_date");
+
     const result = await withMongo(async () => {
-      const { bookings } = await collections();
+      const { bookings, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
       // Query sudah dibatasi rentang tanggal + filter, jadi set ini terbatas.
       const matched = await bookings.find(filter).sort(sortSpec).toArray();
+
+      const staged = isPaymentEventsReadEnabled() && explicitStart && explicitEnd
+        ? await readActiveStagedPaymentEvents(explicitStart, explicitEnd, {
+          runs: ayoPaymentEventStagingRuns,
+          events: ayoPaymentEventStagingEvents,
+          activation: ayoPaymentEventActivation,
+        })
+        : null;
+      // Booking tanpa payment event yang cocok (mis. periode belum tercakup
+      // payment-events) tetap memakai bookings.total_price sebagai fallback —
+      // baris tidak pernah dibuang, beda dengan withCanonicalPaymentAmounts()
+      // yang dipakai jalur export.
+      const withPayments = staged ? withBookingPaymentTotals(matched, aggregateBookingPayments(staged.events)) : matched;
+
       // Eligibility tampil (Rp0 / Internal Use) memakai rule yang sama seperti dashboard.
-      const displayRows = matched
+      const displayRows = withPayments
         .filter(isDisplayEligibleTransaction)
         .filter((booking) => !isCancelledStatusFilter || isCancelledTransaction(booking));
       const total = displayRows.length;

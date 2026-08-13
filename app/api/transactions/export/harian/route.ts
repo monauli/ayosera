@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { resolveVenueName } from "@/lib/booking-mapper";
-import { buildOmzetHarianWorkbook } from "@/lib/omzet-export";
+import { buildOmzetHarianWorkbook, withCanonicalPaymentAmounts } from "@/lib/omzet-export";
+import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
+import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
+import { dashboardPaymentAmountsByBooking } from "@/lib/dashboard-payment-metrics";
 
 export const runtime = "nodejs";
 
@@ -26,9 +29,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "date must use YYYY-MM-DD format" }, { status: 400 });
     }
     const monthPrefix = date.slice(0, 7);
+    const monthStart = `${monthPrefix}-01`;
+    const monthEnd = `${monthPrefix}-${String(new Date(Number(monthPrefix.slice(0, 4)), Number(monthPrefix.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
 
     const { dayBookings, monthBookings, sportByFieldId, venueName } = await withMongo(async () => {
-      const { bookings, fields } = await collections();
+      const { bookings, fields, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
       const [day, month, fieldRows] = await Promise.all([
         bookings.find({ date }).sort({ field_name: 1, start_time: 1 }).toArray(),
         bookings.find({ date: { $regex: `^${monthPrefix}` } }).toArray(),
@@ -36,9 +41,20 @@ export async function GET(request: Request) {
       ]);
       const map = new Map<number, string>();
       for (const f of fieldRows) if (f.id && f.sport_name) map.set(f.id, f.sport_name);
+      // Sama seperti export bulanan: pakai dataset payment-events aktif yang
+      // tervalidasi supaya booking split-payment tidak kehilangan payment
+      // sebelumnya. Bila tidak tersedia, pertahankan fallback booking lama.
+      const staged = isPaymentEventsReadEnabled()
+        ? await readActiveStagedPaymentEvents(monthStart, monthEnd, {
+          runs: ayoPaymentEventStagingRuns,
+          events: ayoPaymentEventStagingEvents,
+          activation: ayoPaymentEventActivation,
+        })
+        : null;
+      const paymentAmounts = staged ? dashboardPaymentAmountsByBooking(staged.events) : null;
       return {
-        dayBookings: day as BookingDocument[],
-        monthBookings: month as BookingDocument[],
+        dayBookings: (paymentAmounts ? withCanonicalPaymentAmounts(day as BookingDocument[], paymentAmounts) : day) as BookingDocument[],
+        monthBookings: (paymentAmounts ? withCanonicalPaymentAmounts(month as BookingDocument[], paymentAmounts) : month) as BookingDocument[],
         sportByFieldId: map,
         venueName: resolveVenueName(),
       };
