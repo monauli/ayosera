@@ -1319,3 +1319,14 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - ODEA RED: incoming +48 13 Juli dan opname 17 Juli +2 tetap terpisah; unknown tetap unknown.
 - ODEA ROSE: evidence Feb–Jul tetap partial-safe; mismatch July 11 vs 9 tetap `SOURCE_DATA_INCOMPLETE`; adjustment lama +64 tidak dipakai.
 - Status: **READY FOR PRODUCTION ACCEPTANCE** dengan blocker operasional: source Olsera resmi independen untuk validasi kategori, seluruh akun buku besar, dan empat perbedaan BA masih perlu tersedia/ditinjau. Validator tetap `Belum Bisa Diverifikasi`, bukan PASS palsu.
+## 2026-08-14 — Live Olsera Validator
+
+- Panel `Validasi Data Olsera` sekarang memiliki periode bulan, tombol `Validasi Sekarang`, loading state, dan timestamp pemeriksaan.
+- Endpoint read-only: `GET /api/audit/olsera-validation?period=YYYY-MM`.
+- Kategori memakai helper `fetchOlseraSalesAuditSource` (closeorder + openorder paid + detail order/item) dan membandingkan materialized AYOSERA; label hasil `Cocok dengan API Olsera`.
+- Inventori memakai `fetchStockMovementRange` pada `/en/inventory/stockmovement`, membandingkan field opening/incoming/return/sales/outgoing/closing per produk; BA tetap diagnostic terpisah.
+- Financial memakai `getBalanceSheet`, `getProfitLoss`, `getCashFlow`, dan `getLedgerSummary`; snapshot AYOSERA tidak ditulis ulang. Section independen dapat berstatus `Gagal Dicek`.
+- Validator sepenuhnya read-only: tidak ada rebuild, adjustment, lock, finalisasi, atau update snapshot/source.
+- Tests: `test:olsera-inventory` 48/48 PASS, `test:olsera-financial` 29/29 PASS, type-check PASS, build PASS, diff-check PASS.
+- Files: `app/api/audit/olsera-validation/route.ts`, `components/olsera-validation-panel.tsx`, dokumen handoff.
+- Production test berikutnya: pilih periode finalized, klik `Validasi Sekarang`, pastikan tiga section memuat status live dan detail delta tanpa ada write ke Olsera/AYOSERA.
