@@ -1366,3 +1366,12 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - Last validated code state: inventory monthly tests 229/229 PASS, type-check PASS, build PASS, diff-check PASS.
 - Next action: restore Mongo DNS/connection, rerun the same three dry-runs, inspect before/after, then request explicit approval for any controlled `--write`.
 - Retry preview 2026-08-14: scoped YONEX dry-run again failed before source read with the same exact blocker, `connect ECONNREFUSED 127.0.0.1:27017`; no write was attempted. ODEA scopes remain unexecuted after the identical Mongo failure from the prior grouped attempt.
+## 2026-08-14 — Master validator final + Vercel preview endpoint
+
+- Validator cards now expose category qty/omzet AYOSERA vs Olsera Live, deltas, inventory mismatch details, financial component totals/deltas, and ledger account mismatch details.
+- Added authenticated read-only endpoint `GET /api/audit/inventory-history-preview`; scope is hard-limited to YONEX old/new lineage, ODEA ROSE old/canonical lineage, and ODEA RED for 2026-02..2026-08. It reads snapshots, movements, stored sales, aliases, and stock-opname evidence via application Mongo helpers; no POST/write path and no secrets/tokens/URI in response.
+- Preview classification is explicit: `CONSISTENT`, `INCONSISTENT`, or `SOURCE_DATA_INCOMPLETE`; no auto-fix or snapshot write.
+- Inventory BA remains separate from live inventory validation. ODEA ROSE July 11-vs-9 remains unresolved; ODEA RED remains distinct; YONEX/ODEA have no controlled write in this task.
+- Date/month control in Audit dark mode now follows the active color scheme.
+- Local Mongo remains unavailable; Vercel/runtime endpoint must be used for production preview.
+- Tests: financial 29/29, inventory monthly 229/229, integration 45/45, type-check PASS, build PASS, diff-check PASS.
