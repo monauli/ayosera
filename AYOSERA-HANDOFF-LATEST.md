@@ -1014,3 +1014,27 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 
 - Label visible parent/toggle multi-payment diubah dari `${count} pembayaran` menjadi `${count} sesi`.
 - Child tetap memakai `Pembayaran 1`, `Pembayaran 2`, dst.; paymentCount, total, state expand/collapse, API, database, dan modul lain tidak disentuh.
+# Partial-safe reconstruction attempt — 2026-08-13
+
+## Schema audit
+
+- `OlseraInventoryMonthlySnapshotDocument` supports numeric flow fields plus `null`, but has no separate unknown value for a numeric component. Its `diagnostics`, `status`, and `canonicalProductId` fields support incomplete/manual-review states.
+- `inventory_stock_opname_reconciliations` stores physical quantity, system closing quantity, difference, status, note, and history; it does not create inventory movements or alter monthly snapshots.
+- Therefore unknown source values must remain `null`/diagnostic; they must not be replaced with zero or inferred movements.
+
+## Controlled-write result
+
+- No database write was performed. The required scoped read-back of snapshots, stock-opname evidence, movements, and order items for YONEX/ODEA ROSE/ODEA RED timed out against the configured production MongoDB before returning data.
+- Consequently no before/after dry-run could be established from the live database, and no snapshot or evidence document was safely written.
+- Raw Olsera movement/order sources were not modified; the three product lineages remain separate, including ODEA ROSE vs ODEA RED.
+
+## Required state once source access is available
+
+- YONEX: only write Feb–Jul chain if the approved opening/sales/zero-flow evidence can be represented without inventing movements; April `-2` must remain an opname/evidence adjustment. August may only carry opening from a verified July closing.
+- ODEA ROSE: Feb–Jun may be rebuilt only with all components verified; July must remain `SOURCE_DATA_INCOMPLETE` until the 11-vs-9 sales mismatch is resolved; August must not be changed from an unfinalized July.
+- ODEA RED: store only proven incoming/PO/opname evidence; opening, sales, closing, and unknown movements remain unfilled until exact source data is available.
+
+## Validation
+
+- No write/read-back verification or inventory export comparison was possible because the production database read timed out.
+- No commit/push was made for this blocked attempt.
