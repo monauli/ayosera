@@ -1365,3 +1365,4 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - Existing safety guard remains active: fully-known arithmetic mismatch is `incomplete` with diagnostic; unknown fields remain null.
 - Last validated code state: inventory monthly tests 229/229 PASS, type-check PASS, build PASS, diff-check PASS.
 - Next action: restore Mongo DNS/connection, rerun the same three dry-runs, inspect before/after, then request explicit approval for any controlled `--write`.
+- Retry preview 2026-08-14: scoped YONEX dry-run again failed before source read with the same exact blocker, `connect ECONNREFUSED 127.0.0.1:27017`; no write was attempted. ODEA scopes remain unexecuted after the identical Mongo failure from the prior grouped attempt.
