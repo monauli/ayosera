@@ -138,6 +138,106 @@ test("evaluateBaRow: tidak ada produk katalog yang cocok -> TIDAK_DITEMUKAN", ()
   assert.equal(evaluation.status, "TIDAK_DITEMUKAN");
 });
 
+// ---------------------------------------------------------------------------
+// Tier suffix generik (BA menulis nama TANPA prefix kategori katalog) —
+// iterasi ini. Kasus nyata: YONEX AC102/ODEA RED/ODEA ROSE, plus satu
+// kategori SINTETIS ("CATEGORY X") untuk membuktikan logikanya generik,
+// bukan daftar kata kategori hardcode.
+// ---------------------------------------------------------------------------
+
+const prefixCatalog: CatalogRow[] = [
+  { productId: 101, variantId: null, productName: "GRIP YONEX AC102" },
+  { productId: 102, variantId: null, productName: "BOLA PADEL ODEA RED" },
+  { productId: 103, variantId: null, productName: "BOLA PADEL ODEA ROSE" },
+  { productId: 104, variantId: null, productName: "CATEGORY X WIDGET PRO" },
+];
+
+test("matchBaItemToCatalog: 'YONEX AC102' cocok kuat dengan katalog 'GRIP YONEX AC102' (prefix kategori generik dilepas)", () => {
+  const result = matchBaItemToCatalog("YONEX AC102", prefixCatalog, normalizeInventoryBaName);
+  assert.equal(result.kind, "MATCHED");
+  if (result.kind === "MATCHED") {
+    assert.equal(result.row.productId, 101);
+    assert.equal(result.via, "suffix");
+  }
+});
+
+test("matchBaItemToCatalog: 'ODEA RED' cocok kuat dengan katalog 'BOLA PADEL ODEA RED'", () => {
+  const result = matchBaItemToCatalog("ODEA RED", prefixCatalog, normalizeInventoryBaName);
+  assert.equal(result.kind, "MATCHED");
+  if (result.kind === "MATCHED") assert.equal(result.row.productId, 102);
+});
+
+test("matchBaItemToCatalog: 'ODEA ROSE' cocok kuat dengan katalog 'BOLA PADEL ODEA ROSE'", () => {
+  const result = matchBaItemToCatalog("ODEA ROSE", prefixCatalog, normalizeInventoryBaName);
+  assert.equal(result.kind, "MATCHED");
+  if (result.kind === "MATCHED") assert.equal(result.row.productId, 103);
+});
+
+test("matchBaItemToCatalog: tier suffix TIDAK PERNAH mempertukarkan ODEA RED <-> ODEA ROSE walau sama-sama punya prefix kategori", () => {
+  const red = matchBaItemToCatalog("ODEA RED", prefixCatalog, normalizeInventoryBaName);
+  const rose = matchBaItemToCatalog("ODEA ROSE", prefixCatalog, normalizeInventoryBaName);
+  assert.equal(red.kind, "MATCHED");
+  assert.equal(rose.kind, "MATCHED");
+  if (red.kind === "MATCHED" && rose.kind === "MATCHED") {
+    assert.notEqual(red.row.productId, rose.row.productId);
+    assert.equal(red.row.productId, 102);
+    assert.equal(rose.row.productId, 103);
+  }
+});
+
+test("matchBaItemToCatalog: tier suffix GENERIK — kategori sintetis 'CATEGORY X' juga terdeteksi tanpa hardcode kata kategori apa pun", () => {
+  const result = matchBaItemToCatalog("WIDGET PRO", prefixCatalog, normalizeInventoryBaName);
+  assert.equal(result.kind, "MATCHED");
+  if (result.kind === "MATCHED") {
+    assert.equal(result.row.productId, 104);
+    assert.equal(result.via, "suffix");
+  }
+});
+
+test("matchBaItemToCatalog: suffix tier ambigu (>1 katalog berakhir dengan token sama) -> AMBIGUOUS, tidak auto-pilih", () => {
+  const ambiguousCatalog: CatalogRow[] = [
+    { productId: 201, variantId: null, productName: "GRIP YONEX AC102" },
+    { productId: 202, variantId: null, productName: "SENAR YONEX AC102" },
+  ];
+  const result = matchBaItemToCatalog("YONEX AC102", ambiguousCatalog, normalizeInventoryBaName);
+  assert.equal(result.kind, "AMBIGUOUS");
+});
+
+test("evaluateBaRow: cutoffQueryFailed true -> PERLU_DICEK walau match kuat dan CEK A sudah OK (tidak pernah diam-diam Cocok)", () => {
+  const evaluation = evaluateBaRow(
+    { description: "YONEX AC102", systemQty: 10, physicalQty: 9, differenceQty: -1, arithmeticStatus: "OK" },
+    prefixCatalog,
+    normalizeInventoryBaName,
+    null,
+    { cutoffQueryFailed: true },
+  );
+  assert.equal(evaluation.status, "PERLU_DICEK");
+  assert.ok(evaluation.reasons.some((r) => r.includes("Gagal mengambil stok sistem AYOSERA")));
+});
+
+test("evaluateBaRow: systemStockAtCutoff null (produk tidak ditemukan pada hasil query, TANPA error) -> PERLU_DICEK, bukan Cocok diam-diam", () => {
+  const evaluation = evaluateBaRow(
+    { description: "YONEX AC102", systemQty: 10, physicalQty: 10, differenceQty: 0, arithmeticStatus: "OK" },
+    prefixCatalog,
+    normalizeInventoryBaName,
+    null,
+  );
+  assert.equal(evaluation.status, "PERLU_DICEK");
+  assert.ok(evaluation.reasons.some((r) => r.includes("tidak ditemukan untuk produk ini")));
+});
+
+test("evaluateBaRow: match via suffix + stok cutoff sama + CEK A OK -> COCOK", () => {
+  const evaluation = evaluateBaRow(
+    { description: "YONEX AC102", systemQty: 10, physicalQty: 9, differenceQty: -1, arithmeticStatus: "OK" },
+    prefixCatalog,
+    normalizeInventoryBaName,
+    10,
+  );
+  assert.equal(evaluation.status, "COCOK");
+  assert.equal(evaluation.matchedProduct?.productId, 101);
+  assert.equal(evaluation.matchedVia, "suffix");
+});
+
 test("shouldBlockFinalizeForBaRows: blokir bila ADA satu saja baris bukan COCOK", () => {
   assert.equal(shouldBlockFinalizeForBaRows([{ status: "COCOK" }, { status: "PERLU_DICEK" }]), true);
   assert.equal(shouldBlockFinalizeForBaRows([{ status: "COCOK" }, { status: "TIDAK_DITEMUKAN" }]), true);

@@ -1237,3 +1237,74 @@ Dump mentah pdf.js (`pdfjs-dist/legacy/build/pdf.mjs`, `getTextContent()` per ha
 ### File berubah (iterasi ini)
 
 `lib/inventory-ba-table-parser.ts`, `lib/inventory-ba-table-parser.test.ts`, `lib/reconciliation-berita-acara-client-ocr.ts`, `lib/__fixtures__/inventory-ba-juli-2026-real-items.json` (baru), dan handoff ini. Tidak menyentuh `lib/inventory-ba-finalize-guard.ts`, `lib/inventory-ba-client.ts`, UI (`app/reconciliation/inventory/page.tsx`, `app/globals.css`) — sudah diverifikasi benar tanpa perubahan.
+
+## Iterasi ke-6: product matching generik + wiring stok cutoff AYOSERA pada checker BA — 2026-08-14
+
+Fokus iterasi ini murni SETELAH parsing PDF (sudah terbukti benar 7/7 di iterasi sebelumnya): pencocokan nama produk BA → katalog AYOSERA, dan sumber "Stok Sistem AYOSERA" yang dibandingkan terhadap Stok Sistem BA harus PERSIS stok pada tanggal cutoff BA (bukan snapshot bulanan/akhir bulan).
+
+### Root cause #1 — matching terlalu ketat untuk nama BA tanpa prefix kategori katalog
+
+`matchBaItemToCatalog` (`lib/inventory-ba-finalize-guard.ts`) hanya punya 3 tier: SKU exact, nama exact, lalu fuzzy Dice coefficient dengan threshold `0.85`. Kasus nyata BA Juli 2026 gagal di SEMUA tier:
+
+- BA `"YONEX AC102"` (2 token) vs katalog `"GRIP YONEX AC102"` (3 token) → Dice = 2×2/(2+3) = **0.8** < 0.85 → NO_MATCH.
+- BA `"ODEA RED"` (2 token) vs katalog `"BOLA PADEL ODEA RED"` (4 token) → Dice = 2×2/(2+4) = **0.667** < 0.85 → NO_MATCH.
+
+Threshold 0.85 sengaja dipilih SEBELUMNYA supaya `ODEA RED` tidak pernah fuzzy-cross-match `ODEA ROSE` (Dice 0.5) — menurunkan threshold akan membahayakan pemisahan itu, jadi tidak disentuh.
+
+**Fix (generik, bukan daftar kata kategori hardcode):** tier baru `suffix` disisipkan SETELAH exact-name, SEBELUM fuzzy — `suffixTokenMatch`: token BA (target) harus SAMA PERSIS (urutan & isi) dengan token EKOR token katalog setelah sejumlah token AWAL (≥1) dilepas. `"YONEX AC102"` adalah ekor persis dari `"GRIP YONEX AC102"` (setelah `"GRIP"` dilepas) → MATCHED. `"ODEA RED"` adalah ekor persis dari `"BOLA PADEL ODEA RED"` → MATCHED. `"ODEA RED"` BUKAN ekor dari `"BOLA PADEL ODEA ROSE"` (ekor katalog adalah `{ODEA, ROSE}` ≠ `{ODEA, RED}`) → TIDAK pernah tertukar. Kandidat >1 pada tier ini → `AMBIGUOUS`, tidak auto-pilih. Dibuktikan generik dengan test sintetis kategori palsu `"CATEGORY X WIDGET PRO"` yang tetap terdeteksi tanpa perubahan kode apa pun.
+
+### Root cause #2 — CEK B (stok sistem BA vs stok sistem AYOSERA pada cutoff) memakai data STALE, bukan cutoff
+
+Helper cutoff (`fetchStockMovementRange`, `resolveCutoffQueryRange`, `fetchCutoffSystemRows`, `loadInventoryOpnameCutoff`) SUDAH ADA dan SUDAH BENAR dari iterasi sebelumnya (`end_date` API = cutoffDate persis, movement setelah cutoff tidak pernah ikut — dibuktikan test `lib/inventory-stock-opname-store.test.ts` baris ~205: cutoff 16 Juli tetap 36 walau end_date=17 Juli sudah 35). Bug ADA di pemanggilan dari `app/reconciliation/inventory/page.tsx`:
+
+1. `uploadBa` menghitung `systemStockAtCutoff` untuk CEK B dari `preMatch` — pencarian STRING EXACT sederhana (`normalizeInventoryBaName(row.productName) === normalizeInventoryBaName(item.description)`), BUKAN `matchBaItemToCatalog` yang sesungguhnya dipakai `evaluateBaRow`. Akibatnya walau matching produk (fix #1) sudah benar, `systemStockAtCutoff` tetap `null` untuk kasus prefix kategori → CEK B diam-diam di-skip.
+2. `preMatch` diambil dari state `data.rows` — yaitu HASIL LOAD TERAKHIR halaman (`load()`), yang HANYA memakai cutoff bila `cutoffConfirmed` sudah dicentang user. Saat BA baru diupload, `cutoffDate` di-set dari hasil parse PDF tapi `cutoffConfirmed` SENGAJA di-set `false` (existing safety rule: cutoff wajib dikonfirmasi eksplisit sebelum memengaruhi tabel utama/finalisasi). Jadi `data.rows` pada momen evaluasi BA baru saja diupload BISA SAJA masih basis snapshot bulanan lama, bukan cutoff BA — checker membandingkan terhadap angka yang salah tanggal.
+3. Bila `systemStockAtCutoff` bernilai `null` (baik karena skip di atas maupun karena produk memang tidak ditemukan di hasil query), `evaluateBaRow` LAMA diam-diam SKIP CEK B (tidak mendorong reason apa pun) — bisa menghasilkan `COCOK` padahal CEK B belum pernah benar-benar terbukti sama.
+
+**Fix:**
+- `uploadBa` sekarang menembak fetch KHUSUS `GET /api/reconciliation/inventory-opname?...&cutoffDate=<cutoff BA>` (endpoint + helper YANG SAMA dengan tabel utama, `loadInventoryOpnameCutoff`) SEGERA setelah cutoff BA terbaca dari PDF — TIDAK menunggu checkbox "Konfirmasi cutoff" (gate itu tetap hanya melindungi Stok Akhir Sistem tabel utama/finalisasi, bukan preview checker). Kegagalan fetch (network/API error) ditandai eksplisit `cutoffQueryFailed`.
+- Katalog untuk matching + lookup stok cutoff sekarang SAMA-SAMA berasal dari hasil fetch cutoff ini (fallback ke `data.rows` bila cutoff BA tidak terbaca sama sekali).
+- Product match diresolusi SEKALI via `matchBaItemToCatalog` (fungsi yang sama dipakai `evaluateBaRow`), baru stok cutoff produk yang cocok itu di-lookup dari hasil fetch cutoff — bukan lagi string-exact terpisah.
+- `evaluateBaRow` diberi parameter opsional baru `{ cutoffQueryFailed }`: bila `true`, ATAU bila `systemStockAtCutoff === null` (produk cocok tapi tidak ditemukan di hasil query cutoff), status DIPAKSA `PERLU_DICEK` dengan reason eksplisit — TIDAK PERNAH lagi diam-diam `COCOK` hanya karena CEK B belum terbukti.
+
+### Status logic final (evaluateBaRow)
+
+`COCOK` HANYA bila: (a) match produk kuat/tunggal (SKU/nama-exact/suffix/fuzzy≥0.85, tidak ambigu), (b) stok sistem AYOSERA pada cutoff BERHASIL diambil DAN sama persis dengan Stok Sistem BA, (c) aritmetika cetak BA sendiri (Fisik − Sistem = Selisih) konsisten. `PERLU_DICEK` bila match ambigu, stok cutoff berbeda, stok cutoff gagal diambil/tidak ditemukan, atau aritmetika BA sendiri salah. `TIDAK_DITEMUKAN` bila tidak ada kandidat produk sama sekali. Tidak ada auto-correct angka BA, tidak ada auto-finalize/auto-lock, tidak ada adjustment Olsera dipicu di mana pun pada perubahan ini.
+
+### Tabel "Hasil Pembacaan Berita Acara" — kolom baru
+
+Kolom sekarang: No. | Nama Barang BA | Produk AYOSERA | Stok Sistem BA | **Stok Sistem AYOSERA @ Cutoff** (baru) | Stok Fisik Aktual | Selisih BA | Status. Kolom baru menampilkan stok hasil fetch cutoff per baris (`ayoseraCutoffStock`), sumber sama persis dengan tabel utama.
+
+### Verifikasi live read-only (2026-08-14, MongoDB + Olsera Open API, TANPA WRITE)
+
+Script throwaway read-only (tidak di-commit) memakai HELPER PRODUKSI YANG SAMA (`fetchCutoffSystemRows` → `fetchStockMovementRange` + `fetchMatchingContext`) plus matcher yang sudah diperbaiki (`matchBaItemToCatalog`), cutoff `2026-07-16`, window query `2026-07-01..2026-07-16`. Koneksi MongoDB & Olsera BERHASIL (tidak ada `querySrv ECONNREFUSED` pada percobaan ini). Katalog termuat 125 produk, 29 baris stockmovement pada window, 0 unmatched/ambiguous.
+
+| BA name | Produk AYOSERA (via) | productId | BA Sistem | Stok AYOSERA @ cutoff | Status |
+|---|---|---|---|---|---|
+| YONEX AC102 | GRIP YONEX AC102 (suffix) | 111350931 | 10 | 10 | COCOK |
+| NESTLE PURE LIFE 1500ML | NESTLE PURE LIFE 1500ML (exact-name) | 109533497 | 350 | 50 | PERLU_DICEK |
+| NESTLE PURE LIFE 600ML | NESTLE PURE LIFE 600ML (exact-name) | 109533529 | 529 | 505 | PERLU_DICEK |
+| ODEA RED | BOLA PADEL ODEA RED (suffix) | 119043265 | 45 | 47 | PERLU_DICEK |
+| ODEA ROSE | BOLA PADEL ODEA ROSE (suffix) | 116138490 | 38 | 36 | PERLU_DICEK |
+| POCARI SWEAT PET 500 ML | POCARI SWEAT PET 500 ML (exact-name) | 109533902 | 342 | 342 | COCOK |
+| POCARI ION WATER 500ML | POCARI ION WATER 500ML (exact-name) | 109534279 | 202 | 202 | COCOK |
+
+Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: YONEX AC102, ODEA RED, ODEA ROSE — TIDAK saling tertukar). Angka stok TIDAK difudge: 4 dari 7 produk (NESTLE 1500ML, NESTLE 600ML, ODEA RED, ODEA ROSE) menunjukkan selisih NYATA antara Stok Sistem BA dan stok AYOSERA pada cutoff — dilaporkan apa adanya sebagai `PERLU_DICEK`, root cause selisih itu sendiri (kenapa Olsera live berbeda dari angka BA) BELUM diinvestigasi pada iterasi ini (di luar scope: iterasi ini hanya membetulkan matching + sumber data cutoff, bukan menjelaskan/mengoreksi selisih substantif). Tidak ada Olsera stock adjustment, tidak ada finalisasi, tidak ada write apa pun dijalankan oleh verifikasi ini.
+
+### Tests
+
+- `lib/inventory-ba-finalize-guard.test.ts`: 18 → **27/27 PASS** (9 test baru: 3 kasus real prefix kategori, non-cross-match RED/ROSE via suffix, genericity sintetis "CATEGORY X", suffix ambigu, `cutoffQueryFailed` → Perlu Dicek, `systemStockAtCutoff` null tanpa error → Perlu Dicek, match suffix + cutoff sama → Cocok).
+- `npm run test:inventory-stock-opname`: **31 + 22 PASS** (tidak berubah — cutoff exclusion 17 Juli sudah dibuktikan di iterasi sebelumnya, tetap lulus).
+- `npm run test:reconciliation-berita-acara`: **90/90 PASS** (fitur BA omzet terpisah, tidak tersentuh, dibuktikan tetap hijau).
+- `npm run type-check`: PASS.
+- `npm run build`: PASS (exit 0), termasuk `/reconciliation/inventory`.
+- `git diff --check`: PASS.
+
+### File berubah (iterasi ke-6)
+
+`lib/inventory-ba-finalize-guard.ts` (tier `suffix` generik + opsi `cutoffQueryFailed`), `lib/inventory-ba-finalize-guard.test.ts` (9 test baru), `app/reconciliation/inventory/page.tsx` (fetch cutoff khusus untuk preview BA, matching via `matchBaItemToCatalog` eksplisit, kolom baru "Stok Sistem AYOSERA @ Cutoff"), dan handoff ini. Tidak menyentuh `lib/inventory-ba-table-parser.ts`, `lib/inventory-ba-parser.ts`, `lib/inventory-stock-opname*.ts`, `lib/olsera-inventory-stockmovement.ts` (helper cutoff sudah benar, dipakai apa adanya, tidak diimplementasi ulang). Tidak ada perubahan pada Financial, kategori penjualan, YONEX/ODEA closing lama, atau fitur BA omzet.
+
+### Gap / next step
+
+- 4 dari 7 produk BA Juli 2026 menunjukkan selisih nyata Stok Sistem BA vs stok Olsera live pada cutoff — perlu investigasi terpisah (bukan bug matching/wiring, tapi kemungkinan data historis Olsera yang berbeda dari BA cetak, atau BA yang dicetak lebih awal dari waktu benar-benar cutoff). Tidak dikoreksi/diasumsikan pada iterasi ini.
+- Script verifikasi live bersifat throwaway dan TIDAK di-commit (sesuai instruksi); untuk mengulang verifikasi di masa depan, reuse `fetchCutoffSystemRows` + `fetchMatchingContext` + `matchBaItemToCatalog` seperti didokumentasikan di atas.

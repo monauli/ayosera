@@ -11,9 +11,11 @@ import {
   evaluateBaRow,
   isBaParseUnread,
   isDateWithinPeriod,
+  matchBaItemToCatalog,
   shouldBlockFinalizeForBaRows,
   shouldBlockFinalizeForUnreadBa,
   type BaRowStatus,
+  type CatalogRow,
 } from "@/lib/inventory-ba-finalize-guard";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
@@ -153,7 +155,9 @@ export default function InventoryOpnamePage() {
   // Hasil Pembacaan Berita Acara: baris BER-SUMBER LANGSUNG dari BA (bukan
   // seluruh katalog), dengan status per-baris hasil evaluateBaRow (dua cek
   // selisih + matching katalog). Dirender di atas tabel utama.
-  const [baRows, setBaRows] = useState<Array<{ no: number; description: string; systemQty: number | null; physicalQty: number | null; differenceQty: number | null; matchedProductName: string | null; status: BaRowStatus }>>([]);
+  const [baRows, setBaRows] = useState<
+    Array<{ no: number; description: string; systemQty: number | null; ayoseraCutoffStock: number | null; physicalQty: number | null; differenceQty: number | null; matchedProductName: string | null; status: BaRowStatus }>
+  >([]);
   const [baPeriod, setBaPeriod] = useState<{ periodStart: string | null; cutoffDate: string | null } | null>(null);
 
   useEffect(() => {
@@ -232,28 +236,57 @@ export default function InventoryOpnamePage() {
       }
       setBaItemsFound(parsed.items.length);
       setBaPeriod({ periodStart: parsed.periodStart, cutoffDate: parsed.cutoffDate });
+
+      // Stok Sistem AYOSERA @ Cutoff: tarik LANGSUNG dari endpoint cutoff yang
+      // SAMA persis dengan tabel utama (lib/inventory-stock-opname-store.ts:
+      // loadInventoryOpnameCutoff, end_date = cutoffDate BA PERSIS) — TIDAK
+      // menunggu checkbox "Konfirmasi cutoff" (gate itu hanya melindungi
+      // Stok Akhir Sistem TABEL UTAMA/finalisasi, bukan preview checker ini).
+      // Kegagalan fetch ditandai eksplisit (cutoffQueryFailed) supaya baris
+      // BA yang terdampak WAJIB Perlu Dicek, bukan diam-diam dianggap Cocok.
+      let cutoffCatalogRows: Row[] | null = null;
+      let cutoffQueryFailed = false;
+      if (parsed.cutoffDate) {
+        const cutoffYear = parsed.periodStart ? parsed.periodStart.split("-")[0] : year;
+        const cutoffMonth = parsed.periodStart ? String(Number(parsed.periodStart.split("-")[1])) : month;
+        try {
+          const cutoffResponse = await fetch(`/api/reconciliation/inventory-opname?year=${encodeURIComponent(cutoffYear)}&month=${encodeURIComponent(cutoffMonth)}&cutoffDate=${encodeURIComponent(parsed.cutoffDate)}`, { cache: "no-store" });
+          const cutoffResult = await cutoffResponse.json().catch(() => null);
+          if (cutoffResponse.ok && cutoffResult?.rows) cutoffCatalogRows = cutoffResult.rows as Row[];
+          else cutoffQueryFailed = true;
+        } catch {
+          cutoffQueryFailed = true;
+        }
+      }
+      const catalogForMatch: CatalogRow[] = (cutoffCatalogRows ?? data?.rows ?? []).map((row) => ({ productId: row.productId, variantId: row.variantId, productName: row.productName, productSku: row.productSku }));
+      const cutoffStockByKey = new Map<string, number | null>((cutoffCatalogRows ?? []).map((row) => [rowKey(row.productId, row.variantId), row.systemClosingQty]));
+
       let autoCocok = 0;
       let perluDicek = parsed.status === "PERLU_DICEK" && parsed.items.length === 0 ? 1 : 0;
       const sourcedKeys = new Set<string>();
       const nextBaRows: typeof baRows = [];
-      if (data) {
+      if (data || cutoffCatalogRows) {
         const next = { ...edits };
         parsed.items.forEach((item, index) => {
-          // CEK B (stok sistem BA vs stok sistem AYOSERA sendiri pada cutoff)
-          // butuh baris katalog yang cocok DULU — evaluateBaRow melakukan
-          // matching + kedua cek selisih sekaligus, generik (bukan hardcode nama produk).
-          const preMatch = data.rows.find((row) => normalizeInventoryBaName(row.productName) === normalizeInventoryBaName(item.description) || (row.productSku && normalizeInventoryBaName(row.productSku) === normalizeInventoryBaName(item.description)));
-          const systemStockAtCutoff = preMatch?.systemClosingQty ?? null;
+          // Resolusi produk katalog DULU (matchBaItemToCatalog generik — SKU,
+          // nama exact, suffix token tanpa prefix kategori, lalu fuzzy) supaya
+          // CEK B bisa mengambil stok cutoff produk yang BENAR-BENAR cocok,
+          // bukan pencocokan nama sederhana yang terpisah dari evaluateBaRow.
+          const preMatch = matchBaItemToCatalog(item.description, catalogForMatch, normalizeInventoryBaName);
+          const matchedRow = preMatch.kind === "MATCHED" ? preMatch.row : null;
+          const systemStockAtCutoff = matchedRow ? (cutoffStockByKey.get(rowKey(matchedRow.productId, matchedRow.variantId)) ?? null) : null;
           const evaluation = evaluateBaRow(
             { description: item.description, systemQty: item.systemQty, physicalQty: item.physicalQty, differenceQty: item.differenceQty, arithmeticStatus: item.status },
-            data.rows,
+            catalogForMatch,
             normalizeInventoryBaName,
             systemStockAtCutoff,
+            { cutoffQueryFailed },
           );
           nextBaRows.push({
             no: index + 1,
             description: item.description,
             systemQty: item.systemQty,
+            ayoseraCutoffStock: systemStockAtCutoff,
             physicalQty: item.physicalQty,
             differenceQty: item.differenceQty,
             matchedProductName: evaluation.matchedProduct?.productName ?? null,
@@ -578,11 +611,12 @@ export default function InventoryOpnamePage() {
               <thead>
                 <tr>
                   <th>No.</th>
-                  <th>Nama Barang</th>
-                  <th>Stok Sistem BA</th>
-                  <th>Stok Fisik Aktual</th>
-                  <th>Selisih</th>
+                  <th>Nama Barang BA</th>
                   <th>Produk AYOSERA</th>
+                  <th>Stok Sistem BA</th>
+                  <th>Stok Sistem AYOSERA @ Cutoff</th>
+                  <th>Stok Fisik Aktual</th>
+                  <th>Selisih BA</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -591,10 +625,11 @@ export default function InventoryOpnamePage() {
                   <tr key={row.no}>
                     <td>{row.no}</td>
                     <td>{row.description}</td>
+                    <td>{row.matchedProductName ?? "—"}</td>
                     <td>{formatQty(row.systemQty)}</td>
+                    <td>{formatQty(row.ayoseraCutoffStock)}</td>
                     <td>{formatQty(row.physicalQty)}</td>
                     <td>{formatSignedQty(row.differenceQty)}</td>
-                    <td>{row.matchedProductName ?? "—"}</td>
                     <td>
                       <span className={`recon-badge recon-badge-${BA_ROW_STATUS_TONE[row.status]}`}>{BA_ROW_STATUS_LABEL[row.status]}</span>
                     </td>

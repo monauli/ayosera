@@ -40,7 +40,7 @@ export type CatalogRow = { productId: number; variantId: number | null; productN
 export type BaMatchResult =
   | { kind: "NO_MATCH" }
   | { kind: "AMBIGUOUS"; candidates: CatalogRow[] }
-  | { kind: "MATCHED"; row: CatalogRow; via: "sku" | "exact-name" | "fuzzy" };
+  | { kind: "MATCHED"; row: CatalogRow; via: "sku" | "exact-name" | "suffix" | "fuzzy" };
 
 // Ambang confidence untuk fuzzy match (tier terakhir, hanya dipakai bila SKU
 // dan nama exact TIDAK menemukan apa pun). Dice coefficient token-based:
@@ -72,17 +72,40 @@ function diceCoefficient(a: string[], b: string[]): number {
 }
 
 /**
+ * Tier GENERIK (bukan daftar kata kategori hardcode) untuk kasus BA menulis
+ * nama produk TANPA prefix kategori katalog, mis. BA "YONEX AC102" vs katalog
+ * "GRIP YONEX AC102"; BA "ODEA RED" vs katalog "BOLA PADEL ODEA RED". Deteksi:
+ * token BA (target) harus SAMA PERSIS (urutan & isi) dengan token EKOR
+ * (suffix) token katalog setelah sejumlah token AWAL (>=1) dilepas — BUKAN
+ * substring bebas di posisi manapun. Ini sengaja ketat supaya "ODEA RED"
+ * TIDAK PERNAH dianggap suffix-match terhadap katalog "... ODEA ROSE" (token
+ * ekor katalog adalah {ODEA, ROSE}, bukan {ODEA, RED} — tidak identik).
+ * Kandidat >1 (mis. dua produk katalog berbeda berakhir dengan token sama
+ * persis) -> AMBIGUOUS, tidak pernah auto-pilih.
+ */
+function suffixTokenMatch(targetTokens: readonly string[], catalogTokens: readonly string[]): boolean {
+  if (targetTokens.length === 0) return false;
+  if (catalogTokens.length <= targetTokens.length) return false; // wajib ada minimal 1 token prefix kategori yang dilepas
+  const tail = catalogTokens.slice(catalogTokens.length - targetTokens.length);
+  return tail.every((token, index) => token === targetTokens[index]);
+}
+
+/**
  * Cocokkan satu baris deskripsi BA terhadap katalog, urutan prioritas:
  * 1. SKU (bila BA menyertakan SKU pada deskripsi/kolom terpisah dan cocok persis).
  * 2. Nama ternormalisasi (exact match).
- * 3. (Alias) — tidak ada tabel alias produk<->BA generik di codebase saat ini
+ * 3. Suffix token generik (lihat suffixTokenMatch di atas) — menangani BA yang
+ *    menulis nama produk TANPA prefix kategori katalog (mis. "YONEX AC102" vs
+ *    katalog "GRIP YONEX AC102", "ODEA RED" vs katalog "BOLA PADEL ODEA RED").
+ *    TIDAK ada daftar kata kategori hardcode — murni perbandingan token ekor.
+ * 4. (Alias) — tidak ada tabel alias produk<->BA generik di codebase saat ini
  *    (grep "alias" hanya menemukan alias identitas order-item historis di
  *    lib/historical-order-item-identity.ts, domain berbeda); bila tabel
  *    semacam itu ditambahkan untuk BA di masa depan, sisipkan di sini SEBELUM
- *    fuzzy, bukan menggantikan exact match.
- * 4. Fuzzy (token Dice coefficient) HANYA bila skor >= BA_FUZZY_MATCH_THRESHOLD
+ *    fuzzy, bukan menggantikan exact/suffix match.
+ * 5. Fuzzy (token Dice coefficient) HANYA bila skor >= BA_FUZZY_MATCH_THRESHOLD
  *    dan hasilnya TUNGGAL (tidak ambigu di antara kandidat fuzzy lain).
- * Bila lebih dari satu baris katalog cocok pada tier manapun (nama/SKU
+ * Bila lebih dari satu baris katalog cocok pada tier manapun (nama/SKU/suffix
  * ambigu), JANGAN auto-pilih salah satu — kembalikan AMBIGUOUS supaya UI
  * menandai "Perlu Dicek", bukan menebak.
  */
@@ -97,6 +120,11 @@ export function matchBaItemToCatalog(description: string, catalog: ReadonlyArray
   if (nameCandidates.length > 1) return { kind: "AMBIGUOUS", candidates: nameCandidates };
 
   const targetTokens = tokenSet(description, normalize);
+
+  const suffixCandidates = catalog.filter((row) => suffixTokenMatch(targetTokens, tokenSet(row.productName, normalize)));
+  if (suffixCandidates.length === 1) return { kind: "MATCHED", row: suffixCandidates[0], via: "suffix" };
+  if (suffixCandidates.length > 1) return { kind: "AMBIGUOUS", candidates: suffixCandidates };
+
   const scored = catalog
     .map((row) => ({ row, score: diceCoefficient(targetTokens, tokenSet(row.productName, normalize)) }))
     .filter((entry) => entry.score >= BA_FUZZY_MATCH_THRESHOLD)
@@ -115,7 +143,7 @@ export type BaRowStatus = "COCOK" | "PERLU_DICEK" | "TIDAK_DITEMUKAN";
 export type BaRowEvaluation = {
   status: BaRowStatus;
   matchedProduct: CatalogRow | null;
-  matchedVia: "sku" | "exact-name" | "fuzzy" | null;
+  matchedVia: "sku" | "exact-name" | "suffix" | "fuzzy" | null;
   reasons: string[];
 };
 
@@ -130,13 +158,29 @@ export type BaRowInput = {
 
 type InventoryBaParseStatusLike = "OK" | "PERLU_DICEK";
 
+export type EvaluateBaRowOptions = {
+  /**
+   * true bila pengambilan stok sistem AYOSERA pada cutoff (CEK B) GAGAL
+   * secara teknis (network/API error) — BUKAN sekadar produk tidak
+   * ditemukan pada hasil query. Wajib memaksa PERLU_DICEK, TIDAK PERNAH
+   * diam-diam dianggap Cocok hanya karena tidak bisa diverifikasi.
+   */
+  cutoffQueryFailed?: boolean;
+};
+
 /**
  * Evaluasi SATU baris BA terhadap katalog AYOSERA, menerapkan dua pengecekan
  * selisih (CEK A: aritmetika cetak BA sendiri, sudah dihitung parser; CEK B:
  * Stok Sistem BA vs stok sistem AYOSERA sendiri pada cutoff) plus matching.
- * TIDAK PERNAH menulis ulang angka BA supaya "cocok" secara paksa.
+ * TIDAK PERNAH menulis ulang angka BA supaya "cocok" secara paksa. Status
+ * COCOK HANYA bila: (a) match produk kuat/tunggal, (b) stok sistem AYOSERA
+ * pada cutoff BERHASIL diambil DAN sama persis dengan Stok Sistem BA, dan
+ * (c) aritmetika cetak BA sendiri konsisten (CEK A). systemStockAtCutoff
+ * bernilai null (query sukses tapi produk tidak ditemukan pada hasil) atau
+ * cutoffQueryFailed true (query gagal) SAMA-SAMA tidak pernah menghasilkan
+ * COCOK — keduanya berarti CEK B belum terbukti benar, bukan terbukti sama.
  */
-export function evaluateBaRow(item: BaRowInput, catalog: ReadonlyArray<CatalogRow>, normalize: (value: string) => string, systemStockAtCutoff: number | null): BaRowEvaluation {
+export function evaluateBaRow(item: BaRowInput, catalog: ReadonlyArray<CatalogRow>, normalize: (value: string) => string, systemStockAtCutoff: number | null, options?: EvaluateBaRowOptions): BaRowEvaluation {
   const reasons: string[] = [];
   if (item.arithmeticStatus !== "OK") reasons.push("Selisih tercetak pada BA tidak konsisten dengan Stok Fisik − Stok Sistem.");
 
@@ -148,7 +192,11 @@ export function evaluateBaRow(item: BaRowInput, catalog: ReadonlyArray<CatalogRo
     return { status: "PERLU_DICEK", matchedProduct: null, matchedVia: null, reasons: [...reasons, `Nama ambigu, cocok dengan ${match.candidates.length} produk katalog.`] };
   }
 
-  if (systemStockAtCutoff !== null && item.systemQty !== null && systemStockAtCutoff !== item.systemQty) {
+  if (options?.cutoffQueryFailed) {
+    reasons.push("Gagal mengambil stok sistem AYOSERA pada cutoff — perlu ditinjau manual.");
+  } else if (systemStockAtCutoff === null) {
+    reasons.push("Stok sistem AYOSERA pada cutoff tidak ditemukan untuk produk ini — perlu ditinjau manual.");
+  } else if (item.systemQty !== null && systemStockAtCutoff !== item.systemQty) {
     reasons.push(`Stok Sistem BA (${item.systemQty}) berbeda dari stok sistem AYOSERA pada cutoff (${systemStockAtCutoff}).`);
   }
 
