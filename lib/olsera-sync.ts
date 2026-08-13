@@ -752,8 +752,11 @@ export async function fetchOlseraSalesAuditSource(startDate: string, endDate: st
       const seen = new Set(closeIds);
       const orders: OrderRef[] = closeIds.map((id) => ({ id, source: "close" }));
       for (const id of openIds) if (!seen.has(id)) orders.push({ id, source: "open" });
-      for (const order of orders) {
-        const { meta, items } = await fetchOrderDetail(auth.token, order);
+      const details: Array<{ order: OrderRef; meta: OrderMeta; items: OrderItem[] }> = [];
+      let cursor = 0;
+      const worker = async () => { for (;;) { const index = cursor++; if (index >= orders.length) return; details[index] = { order: orders[index], ...(await fetchOrderDetail(auth.token, orders[index])) }; } };
+      await Promise.all(Array.from({ length: Math.min(DETAIL_CONCURRENCY, orders.length || 1) }, worker));
+      for (const { order, meta, items } of details) {
         const orderIdentity = String(meta.order_no ?? order.id).trim();
         if (!orderIdentity) throw new OlseraSalesAuditSourceError("SOURCE_INCOMPLETE", "Order Olsera tidak memiliki identity.");
         const normalizedItems = items.map((item) => {

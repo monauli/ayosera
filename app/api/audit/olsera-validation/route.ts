@@ -13,6 +13,7 @@ const iso = /^\d{4}-(0[1-9]|1[0-2])$/;
 const dayEnd = (period: string) => new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).toISOString().slice(0, 10);
 const stable = (value: unknown) => JSON.stringify(value, (_, v) => v instanceof Date ? v.toISOString() : v);
 const failed = (error: unknown) => ({ status: "Gagal Dicek" as Status, detail: error instanceof Error ? error.message : "Source Olsera tidak dapat dibaca." });
+const withTimeout = async <T,>(task: Promise<T>, ms: number): Promise<T> => await Promise.race([task, new Promise<T>((_, reject) => setTimeout(() => reject(new Error("Validasi kategori melewati batas waktu.")), ms))]);
 
 export async function GET(request: Request) {
   try {
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
     const sections = await Promise.allSettled([
       (async () => {
         if (section && section !== "category") return { status: "Data Belum Lengkap" as Status };
-        const [live, stored] = await Promise.all([fetchOlseraSalesAuditSource(start, end), withMongo(async () => { const { olseraSalesByCategory } = await collections(); return olseraSalesByCategory.find({ date: { $gte: start, $lte: end } }).toArray(); })]);
+        const [live, stored] = await withTimeout(Promise.all([fetchOlseraSalesAuditSource(start, end), withMongo(async () => { const { olseraSalesByCategory } = await collections(); return olseraSalesByCategory.find({ date: { $gte: start, $lte: end } }).toArray(); })]), 45_000);
         const liveTotal = live.items.reduce((x, row) => x + row.amount, 0), liveQty = live.items.reduce((x, row) => x + row.qty, 0);
         const storedTotal = stored.reduce((x, row) => x + row.totalAmount, 0), storedQty = stored.reduce((x, row) => x + row.qty, 0);
         return { status: current ? "Data Belum Lengkap" : liveTotal === storedTotal && liveQty === storedQty ? "Cocok" : "Selisih", label: "Cocok dengan API Olsera", ayosera: { qty: storedQty, total: storedTotal }, olseraLive: { qty: liveQty, total: liveTotal }, orders: live.orders.length };

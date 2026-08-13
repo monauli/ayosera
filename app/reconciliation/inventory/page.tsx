@@ -292,7 +292,7 @@ export default function InventoryOpnamePage() {
             matchedProductName: evaluation.matchedProduct?.productName ?? null,
             status: evaluation.status,
           });
-          if (evaluation.status === "COCOK" && evaluation.matchedProduct) {
+          if (evaluation.matchedProduct) {
             const key = rowKey(evaluation.matchedProduct.productId, evaluation.matchedProduct.variantId);
             next[key] = { physicalQty: item.physicalQty, note: "Dibaca dari BA" };
             sourcedKeys.add(key);

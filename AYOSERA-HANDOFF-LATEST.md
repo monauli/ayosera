@@ -1338,3 +1338,10 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - Endpoint validator menerima `section` agar UI memproses section satu per satu tanpa fake timer; kegagalan stage tampil sebagai error dan tidak menjadi PASS palsu.
 - Banner warning lama `Belum Bisa Diverifikasi` dihapus dari panel.
 - Tests: inventory UI 50/50 PASS, integration/validator 45/45 PASS, type-check PASS, build PASS, diff-check PASS.
+## 2026-08-14 — Final Inventory BA wiring + validator timeout
+
+- Root cause validator stuck: category live audit fetched every order detail sequentially and had no section timeout. Fixed with bounded concurrency 2 and a 45-second category budget; timeout returns `Gagal Dicek` while independent sections continue.
+- Inventory cutoff wiring remains read-only and uses the existing cutoff range path (`loadInventoryOpnameCutoff` → `fetchStockMovementRange`), so movement after cutoff is excluded.
+- BA-matched rows now auto-fill `physicalQty` from BA physical stock even when status `Perlu Dicek`; `Dibaca dari BA` provenance remains only for actual BA matches. Omitted items retain BA-only assumed-match behavior without the badge.
+- No formula, source, adjustment, finalization, lock, snapshot, cron, or YONEX/ODEA historical logic changed.
+- Tests: `test:olsera-audit` 16/16, inventory stock-opname 31+22, BA/reconciliation 90, inventory UI 50/50, type-check PASS, build PASS, diff-check PASS.
