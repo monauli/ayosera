@@ -30,7 +30,7 @@ mock.module("@/lib/reconciliation-omzet-period-lock", {
   },
 });
 
-let ocrText = "Berita Acara PENAMBAHAN Rp740.000. Alasan: advance payment received in March recognized as March revenue";
+let ocrText = "Berita Acara periode Maret 2026: PENAMBAHAN Rp740.000. Alasan: advance payment received in March recognized as March revenue";
 let ocrConfidence = 1;
 let ocrThrows = false;
 mock.module("@/lib/reconciliation-berita-acara-ocr", {
@@ -58,7 +58,7 @@ test.beforeEach(() => {
   supervisorRejects = false;
   ledgerDifference = 740_000;
   lockAttachment = { url: "https://blob.example/ba.pdf", mimeType: "application/pdf", fileName: "ba.pdf" };
-  ocrText = "Berita Acara PENAMBAHAN Rp740.000. Alasan: advance payment received in March recognized as March revenue";
+  ocrText = "Berita Acara periode Maret 2026: PENAMBAHAN Rp740.000. Alasan: advance payment received in March recognized as March revenue";
   ocrConfidence = 1;
   ocrThrows = false;
 });
@@ -78,7 +78,7 @@ test("Maret: PENAMBAHAN Rp740.000 vs systemDifference +740000 -> COCOK", async (
 
 test("April: PENGURANGAN Rp740.000 vs systemDifference -739999 -> COCOK (toleransi Rp1)", async () => {
   ledgerDifference = -739_999;
-  ocrText = "Berita Acara PENGURANGAN Rp740.000. Alasan: koreksi pengakuan pendapatan advance payment.";
+  ocrText = "Berita Acara periode April 2026: PENGURANGAN Rp740.000. Alasan: koreksi pengakuan pendapatan advance payment.";
   const res = await POST(new Request("http://localhost"), ctx("2026-04"));
   const body = (await res.json()) as { data: { matchStatus: string } };
   assert.equal(body.data.matchStatus, "COCOK");
