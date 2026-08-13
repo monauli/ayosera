@@ -767,3 +767,84 @@ Selain audit di atas, sesi ini juga memperbaiki 2 test yang gagal di `app/api/re
 - **Logic data TIDAK disentuh:** `aggregateBookingPayments`, `withBookingPaymentTotals`, `paymentEventIdentity`, dedup, `paymentDetailsFor`, total nominal, Export Bulanan/Harian, Dashboard nominal, Rekonsiliasi nominal/lock — tidak ada perubahan di `lib/booking-payment-aggregate.ts`, `lib/ayo-payment-events.ts`, `lib/booking-mapper.ts`, atau file terkait lainnya.
 - **Hasil test:** `npm run test:booking-payment-detail-ui` 5/5 PASS, `npm run test:booking-payment-aggregate` 12/12 PASS, `npm run test:booking-session` 36/36 PASS, `npm run test:booking-mapper` 4/4 PASS. `npm run type-check` PASS. `npm run build` PASS. `git diff --check` bersih (tidak ada trailing whitespace).
 - **File yang diubah:** hanya `components/booking-payment-detail.tsx`.
+
+---
+
+## Rekonsiliasi Inventori: basis cutoff tanggal BA (bukan akhir bulan kalender) — 2026-08-13
+
+### Riset yang membuka jalan (read-only, GET-only, sebelum sesi ini)
+
+Audit sebelumnya STOP dengan dugaan Olsera Open API hanya menyediakan saldo stok agregat per bulan kalender. Riset lanjutan (read-only, hanya GET terhadap API live, tidak pernah menulis) MEMBUKTIKAN sebaliknya:
+
+- `GET /api/open-api/v1/en/inventory/stockmovement` (sudah dipakai lewat `lib/olsera-inventory-stockmovement.ts:fetchStockMovementRange`, fungsi generik yang SUDAH menerima `start_date`/`end_date` apa pun) mengembalikan field `sisa` (saldo akhir) **presisi per hari** mengikuti `end_date` — dibuktikan live: `end_date=2026-07-14` → sisa 12, `end_date=2026-07-15` → sisa 36 (barang masuk persis tanggal itu), `end_date=2026-07-16` → sisa 36, `end_date=2026-07-17` → sisa 35 (penjualan +1 persis tanggal itu). Ini POINT-IN-TIME sungguhan (konsisten aritmetika `beginning + incoming + return − sales − outgoing = sisa`), BUKAN agregat bulanan.
+- Batasan nyata: jendela tanggal > ~90-100 hari ditolak Olsera (HTTP 406, "not allowed pulling data for more than 3 mounts" — lihat komentar lama `lib/olsera-inventory-monthly-core.ts`) — bukan halangan untuk cutoff single-bulan (jendela maks ~31 hari, jauh di bawah batas).
+- Yang membatasi ke akhir bulan SELAMA INI adalah keputusan desain kode AYOSERA sendiri (`lib/olsera-inventory-monthly-snapshot-store.ts` selalu memanggil `fetchStockMovementRange` dengan boundary `monthDateRange(year, month)` — awal s/d akhir bulan penuh), **bukan** keterbatasan API.
+- Endpoint tambahan `GET /en/inventory/stockopname` (+ `/detail?id=X`) ditemukan sebagai dokumen stock opname resmi Olsera per-SKU bertanggal — cocok dengan pola BA nyata ("Stock Opname Periode 01-16 Juli 2026", `id=4148067`, `date=2026-07-17`, Posted) tapi HANYA mencatat SKU yang selisih (bukan snapshot katalog lengkap) dan `qty_sys` bisa lag dari cutoff — sesuai rekomendasi riset, **TIDAK diimplementasikan** sesi ini (scope kecil, cross-check opsional, prioritas ke `stockmovement`+`end_date` sebagai sumber utama).
+
+### Yang diimplementasikan
+
+Basis rekonsiliasi ditambah (BUKAN diganti/redesign) dari "akhir bulan kalender" menjadi "cutoff tanggal BA eksplisit, dikonfirmasi user" — jalur snapshot bulanan lama tetap ada & tidak berubah (dipakai bila `cutoffDate` tidak diisi, backward compatible untuk dokumen/BA lama):
+
+1. **`lib/inventory-stock-opname.ts`** (pure, tanpa I/O) — ditambah:
+   - `isValidIsoDate` — validasi `YYYY-MM-DD` kalender valid (menolak `2026-02-30`, dsb).
+   - `resolveCutoffQueryRange(cutoffDate, desiredStartDate?)` — `endDate` = `cutoffDate` PERSIS (movement setelah cutoff tidak pernah ikut, dijamin parameter API); `startDate` default awal bulan cutoff, DIKLEM ke `CUTOFF_MAX_LOOKBACK_DAYS` (75 hari, margin aman di bawah batas ~90-100 hari Olsera) bila diminta lebih lebar — tidak pernah gagal 406 tanpa fallback.
+   - `validateCutoffPlausibility({cutoffDate, year, month, today})` — cutoff WAJIB tanggal valid, WAJIB berada di bulan/tahun filter yang dibuka, TIDAK BOLEH masa depan — inilah gate "BA salah periode diblok".
+   - `parseInventoryBaPeriodText(rawText)` — ekstraksi opsional rentang tanggal presisi hari dari teks BA (mis. "01 Juli 2026 s/d 16 Juli 2026" → cutoff = akhir periode = 16 Juli, BUKAN tanggal BA diterbitkan 17 Juli). Murni & tersedia untuk pemakaian OCR di masa depan — modul inventory-opname saat ini TIDAK punya pipeline OCR (beda dari modul rekonsiliasi omzet yang punya `reconciliation-berita-acara-ocr.ts`); alur konfirmasi cutoff yang benar-benar terpakai sesi ini adalah **input manual + checkbox konfirmasi wajib eksplisit**, bukan auto-parse dari file BA.
+2. **`lib/inventory-stock-opname-store.ts`** (I/O, server-only) — ditambah:
+   - `fetchCutoffSystemRows(cutoffDate, deps)` — panggil `fetchStockMovementRange(startDate, cutoffDate)` lalu cocokkan baris ke katalog produk lewat `attachMovementsToProducts` (REUSE persis dari `lib/olsera-inventory-monthly-core.ts`, tidak diimplementasi ulang) dan `fetchMatchingContext` (REUSE dari `lib/olsera-inventory-monthly-snapshot-store.ts`, katalog+alias, read-only).
+   - `loadInventoryOpnameCutoff({storeId, year, month, cutoffDate}, context?)` — hasil sejenis `loadInventoryOpnameMonth` tapi Stok Akhir Sistem = `sisa` API PERSIS pada `cutoffDate` (bukan `closingQty` snapshot Mongo bulanan). `snapshots` collection SAMA SEKALI tidak disentuh/dihitung ulang di jalur ini.
+   - `finalizeInventoryStockOpname` — parameter BARU opsional `cutoffDate`/`cutoffConfirmed`/`now`. Bila `cutoffDate` diisi: `cutoffConfirmed` WAJIB `true` (pola SAMA dengan `baOnlyDifferencesConfirmed` yang sudah ada — konfirmasi wajib, bukan otomatis), lalu `validateCutoffPlausibility` WAJIB lolos SEBELUM memanggil API sama sekali (gagal cepat, bukti: test `ctx.calls.length === 0` saat diblok), lalu verifikasi mismatch memakai `loadInventoryOpnameCutoff` (bukan `loadInventoryOpnameMonth`). Bila `cutoffDate` KOSONG/`undefined` (dokumen/BA lama) → jalur LAMA (`loadInventoryOpnameMonth`) dipakai apa adanya, 0 perubahan perilaku. Event lock yang tersimpan mendapat field BARU `cutoffDate` (null bila tidak diisi) di samping field `cutoff` (string) LAMA yang dipertahankan penuh untuk backward compatibility — **tidak ada migrasi/backfill paksa** untuk dokumen lama.
+3. **`app/api/reconciliation/inventory-opname/route.ts`** — `GET` menerima query opsional `cutoffDate` (memanggil `loadInventoryOpnameCutoff` bila diisi & valid, else `loadInventoryOpnameMonth` seperti sebelumnya); `POST action=finalize` meneruskan `cutoffDate`/`cutoffConfirmed` dari body ke store. `year`/`month` TETAP wajib di kedua endpoint — sekarang murni sebagai filter/kunci pencarian BA tersimpan, bukan lagi sumber boundary stok begitu `cutoffDate` dipakai.
+4. **`app/reconciliation/inventory/page.tsx`** — ditambah field tanggal "Cutoff tanggal BA (opsional)" + checkbox wajib "Konfirmasi cutoff" (disabled sampai tanggal diisi; berubah otomatis ke belum-dicentang setiap kali tanggal diganti — TIDAK ADA cutoff yang terpakai tanpa konfirmasi eksplisit user). Query `Tampilkan Data` hanya mengirim `cutoffDate` setelah dicentang. Banner info menampilkan cutoff aktif + jendela query saat dipakai. Tahun/Bulan TETAP ada sebagai filter (tidak dihapus). **Catatan jujur soal scope UI:** halaman ini sebelum sesi ini SUDAH TIDAK punya UI upload/finalize/lock sama sekali (fitur-fitur itu hanya ada di API/store — dikonfirmasi lewat pembacaan penuh `page.tsx`, 0 match untuk "finalize"/"lock"/"upload"/"attachment"), jadi sesi ini TIDAK membangun UI finalize/lock baru (di luar scope "extend, bukan redesign") — backend (API+store+rules) SUDAH lengkap mendukung cutoff untuk finalize, UI finalize adalah fast-follow bila dibutuhkan.
+
+### Rules keras — cara dipenuhi
+
+- **Rule 3/4 (movement setelah cutoff exclude, otomatis lewat `end_date`):** dibuktikan LIVE (lihat validasi di bawah) dan lewat test mock yang membedakan `end_date=2026-07-16` (sisa 36) vs `end_date=2026-07-17` (sisa 35) — tidak ada filter manual tambahan di kode, murni parameter API.
+- **Rule 5 (lock tidak freeze inventory setelah cutoff):** dikonfirmasi ARSITEKTURAL — `lib/cron-olsera-inventory.ts` dan `lib/olsera-inventory.ts` (jalur cron/sync inventori) TIDAK PERNAH mengimpor modul stock-opname atau membaca koleksi `inventory_stock_opname_reconciliations`/status lock apa pun sebelum menulis data. Test regresi baru (source-text assertion, pola sama `lib/reconciliation-omzet-period-lock-ui.test.ts`) memastikan ini TIDAK diam-diam berubah di masa depan.
+- **Rule 6 (extend, bukan redesign):** `loadInventoryOpnameMonth`/`saveInventoryOpnameBatch`/`unlockInventoryStockOpname` TIDAK diubah satu baris logic pun (hanya import baru ditambahkan di header file). `finalizeInventoryStockOpname` diperluas dengan parameter opsional (backward compatible, default = perilaku lama persis).
+- **Rule 7 (tidak menyentuh YONEX/ODEA/payment/Financial/Lock Omzet secara khusus):** tidak ada satu pun referensi YONEX/ODEA/`booking-payment-*`/`olsera-financial-*`/`reconciliation-omzet-period-lock*` di seluruh diff sesi ini (`git diff --stat` hanya menyentuh 5 file inventory-opname + `AYOSERA-HANDOFF-LATEST.md`). Perubahan generik (`fetchStockMovementRange` dipanggil dengan tanggal lain) otomatis ikut berlaku untuk produk apa pun termasuk ODEA/ODEA ROSE bila match katalog memang mengenainya — TIDAK ADA logic bercabang khusus nama produk yang ditambahkan.
+- **Rule 8 (field `cutoffDate` baru, `cutoff` lama dipertahankan, tidak migrasi paksa):** lihat poin 2 di atas — `cutoff` (string) tetap ada & tetap dipakai persis seperti sebelumnya, `cutoffDate` murni aditif, dokumen lama tanpa field ini dibaca apa adanya (`cutoffDate: null`), tidak ada script backfill dijalankan/ditambahkan.
+- **Rule 9 (BA salah periode diblok, diperkuat):** `validateCutoffPlausibility` memblokir finalize untuk cutoff yang tidak valid/ambigu/beda bulan dari filter/berada di masa depan — diuji eksplisit (lihat daftar test di bawah).
+
+### File yang diubah
+
+- `lib/inventory-stock-opname.ts` — fungsi pure baru (cutoff range/validasi/parsing periode).
+- `lib/inventory-stock-opname-store.ts` — `fetchCutoffSystemRows`, `loadInventoryOpnameCutoff`, `finalizeInventoryStockOpname` diperluas.
+- `app/api/reconciliation/inventory-opname/route.ts` — `GET`/`POST action=finalize` menerima `cutoffDate`.
+- `app/reconciliation/inventory/page.tsx` — input cutoff + konfirmasi wajib di UI.
+- `lib/inventory-stock-opname.test.ts` — 13 test baru (isValidIsoDate, resolveCutoffQueryRange, validateCutoffPlausibility, parseInventoryBaPeriodText).
+- `lib/inventory-stock-opname-store.test.ts` — 10 test baru (loadInventoryOpnameCutoff, finalize dengan cutoffDate, backward-compat tanpa cutoffDate, independensi lock vs cron).
+- `AYOSERA-HANDOFF-LATEST.md` — section ini.
+
+### Hasil test/typecheck/build
+
+- `npm run test:inventory-stock-opname` (`lib/inventory-stock-opname.test.ts` + `lib/inventory-stock-opname-store.test.ts`) — **31/31 PASS** + **20/20 PASS** (sebelumnya 18 + 10 = 28 test total; 23 test BARU ditambahkan sesi ini, 0 test lama dihapus/diubah).
+- `npm run test:olsera-inventory-monthly` — **229/229 PASS** (memverifikasi reuse `attachMovementsToProducts`/`fetchMatchingContext`/`buildMatchingContext` TIDAK meregresi pipeline snapshot bulanan existing).
+- `npm run test:cron-olsera-inventory` — **15/15 PASS** (jalur cron/sync inventori tidak terpengaruh).
+- `npm run type-check` — PASS, tanpa error.
+- `npm run build` — PASS, build production sukses (`/reconciliation/inventory` 6.91 kB, naik dari sebelumnya karena input cutoff baru).
+- `git diff --check` — PASS (hanya warning LF/CRLF normalisasi Windows, bukan whitespace error).
+
+### Validasi read-only production (sebelum commit)
+
+Script sementara di scratchpad (bukan bagian project, tidak menulis DB) memanggil `resolveCutoffQueryRange` + `fetchStockMovementRange` (fungsi BARU/existing yang dipakai jalur cutoff, TANPA modifikasi apa pun untuk validasi ini) langsung ke API Olsera live untuk `product_id=116138490`:
+
+```
+resolveCutoffQueryRange(2026-07-16) -> startDate=2026-07-01 endDate=2026-07-16
+Row produk 116138490 @ end_date=2026-07-16: { beginningQty:21, incomingQty:24, returnQty:0, salesQty:9, outgoingQty:0, sisa:36 }
+>>> sisa @ 2026-07-16 = 36 (ekspektasi riset: 36)   ✅ COCOK
+>>> sisa @ 2026-07-17 = 35 (ekspektasi riset: 35)   ✅ COCOK
+```
+
+Hasil PERSIS cocok dengan temuan riset — mengonfirmasi ulang secara independen (panggilan live baru, bukan reuse hasil riset lama) bahwa implementasi cutoff sesi ini menghasilkan angka yang benar dan bahwa movement 17 Juli tidak bocor ke perhitungan cutoff 16 Juli.
+
+### Konfirmasi checker/finalisasi/upload/lock existing tetap berfungsi
+
+- `loadInventoryOpnameMonth`, `saveInventoryOpnameBatch`, `unlockInventoryStockOpname`, endpoint upload (`app/api/reconciliation/inventory-opname/upload/route.ts`) — **0 baris diubah**, seluruh test lama (`inventory-stock-opname-store.test.ts` original 10 test) tetap PASS tanpa modifikasi.
+- `finalizeInventoryStockOpname` tanpa `cutoffDate` (BA lama) — dibuktikan test baru "finalize TANPA cutoffDate ... backward compatible" tetap `LOCKED` persis seperti perilaku sebelum sesi ini.
+
+### Konfirmasi scope lain TIDAK disentuh
+
+- Tidak ada perubahan pada YONEX/ODEA (audit maupun logic baru — perubahan cutoff bersifat generik per-produk lewat katalog, tidak ada branch nama produk).
+- Tidak ada perubahan pada `booking-payment-*`, `lib/olsera-financial-*`, atau `lib/reconciliation-omzet-period-lock*` (Lock Omzet) — dikonfirmasi lewat `git diff --stat` (lihat daftar file di atas, tidak ada file-file tersebut di dalamnya).
+- Lock stock opname TIDAK memfreeze inventory setelah cutoff — dikonfirmasi arsitektural + test regresi baru (lihat Rule 5 di atas); cron `app/api/cron/olsera/inventory` tetap jalan untuk semua tanggal tanpa gate apa pun dari modul rekonsiliasi ini.

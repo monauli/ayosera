@@ -164,3 +164,140 @@ export function summarizeOpname(rows: ReadonlyArray<{ status: OpnameStatus; diff
 export function buildOpnameId(input: { storeId: number; year: number; month: number; productId: number; variantId: number | null }): string {
   return `${input.storeId}:${input.year}:${String(input.month).padStart(2, "0")}:${input.productId}:${input.variantId ?? 0}`;
 }
+
+// ---------------------------------------------------------------------------
+// Cutoff tanggal BA (BUKAN akhir bulan kalender) — riset live 2026-08
+// (scratchpad, GET-only ke Open API Olsera) MEMBUKTIKAN GET .../inventory/
+// stockmovement mengembalikan `sisa` presisi PER HARI mengikuti parameter
+// `end_date` (mis. end_date=2026-07-16 -> sisa 36, end_date=2026-07-17 ->
+// sisa 35 tepat mengikuti penjualan tanggal itu) — BUKAN agregat bulanan.
+// lib/olsera-inventory-stockmovement.ts:fetchStockMovementRange SUDAH generik
+// (menerima start_date/end_date apa pun); fungsi di bawah HANYA menentukan
+// rentang tanggal & validitas cutoff — pemanggilan API tetap di
+// lib/inventory-stock-opname-store.ts (glue I/O), file ini tetap murni.
+// ---------------------------------------------------------------------------
+
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Validasi string tanggal ISO (YYYY-MM-DD) yang BENAR-BENAR kalender valid (mis. "2026-02-30" ditolak). */
+export function isValidIsoDate(value: unknown): value is string {
+  if (typeof value !== "string" || !ISO_DATE_PATTERN.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
+/**
+ * Batas aman jendela query stockmovement — Olsera menolak (HTTP 406, "not
+ * allowed pulling data for more than 3 mounts") jendela lebih dari ~90-100
+ * hari (lihat lib/olsera-inventory-monthly-core.ts). Nilai di bawah ini
+ * sengaja diberi margin aman (bukan mepet ke batas Olsera).
+ */
+export const CUTOFF_MAX_LOOKBACK_DAYS = 75;
+
+/**
+ * Rentang query stockmovement untuk SATU cutoff tanggal spesifik (bukan
+ * akhir bulan kalender). `endDate` = cutoffDate PERSIS — movement setelah
+ * cutoff otomatis tidak pernah ikut (dijamin parameter API, BUKAN dipotong
+ * manual di sini/pemanggil). `desiredStartDate` opsional (default: awal
+ * bulan cutoff, rentang "wajar" untuk laporan periode berjalan); DIKLEM ke
+ * CUTOFF_MAX_LOOKBACK_DAYS sebelum cutoff bila lebih lebar dari itu — supaya
+ * request TIDAK PERNAH gagal 406 tanpa fallback.
+ */
+export function resolveCutoffQueryRange(cutoffDate: string, desiredStartDate?: string): { startDate: string; endDate: string } {
+  if (!isValidIsoDate(cutoffDate)) throw new RangeError(`cutoffDate tidak valid: ${String(cutoffDate)}`);
+  const [year, month] = cutoffDate.split("-").map(Number);
+  const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const wanted = desiredStartDate && isValidIsoDate(desiredStartDate) ? desiredStartDate : monthStart;
+  const cutoffMs = Date.parse(`${cutoffDate}T00:00:00Z`);
+  const wantedMs = Date.parse(`${wanted}T00:00:00Z`);
+  const windowDays = Math.round((cutoffMs - wantedMs) / 86_400_000);
+  if (wantedMs <= cutoffMs && windowDays <= CUTOFF_MAX_LOOKBACK_DAYS) return { startDate: wanted, endDate: cutoffDate };
+  const clampedMs = cutoffMs - CUTOFF_MAX_LOOKBACK_DAYS * 86_400_000;
+  return { startDate: new Date(clampedMs).toISOString().slice(0, 10), endDate: cutoffDate };
+}
+
+export type CutoffValidationResult = { ok: boolean; reason: string | null };
+
+/**
+ * "BA salah periode diblok": cutoff WAJIB tanggal valid, WAJIB berada pada
+ * bulan/tahun filter yang sedang dibuka (BA periode lain tidak boleh
+ * terpasang diam-diam ke filter yang salah), dan TIDAK BOLEH tanggal masa
+ * depan relatif `today` (BA tidak bisa merekonsiliasi stok yang belum
+ * terjadi). Dipanggil SEBELUM finalisasi — gagal di sini WAJIB memblokir
+ * finalisasi (butuh review manual), TIDAK PERNAH menebak cutoff yang
+ * "masuk akal".
+ */
+export function validateCutoffPlausibility(input: { cutoffDate: string | null; year: number; month: number; today: string }): CutoffValidationResult {
+  if (!input.cutoffDate || !isValidIsoDate(input.cutoffDate)) {
+    return { ok: false, reason: "Tanggal cutoff BA tidak terbaca/tidak valid — perlu ditinjau manual sebelum finalisasi." };
+  }
+  const [cy, cm] = input.cutoffDate.split("-").map(Number);
+  if (cy !== input.year || cm !== input.month) {
+    return {
+      ok: false,
+      reason: `Cutoff BA (${input.cutoffDate}) tidak berada pada periode ${input.year}-${String(input.month).padStart(2, "0")} yang dipilih — kemungkinan BA salah periode, perlu ditinjau manual.`,
+    };
+  }
+  if (input.cutoffDate > input.today) {
+    return { ok: false, reason: "Cutoff BA berada di masa depan — tidak bisa direkonsiliasi." };
+  }
+  return { ok: true, reason: null };
+}
+
+// ---------------------------------------------------------------------------
+// Parsing periode dari teks BA (opsional, murni — TIDAK terhubung ke OCR
+// otomatis apa pun di modul ini; dipakai sebagai bantuan pengisian yang tetap
+// WAJIB dikonfirmasi user, bukan pengganti konfirmasi). Contoh nyata: "Stock
+// Opname Periode 01 Juli 2026 s/d 16 Juli 2026" -> cutoff = AKHIR periode
+// (16 Juli), BUKAN tanggal BA diterbitkan/ditandatangani (bisa beberapa hari
+// setelah periode berakhir).
+// ---------------------------------------------------------------------------
+
+const ID_MONTHS: Record<string, string> = {
+  januari: "01",
+  februari: "02",
+  maret: "03",
+  april: "04",
+  mei: "05",
+  juni: "06",
+  juli: "07",
+  agustus: "08",
+  september: "09",
+  oktober: "10",
+  november: "11",
+  desember: "12",
+};
+
+export type BaPeriodParseResult = { periodStartDate: string | null; periodEndDate: string | null; status: "OK" | "PERLU_REVIEW" };
+
+/** Ambil rentang tanggal presisi HARI dari teks BA. Tidak pernah menebak — format ambigu/tidak ditemukan -> PERLU_REVIEW. */
+export function parseInventoryBaPeriodText(rawText: string): BaPeriodParseResult {
+  const text = (rawText ?? "").trim();
+  if (!text) return { periodStartDate: null, periodEndDate: null, status: "PERLU_REVIEW" };
+  const monthNamePattern = Object.keys(ID_MONTHS).join("|");
+  const connector = "(?:s\\s*/\\s*d|sampai(?:\\s+dengan)?|-|–|—)";
+
+  // "01 Juli 2026 s/d 16 Juli 2026" (bulan/tahun ditulis di kedua sisi).
+  const twoDatesPattern = new RegExp(`\\b(\\d{1,2})\\s+(${monthNamePattern})\\s+(20\\d{2})\\s*${connector}\\s*(\\d{1,2})\\s+(${monthNamePattern})\\s+(20\\d{2})\\b`, "i");
+  const twoDates = text.match(twoDatesPattern);
+  if (twoDates) {
+    const [, d1, m1, y1, d2, m2, y2] = twoDates;
+    const start = `${y1}-${ID_MONTHS[m1.toLowerCase()]}-${d1.padStart(2, "0")}`;
+    const end = `${y2}-${ID_MONTHS[m2.toLowerCase()]}-${d2.padStart(2, "0")}`;
+    if (isValidIsoDate(start) && isValidIsoDate(end) && start <= end) return { periodStartDate: start, periodEndDate: end, status: "OK" };
+  }
+
+  // "01 - 16 Juli 2026" (bulan/tahun ditulis sekali, berlaku untuk kedua tanggal).
+  const sameMonthPattern = new RegExp(`\\b(\\d{1,2})\\s*${connector}\\s*(\\d{1,2})\\s+(${monthNamePattern})\\s+(20\\d{2})\\b`, "i");
+  const sameMonth = text.match(sameMonthPattern);
+  if (sameMonth) {
+    const [, d1, d2, m, y] = sameMonth;
+    const mm = ID_MONTHS[m.toLowerCase()];
+    const start = `${y}-${mm}-${d1.padStart(2, "0")}`;
+    const end = `${y}-${mm}-${d2.padStart(2, "0")}`;
+    if (isValidIsoDate(start) && isValidIsoDate(end) && start <= end) return { periodStartDate: start, periodEndDate: end, status: "OK" };
+  }
+
+  return { periodStartDate: null, periodEndDate: null, status: "PERLU_REVIEW" };
+}

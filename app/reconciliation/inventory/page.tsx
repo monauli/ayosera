@@ -43,7 +43,10 @@ type Summary = {
   totalSelisihNegatif: number;
 };
 
-type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary };
+// cutoffDate/startDate/endDate: HANYA terisi bila query pakai cutoff tanggal BA
+// (lihat lib/inventory-stock-opname-store.ts:loadInventoryOpnameCutoff) — kosong
+// (undefined) berarti Stok Akhir Sistem masih basis snapshot akhir bulan (perilaku lama).
+type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string };
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 type Edit = { physicalQty: number | null; note: string | null };
 
@@ -100,6 +103,11 @@ export default function InventoryOpnamePage() {
   const [mode, setMode] = useState<ThemeMode>("light");
   const [year, setYear] = useState(String(initial.year));
   const [month, setMonth] = useState(String(initial.month));
+  // Cutoff tanggal BA (basis BARU rekonsiliasi — lihat AYOSERA-HANDOFF-LATEST.md).
+  // Tahun/Bulan di atas TETAP dipakai sebagai filter pencarian BA, BUKAN lagi
+  // sumber boundary Stok Akhir Sistem begitu cutoffDate dikonfirmasi & dipakai.
+  const [cutoffDate, setCutoffDate] = useState("");
+  const [cutoffConfirmed, setCutoffConfirmed] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<LoadResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -140,7 +148,13 @@ export default function InventoryOpnamePage() {
     setSaveMessage("");
     setSaveError("");
     try {
-      const response = await fetch(`/api/reconciliation/inventory-opname?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`, { cache: "no-store" });
+      // cutoffDate HANYA dikirim setelah user secara eksplisit mencentang
+      // konfirmasi (cutoffConfirmed) — sesuai aturan "cutoff WAJIB dikonfirmasi
+      // user, bukan otomatis tanpa konfirmasi". Tanpa konfirmasi, query tetap
+      // basis snapshot bulanan lama (backward compatible).
+      const useCutoff = cutoffConfirmed && cutoffDate.trim() !== "";
+      const url = `/api/reconciliation/inventory-opname?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}${useCutoff ? `&cutoffDate=${encodeURIComponent(cutoffDate.trim())}` : ""}`;
+      const response = await fetch(url, { cache: "no-store" });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || "Gagal memuat data rekonsiliasi inventori.");
       setData(result);
@@ -296,12 +310,32 @@ export default function InventoryOpnamePage() {
             ))}
           </select>
         </label>
+        <label>
+          Cutoff tanggal BA (opsional)
+          <input
+            type="date"
+            value={cutoffDate}
+            onChange={(e) => {
+              setCutoffDate(e.target.value);
+              setCutoffConfirmed(false);
+            }}
+          />
+        </label>
+        <label className="recon-check" style={{ alignSelf: "end" }}>
+          <input type="checkbox" checked={cutoffConfirmed} disabled={!cutoffDate.trim()} onChange={(e) => setCutoffConfirmed(e.target.checked)} /> Konfirmasi cutoff — Stok Akhir Sistem dihitung persis pada tanggal ini
+        </label>
         <label className="recon-check" style={{ alignSelf: "end" }}>
           <button className="recon-button secondary" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 className="spin" /> : <RefreshCw />} Tampilkan Data
           </button>
         </label>
       </section>
+
+      {data?.cutoffDate && (
+        <p className="recon-readonly">
+          Stok Akhir Sistem dihitung persis pada cutoff <strong>{data.cutoffDate}</strong> (bukan akhir bulan kalender) — jendela query {data.startDate} s/d {data.endDate}.
+        </p>
+      )}
 
       {saveMessage && <p className="recon-readonly">{saveMessage}</p>}
       {saveError && <p className="recon-draft"><AlertTriangle /> {saveError}</p>}

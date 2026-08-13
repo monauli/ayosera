@@ -14,14 +14,21 @@ import {
   computeFormulaClosingQty,
   determineOpnameStatus,
   hasFormulaMismatch,
+  isValidIsoDate,
   needsManualAdjust,
+  resolveCutoffQueryRange,
   resolveSystemClosingQty,
   summarizeOpname,
+  validateCutoffPlausibility,
   verifyStockOpnameBa,
   type OpnameStatus,
   type OpnameSummary,
   type StockOpnameBaEntry,
 } from "./inventory-stock-opname.ts";
+import { attachMovementsToProducts, type UnmatchedMovementEntry } from "./olsera-inventory-monthly-core.ts";
+import type { MatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
+import { fetchMatchingContext } from "./olsera-inventory-monthly-snapshot-store.ts";
+import { fetchStockMovementRange, type FetchStockMovementResult } from "./olsera-inventory-stockmovement.ts";
 import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
 
 export class InventoryStockOpnameError extends Error {
@@ -62,16 +69,92 @@ export type MinimalOpnameCollection = MinimalReadCollection<InventoryStockOpname
   deleteOne(filter: Record<string, unknown>): Promise<unknown>;
 };
 
+/**
+ * Override I/O opsional (additive) untuk jalur cutoff tanggal BA (lihat
+ * loadInventoryOpnameCutoff/finalizeInventoryStockOpname di bawah) — testable
+ * tanpa memanggil Open API Olsera/Mongo sungguhan (pola sama context Mongo di
+ * atas). TIDAK PERNAH dipakai jalur snapshot bulanan lama (loadInventoryOpnameMonth),
+ * yang tetap 100% tidak berubah.
+ */
+export type CutoffFetchOverrides = {
+  fetchStockMovementRangeImpl?: (startDate: string, endDate: string) => Promise<FetchStockMovementResult>;
+  matchingContext?: MatchingContext;
+};
+
 export type InventoryStockOpnameContext = {
   snapshots: MinimalReadCollection<OlseraInventoryMonthlySnapshotDocument>;
   opname: MinimalOpnameCollection;
-};
+} & CutoffFetchOverrides;
 
 export async function resolveInventoryStockOpnameContext(context?: InventoryStockOpnameContext): Promise<InventoryStockOpnameContext> {
   if (context) return context;
   const { collections } = await import("./mongodb.ts");
   const { olseraInventoryMonthlySnapshots, inventoryStockOpnameReconciliations } = await collections();
   return { snapshots: olseraInventoryMonthlySnapshots, opname: inventoryStockOpnameReconciliations };
+}
+
+/** Resolusi dependency jalur cutoff — default: fetchStockMovementRange (Open API Olsera live, read-only) + fetchMatchingContext (katalog Mongo, read-only). Override lewat context untuk tes (tanpa network/Mongo sungguhan). */
+async function resolveCutoffDeps(context?: CutoffFetchOverrides): Promise<{ fetchStockMovementRangeImpl: (startDate: string, endDate: string) => Promise<FetchStockMovementResult>; matchingContext: MatchingContext }> {
+  const fetchStockMovementRangeImpl = context?.fetchStockMovementRangeImpl ?? fetchStockMovementRange;
+  const matchingContext = context?.matchingContext ?? (await fetchMatchingContext());
+  return { fetchStockMovementRangeImpl, matchingContext };
+}
+
+export type CutoffSystemRow = {
+  productId: number;
+  variantId: number | null;
+  productName: string;
+  productSku: string | null;
+  groupName: string;
+  openingQty: number;
+  incomingQty: number;
+  returnQty: number;
+  salesQty: number;
+  outgoingQty: number;
+  /** "sisa" API Olsera PERSIS pada cutoffDate (end_date) — sudah presisi harian, TIDAK PERNAH dipotong manual di sini. */
+  closingQty: number;
+};
+
+export type FetchCutoffSystemRowsResult =
+  | { ok: true; rows: CutoffSystemRow[]; startDate: string; endDate: string; unmatchedOrAmbiguous: UnmatchedMovementEntry[] }
+  | { ok: false; error: string };
+
+/**
+ * Tarik stok sistem PERSIS pada cutoffDate lewat GET .../inventory/stockmovement
+ * (end_date=cutoffDate) — TIDAK PERNAH memakai boundary akhir bulan kalender.
+ * Movement setelah cutoffDate otomatis tidak pernah ikut (dijamin parameter
+ * API Olsera sendiri, lihat lib/olsera-inventory-stockmovement.ts). Pencocokan
+ * baris API -> produk katalog REUSE attachMovementsToProducts (SAMA persis
+ * dengan pipeline snapshot bulanan existing) — TIDAK diimplementasi ulang.
+ */
+export async function fetchCutoffSystemRows(cutoffDate: string, deps: { fetchStockMovementRangeImpl: (startDate: string, endDate: string) => Promise<FetchStockMovementResult>; matchingContext: MatchingContext }): Promise<FetchCutoffSystemRowsResult> {
+  const { startDate, endDate } = resolveCutoffQueryRange(cutoffDate);
+  const fetched = await deps.fetchStockMovementRangeImpl(startDate, endDate);
+  if (!fetched.ok) return { ok: false, error: fetched.error };
+
+  const unmatchedOrAmbiguous: UnmatchedMovementEntry[] = [];
+  const matched = attachMovementsToProducts(fetched.rows, deps.matchingContext.identityIndex, deps.matchingContext.skuIndex, deps.matchingContext.nameIndex, `cutoff ${cutoffDate}`, unmatchedOrAmbiguous);
+
+  const rows: CutoffSystemRow[] = [];
+  for (const [productKey, matchedMovement] of matched.entries()) {
+    const product = deps.matchingContext.catalogById.get(productKey);
+    if (!product) continue; // defensif — key persis berasal dari catalogById saat matching, seharusnya tidak pernah kosong.
+    const row = matchedMovement.row;
+    rows.push({
+      productId: product.productId,
+      variantId: product.variantId,
+      productName: row.productVariantName ? `${row.productName} - ${row.productVariantName}` : row.productName,
+      productSku: row.productVariantSku ?? row.productSku,
+      groupName: row.productGroupName ?? product.category ?? "(Tanpa Group)",
+      openingQty: row.beginningQty,
+      incomingQty: row.incomingQty,
+      returnQty: row.returnQty,
+      salesQty: row.salesQty,
+      outgoingQty: row.outgoingQty,
+      closingQty: row.sisa,
+    });
+  }
+  return { ok: true, rows, startDate, endDate, unmatchedOrAmbiguous };
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +265,88 @@ export async function loadInventoryOpnameMonth(
   rows.sort((a, b) => a.productName.localeCompare(b.productName, "id"));
 
   return { storeId, year, month, rows, summary: summarizeOpname(rows) };
+}
+
+// ---------------------------------------------------------------------------
+// Jalur BARU: rekonsiliasi berbasis cutoff tanggal BA (BUKAN akhir bulan
+// kalender) — Stok Akhir Sistem dihitung PERSIS pada cutoffDate lewat
+// fetchCutoffSystemRows (end_date=cutoffDate). TIDAK PERNAH menyentuh/
+// menghitung ulang olsera_inventory_monthly_snapshots (koleksi snapshot
+// bulanan existing tetap read-only & tidak dipakai sama sekali di jalur ini).
+// year/month TETAP dipakai (hanya untuk mencari berita acara tersimpan by
+// key storeId+year+month yang sudah ada — bukan lagi sumber boundary stok).
+// ---------------------------------------------------------------------------
+
+export type InventoryOpnameCutoffResult = InventoryOpnameMonthResult & {
+  cutoffDate: string;
+  startDate: string;
+  endDate: string;
+  unmatchedOrAmbiguous: UnmatchedMovementEntry[];
+};
+
+export async function loadInventoryOpnameCutoff(
+  input: { storeId: number; year: number; month: number; cutoffDate: string },
+  context?: InventoryStockOpnameContext,
+): Promise<InventoryOpnameCutoffResult> {
+  const storeId = input.storeId;
+  const year = validateYear(input.year);
+  const month = validateMonth(input.month);
+  if (!isValidIsoDate(input.cutoffDate)) throw new InventoryStockOpnameError("cutoffDate tidak valid — format wajib YYYY-MM-DD.");
+
+  const { opname } = await resolveInventoryStockOpnameContext(context);
+  const deps = await resolveCutoffDeps(context);
+
+  const [fetched, opnameRows] = await Promise.all([
+    fetchCutoffSystemRows(input.cutoffDate, deps),
+    opname.find({ storeId, year, month }).toArray(),
+  ]);
+  if (!fetched.ok) throw new InventoryStockOpnameError(`Gagal menarik stok sistem Olsera pada cutoff ${input.cutoffDate}: ${fetched.error}`);
+
+  const opnameByKey = new Map(opnameRows.map((doc) => [opnameKey(doc.productId, doc.variantId), doc]));
+
+  const rows: InventoryOpnameRow[] = fetched.rows.map((sys) => {
+    const flow = { openingQty: sys.openingQty, incomingQty: sys.incomingQty, returnQty: sys.returnQty, salesQty: sys.salesQty, outgoingQty: sys.outgoingQty, closingQty: sys.closingQty };
+    // sys.closingQty ("sisa") datang LANGSUNG dari API tepat pada cutoffDate — sumber utama, tidak perlu fallback rumus (beda dari jalur snapshot bulanan yang closingQty-nya bisa null pada carry-forward tertentu).
+    const systemClosingQty = sys.closingQty;
+    const opnameDoc = opnameByKey.get(opnameKey(sys.productId, sys.variantId)) ?? null;
+    const physicalQty = opnameDoc?.physicalQty ?? null;
+    const differenceQty = computeDifferenceQty(physicalQty, systemClosingQty);
+    // Jalur cutoff langsung TIDAK punya konsep carry-forward "incomplete"/canonicalProductId
+    // (itu murni artefak rantai bulanan berkelanjutan) — setiap panggilan berdiri sendiri,
+    // langsung dari API pada cutoffDate, jadi manualAdjust selalu false di sini.
+    const manualAdjust = false;
+    const status = determineOpnameStatus({ physicalQty, systemClosingQty, manualAdjust });
+
+    return {
+      productId: sys.productId,
+      variantId: sys.variantId,
+      productName: sys.productName,
+      productSku: sys.productSku,
+      category: sys.groupName,
+      openingQty: sys.openingQty,
+      incomingQty: sys.incomingQty,
+      returnQty: sys.returnQty,
+      salesQty: sys.salesQty,
+      outgoingQty: sys.outgoingQty,
+      snapshotClosingQty: systemClosingQty,
+      formulaClosingQty: computeFormulaClosingQty(flow),
+      systemClosingQty,
+      formulaMismatch: hasFormulaMismatch(flow),
+      snapshotStatus: "complete",
+      snapshotDiagnostics: [],
+      manualAdjust,
+      physicalQty,
+      differenceQty,
+      status,
+      note: opnameDoc?.note ?? null,
+      updatedBy: opnameDoc?.updatedBy ?? null,
+      updatedAt: opnameDoc?.updatedAt ? new Date(opnameDoc.updatedAt).toISOString() : null,
+    };
+  });
+
+  rows.sort((a, b) => a.productName.localeCompare(b.productName, "id"));
+
+  return { storeId, year, month, cutoffDate: input.cutoffDate, startDate: fetched.startDate, endDate: fetched.endDate, rows, summary: summarizeOpname(rows), unmatchedOrAmbiguous: fetched.unmatchedOrAmbiguous };
 }
 
 // ---------------------------------------------------------------------------
@@ -310,16 +475,74 @@ export async function saveInventoryOpnameBatch(
   return loadInventoryOpnameMonth({ storeId, year, month }, context);
 }
 
-export async function finalizeInventoryStockOpname(input: { storeId: number; year: number; month: number; actor: string; cutoff: string; baOnlyDifferencesConfirmed: boolean; attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: Date; uploadedBy: string } }, context?: InventoryStockOpnameContext) {
+/**
+ * Timezone Asia/Jakarta, format YYYY-MM-DD — SATU-SATUNYA sumber "hari ini"
+ * dipakai validateCutoffPlausibility di sini (pola sama app/reconciliation/inventory/page.tsx:currentJakartaYearMonth,
+ * hanya ditambah komponen tanggal).
+ */
+function todayJakartaIso(now: Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+export async function finalizeInventoryStockOpname(
+  input: {
+    storeId: number;
+    year: number;
+    month: number;
+    actor: string;
+    cutoff: string;
+    /**
+     * Tanggal cutoff BA eksplisit (ISO, mis. "2026-07-16" = akhir periode BA
+     * "01 Juli 2026 s/d 16 Juli 2026") — BILA DIISI, Stok Akhir Sistem
+     * dihitung PERSIS pada tanggal ini (lewat loadInventoryOpnameCutoff, end_date
+     * API = cutoffDate) menggantikan snapshot akhir bulan kalender untuk
+     * verifikasi finalisasi. BILA KOSONG/undefined (dokumen lama/BA tanpa
+     * cutoff tanggal eksplisit), perilaku LAMA dipertahankan penuh — verifikasi
+     * tetap memakai loadInventoryOpnameMonth (snapshot bulanan), TIDAK ADA
+     * migrasi paksa/backfill otomatis.
+     */
+    cutoffDate?: string | null;
+    /** WAJIB true bila cutoffDate diisi (pola sama baOnlyDifferencesConfirmed) — user harus mengonfirmasi cutoff tanggal spesifik, bukan otomatis tanpa konfirmasi. */
+    cutoffConfirmed?: boolean;
+    baOnlyDifferencesConfirmed: boolean;
+    attachment: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: Date; uploadedBy: string };
+    /** Opsional — injeksi waktu "sekarang" untuk tes deterministik (lockedAt & perhitungan "hari ini" cutoff). Default: new Date(). */
+    now?: Date;
+  },
+  context?: InventoryStockOpnameContext,
+) {
   if (!input.baOnlyDifferencesConfirmed) throw new InventoryStockOpnameError("Konfirmasi BA hanya memuat item yang selisih wajib dicentang.");
-  const result = await loadInventoryOpnameMonth({ storeId: input.storeId, year: input.year, month: input.month }, context);
+
+  const now = input.now ?? new Date();
+  const cutoffDate = input.cutoffDate ?? null;
+
+  let result: InventoryOpnameMonthResult;
+  if (cutoffDate !== null) {
+    // Basis BARU: cutoff tanggal BA (bukan akhir bulan kalender) — WAJIB
+    // dikonfirmasi eksplisit & WAJIB lolos validasi plausibilitas ("BA salah
+    // periode diblok") sebelum dipakai untuk finalisasi.
+    if (!input.cutoffConfirmed) throw new InventoryStockOpnameError("Konfirmasi cutoff tanggal BA wajib dicentang sebelum finalisasi.");
+    const validation = validateCutoffPlausibility({ cutoffDate, year: input.year, month: input.month, today: todayJakartaIso(now) });
+    if (!validation.ok) throw new InventoryStockOpnameError(validation.reason ?? "Cutoff BA tidak valid — perlu ditinjau manual.");
+    result = await loadInventoryOpnameCutoff({ storeId: input.storeId, year: input.year, month: input.month, cutoffDate }, context);
+  } else {
+    // Perilaku LAMA dipertahankan (backward compatible) — BA tanpa cutoff tanggal eksplisit.
+    result = await loadInventoryOpnameMonth({ storeId: input.storeId, year: input.year, month: input.month }, context);
+  }
+
   const submitted = result.rows.filter((row) => row.physicalQty !== null);
   if (!submitted.length || submitted.some((row) => row.manualAdjust || row.systemClosingQty === null || row.differenceQty === null || row.differenceQty === 0)) throw new InventoryStockOpnameError("Finalisasi diblokir: masih ada mismatch, mapping tidak pasti, atau item tanpa selisih.");
   const { opname } = await resolveInventoryStockOpnameContext(context);
-  const now = new Date();
   const eventId = `${input.storeId}:${input.year}:${String(input.month).padStart(2, "0")}:event`;
-  await opname.updateOne({ _id: eventId }, { $set: { _id: eventId, storeId: input.storeId, year: input.year, month: input.month, productId: 0, variantId: null, physicalQty: 0, systemClosingQty: null, differenceQty: null, status: "COCOK", note: null, updatedBy: input.actor, cutoff: input.cutoff, baOnlyDifferencesConfirmed: true, attachment: input.attachment, verificationResult: "PASS", lockedAt: now, lockedBy: input.actor, unlockedAt: null, unlockedBy: null, updatedAt: now }, $setOnInsert: { createdAt: now }, $push: { history: { action: "lock", actor: input.actor, reason: null, at: now } } }, { upsert: true });
-  return { status: "LOCKED" as const, cutoff: input.cutoff, verificationResult: "PASS" as const, lockedAt: now, lockedBy: input.actor, adjustmentApplied: false };
+  // NOTE (Rule 5 — lock TIDAK memfreeze inventory): dokumen event ini HANYA
+  // ditulis ke koleksi terpisah `inventory_stock_opname_reconciliations`
+  // (lihat lib/mongodb.ts) — cron/sync inventori (lib/cron-olsera-inventory.ts,
+  // lib/olsera-inventory.ts) TIDAK PERNAH membaca koleksi ini (lihat komentar
+  // + regresi di lib/inventory-stock-opname-store.test.ts "lock tidak
+  // memfreeze cron/sync inventory"). Lock ini murni snapshot hasil
+  // rekonsiliasi + status, bukan gate operasional.
+  await opname.updateOne({ _id: eventId }, { $set: { _id: eventId, storeId: input.storeId, year: input.year, month: input.month, productId: 0, variantId: null, physicalQty: 0, systemClosingQty: null, differenceQty: null, status: "COCOK", note: null, updatedBy: input.actor, cutoff: input.cutoff, cutoffDate, baOnlyDifferencesConfirmed: true, attachment: input.attachment, verificationResult: "PASS", lockedAt: now, lockedBy: input.actor, unlockedAt: null, unlockedBy: null, updatedAt: now }, $setOnInsert: { createdAt: now }, $push: { history: { action: "lock", actor: input.actor, reason: null, at: now } } }, { upsert: true });
+  return { status: "LOCKED" as const, cutoff: input.cutoff, cutoffDate, verificationResult: "PASS" as const, lockedAt: now, lockedBy: input.actor, adjustmentApplied: false };
 }
 
 export async function unlockInventoryStockOpname(input: { storeId: number; year: number; month: number; actor: string; reason: string }, context?: InventoryStockOpnameContext) {
