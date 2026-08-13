@@ -184,7 +184,7 @@ export function groupPdfTextItemsIntoLines(items: readonly PdfTextItemLike[]): s
     .join("\n");
 }
 
-export type PositionedPdfTextItem = { str: string; x: number; y: number };
+export type PositionedPdfTextItem = { str: string; x: number; y: number; page: number };
 
 /**
  * Ekstrak text item pdf.js MENTAH (str + posisi X/Y asli dari `transform`),
@@ -207,7 +207,12 @@ export async function extractPdfTextLayerItems(doc: PdfDocumentProxy): Promise<P
       if (!str) continue;
       const t = item.transform;
       if (!Array.isArray(t) || t.length < 6 || typeof t[4] !== "number" || typeof t[5] !== "number") return null;
-      all.push({ str, x: t[4], y: t[5] });
+      // `page` (1-based) dipertahankan supaya tabel yang bersambung lintas
+      // halaman bisa direkonstruksi dengan benar oleh
+      // lib/inventory-ba-table-parser.ts — koordinat Y tiap halaman PDF
+      // independen (mulai lagi dari atas), jadi baris di halaman 2 TIDAK
+      // boleh dibandingkan langsung dengan Y baris di halaman 1.
+      all.push({ str, x: t[4], y: t[5], page: i });
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
   }

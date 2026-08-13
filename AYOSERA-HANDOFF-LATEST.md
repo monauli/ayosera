@@ -1183,3 +1183,57 @@ Masih TIDAK ADA file PDF BA produksi asli di repo sebagai fixture (sama seperti 
 ### File berubah
 
 `lib/inventory-ba-parser.ts`, `lib/inventory-ba-parser.test.ts`, `lib/inventory-ba-table-parser.ts` (baru), `lib/inventory-ba-table-parser.test.ts` (baru), `lib/reconciliation-berita-acara-client-ocr.ts`, `lib/reconciliation-berita-acara-client-ocr.test.ts`, `lib/inventory-ba-client.ts`, `app/reconciliation/inventory/page.tsx`, `app/globals.css`, dan handoff ini. Tidak menyentuh `lib/inventory-ba-finalize-guard.ts`, Financial, YONEX, ODEA, kategori penjualan, atau flow BA rekonsiliasi omzet (`lib/reconciliation-berita-acara-parser.ts`).
+
+## BA Stock Opname — fix ground-truth dari file PDF asli — 2026-08-14
+
+Iterasi ini adalah PERTAMA KALI parser diverifikasi terhadap file PDF BA produksi ASLI (bukan koordinat X/Y sintetis/rekonstruksi), sesuai permintaan eksplisit user. File tersedia lokal (gitignored, TIDAK di-commit/push) di `tmp/fixtures/BA Daily Stock Opname BC Padel 01-16 Juli 2026.pdf` (117.381 byte).
+
+### Ekstraksi ground-truth (Step 0)
+
+Dump mentah pdf.js (`pdfjs-dist/legacy/build/pdf.mjs`, `getTextContent()` per halaman, `str`/`transform[4]` (x)/`transform[5]` (y)/`width`/`height`) dilakukan via script Node throwaway (tidak di-commit). Temuan:
+
+- 2 halaman. Halaman 1: **177 text item** (termasuk item string kosong dari line-break pdf.js). Halaman 2: **0 item** (dokumen sebenarnya hanya 1 halaman berisi konten; halaman 2 kosong).
+- Baris periode/cutoff: `"...untuk periode 01"` (y=463.35) + `"Juli 2026 sampai 16 Juli 2026."` (y=447.55) -> periodStart 2026-07-01, cutoffDate 2026-07-16.
+- Tanggal penandatanganan ("Jum'at, tanggal Tujuh Belas Bulan Juli Tahun Dua Ribu Dua Puluh Enam (17-07-2026)") ditulis DIEJA, bukan format digit "17 Juli 2026" — regex periode/cutoff (pola digit eksplisit) TIDAK PERNAH cocok dengan kalimat ini, terbukti benar TIDAK menangkap 17 Juli sebagai cutoff.
+- 7 anchor baris "No." unik (item `"1"`..`"7"`, x=84.8, y menurun 324.65 -> 159.63) — **7 baris data, dibuktikan dari data, bukan diasumsikan**.
+- Header kolom asli: `"No."`(x=79.6), `"Kelompok"`/`"Barang"` (2 baris wrap, x~114-121), **`"Deksripsi Barang"`** (x=178.9 — EJAAN ASLI DOKUMEN, k dan s tertukar dari kata baku "Deskripsi"), `"Satuan"` (x=276.4), `"Stock"`/`"Sistem"`/`"Olsera"` (3 baris wrap, x~330-333), `"Stock"`/`"Fisik"`/`"Aktual"` (3 baris wrap, x~383-388), `"Selisih"` (x=431.9), `"Keterangan"` (x=496.8).
+- Sel Deskripsi Barang yang wrap 2 baris cetak (mis. `"NESTLE PURE LIFE"` lalu `"1500ML"`) memiliki baseline Y yang **simetris di atas DAN di bawah** Y anchor baris tersebut, bukan selalu di bawah — lihat root cause #3 di bawah.
+- Kolom Kelompok/Keterangan pada baris data TIDAK selalu start persis di X header label-nya (mis. `"BOLA PADEL"` mulai x=109.2, lebih kiri dari header `"Kelompok"` x=114.0; `"Untuk Raket Sewa"`/`"Salah Input di Kasir"` mulai x~480-482, lebih kiri dari header `"Keterangan"` x=496.8) — lihat root cause #2.
+
+### Root cause (3 bug nyata, semua terbukti HANYA dari raw x/y file asli — sebelumnya lolos 100% pada fixture sintetis karena fixture itu tidak mereproduksi ketiganya)
+
+1. **Typo ejaan header asli dokumen**: `COLUMN_LABELS.deskripsi` sebelumnya `/deskripsi/i` — tidak pernah cocok dengan `"Deksripsi Barang"` (k/s tertukar) yang benar-benar dicetak di PDF sumber. Akibat: `findHeaderColumns` tidak pernah menemukan kolom deskripsi -> `missingRequired` true -> parser gagal total (0 baris, PERLU_DICEK) untuk file real ini, padahal seluruh posisi X/Y tabel valid. Fix: regex `/de[ks]{2}ripsi/i` (cocok kedua ejaan, generik — bukan hardcode nama produk).
+2. **Batas kolom berbasis X header sendiri terlalu ketat**: `assignColumn` lama (`x >= col.xStart - tolerance`, ambil kolom terakhir yang lolos) mengharuskan teks sel dimulai TEPAT DI atau KANAN dari X label headernya. Teks "Kelompok"/"Keterangan" pada data real mulai sedikit lebih KIRI dari label headernya sendiri (lihat temuan di atas) — akibatnya nyasar ke kolom SEBELUMNYA (`kelompok` -> `no`, dibuang; `keterangan` -> `selisih`, mencemari nilai Selisih dengan teks). Fix: `assignColumn` sekarang pakai **titik tengah (midpoint) antara X header berdekatan** sebagai batas kolom, bukan X header itu sendiri — generik, diturunkan murni dari posisi X header, toleran terhadap sel yang mulai sedikit kiri/kanan dari label kolomnya.
+3. **Header region tanpa batas atas + banding baris berbasis "dari anchor turun ke anchor berikutnya"**: (a) filter `headerItems` lama (`item.y > headerCutoffY`) tanpa batas atas ikut menangkap kata "fisik" dari paragraf `"...penghitungan fisik persediaan barang..."` (y≈479, x≈72) — karena `findHeaderColumns` mengambil X **terkecil** di antara kandidat, kata paragraf ini (x≈72) mengalahkan header asli `"Fisik"` (x≈388) dan merusak batas kolom Sistem/Fisik/Selisih untuk SEMUA baris. (b) baris deskripsi multi-baris (root cause temuan di atas: baseline simetris di atas/bawah anchor) salah ditaruh ke baris SEBELUMNYA oleh band lama. Fix: (a) region header dibatasi ke rentang Y kontinu di atas anchor baris teratas, berhenti pada gap vertikal besar pertama (ambang diturunkan dari tinggi baris antar-anchor, bukan konstanta piksel tetap) — memisahkan label header (gap kecil, sebaris) dari paragraf jauh di atasnya (gap besar). (b) baris data sekarang diassign ke anchor **terdekat** (`|Y - anchorY|` minimum) pada halaman yang sama, bukan band tetap — otomatis menggabungkan sel multi-baris ke baris yang benar dari kedua sisi Y.
+
+### Perubahan tambahan (multi-halaman)
+
+`PositionedTextItem`/`PositionedPdfTextItem` sekarang menyertakan `page` (1-based; opsional di tipe tabel-parser untuk kompatibilitas mundur test lama). `extractPdfTextLayerItems` (client-ocr) menandai `page` per item. `parseInventoryBaTable` memakai `page` untuk: anchor baris di halaman non-header tidak dibatasi `y < noHeaderY` (tidak ada baris header untuk dibandingkan di halaman lanjutan), dan assignment baris-terdekat hanya membandingkan anchor pada halaman yang SAMA — mencegah baris halaman 2 tertukar dengan baris halaman 1 yang kebetulan Y-nya mirip (koordinat Y tiap halaman PDF independen, mulai lagi dari atas). Diverifikasi dengan test sintetis 2-halaman (label eksplisit sebagai sintetis, bukan klaim data real) — file real BA Juli 2026 sendiri hanya 1 halaman berisi konten sehingga jalur ini belum diverifikasi terhadap PDF asli multi-halaman sungguhan (gap untuk iterasi berikutnya bila muncul BA yang benar-benar bersambung halaman).
+
+### Fixture baru
+
+`lib/__fixtures__/inventory-ba-juli-2026-real-items.json` — 76 text item disalin VERBATIM (str/x/y, dibulatkan 3 desimal) dari dump mentah pdf.js halaman 1 file asli. Hanya berisi baris kalimat periode/cutoff (y 440–465) dan seluruh tabel (header + 7 baris, y ≤ 368) — paragraf pembuka, nama/jabatan penandatangan ("HENDRI"/"Amel"), dan kalimat "PARA PIHAK..." DIHAPUS sesuai permintaan sanitasi. Tidak ada nilai yang diketik ulang/didekati; setiap str/x/y bisa ditelusuri balik ke dump mentah pdf.js atas file produksi asli.
+
+### Test baru (`lib/inventory-ba-table-parser.test.ts`)
+
+- 2 test regresi file PDF asli: periode 2026-07-01 s/d cutoff 2026-07-16 (BUKAN 17 Juli tanggal penandatanganan), 7 baris status OK, dan seluruh 7 baris (Nama/Kelompok/Sistem/Fisik/Selisih) persis sesuai raw dump — sama persis dengan 7 angka yang disebut di task (YONEX AC102 10/9/-1, NESTLE 1500ML 350/349/-1, NESTLE 600ML 529/528/-1, ODEA RED 45/47/+2, ODEA ROSE 38/36/-2, POCARI SWEAT 342/341/-1, POCARI ION 202/201/-1) — **tidak ada selisih ditemukan antara ekspektasi task dan file asli**.
+- 7 test generik jumlah baris (fixture sintetis berlabel eksplisit, bukan klaim data real): 1 baris, 3 baris, 23 baris, tabel 2 halaman, 0 baris valid (header tanpa anchor), 1 baris rusak di tengah tabel valid (baris lain sebelum/sesudah TIDAK bergeser nomor/nilai), dipertahankan test multi-baris wrap sudah ada sebelumnya.
+
+### Validasi
+
+- `lib/inventory-ba-table-parser.test.ts`: **25/25 PASS** (18 test lama tetap lulus tanpa perubahan assertion + 7 test baru).
+- `lib/inventory-ba-parser.test.ts`, `lib/reconciliation-berita-acara-*.test.ts` (parser BA omzet + client-ocr + UI, flow lain yang bersinggungan lewat file yang sama), `lib/inventory-ba-finalize-guard.test.ts`: **108 + 18 PASS**.
+- `npm run test:inventory-stock-opname`: **31 + 22 PASS**.
+- `npm run type-check`: PASS.
+- `npm run build`: PASS (exit 0), termasuk `/reconciliation/inventory`.
+- `git diff --check`: PASS (hanya warning LF/CRLF Windows).
+
+### Gap yang belum diselesaikan
+
+- Tabel BA yang BENAR-BENAR bersambung lintas 2+ halaman PDF sungguhan belum tersedia sebagai fixture nyata untuk verifikasi ground-truth (dukungan `page`-aware sudah diimplementasi dan diuji dengan fixture sintetis eksplisit, tapi belum dibuktikan terhadap byte PDF asli).
+- OCR table extraction untuk PDF BA hasil scan/foto (tanpa text layer) masih belum ada — tetap `inventoryBaParseFailure` (fail-safe), sama seperti sebelumnya.
+- File PDF asli sendiri sengaja TIDAK di-commit/push (gitignored `tmp/`) — hanya fixture JSON tersanitasi yang masuk repo, sesuai permintaan user.
+
+### File berubah (iterasi ini)
+
+`lib/inventory-ba-table-parser.ts`, `lib/inventory-ba-table-parser.test.ts`, `lib/reconciliation-berita-acara-client-ocr.ts`, `lib/__fixtures__/inventory-ba-juli-2026-real-items.json` (baru), dan handoff ini. Tidak menyentuh `lib/inventory-ba-finalize-guard.ts`, `lib/inventory-ba-client.ts`, UI (`app/reconciliation/inventory/page.tsx`, `app/globals.css`) — sudah diverifikasi benar tanpa perubahan.

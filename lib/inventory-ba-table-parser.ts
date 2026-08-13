@@ -31,7 +31,14 @@
 //    besar = lebih ke atas halaman).
 import { extractInventoryBaPeriod, inventoryBaParseFailure, numberValue, type InventoryBaItem, type InventoryBaParseResult } from "./inventory-ba-parser.ts";
 
-export type PositionedTextItem = { str: string; x: number; y: number };
+// `page` opsional untuk kompatibilitas mundur (test lama tanpa field ini
+// diperlakukan seolah semua item berada di halaman yang sama, page 1).
+// Dipakai untuk tabel yang bersambung lintas halaman: nomor kolom "No."
+// terus lanjut (mis. 1..7 di halaman 1, 8..12 di halaman 2), tetapi
+// koordinat Y masing-masing halaman independen (mulai lagi dari atas
+// halaman) — tanpa `page`, baris di halaman 2 bisa salah dianggap dekat
+// dengan anchor baris halaman 1 yang kebetulan Y-nya mirip.
+export type PositionedTextItem = { str: string; x: number; y: number; page?: number };
 
 type ColumnKey = "no" | "kelompok" | "deskripsi" | "satuan" | "sistem" | "fisik" | "selisih" | "keterangan";
 
@@ -40,10 +47,19 @@ type ColumnKey = "no" | "kelompok" | "deskripsi" | "satuan" | "sistem" | "fisik"
 // tersebar; kita hanya butuh SATU item yang cocok untuk menetapkan X awal
 // kolom, item kelanjutan header seperti "Olsera"/"Aktual" tidak perlu cocok
 // apa pun karena tidak dipakai untuk batas kolom).
+// ROOT CAUSE (BA Juli 2026, real production file — pdf.js raw dump proved
+// this, not a guess): header kolom deskripsi PADA FILE PDF ASLI tertulis
+// "Deksripsi Barang" (k dan s TERTUKAR — typo asli dokumen sumber, bukan
+// artefak ekstraksi), sedangkan regex sebelumnya hanya cocok ejaan baku
+// "Deskripsi". Akibatnya findHeaderColumns tidak pernah menemukan kolom
+// deskripsi -> missingRequired true -> parser SELALU gagal (0 baris,
+// PERLU_DICEK) untuk file real ini walau posisi X/Y tabel sudah benar.
+// Fix generik (bukan hardcode nama produk): terima kedua ejaan ("deskripsi"
+// dan "deksripsi") via regex yang toleran terhadap transposisi k/s tersebut.
 const COLUMN_LABELS: Record<ColumnKey, RegExp> = {
   no: /^no\.?$/i,
   kelompok: /kelompok/i,
-  deskripsi: /deskripsi/i,
+  deskripsi: /de[ks]{2}ripsi/i,
   satuan: /^satuan$/i,
   sistem: /sistem/i,
   fisik: /fisik/i,
@@ -72,12 +88,28 @@ function findHeaderColumns(headerItems: PositionedTextItem[]): Column[] {
   return [...found.entries()].map(([key, xStart]) => ({ key, xStart })).sort((a, b) => a.xStart - b.xStart);
 }
 
+// ROOT CAUSE (BA Juli 2026, real production file): body cell text is not
+// always left-aligned to exactly its header label's X — e.g. "Keterangan"
+// header sits at x≈496.8 but the actual "Untuk Raket Sewa"/"Salah Input di
+// Kasir" cell text starts at x≈480-482 (visually center-ish within the
+// column width), and "Kelompok" header sits at x≈114.0 while "BOLA PADEL"
+// cell text starts at x≈109.2. The old walk-and-overwrite assignment
+// (`x >= col.xStart - tolerance`) required cell text to start AT OR RIGHT OF
+// its own header label, so text starting slightly left of its label's X
+// bled into the PREVIOUS column instead (keterangan -> selisih, kelompok ->
+// no). Fix (generic, derived purely from header X positions, no hardcoded
+// pixel constants): assign each item to the column whose header label is
+// CLOSEST on the left, using the MIDPOINT between adjacent header X
+// positions as the column boundary rather than each header's own X. This
+// tolerates content that starts left/right of its label as long as it is
+// still closer to its own column's label than to the neighboring one.
 function assignColumn(x: number, columns: Column[]): ColumnKey {
-  let assigned: Column = columns[0];
-  for (const col of columns) {
-    if (x >= col.xStart - LINE_Y_TOLERANCE) assigned = col;
+  for (let i = 0; i < columns.length; i++) {
+    const nextStart = columns[i + 1]?.xStart;
+    const boundary = nextStart !== undefined ? (columns[i].xStart + nextStart) / 2 : Infinity;
+    if (x < boundary) return columns[i].key;
   }
-  return assigned.key;
+  return columns[columns.length - 1].key;
 }
 
 function cellText(items: PositionedTextItem[]): string {
@@ -103,10 +135,14 @@ export function parseInventoryBaTable(items: readonly PositionedTextItem[]): Inv
   const rawText = items.map((i) => i.str).join(" ");
   if (items.length === 0) return inventoryBaParseFailure(rawText);
 
+  const pageOf = (item: PositionedTextItem): number => item.page ?? 1;
+
   const noHeaderCandidates = items.filter((item) => COLUMN_LABELS.no.test(item.str.trim()));
   if (noHeaderCandidates.length === 0) return inventoryBaParseFailure(rawText);
   const noHeaderY = Math.max(...noHeaderCandidates.map((i) => i.y));
-  const noHeaderX = noHeaderCandidates.find((i) => i.y === noHeaderY)!.x;
+  const noHeaderItem = noHeaderCandidates.find((i) => i.y === noHeaderY)!;
+  const noHeaderX = noHeaderItem.x;
+  const headerPage = pageOf(noHeaderItem);
 
   // Batas kanan kolom "No." dipakai untuk membatasi pencarian anchor angka
   // baris supaya tidak salah menangkap angka kolom lain yang kebetulan
@@ -114,40 +150,95 @@ export function parseInventoryBaTable(items: readonly PositionedTextItem[]): Inv
   // (kelompok/deskripsi) sebagai batas atas sementara — dihitung ulang di
   // bawah setelah header final ditemukan, tapi untuk anchor baris kita
   // hanya perlu rentang kasar di sekitar X kolom No.
-  const roughColumns = findHeaderColumns(items.filter((item) => item.y >= noHeaderY - LINE_Y_TOLERANCE));
+  const roughColumns = findHeaderColumns(items.filter((item) => pageOf(item) === headerPage && item.y >= noHeaderY - LINE_Y_TOLERANCE));
   const noColIndex = roughColumns.findIndex((c) => c.key === "no");
   const noColXEnd = noColIndex >= 0 && roughColumns[noColIndex + 1] ? roughColumns[noColIndex + 1].xStart : noHeaderX + 60;
 
+  // Anchor baris = item numerik murni dalam rentang X kolom "No.". Untuk
+  // tabel yang bersambung lintas halaman (`page` berbeda), setiap halaman
+  // punya sistem koordinat Y sendiri (mulai lagi dari atas halaman) —
+  // anchor di halaman header dibatasi `y < noHeaderY`, sedangkan anchor di
+  // halaman LAIN (lanjutan tabel, tidak ada baris header di sana) tidak
+  // dibatasi Y karena tidak ada baris header untuk dibandingkan. Diurutkan
+  // per halaman (menaik) lalu Y menurun dalam halaman itu supaya urutan
+  // baris hasil akhir tetap urutan baca alami, bukan tercampur.
   const rowAnchors = items
-    .filter((item) => item.y < noHeaderY && item.x >= noHeaderX - LINE_Y_TOLERANCE && item.x < noColXEnd && /^\d+\.?$/.test(item.str.trim()))
-    .sort((a, b) => b.y - a.y);
+    .filter((item) => {
+      if (item.x < noHeaderX - LINE_Y_TOLERANCE || item.x >= noColXEnd) return false;
+      if (!/^\d+\.?$/.test(item.str.trim())) return false;
+      if (pageOf(item) === headerPage) return item.y < noHeaderY;
+      return true;
+    })
+    .sort((a, b) => pageOf(a) - pageOf(b) || b.y - a.y);
 
   if (rowAnchors.length === 0) return inventoryBaParseFailure(rawText);
 
-  const rowYs = rowAnchors.map((a) => a.y);
-  const headerCutoffY = rowYs[0] + LINE_Y_TOLERANCE;
+  const headerPageRowYs = rowAnchors.filter((a) => pageOf(a) === headerPage).map((a) => a.y);
+  const headerCutoffY = headerPageRowYs.length > 0 ? headerPageRowYs[0] + LINE_Y_TOLERANCE : noHeaderY;
 
-  const headerItems = items.filter((item) => item.y > headerCutoffY);
+  // ROOT CAUSE (BA Juli 2026, real production file — proved via raw pdf.js
+  // dump, not a guess): the OLD `item.y > headerCutoffY` filter had no upper
+  // bound, so it also captured body paragraph text sitting ABOVE the table
+  // (e.g. the word "fisik" inside "...penghitungan fisik persediaan barang
+  // (stock opname)..." at y≈479) — with multiple candidates, `findHeaderColumns`
+  // picks the SMALLEST x among matches, so that stray paragraph occurrence
+  // (x≈72) beat the real "Fisik" header cell (x≈388) and corrupted the
+  // column boundaries downstream, causing Sistem/Fisik to read as null.
+  // Fix (generic, no hardcoded pixel/text constants): bound the header
+  // region to a contiguous run of Y values directly above the topmost row
+  // anchor, stopping at the first large vertical gap — real header label
+  // lines (incl. wrapped labels like "Stock"/"Sistem"/"Olsera") sit close
+  // together (gap ~ one line height), while paragraph text above the table
+  // is always separated by a much larger gap.
+  const rowHeight = headerPageRowYs.length >= 2 ? headerPageRowYs[0] - headerPageRowYs[1] : 40;
+  const headerGapThreshold = Math.max(rowHeight * 1.5, 20);
+  const candidateHeaderYsAsc = [...new Set(items.filter((item) => pageOf(item) === headerPage && item.y > headerCutoffY).map((item) => item.y))].sort((a, b) => a - b);
+  let headerTopY = headerCutoffY;
+  for (const y of candidateHeaderYsAsc) {
+    if (y - headerTopY > headerGapThreshold) break;
+    headerTopY = y;
+  }
+
+  const headerItems = items.filter((item) => pageOf(item) === headerPage && item.y > headerCutoffY && item.y <= headerTopY + LINE_Y_TOLERANCE);
   const columns = findHeaderColumns(headerItems);
   const foundKeys = new Set(columns.map((c) => c.key));
   const missingRequired = REQUIRED_COLUMNS.some((key) => !foundKeys.has(key));
   if (missingRequired) return inventoryBaParseFailure(rawText);
 
-  const bodyItems = items.filter((item) => item.y <= headerCutoffY);
+  // Body = semua item KECUALI header (halaman header, di atas headerCutoffY)
+  // dan KECUALI anchor baris "No." sendiri (ditangani terpisah, bukan data
+  // kolom). Item di halaman lain (lanjutan tabel) semuanya body — tidak ada
+  // wilayah header untuk dikecualikan di sana.
+  const bodyItems = items.filter((item) => !(pageOf(item) === headerPage && item.y > headerCutoffY));
 
-  // Baris N mencakup Y dari rowYs[N] (inklusif) turun sampai SEBELUM rowYs[N+1].
-  function rowIndexForY(y: number): number {
-    for (let i = 0; i < rowYs.length; i++) {
-      const upper = rowYs[i] + LINE_Y_TOLERANCE;
-      const lower = i + 1 < rowYs.length ? rowYs[i + 1] + LINE_Y_TOLERANCE : -Infinity;
-      if (y <= upper && y > lower) return i;
+  // ROOT CAUSE tambahan (real file): sel deskripsi yang wrap 2 baris cetak
+  // (mis. "NESTLE PURE LIFE" lalu "1500ML") memiliki baseline Y yang
+  // SIMETRIS di atas & di bawah Y anchor baris tersebut (bukan selalu di
+  // BAWAH anchornya) — band tetap lama ("dari anchor N turun sampai sebelum
+  // anchor N+1") salah menaruh baris pertama sel wrap tersebut ke baris
+  // SEBELUMNYA karena Y-nya lebih besar dari anchor barisnya sendiri. Fix
+  // generik: assign tiap item body ke anchor TERDEKAT (jarak |Y| minimum)
+  // pada HALAMAN YANG SAMA — ini otomatis menggabungkan sel multi-baris ke
+  // baris yang benar tanpa constant piksel apa pun, dan multi-halaman aman
+  // karena hanya anchor di halaman yang sama yang dibandingkan.
+  function rowIndexForItem(item: PositionedTextItem): number {
+    const page = pageOf(item);
+    let bestIndex = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < rowAnchors.length; i++) {
+      if (pageOf(rowAnchors[i]) !== page) continue;
+      const dist = Math.abs(rowAnchors[i].y - item.y);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = i;
+      }
     }
-    return -1;
+    return bestIndex;
   }
 
-  const rowsBuckets: Map<ColumnKey, PositionedTextItem[]>[] = rowYs.map(() => new Map());
+  const rowsBuckets: Map<ColumnKey, PositionedTextItem[]>[] = rowAnchors.map(() => new Map());
   for (const item of bodyItems) {
-    const rowIndex = rowIndexForY(item.y);
+    const rowIndex = rowIndexForItem(item);
     if (rowIndex === -1) continue;
     const col = assignColumn(item.x, columns);
     if (col === "no") continue; // kolom "No." hanya penanda urutan baris, bukan data.
