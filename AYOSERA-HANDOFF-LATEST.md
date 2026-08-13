@@ -1354,3 +1354,14 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - No production snapshot rebuild/write was executed in this pass because the exact live source evidence for the requested historical values was not available in a safe, read-only run; no numbers were invented.
 - Tests: inventory monthly suite 229/229 PASS, type-check PASS, build PASS, diff-check PASS.
 - Next production acceptance: run a scoped read-only audit/rebuild preview for YONEX and ODEA ROSE/RED; write only after exact source evidence confirms the requested chain and inspect incomplete diagnostics before approval.
+## 2026-08-14 — Final YONEX/ODEA production preview
+
+- Scoped dry-run attempted for YONEX `118420650`, ODEA ROSE `116138490`, and ODEA RED `119043265`, periods `2026-02` through `2026-08`, using `scripts/backfill-monthly-snapshot.ts` without `--write`.
+- All three previews stopped before reading production state because Mongo connection failed: `connect ECONNREFUSED 127.0.0.1:27017`. Application DNS/fallback credentials were not available in this environment.
+- Controlled write: **NONE**. No snapshot, movement, alias, stock-opname, or raw Olsera data was changed.
+- YONEX before/after and exact read-back: **BLOCKED** until Mongo connectivity is restored. Approved chain remains documented but was not written without production evidence.
+- ODEA RED: no write; remains separate and partial-safe. Proven incoming/PO/opname facts remain evidence only.
+- ODEA ROSE: no write; February invalid closing and July 11-vs-9 mismatch remain unresolved/incomplete until scoped source read succeeds.
+- Existing safety guard remains active: fully-known arithmetic mismatch is `incomplete` with diagnostic; unknown fields remain null.
+- Last validated code state: inventory monthly tests 229/229 PASS, type-check PASS, build PASS, diff-check PASS.
+- Next action: restore Mongo DNS/connection, rerun the same three dry-runs, inspect before/after, then request explicit approval for any controlled `--write`.
