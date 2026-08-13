@@ -31,6 +31,7 @@ type Row = {
   note: string | null;
   updatedBy: string | null;
   updatedAt: string | null;
+  evidenceSource?: "BA_INPUT" | "BA_OMITTED_ASSUMED_MATCH" | null;
 };
 
 type Summary = {
@@ -202,6 +203,13 @@ export default function InventoryOpnamePage() {
     setFinalizing(true);
     setFinalizeError("");
     try {
+      const entries = data.rows.map((row) => {
+        const edit = edits[rowKey(row.productId, row.variantId)] ?? { physicalQty: row.physicalQty, note: row.note };
+        return { productId: row.productId, variantId: row.variantId, physicalQty: edit.physicalQty, note: edit.note };
+      });
+      const saveResponse = await fetch("/api/reconciliation/inventory-opname", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: Number(year), month: Number(month), entries }) });
+      const saveResult = await saveResponse.json().catch(() => null);
+      if (!saveResponse.ok) throw new Error(saveResult?.error || "Gagal menyimpan input Berita Acara sebelum finalisasi.");
       const response = await fetch("/api/reconciliation/inventory-opname", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -282,8 +290,11 @@ export default function InventoryOpnamePage() {
     if (!data) return [];
     return data.rows.map((row) => {
       const edit = edits[rowKey(row.productId, row.variantId)];
+      const physicalQty = edit?.physicalQty ?? row.physicalQty;
+      if (baOnlyDifferencesConfirmed && physicalQty === null && row.systemClosingQty !== null && !row.manualAdjust) {
+        return { ...row, physicalQty: row.systemClosingQty, differenceQty: 0, status: "COCOK" as OpnameStatus, evidenceSource: "BA_OMITTED_ASSUMED_MATCH" as const };
+      }
       if (!edit) return row;
-      const physicalQty = edit.physicalQty;
       const differenceQty = physicalQty === null || row.systemClosingQty === null ? null : physicalQty - row.systemClosingQty;
       const status: OpnameStatus = row.manualAdjust
         ? "BUTUH_ADJUST_MANUAL"
@@ -294,7 +305,7 @@ export default function InventoryOpnamePage() {
             : "COCOK";
       return { ...row, physicalQty, note: edit.note, differenceQty, status };
     });
-  }, [data, edits]);
+  }, [data, edits, baOnlyDifferencesConfirmed]);
 
   const visibleRows = useMemo(() => visibleInventoryRows(rowsWithEdits, showHidden), [rowsWithEdits, showHidden]);
   const hiddenCount = rowsWithEdits.length - visibleRows.length;

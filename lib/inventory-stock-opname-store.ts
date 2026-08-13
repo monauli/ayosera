@@ -189,6 +189,7 @@ export type InventoryOpnameRow = {
   note: string | null;
   updatedBy: string | null;
   updatedAt: string | null;
+  evidenceSource?: "BA_INPUT" | "BA_OMITTED_ASSUMED_MATCH" | null;
 };
 
 export type InventoryOpnameMonthResult = {
@@ -265,6 +266,7 @@ export async function loadInventoryOpnameMonth(
       note: opnameDoc?.note ?? null,
       updatedBy: opnameDoc?.updatedBy ?? null,
       updatedAt: opnameDoc?.updatedAt ? new Date(opnameDoc.updatedAt).toISOString() : null,
+      evidenceSource: opnameDoc?.evidenceSource ?? null,
     };
   });
 
@@ -348,6 +350,7 @@ export async function loadInventoryOpnameCutoff(
       note: opnameDoc?.note ?? null,
       updatedBy: opnameDoc?.updatedBy ?? null,
       updatedAt: opnameDoc?.updatedAt ? new Date(opnameDoc.updatedAt).toISOString() : null,
+      evidenceSource: opnameDoc?.evidenceSource ?? null,
     };
   });
 
@@ -538,9 +541,17 @@ export async function finalizeInventoryStockOpname(
     result = await loadInventoryOpnameMonth({ storeId: input.storeId, year: input.year, month: input.month }, context);
   }
 
-  const submitted = result.rows.filter((row) => row.physicalQty !== null);
-  if (!submitted.length || submitted.some((row) => row.manualAdjust || row.systemClosingQty === null || row.differenceQty === null || row.differenceQty === 0)) throw new InventoryStockOpnameError("Finalisasi diblokir: masih ada mismatch, mapping tidak pasti, atau item tanpa selisih.");
+  const submitted = result.rows.filter((row) => row.physicalQty !== null || input.baOnlyDifferencesConfirmed);
+  if (!submitted.length || submitted.some((row) => row.manualAdjust || row.systemClosingQty === null || (!input.baOnlyDifferencesConfirmed && (row.differenceQty === null || row.differenceQty === 0)))) throw new InventoryStockOpnameError("Finalisasi diblokir: masih ada mismatch, mapping tidak pasti, atau item tanpa selisih.");
   const { opname } = await resolveInventoryStockOpnameContext(context);
+  for (const row of result.rows) {
+    if (row.manualAdjust || row.systemClosingQty === null) continue;
+    const omitted = row.physicalQty === null;
+    if (omitted && !input.baOnlyDifferencesConfirmed) continue;
+    const physicalQty = omitted ? row.systemClosingQty : row.physicalQty;
+    const id = buildOpnameId({ storeId: input.storeId, year: input.year, month: input.month, productId: row.productId, variantId: row.variantId });
+    await opname.updateOne({ _id: id }, { $set: { _id: id, storeId: input.storeId, year: input.year, month: input.month, productId: row.productId, variantId: row.variantId, physicalQty, systemClosingQty: row.systemClosingQty, differenceQty: omitted ? 0 : row.differenceQty, status: "COCOK", note: omitted ? "Tidak tercantum di BA; dianggap Cocok sesuai konfirmasi BA-only-differences." : row.note, evidenceSource: omitted ? "BA_OMITTED_ASSUMED_MATCH" : "BA_INPUT", updatedBy: input.actor, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
+  }
   const eventId = `${input.storeId}:${input.year}:${String(input.month).padStart(2, "0")}:event`;
   // NOTE (Rule 5 — lock TIDAK memfreeze inventory): dokumen event ini HANYA
   // ditulis ke koleksi terpisah `inventory_stock_opname_reconciliations`

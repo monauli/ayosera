@@ -478,3 +478,20 @@ test("end-to-end finalisasi lalu lock event tidak melakukan double adjustment", 
   assert.equal(unlocked.status, "UNLOCKED");
   assert.equal(opname.store.get("324175:2026:05:event")?.lockedAt, null);
 });
+
+test("BA-only: item kosong dianggap Cocok dan disimpan sebagai evidence assumed match", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 7, closingQty: 69 })], opname);
+  const locked = await finalizeInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, cutoff: "2026-05-31", baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email } }, ctx);
+  assert.equal(locked.status, "LOCKED");
+  const evidence = opname.store.get("324175:2026:05:7:0") as Record<string, unknown>;
+  assert.equal(evidence.physicalQty, 69);
+  assert.equal(evidence.differenceQty, 0);
+  assert.equal(evidence.evidenceSource, "BA_OMITTED_ASSUMED_MATCH");
+});
+
+test("BA-only OFF: item kosong tetap memblokir finalisasi", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 8, closingQty: 10 })], opname);
+  await assert.rejects(() => finalizeInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, cutoff: "2026-05-31", baOnlyDifferencesConfirmed: false, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email } }, ctx));
+});

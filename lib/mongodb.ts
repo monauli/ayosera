@@ -664,6 +664,7 @@ export type InventoryStockOpnameDocument = {
   verificationResult?: "PASS" | null;
   baOnlyDifferencesConfirmed?: boolean;
   history?: Array<{ action: "lock" | "unlock"; actor: string; reason: string | null; at: Date }>;
+  evidenceSource?: "BA_INPUT" | "BA_OMITTED_ASSUMED_MATCH";
 };
 
 export type OlseraInventoryStateDocument = {

@@ -1046,3 +1046,11 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 - File berubah: `app/reconciliation/inventory/page.tsx`, `lib/inventory-stock-opname-store.ts`, `lib/mongodb.ts`, dan handoff ini.
 - Flow code-level: Upload BA → checker existing → Finalisasi guarded oleh BA/cutoff/checkbox/status → Locked → Unlock dengan alasan → refresh status.
 - Validasi: `test:inventory-stock-opname` PASS (31 + 20), typecheck PASS, `git diff --check` PASS. Build Next dijalankan tetapi runner timeout tanpa error compile setelah menunggu 180 detik.
+# BA-only-differences finalization fix — 2026-08-13
+
+- Saat checkbox `Berita Acara hanya mencantumkan item yang memiliki selisih` aktif, item kosong sekarang tampil sebagai `Cocok` dengan stok BA efektif = Stok Akhir Sistem dan selisih `0`.
+- Saat checkbox nonaktif, behavior lama tetap: item kosong `Belum Diisi` dan finalisasi terblokir.
+- Finalisasi menyimpan provenance per item di `inventory_stock_opname_reconciliations`: `BA_INPUT` untuk item yang diisi user dan `BA_OMITTED_ASSUMED_MATCH` untuk item yang tidak tercantum di BA. Tidak ada movement/adjustment Olsera.
+- Finalisasi UI menyimpan input checker terlebih dahulu, lalu memanggil finalize existing; unlock tetap memakai action existing.
+- Cutoff tetap divalidasi terhadap tahun/bulan terpilih. BA periode `01–16 Juli 2026` memakai cutoff `2026-07-16`; cutoff Juli untuk bulan Agustus ditolak oleh guard existing.
+- Tests baru mencakup BA-only kosong → Cocok/evidence assumed match dan BA-only off → tetap memblokir. Inventory stock-opname tests 31 + 22 PASS; typecheck PASS; `git diff --check` PASS.
