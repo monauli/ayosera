@@ -5,7 +5,16 @@ import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, 
 import { visibleInventoryRows } from "@/lib/olsera-inventory-ui";
 import { analyzeInventoryBaFile } from "@/lib/inventory-ba-client";
 import { normalizeInventoryBaName } from "@/lib/inventory-ba-parser";
-import { BA_UNREAD_MESSAGE, canApplyBaOmittedAssumedMatch, isBaParseUnread, matchBaItemToCatalog, shouldBlockFinalizeForUnreadBa } from "@/lib/inventory-ba-finalize-guard";
+import {
+  BA_UNREAD_MESSAGE,
+  canApplyBaOmittedAssumedMatch,
+  evaluateBaRow,
+  isBaParseUnread,
+  isDateWithinPeriod,
+  shouldBlockFinalizeForBaRows,
+  shouldBlockFinalizeForUnreadBa,
+  type BaRowStatus,
+} from "@/lib/inventory-ba-finalize-guard";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 type OpnameStatus = "BELUM_DIISI" | "COCOK" | "PERLU_DICEK" | "BUTUH_ADJUST_MANUAL";
@@ -141,6 +150,11 @@ export default function InventoryOpnamePage() {
   const [baItemsFound, setBaItemsFound] = useState<number | null>(null);
   const [baSourcedKeys, setBaSourcedKeys] = useState<Set<string>>(new Set());
   const baUnread = attachment !== null && baItemsFound !== null && isBaParseUnread({ uploadSucceeded: true, itemsFound: baItemsFound });
+  // Hasil Pembacaan Berita Acara: baris BER-SUMBER LANGSUNG dari BA (bukan
+  // seluruh katalog), dengan status per-baris hasil evaluateBaRow (dua cek
+  // selisih + matching katalog). Dirender di atas tabel utama.
+  const [baRows, setBaRows] = useState<Array<{ no: number; description: string; systemQty: number | null; physicalQty: number | null; differenceQty: number | null; matchedProductName: string | null; status: BaRowStatus }>>([]);
+  const [baPeriod, setBaPeriod] = useState<{ periodStart: string | null; cutoffDate: string | null } | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -217,35 +231,52 @@ export default function InventoryOpnamePage() {
         setCutoffConfirmed(false);
       }
       setBaItemsFound(parsed.items.length);
+      setBaPeriod({ periodStart: parsed.periodStart, cutoffDate: parsed.cutoffDate });
       let autoCocok = 0;
       let perluDicek = parsed.status === "PERLU_DICEK" && parsed.items.length === 0 ? 1 : 0;
       const sourcedKeys = new Set<string>();
+      const nextBaRows: typeof baRows = [];
       if (data) {
         const next = { ...edits };
-        for (const item of parsed.items) {
-          if (item.status !== "OK") {
+        parsed.items.forEach((item, index) => {
+          // CEK B (stok sistem BA vs stok sistem AYOSERA sendiri pada cutoff)
+          // butuh baris katalog yang cocok DULU — evaluateBaRow melakukan
+          // matching + kedua cek selisih sekaligus, generik (bukan hardcode nama produk).
+          const preMatch = data.rows.find((row) => normalizeInventoryBaName(row.productName) === normalizeInventoryBaName(item.description) || (row.productSku && normalizeInventoryBaName(row.productSku) === normalizeInventoryBaName(item.description)));
+          const systemStockAtCutoff = preMatch?.systemClosingQty ?? null;
+          const evaluation = evaluateBaRow(
+            { description: item.description, systemQty: item.systemQty, physicalQty: item.physicalQty, differenceQty: item.differenceQty, arithmeticStatus: item.status },
+            data.rows,
+            normalizeInventoryBaName,
+            systemStockAtCutoff,
+          );
+          nextBaRows.push({
+            no: index + 1,
+            description: item.description,
+            systemQty: item.systemQty,
+            physicalQty: item.physicalQty,
+            differenceQty: item.differenceQty,
+            matchedProductName: evaluation.matchedProduct?.productName ?? null,
+            status: evaluation.status,
+          });
+          if (evaluation.status === "COCOK" && evaluation.matchedProduct) {
+            const key = rowKey(evaluation.matchedProduct.productId, evaluation.matchedProduct.variantId);
+            next[key] = { physicalQty: item.physicalQty, note: "Dibaca dari BA" };
+            sourcedKeys.add(key);
+            autoCocok++;
+          } else {
             perluDicek++;
-            continue;
           }
-          // Ambigu (lebih dari satu baris katalog cocok) -> JANGAN auto-pilih, tandai Perlu Dicek.
-          const matchResult = matchBaItemToCatalog(item.description, data.rows, normalizeInventoryBaName);
-          if (matchResult.kind !== "MATCHED") {
-            perluDicek++;
-            continue;
-          }
-          const key = rowKey(matchResult.row.productId, matchResult.row.variantId);
-          next[key] = { physicalQty: item.physicalQty, note: "Dibaca dari BA" };
-          sourcedKeys.add(key);
-          autoCocok++;
-        }
+        });
         setEdits(next);
       }
+      setBaRows(nextBaRows);
       setBaSourcedKeys(sourcedKeys);
       setBaReadSummary({ periodStart: parsed.periodStart, cutoffDate: parsed.cutoffDate, found: parsed.items.length, autoCocok, perluDicek });
       setSaveMessage(
         parsed.items.length === 0
           ? BA_UNREAD_MESSAGE
-          : "Berita Acara selesai dibaca. Silakan review sebelum finalisasi.",
+          : "Berita Acara selesai dibaca.",
       );
     } catch (e) {
       setFinalizeError(e instanceof Error ? e.message : "Gagal mengunggah Berita Acara.");
@@ -259,6 +290,17 @@ export default function InventoryOpnamePage() {
     if (!data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed) return;
     if (shouldBlockFinalizeForUnreadBa({ uploadSucceeded: true, itemsFound: baItemsFound ?? 0 }) && baItemsFound !== null) {
       setFinalizeError(BA_UNREAD_MESSAGE);
+      return;
+    }
+    // Finalisasi WAJIB diblok bila ADA baris BA "Perlu Dicek"/"Tidak Ditemukan"
+    // (jumlah baris terparse != baris resolvable), atau cutoff BUKAN di dalam
+    // periode BA sendiri — tidak pernah auto-finalize/auto-lock/adjust Olsera.
+    if (baRows.length > 0 && shouldBlockFinalizeForBaRows(baRows)) {
+      setFinalizeError("Ada item Berita Acara berstatus Perlu Dicek atau Tidak Ditemukan. Selesaikan review sebelum finalisasi.");
+      return;
+    }
+    if (baPeriod?.periodStart && baPeriod?.cutoffDate && !isDateWithinPeriod(cutoffDate, baPeriod.periodStart, baPeriod.cutoffDate)) {
+      setFinalizeError("Cutoff yang dipilih berada di luar periode Berita Acara.");
       return;
     }
     setFinalizing(true);
@@ -400,6 +442,14 @@ export default function InventoryOpnamePage() {
     return summary;
   }, [rowsWithEdits]);
 
+  const baBlocksFinalize = baRows.length > 0 && shouldBlockFinalizeForBaRows(baRows);
+  const baCutoffOutOfPeriod = Boolean(baPeriod?.periodStart && baPeriod?.cutoffDate && cutoffDate && !isDateWithinPeriod(cutoffDate, baPeriod.periodStart, baPeriod.cutoffDate));
+  const baCocokCount = baRows.filter((r) => r.status === "COCOK").length;
+  const baPerluDicekCount = baRows.filter((r) => r.status === "PERLU_DICEK").length;
+  const baTidakDitemukanCount = baRows.filter((r) => r.status === "TIDAK_DITEMUKAN").length;
+  const BA_ROW_STATUS_LABEL: Record<BaRowStatus, string> = { COCOK: "Cocok", PERLU_DICEK: "Perlu Dicek", TIDAK_DITEMUKAN: "Tidak Ditemukan" };
+  const BA_ROW_STATUS_TONE: Record<BaRowStatus, "ok" | "warn" | "danger"> = { COCOK: "ok", PERLU_DICEK: "warn", TIDAK_DITEMUKAN: "danger" };
+
   if (user && !user.allowedModules.includes("rekonsiliasi") && user.role !== "supervisor") {
     return (
       <main className="recon-page">
@@ -506,14 +556,55 @@ export default function InventoryOpnamePage() {
             <p className="recon-readonly">File BA: {data.lock.attachment?.fileName ?? attachment?.fileName ?? "—"}</p>
             <p className="recon-readonly">Data pemeriksaan pada tanggal cutoff sudah dikunci. Transaksi inventori setelah tanggal tersebut tetap berjalan normal.</p>
             {supervisor && <><input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Alasan buka kunci" /><button className="recon-button danger" onClick={() => void unlock()} disabled={unlocking}>{unlocking ? <Loader2 className="spin" /> : <Unlock />} Buka Kunci</button></>}
-          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed || baUnread || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
+          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
         </div>
       </section>
       {baUnread && <p className="recon-draft"><AlertTriangle /> {BA_UNREAD_MESSAGE}</p>}
+      {baBlocksFinalize && <p className="recon-draft"><AlertTriangle /> Ada item Berita Acara berstatus Perlu Dicek atau Tidak Ditemukan — selesaikan review sebelum finalisasi.</p>}
+      {baCutoffOutOfPeriod && <p className="recon-draft"><AlertTriangle /> Cutoff yang dipilih berada di luar periode Berita Acara ({baPeriod?.periodStart} s/d {baPeriod?.cutoffDate}).</p>}
       {finalizeError && <p className="recon-draft"><AlertTriangle /> {finalizeError}</p>}
 
       {saveMessage && <p className="recon-readonly">{saveMessage}</p>}
       {saveError && <p className="recon-draft"><AlertTriangle /> {saveError}</p>}
+
+      {baRows.length > 0 && (
+        <section className="recon-filters" aria-label="Hasil Pembacaan Berita Acara">
+          <h2 style={{ margin: 0 }}>Hasil Pembacaan Berita Acara</h2>
+          <p className="recon-readonly">
+            Periode BA: {baPeriod?.periodStart ?? "Perlu Dicek"} s/d {baPeriod?.cutoffDate ?? "Perlu Dicek"} · Cutoff: {baPeriod?.cutoffDate ?? "Perlu Dicek"} · Item ditemukan: {baRows.length} · Cocok: {baCocokCount} · Perlu Dicek: {baPerluDicekCount + baTidakDitemukanCount}
+          </p>
+          <div style={{ overflowX: "auto", width: "100%" }}>
+            <table className="recon-table">
+              <thead>
+                <tr>
+                  <th>No.</th>
+                  <th>Nama Barang</th>
+                  <th>Stok Sistem BA</th>
+                  <th>Stok Fisik Aktual</th>
+                  <th>Selisih</th>
+                  <th>Produk AYOSERA</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {baRows.map((row) => (
+                  <tr key={row.no}>
+                    <td>{row.no}</td>
+                    <td>{row.description}</td>
+                    <td>{formatQty(row.systemQty)}</td>
+                    <td>{formatQty(row.physicalQty)}</td>
+                    <td>{formatSignedQty(row.differenceQty)}</td>
+                    <td>{row.matchedProductName ?? "—"}</td>
+                    <td>
+                      <span className={`recon-badge recon-badge-${BA_ROW_STATUS_TONE[row.status]}`}>{BA_ROW_STATUS_LABEL[row.status]}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {error ? (
         <section className="recon-empty">

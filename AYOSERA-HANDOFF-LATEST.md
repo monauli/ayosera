@@ -1095,3 +1095,39 @@ Tidak ada PDF produksi asli BA Juli 2026 yang tersedia sebagai fixture di repo (
 ### File berubah
 
 `lib/reconciliation-berita-acara-client-ocr.ts`, `lib/reconciliation-berita-acara-client-ocr.test.ts`, `lib/inventory-ba-parser.ts`, `lib/inventory-ba-parser.test.ts`, `lib/inventory-ba-finalize-guard.ts` (baru), `lib/inventory-ba-finalize-guard.test.ts` (baru), `app/reconciliation/inventory/page.tsx`, dan handoff ini. Tidak menyentuh Financial, YONEX, ODEA, atau kategori penjualan.
+
+## BUG PRODUKSI LANJUTAN: BA Juli 2026 6 dari 7 item terbaca + tabel "Hasil Pembacaan BA" — 2026-08-13
+
+Setelah fix 0-item di atas, laporan lanjutan: parser kini membaca **6 dari 7** baris BA (bukan 0, tapi masih ada 1 baris hilang/rusak).
+
+### Root cause
+
+`lib/inventory-ba-parser.ts` (`pendingPrefix`) SELALU mengasumsikan baris tanpa triplet angka adalah **awalan (prefix)** untuk baris angka berikutnya — benar untuk pola wrap "nama dulu, angka menyusul" (mis. `"NESTLE PURE LIFE"` lalu `"1500ML pcs 350 349 -1"`, sudah tertangani sebelumnya). Tapi sebagian tabel BA (umum pada software akuntansi Indonesia yang top-align isi sel) me-render kolom Satuan/Stock Sistem/Stock Fisik/Selisih di baris fisik **PERTAMA** sebuah baris tabel yang wrap, sehingga sisa nama produk (mis. `"1500ML"`, `"600ML"`, `"500 ML"`) muncul sebagai baris **YATIM SETELAH angka** — bukan sebelum. Parser lama menempelkan baris yatim itu sebagai prefix baris BERIKUTNYA, sekaligus merusak strip kolom "No." baris berikutnya (digit ikut jadi bagian deskripsi) — hasilnya angka/nama antar dua baris produk saling tertukar/campur, yang pada rekonstruksi tertentu membuat satu baris kehilangan datanya secara efektif.
+
+Direproduksi via rekonstruksi (bukan file PDF asli — lihat catatan keterbatasan di bawah, TIDAK BERUBAH dari sebelumnya): baris `"2 NESTLE PURE LIFE pcs 350 349 -1"` diikuti baris yatim `"1500ML"`, lalu `"3 NESTLE PURE LIFE pcs 529 528 -1"` diikuti `"600ML"`, dst — parser lama menghasilkan deskripsi tercampur seperti `"1500ML 3 NESTLE PURE LIFE"` berpasangan dengan angka 529/528/-1 milik NESTLE 600ML (bukan 1500ML), dan seterusnya berantai untuk POCARI SWEAT PET/ION WATER.
+
+### Fix (generik, tidak hardcode nama produk apa pun)
+
+`lib/inventory-ba-parser.ts`: tambah pelacakan `lastItem` (item terakhir yang berhasil didorong). Baris yatim (tanpa triplet angka) yang **diawali digit mentah** (mis. `"1500ML"`, `"500 ML"`) dan muncul saat `pendingPrefix` kosong DAN `lastItem` ada, digabung sebagai **SUFFIX** ke `lastItem.description` — bukan sebagai prefix baris berikutnya. Sinyal "diawali digit" dipilih karena generik dan aman di domain ini: nama produk pada tabel BA tidak pernah diawali angka mentah tanpa kolom No. yang jelas terpisah spasi+huruf (kasus itu sudah ditangani terpisah oleh strip kolom No.), sedangkan fragmen ukuran/satuan sisa (`"1500ML"`, `"600ML"`, `"500 ML"`, `"500ML"`) SELALU diawali digit — sehingga tidak mengubah perilaku pola wrap "nama dulu, angka menyusul" yang sudah benar sebelumnya (fragmen jenis itu diawali huruf, bukan digit).
+
+### Fitur baru: tabel "Hasil Pembacaan Berita Acara" + matching + validasi selisih dua lapis
+
+- **`lib/inventory-ba-finalize-guard.ts`**: `matchBaItemToCatalog` diperluas jadi 4-tier — (1) SKU exact, (2) nama ternormalisasi exact, (3) *(tidak ada tabel alias BA generik di codebase — hanya alias identitas order-item historis di `lib/historical-order-item-identity.ts`, domain berbeda; disisipkan di sini bila ditambahkan nanti)*, (4) fuzzy token Dice coefficient dengan `BA_FUZZY_MATCH_THRESHOLD = 0.85` (didokumentasikan di kode: threshold dipilih supaya pasangan seperti ODEA RED/ODEA ROSE, yang hanya beda satu dari dua token, Dice-nya 0.5 — jauh di bawah threshold — TIDAK PERNAH lolos sebagai fuzzy match). Fungsi baru `evaluateBaRow` menjalankan matching + dua cek selisih sekaligus per baris BA: **CEK A** (Stok Fisik − Stok Sistem harus sama dengan Selisih tercetak BA sendiri, sudah dihitung parser) dan **CEK B** (Stok Sistem BA dibandingkan stok sistem AYOSERA sendiri pada cutoff — bila beda, `PERLU_DICEK`; TIDAK PERNAH menulis ulang angka BA supaya cocok paksa). Fungsi baru `shouldBlockFinalizeForBaRows` dan `isDateWithinPeriod` untuk guard finalisasi.
+- **`app/reconciliation/inventory/page.tsx`**: state `baRows`/`baPeriod` baru menyimpan hasil evaluasi per baris BA. Section baru "Hasil Pembacaan Berita Acara" dirender DI ATAS tabel utama setelah upload sukses: ringkasan (Periode BA, Cutoff, Item ditemukan, Cocok, Perlu Dicek) + tabel No./Nama Barang/Stok Sistem BA/Stok Fisik Aktual/Selisih/Produk AYOSERA/Status (`Cocok`/`Perlu Dicek`/`Tidak Ditemukan`). Auto-fill "Dibaca dari BA" dan badge pada tabel utama HANYA untuk baris `Cocok` (match kuat) — ambigu/tidak ditemukan TIDAK auto-fill diam-diam. Tombol Finalisasi ditambah blokir baru: `baBlocksFinalize` (ada baris BA bukan Cocok) dan `baCutoffOutOfPeriod` (cutoff yang dipilih di luar periode BA), dengan banner pesan masing-masing. Tidak ada auto-finalize/auto-lock/adjustment Olsera otomatis di manapun.
+
+### Tests baru
+
+- `lib/inventory-ba-parser.test.ts`: skenario TOP-ALIGNED lengkap 7 baris (kolom No. + wrap top-aligned untuk NESTLE 1500/600ML dan POCARI SWEAT/ION) — memverifikasi tepat 7 item dengan angka sistem/fisik/selisih EXACT per baris, tidak ada yang tertukar/hilang.
+- `lib/inventory-ba-finalize-guard.test.ts`: fuzzy match tier (variasi spasi kecil tetap match; ODEA RED vs katalog hanya-ODEA-ROSE TIDAK PERNAH fuzzy-cross-match), `evaluateBaRow` (match kuat+selisih OK → Cocok; CEK A gagal → Perlu Dicek; CEK B gagal → Perlu Dicek tanpa menulis ulang angka BA; tidak match → Tidak Ditemukan), `shouldBlockFinalizeForBaRows`, `isDateWithinPeriod`.
+
+### Validation
+
+`node --test lib/inventory-ba-parser.test.ts lib/inventory-ba-finalize-guard.test.ts` PASS 25/25 (7 test parser lama + baru, 18 test finalize-guard lama + baru). Suite lebih luas `lib/inventory-*.test.ts lib/olsera-inventory-*.test.ts lib/reconciliation-inventory-*.test.ts lib/cron-olsera-inventory.test.ts`: 415/417 PASS; 2 gagal (`lib/cron-olsera-inventory.test.ts`, `lib/inventory-stock-opname-store.test.ts`) adalah **kegagalan lingkungan pre-existing** (`mock.module is not a function` pada Node 24 saat dijalankan langsung via `node --test`, dan proteksi `server-only` saat modul server diimpor langsung tanpa harness Next.js) — diverifikasi identik gagal pada baseline commit `8e40b54` sebelum perubahan apa pun di pass ini (`git stash` lalu jalankan ulang), jadi bukan regresi dari perubahan ini. `npx tsc --noEmit` PASS. `npm run build` PASS (semua route termasuk `/reconciliation/inventory` compile). `git diff --check` PASS (exit 0).
+
+### Catatan keterbatasan (tidak berubah)
+
+Masih TIDAK ADA file PDF BA produksi asli di repo sebagai fixture (dicek ulang: tidak ada file yang menyebut "BA", "juli", "2026-07", atau "stock-opname" selain fixture existing yang tidak relevan). Root cause dan fix di atas diverifikasi terhadap rekonstruksi layout realistis (baris teks top-aligned + kolom No. + wrap), BUKAN terhadap file PDF produksi asli byte-for-byte. **Rekomendasi:** commit PDF BA Juli 2026 asli (setelah data sensitif di-redact bila perlu) sebagai fixture di `tmp/fixtures/` supaya regresi berikutnya bisa diverifikasi terhadap file sungguhan, bukan rekonstruksi.
+
+### File berubah
+
+`lib/inventory-ba-parser.ts`, `lib/inventory-ba-parser.test.ts`, `lib/inventory-ba-finalize-guard.ts`, `lib/inventory-ba-finalize-guard.test.ts`, `app/reconciliation/inventory/page.tsx`, dan handoff ini. Tidak menyentuh Financial, YONEX, ODEA, kategori penjualan, atau `lib/reconciliation-berita-acara-client-ocr.ts` (fix pass ini murni di layer parsing baris BA, bukan di layer pengelompokan posisi Y pdf.js).

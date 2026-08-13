@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BA_UNREAD_MESSAGE, canApplyBaOmittedAssumedMatch, isBaParseUnread, matchBaItemToCatalog, shouldBlockFinalizeForUnreadBa, type CatalogRow } from "./inventory-ba-finalize-guard.ts";
+import {
+  BA_UNREAD_MESSAGE,
+  canApplyBaOmittedAssumedMatch,
+  evaluateBaRow,
+  isBaParseUnread,
+  isDateWithinPeriod,
+  matchBaItemToCatalog,
+  shouldBlockFinalizeForBaRows,
+  shouldBlockFinalizeForUnreadBa,
+  type CatalogRow,
+} from "./inventory-ba-finalize-guard.ts";
 import { normalizeInventoryBaName } from "./inventory-ba-parser.ts";
 
 // Regresi bug produksi (BA Stock Opname Juli 2026): PDF berhasil diupload,
@@ -71,4 +81,75 @@ test("matchBaItemToCatalog: nama ambigu (>1 baris katalog cocok) -> AMBIGUOUS, T
 test("matchBaItemToCatalog: tidak ada yang cocok -> NO_MATCH", () => {
   const result = matchBaItemToCatalog("PRODUK TIDAK DIKENAL", catalog, normalizeInventoryBaName);
   assert.equal(result.kind, "NO_MATCH");
+});
+
+// ---------------------------------------------------------------------------
+// Fuzzy match (tier 4, hanya dipakai bila SKU dan nama exact tidak menemukan
+// apa pun) + evaluasi selisih dua lapis (CEK A aritmetika cetak, CEK B stok
+// sistem BA vs stok sistem AYOSERA) + guard blokir finalisasi per baris BA.
+// ---------------------------------------------------------------------------
+
+test("matchBaItemToCatalog: variasi spasi kecil (fuzzy tier) tetap MATCHED via fuzzy, bukan NO_MATCH", () => {
+  const result = matchBaItemToCatalog("NESTLE  PURE  LIFE 600ML", [{ productId: 9, variantId: null, productName: "NESTLE PURE LIFE 600ML" }], normalizeInventoryBaName);
+  // Normalisasi sudah menghilangkan spasi ganda -> ini sebenarnya exact-name juga, tapi memverifikasi tier fuzzy tidak dibutuhkan di sini dan tidak salah pilih.
+  assert.equal(result.kind, "MATCHED");
+});
+
+test("matchBaItemToCatalog: ODEA RED dan ODEA ROSE TIDAK PERNAH fuzzy-cross-match satu sama lain walau hanya beda satu kata", () => {
+  const onlyRose: CatalogRow[] = [{ productId: 3, variantId: null, productName: "ODEA ROSE" }];
+  const result = matchBaItemToCatalog("ODEA RED", onlyRose, normalizeInventoryBaName);
+  assert.equal(result.kind, "NO_MATCH", "ODEA RED vs katalog yang hanya berisi ODEA ROSE harus NO_MATCH, bukan fuzzy-matched ke ODEA ROSE");
+});
+
+test("evaluateBaRow: match kuat + selisih arithmetic OK + stok sistem cutoff sama -> COCOK", () => {
+  const evaluation = evaluateBaRow(
+    { description: "ODEA RED", systemQty: 45, physicalQty: 47, differenceQty: 2, arithmeticStatus: "OK" },
+    catalog,
+    normalizeInventoryBaName,
+    45,
+  );
+  assert.equal(evaluation.status, "COCOK");
+  assert.equal(evaluation.matchedProduct?.productId, 2);
+});
+
+test("evaluateBaRow: arithmetic BA sendiri tidak konsisten (CEK A gagal) -> PERLU_DICEK walau produk cocok", () => {
+  const evaluation = evaluateBaRow(
+    { description: "ODEA RED", systemQty: 45, physicalQty: 47, differenceQty: 0, arithmeticStatus: "PERLU_DICEK" },
+    catalog,
+    normalizeInventoryBaName,
+    45,
+  );
+  assert.equal(evaluation.status, "PERLU_DICEK");
+});
+
+test("evaluateBaRow: stok sistem BA berbeda dari stok sistem AYOSERA pada cutoff (CEK B gagal) -> PERLU_DICEK, angka BA TIDAK ditulis ulang", () => {
+  const evaluation = evaluateBaRow(
+    { description: "ODEA RED", systemQty: 45, physicalQty: 47, differenceQty: 2, arithmeticStatus: "OK" },
+    catalog,
+    normalizeInventoryBaName,
+    50, // stok sistem AYOSERA sendiri berbeda dari 45 yang tercetak di BA
+  );
+  assert.equal(evaluation.status, "PERLU_DICEK");
+  assert.ok(evaluation.reasons.some((r) => r.includes("berbeda dari stok sistem AYOSERA")));
+});
+
+test("evaluateBaRow: tidak ada produk katalog yang cocok -> TIDAK_DITEMUKAN", () => {
+  const evaluation = evaluateBaRow({ description: "PRODUK ASING", systemQty: 1, physicalQty: 1, differenceQty: 0, arithmeticStatus: "OK" }, catalog, normalizeInventoryBaName, null);
+  assert.equal(evaluation.status, "TIDAK_DITEMUKAN");
+});
+
+test("shouldBlockFinalizeForBaRows: blokir bila ADA satu saja baris bukan COCOK", () => {
+  assert.equal(shouldBlockFinalizeForBaRows([{ status: "COCOK" }, { status: "PERLU_DICEK" }]), true);
+  assert.equal(shouldBlockFinalizeForBaRows([{ status: "COCOK" }, { status: "TIDAK_DITEMUKAN" }]), true);
+  assert.equal(shouldBlockFinalizeForBaRows([{ status: "COCOK" }, { status: "COCOK" }]), false);
+  assert.equal(shouldBlockFinalizeForBaRows([]), false);
+});
+
+test("isDateWithinPeriod: cutoff di dalam periode -> true; di luar periode -> false; null -> false (fail-safe)", () => {
+  assert.equal(isDateWithinPeriod("2026-07-16", "2026-07-01", "2026-07-16"), true);
+  assert.equal(isDateWithinPeriod("2026-07-01", "2026-07-01", "2026-07-16"), true);
+  assert.equal(isDateWithinPeriod("2026-07-17", "2026-07-01", "2026-07-16"), false);
+  assert.equal(isDateWithinPeriod("2026-06-30", "2026-07-01", "2026-07-16"), false);
+  assert.equal(isDateWithinPeriod(null, "2026-07-01", "2026-07-16"), false);
+  assert.equal(isDateWithinPeriod("2026-07-16", null, "2026-07-16"), false);
 });

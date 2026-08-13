@@ -22,18 +22,27 @@ export function parseInventoryBaText(rawText: string): InventoryBaParseResult {
   // berikutnya yang benar-benar berisi triplet angka — GENERIK, tidak
   // bergantung pada nama produk tertentu.
   let pendingPrefix = "";
+  // Baris terakhir yang berhasil didorong sebagai item (triplet angka sudah
+  // ditemukan). Dipakai untuk kasus tabel yang TOP-ALIGNED: nama produk yang
+  // wrap ke 2 baris, tetapi kolom Satuan/Stock Sistem/Stock Fisik/Selisih
+  // tetap muncul di baris FISIK PERTAMA (sejajar bagian atas baris tabel),
+  // sehingga sisa nama produk (mis. "1500ML", "500 ML") muncul sebagai baris
+  // YATIM SETELAH angka, bukan sebelum angka seperti pola prefix biasa.
+  let lastItem: InventoryBaItem | null = null;
   for (const originalLine of raw.split("\n")) {
     let line = originalLine.trim();
     if (!line) continue;
     if (/deskripsi|stock\s+sistem|stok\s+sistem|kelompok barang|^no\.?\s/i.test(line)) {
       pendingPrefix = "";
+      lastItem = null;
       continue;
     }
     // Baris metadata (periode/tanggal, mis. "Periode 01 Juli 2026 sampai 16
     // Juli 2026" atau baris tanda tangan) BUKAN fragmen nama produk yang wrap
-    // — jangan pernah dijadikan pendingPrefix.
+    // — jangan pernah dijadikan pendingPrefix atau suffix.
     if (new RegExp(`\\b(${monthPattern})\\b`, "i").test(line) && /20\d{2}/.test(line)) {
       pendingPrefix = "";
+      lastItem = null;
       continue;
     }
     // Kolom "No." (indeks baris) yang ikut terbaca di depan, mis. "1 YONEX AC102 pcs 10 9 -1".
@@ -43,23 +52,44 @@ export function parseInventoryBaText(rawText: string): InventoryBaParseResult {
     if (!pendingPrefix) line = line.replace(/^\d{1,2}\s+(?=[A-Za-zÀ-ÿ])/u, "");
     const match = /^(.*?)(?:\s+)([A-Za-zÀ-ÿ]+)?\s+(-?\d+)\s+(-?\d+)\s+([+-]?\d+)\s*(.*)$/u.exec(line);
     if (!match) {
-      // Baris tanpa triplet angka: kemungkinan fragmen deskripsi yang wrap
-      // (bukan header/noise) -> simpan sebagai prefix untuk baris berikutnya.
-      if (/[A-Za-z]/.test(line) && line.length >= 2 && !/ditandatangani/i.test(line)) {
-        pendingPrefix = pendingPrefix ? `${pendingPrefix} ${line}` : line;
-      } else {
+      // Baris tanpa triplet angka: kemungkinan fragmen deskripsi yang wrap.
+      const isNoise = !/[A-Za-z]/.test(line) || line.length < 2 || /ditandatangani/i.test(line);
+      if (isNoise) {
         pendingPrefix = "";
+        lastItem = null;
+        continue;
       }
+      // Fragmen yang DIAWALI ANGKA (mis. "1500ML", "600ML", "500 ML") secara
+      // generik adalah kelanjutan UKURAN/SATUAN di EKOR nama produk, bukan
+      // awal nama produk baru (nama produk pada domain ini tidak pernah
+      // diawali angka mentah tanpa kolom No. yang jelas terpisah spasi+huruf,
+      // sudah ditangani terpisah di atas). Bila baris FISIK sebelumnya baru
+      // saja menghasilkan item (lastItem) dan kita TIDAK sedang di tengah
+      // mengumpulkan prefix, gabungkan sebagai SUFFIX ke item tersebut —
+      // menangani tabel top-aligned tempat kolom angka muncul di baris
+      // pertama sebuah baris yang wrap, dan sisa nama produk baru muncul
+      // SETELAH angka. Selain itu (fragmen diawali huruf), tetap pola PREFIX
+      // lama: dikumpulkan untuk digabung ke baris angka berikutnya.
+      if (!pendingPrefix && lastItem && /^\d/.test(line)) {
+        lastItem.description = `${lastItem.description} ${line}`.replace(/\s+/g, " ").trim();
+        continue;
+      }
+      pendingPrefix = pendingPrefix ? `${pendingPrefix} ${line}` : line;
       continue;
     }
     const description = `${pendingPrefix} ${match[1].trim()}`.replace(/\s+/g, " ").trim();
     pendingPrefix = "";
-    if (description.length < 3 || !/[A-Za-z]/.test(description)) continue;
+    if (description.length < 3 || !/[A-Za-z]/.test(description)) {
+      lastItem = null;
+      continue;
+    }
     const systemQty = numberValue(match[3]);
     const physicalQty = numberValue(match[4]);
     const differenceQty = numberValue(match[5]);
     const arithmeticOk = systemQty !== null && physicalQty !== null && differenceQty === physicalQty - systemQty;
-    items.push({ description, unit: match[2] ?? null, systemQty, physicalQty, differenceQty, confidence: arithmeticOk ? 1 : 0, status: arithmeticOk ? "OK" : "PERLU_DICEK" });
+    const item: InventoryBaItem = { description, unit: match[2] ?? null, systemQty, physicalQty, differenceQty, confidence: arithmeticOk ? 1 : 0, status: arithmeticOk ? "OK" : "PERLU_DICEK" };
+    items.push(item);
+    lastItem = item;
   }
   const unique = items.filter((item, index) => items.findIndex((candidate) => normalized(candidate.description) === normalized(item.description)) === index);
   return { periodStart, cutoffDate, items: unique, status: periodStart && cutoffDate && unique.length ? (unique.every((item) => item.status === "OK") ? "OK" : "PERLU_DICEK") : "PERLU_DICEK", rawText };
