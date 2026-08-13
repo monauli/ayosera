@@ -25,7 +25,15 @@ export function ChildRow({ index, children }: { index: number; children: ReactNo
   );
 }
 
-/** Kolom label urutan child row ("Slot 1" / "Pembayaran 1") — style sama persis di kedua fitur. */
+/**
+ * Kolom label urutan child row ("Slot 1" / "Pembayaran 1") — style sama persis
+ * di kedua fitur. Lebar `w-28` (bukan `w-12`) dan `whitespace-nowrap` sengaja
+ * dipilih supaya label terpanjang yang dipakai saat ini, "Pembayaran 1"/
+ * "Pembayaran 2" (12-13 karakter), tidak wrap ke baris kedua maupun overflow
+ * menimpa kolom di sebelahnya. "Slot 1"/"Slot 2" (lebih pendek) otomatis tetap
+ * rapi di lebar yang sama — hanya menyisakan sedikit spasi ekstra sebelum
+ * kolom berikutnya, tidak mengubah alignment vertikal/tinggi baris.
+ */
 export function ChildRowLabel({ children }: { children: ReactNode }) {
-  return <span className="w-12 shrink-0 text-slate-500">{children}</span>;
+  return <span className="w-28 shrink-0 whitespace-nowrap text-slate-500">{children}</span>;
 }

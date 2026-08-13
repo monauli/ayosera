@@ -919,3 +919,61 @@ Karena agent ini headless tanpa browser, validasi dilakukan lewat perbandingan c
 - `lib/booking-payment-aggregate.ts` (`aggregateBookingPayments`, `withBookingPaymentTotals`, `paymentDetailsFor`), `lib/ayo-payment-events.ts` (`paymentEventIdentity`), `app/api/transactions/route.ts` — **0 baris diubah** (dikonfirmasi `git status`: hanya `components/booking-child-row.tsx` (baru), `components/booking-payment-detail.tsx`, `components/booking-session-row.tsx` yang tersentuh, plus file handoff ini).
 - Export (`export/bulanan`, `export/harian`), Dashboard (`app/api/dashboard/route.ts`), Rekonsiliasi (`lib/reconciliation-*`), Inventory (`lib/inventory-stock-opname*`), Financial (`lib/olsera-financial-*`) — tidak ada satu pun file di area-area ini pada diff sesi ini.
 - Lock stock opname TIDAK memfreeze inventory setelah cutoff — dikonfirmasi arsitektural + test regresi baru (lihat Rule 5 di atas); cron `app/api/cron/olsera/inventory` tetap jalan untuk semua tanggal tanpa gate apa pun dari modul rekonsiliasi ini.
+
+---
+
+## Fix UI: label "Pembayaran N" wrap ke 2 baris (iterasi ke-3 dari fix child row) — 2026-08-13
+
+### Root cause exact
+
+`components/booking-child-row.tsx`, komponen `ChildRowLabel` (satu-satunya sumber untuk label kolom pertama child row, dipakai baik oleh "Slot N" di `booking-session-row.tsx` maupun "Pembayaran N" di `booking-payment-detail.tsx`), sebelumnya:
+
+```tsx
+export function ChildRowLabel({ children }: { children: ReactNode }) {
+  return <span className="w-12 shrink-0 text-slate-500">{children}</span>;
+}
+```
+
+`w-12` = lebar tetap 48px, TIDAK ADA `whitespace-nowrap`. "Slot 1"/"Slot 2" (6 karakter, ±39-42px pada text-xs) muat di 48px sehingga tidak pernah menunjukkan gejala wrap — itu sebabnya masalah ini baru terlihat di fitur payment. "Pembayaran 1"/"Pembayaran 2" (12-13 karakter, ±78-85px pada text-xs) melebihi 48px; karena elemen `<span>` inline defaultnya boleh wrap teks di dalam box, teks membelah jadi 2 baris persis seperti yang dilaporkan user. Ini BUKAN masalah container parent/global — `ChildRow` (flex flex-wrap pada `<li>`) dan `ChildRowList` (`<ul className="pl-6">`) tidak berubah, dan tidak ada penyempitan lain di jalur render (`app/page.tsx` -> `BookingSessionRow` -> `PaymentDetailList`). Root cause murni di lebar+wrap-behaviour `ChildRowLabel`.
+
+### Fix yang diterapkan
+
+Satu file, satu komponen diubah (Opsi A dari task — paling minimal, aman untuk kedua fitur karena satu sumber shared):
+
+```tsx
+export function ChildRowLabel({ children }: { children: ReactNode }) {
+  return <span className="w-28 shrink-0 whitespace-nowrap text-slate-500">{children}</span>;
+}
+```
+
+- `w-12` (48px) -> `w-28` (112px): cukup lebar untuk label terpanjang saat ini ("Pembayaran 1"/"Pembayaran 2", ±78-85px) dengan buffer aman.
+- Tambah `whitespace-nowrap`: jaminan eksplisit anti-wrap, tidak bergantung semata pada lebar cukup (defensif terhadap font/locale/DPI berbeda).
+- Karena `ChildRowLabel` adalah SATU-SATUNYA definisi (dicek `grep -rn "ChildRowLabel\|w-12" components/ lib/ app/` — hanya dipakai, tidak ada duplikat className di `booking-session-row.tsx`/`booking-payment-detail.tsx`), perubahan ini otomatis berlaku identik untuk "Slot N" dan "Pembayaran N". "Slot 1"/"Slot 2" yang lebih pendek tetap rapi di lebar `w-28` — hanya menyisakan sedikit spasi ekstra sebelum kolom berikutnya (flex alignment normal, TIDAK mengubah tinggi baris/padding/border/background/font — semua itu ada di `ChildRow`, yang tidak disentuh).
+
+### File yang diubah
+
+- `components/booking-child-row.tsx` — HANYA `ChildRowLabel`: `w-12` -> `w-28`, tambah `whitespace-nowrap`. `ChildRow`/`ChildRowList` (wrapper, padding, border, background, font, height) tidak disentuh sama sekali.
+
+### Validasi
+
+1. **className literal dicek langsung** — sebelum: `"w-12 shrink-0 text-slate-500"`, sesudah: `"w-28 shrink-0 whitespace-nowrap text-slate-500"` (lihat kutipan kode di atas, diambil dari file aktual).
+2. **Structural sharing tetap utuh** — `grep -rn "ChildRowLabel\|w-12\b" components/ lib/ app/` menunjukkan `ChildRowLabel` hanya didefinisikan sekali di `booking-child-row.tsx` dan dipakai (bukan disalin) di `booking-session-row.tsx` (Slot N) dan `booking-payment-detail.tsx` (Pembayaran N) — tidak ada className baru yang di-duplikasi di luar file sumber.
+3. Tidak ada `*.test.tsx`/render test di project ini (dicek ulang, masih kosong) — validasi mengandalkan perbandingan className literal + satu sumber komponen seperti iterasi sebelumnya. `npm run dev` + akses halaman Transaksi di-skip karena butuh session login (sama seperti sebelumnya, tidak ada bypass auth dilakukan).
+4. Badge "N pembayaran" dikonfirmasi tetap tidak ada — `PaymentDetailToggle` di `booking-payment-detail.tsx` tidak disentuh pada perubahan ini.
+
+### Hasil test/typecheck/build (semua dijalankan LANGSUNG secara sinkron, exit code dicek satu per satu — bukan background)
+
+- `npm run test:booking-payment-detail-ui` — **5/5 PASS**.
+- `npm run test:booking-payment-aggregate` — **12/12 PASS**.
+- `npm run test:booking-session` — **36/36 PASS**.
+- `npm run test:booking-mapper` — **4/4 PASS**.
+- `npm run type-check` — PASS, tanpa error.
+- `npm run build` — PASS (exit code 0). Catatan proses: percobaan pertama dijalankan sebagai background task lalu di-rerun sinkron sebelum selesai, menyebabkan DUA proses `next build` menulis ke `.next` bersamaan dan salah satu run melempar `ENOENT ...route.js.nft.json` (race condition penulisan trace file, bukan error kompilasi/kode). Untuk memastikan hasil bersih, `.next` dihapus (`rm -rf .next`) dan `npm run build` dijalankan ULANG SATU KALI SAJA secara sinkron sampai selesai — hasil: `✓ Compiled successfully`, `✓ Generating static pages (24/24)`, exit code 0, tanpa error apa pun.
+- `git diff --check` — PASS (hanya warning LF/CRLF line-ending, bukan error).
+- Tidak ada assertion test lama terkait className/width `ChildRowLabel` yang perlu diupdate — keempat test file target murni test logic data (total, dedup, referenceId, amount, grouping), tidak ada yang assert className/DOM.
+
+### Konfirmasi scope lain TIDAK disentuh
+
+- `git status` menunjukkan hanya `components/booking-child-row.tsx` (plus file handoff ini) yang berubah pada sesi ini.
+- Tidak ada perubahan pada `lib/booking-payment-aggregate.ts`, `lib/ayo-payment-events.ts`, `app/api/transactions/route.ts`, Export, Dashboard, Rekonsiliasi, Inventory, Financial, YONEX, ODEA.
+- Baris utama Transaksi (1 booking = 1 baris, total payment) tidak disentuh. Single payment tidak berubah. Chevron toggle tetap ada, tidak diubah.
