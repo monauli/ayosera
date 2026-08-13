@@ -613,8 +613,7 @@ export default function InventoryOpnamePage() {
                   <th>No.</th>
                   <th>Nama Barang BA</th>
                   <th>Produk AYOSERA</th>
-                  <th>Stok Sistem BA</th>
-                  <th>Stok Sistem AYOSERA @ Cutoff</th>
+                  <th>Stok Sistem AYOSERA @{baPeriod?.cutoffDate ? ` ${new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(`${baPeriod.cutoffDate}T00:00:00`))}` : " Cutoff"}</th>
                   <th>Stok Fisik Aktual</th>
                   <th>Selisih BA</th>
                   <th>Status</th>
@@ -626,7 +625,6 @@ export default function InventoryOpnamePage() {
                     <td>{row.no}</td>
                     <td>{row.description}</td>
                     <td>{row.matchedProductName ?? "—"}</td>
-                    <td>{formatQty(row.systemQty)}</td>
                     <td>{formatQty(row.ayoseraCutoffStock)}</td>
                     <td>{formatQty(row.physicalQty)}</td>
                     <td>{formatSignedQty(row.differenceQty)}</td>

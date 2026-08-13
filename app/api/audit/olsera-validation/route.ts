@@ -18,6 +18,7 @@ export async function GET(request: Request) {
   try {
     await requireModule("audit");
     const period = new URL(request.url).searchParams.get("period") ?? "";
+    const section = new URL(request.url).searchParams.get("section");
     if (!iso.test(period)) return NextResponse.json({ error: "period harus YYYY-MM." }, { status: 400 });
     const [year, month] = period.split("-").map(Number);
     const start = `${period}-01`, end = dayEnd(period);
@@ -26,12 +27,14 @@ export async function GET(request: Request) {
 
     const sections = await Promise.allSettled([
       (async () => {
+        if (section && section !== "category") return { status: "Data Belum Lengkap" as Status };
         const [live, stored] = await Promise.all([fetchOlseraSalesAuditSource(start, end), withMongo(async () => { const { olseraSalesByCategory } = await collections(); return olseraSalesByCategory.find({ date: { $gte: start, $lte: end } }).toArray(); })]);
         const liveTotal = live.items.reduce((x, row) => x + row.amount, 0), liveQty = live.items.reduce((x, row) => x + row.qty, 0);
         const storedTotal = stored.reduce((x, row) => x + row.totalAmount, 0), storedQty = stored.reduce((x, row) => x + row.qty, 0);
         return { status: current ? "Data Belum Lengkap" : liveTotal === storedTotal && liveQty === storedQty ? "Cocok" : "Selisih", label: "Cocok dengan API Olsera", ayosera: { qty: storedQty, total: storedTotal }, olseraLive: { qty: liveQty, total: liveTotal }, orders: live.orders.length };
       })(),
       (async () => {
+        if (section && section !== "inventory") return { status: "Data Belum Lengkap" as Status };
         const [live, stored] = await Promise.all([fetchStockMovementRange(start, end), withMongo(async () => { const { olseraInventoryMonthlySnapshots } = await collections(); return olseraInventoryMonthlySnapshots.find({ year, month }).toArray(); })]);
         if (!live.ok) return failed(new Error(live.error));
         const byProduct = new Map(live.rows.map((row) => [String(row.productId), row]));
@@ -40,6 +43,7 @@ export async function GET(request: Request) {
         return { status: details.length ? "Selisih" : "Cocok", checked: stored.length, matching: stored.length - details.length, differences: details, source: "/en/inventory/stockmovement" };
       })(),
       (async () => {
+        if (section && section !== "financial") return { status: "Data Belum Lengkap" as Status };
         const periodReports = await withMongo(async () => { const { olseraFinancialMonthlyReports } = await collections(); return olseraFinancialMonthlyReports.find({ period }).toArray(); });
         const live = await Promise.all([getBalanceSheet(period), getProfitLoss(period), getCashFlow(period), getLedgerSummary(period)]);
         const normalized = [normalizeBalanceSheetPayload(live[0]), normalizeProfitLossPayload(live[1]), normalizeCashFlowPayload(live[2]), normalizeLedgerSummaryPayload(live[3])];

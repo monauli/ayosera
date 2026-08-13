@@ -1,15 +1,15 @@
 "use client";
 
-import { AlertTriangle, FileSearch } from "lucide-react";
+import { Check, CircleAlert, FileSearch, Loader2 } from "lucide-react";
 import { useState } from "react";
 
-type ValidationStatus = "Cocok" | "Selisih" | "Data Belum Lengkap" | "Belum Bisa Diverifikasi";
+type ValidationStatus = "Cocok" | "Selisih" | "Data Belum Lengkap" | "Gagal Dicek";
 
 const statusClass: Record<ValidationStatus, string> = {
   Cocok: "text-emerald-300",
   Selisih: "text-rose-300",
   "Data Belum Lengkap": "text-amber-300",
-  "Belum Bisa Diverifikasi": "text-slate-300",
+  "Gagal Dicek": "text-rose-300",
 };
 
 function Status({ value }: { value: ValidationStatus }) {
@@ -35,7 +35,10 @@ export function OlseraValidationPanel() {
   const [busy, setBusy] = useState(false);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [result, setResult] = useState<Record<string, any> | null>(null);
-  const validate = async () => { setBusy(true); try { const response = await fetch(`/api/audit/olsera-validation?period=${period}`, { cache: "no-store" }); const body = await response.json(); setResult(body); setCheckedAt(body.checkedAt ?? new Date().toISOString()); } finally { setBusy(false); } };
+  const [stage, setStage] = useState(-1);
+  const [stageError, setStageError] = useState<number | null>(null);
+  const stages = ["Menghubungkan ke Olsera", "Memeriksa Kategori Penjualan", "Memeriksa Inventori", "Memeriksa Neraca, Laba Rugi & Arus Kas", "Memeriksa semua akun Buku Besar", "Menyusun hasil"];
+  const validate = async () => { setBusy(true); setResult(null); setStageError(null); const merged: Record<string, any> = {}; try { for (let i = 0; i < stages.length; i++) { setStage(i); if (i === 0 || i === 5) continue; const section = i === 1 ? "category" : i === 2 ? "inventory" : "financial"; const response = await fetch(`/api/audit/olsera-validation?period=${period}&section=${section}`, { cache: "no-store" }); const body = await response.json(); Object.assign(merged, body); if (!response.ok || body[section]?.status === "Gagal Dicek") setStageError(i); } setStage(5); setResult(merged); setCheckedAt(merged.checkedAt ?? new Date().toISOString()); } catch { setStageError(stage < 0 ? 0 : stage); } finally { setBusy(false); } };
   const status = (key: string, fallback: ValidationStatus): ValidationStatus => result?.[key]?.status ?? fallback;
   return (
     <section className="mt-6 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4" aria-labelledby="olsera-validation-title">
@@ -51,6 +54,7 @@ export function OlseraValidationPanel() {
         <button type="button" onClick={() => void validate()} disabled={busy || !period} className="rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">{busy ? "Sedang memeriksa data Olsera..." : "Validasi Sekarang"}</button>
         {checkedAt && <span className="text-xs text-slate-400">Terakhir dicek: {new Date(checkedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</span>}
       </div>
+      {busy && <div className="mt-4 space-y-2 rounded-lg border border-white/10 bg-black/10 p-3">{stages.map((label, index) => <div key={label} className="flex items-center gap-2 text-xs">{stageError === index ? <CircleAlert className="h-4 w-4 text-rose-300" /> : stage > index ? <Check className="h-4 w-4 text-emerald-300" /> : stage === index ? <Loader2 className="h-4 w-4 animate-spin text-cyan-300" /> : <span className="h-4 w-4 rounded-full border border-white/20" />}<span className={stage === index ? "text-cyan-200" : stage > index ? "text-emerald-200" : stageError === index ? "text-rose-200" : "text-slate-500"}>{label}</span></div>)}</div>}
 
       <div className="mt-5 grid gap-4 lg:grid-cols-3">
         <div>
@@ -69,10 +73,6 @@ export function OlseraValidationPanel() {
         </div>
       </div>
 
-      <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-300/20 bg-amber-950/10 p-3 text-xs text-amber-200">
-        <AlertTriangle className="h-4 w-4 shrink-0" />
-        <span>“Belum Bisa Diverifikasi” bukan PASS. Detail perbedaan inventori tetap tersedia di checker Berita Acara dan tidak difinalisasi otomatis.</span>
-      </div>
     </section>
   );
 }

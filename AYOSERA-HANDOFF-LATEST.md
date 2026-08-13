@@ -1330,3 +1330,11 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - Tests: `test:olsera-inventory` 48/48 PASS, `test:olsera-financial` 29/29 PASS, type-check PASS, build PASS, diff-check PASS.
 - Files: `app/api/audit/olsera-validation/route.ts`, `components/olsera-validation-panel.tsx`, dokumen handoff.
 - Production test berikutnya: pilih periode finalized, klik `Validasi Sekarang`, pastikan tiga section memuat status live dan detail delta tanpa ada write ke Olsera/AYOSERA.
+## 2026-08-14 — Final UI polish BA + live validator progress
+
+- Tabel `Hasil Pembacaan Berita Acara` tidak lagi merender kolom `Stok Sistem BA`; `systemQty` tetap dipertahankan untuk validasi dan diagnostic internal.
+- Label stok cutoff sekarang dinamis dari cutoff aktif, misalnya `Stok Sistem AYOSERA @ 16/07/2026`.
+- Live validator menampilkan progress request nyata secara berurutan: koneksi, kategori, inventori, laporan keuangan, buku besar, dan penyusunan hasil.
+- Endpoint validator menerima `section` agar UI memproses section satu per satu tanpa fake timer; kegagalan stage tampil sebagai error dan tidak menjadi PASS palsu.
+- Banner warning lama `Belum Bisa Diverifikasi` dihapus dari panel.
+- Tests: inventory UI 50/50 PASS, integration/validator 45/45 PASS, type-check PASS, build PASS, diff-check PASS.
