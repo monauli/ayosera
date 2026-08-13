@@ -121,13 +121,76 @@ export function averageConfidence(values: number[]): number {
 type PdfjsModule = typeof import("pdfjs-dist");
 type PdfDocumentProxy = Awaited<ReturnType<PdfjsModule["getDocument"]>>["promise"] extends Promise<infer T> ? T : never;
 
+type PdfTextItemLike = { str?: unknown; transform?: unknown };
+
+/**
+ * ROOT CAUSE (BA Juli 2026, 0 item terekstrak): pdf.js `getTextContent()`
+ * mengembalikan item teks sebagai stream DATAR (tidak ada newline antar
+ * baris tabel) — sebelumnya kode ini menggabungkan SEMUA item pada satu
+ * halaman dengan satu spasi (`.join(" ")`), sehingga seluruh tabel (header +
+ * 7 baris produk) menjadi SATU baris teks raksasa. `lib/inventory-ba-parser.ts`
+ * mem-parse item PER BARIS (`raw.split("\n")`) — periode/cutoff tetap
+ * terbaca (regex-nya menyapu seluruh teks), tapi regex baris produk tidak
+ * pernah cocok karena baris fisik tabel tidak pernah terpisah `\n`.
+ *
+ * FIX GENERIK (bukan hardcode nama produk): setiap item teks pdf.js
+ * menyertakan `transform` (matriks posisi); `transform[5]` adalah koordinat
+ * Y baseline dan `transform[4]` adalah koordinat X. Kita kelompokkan item
+ * yang Y-nya berdekatan (toleransi kecil, mengakomodasi sedikit jitter antar
+ * karakter dalam satu baris cetak) sebagai SATU baris tabel, urutkan item
+ * dalam baris tersebut berdasarkan X (kiri ke kanan), lalu gabungkan
+ * antar-baris dengan `\n`. Ini berlaku untuk tabel APA PUN (jumlah kolom,
+ * lebar kolom, spasi tidak konsisten) — tidak bergantung pada isi/nama
+ * produk tertentu. Bila suatu PDF tidak menyertakan `transform` yang valid
+ * (mis. mock test lama / edge-case pdf.js), fallback ke perilaku lama
+ * (`.join(" ")`) supaya tidak regresi.
+ */
+export function groupPdfTextItemsIntoLines(items: readonly PdfTextItemLike[]): string {
+  const LINE_Y_TOLERANCE = 2.5;
+  type Positioned = { str: string; x: number; y: number };
+  const positioned: Positioned[] = [];
+  let allHavePosition = true;
+  for (const item of items) {
+    const str = typeof item.str === "string" ? item.str : "";
+    if (!str) continue;
+    const t = item.transform;
+    if (!Array.isArray(t) || t.length < 6 || typeof t[4] !== "number" || typeof t[5] !== "number") {
+      allHavePosition = false;
+      break;
+    }
+    positioned.push({ str, x: t[4], y: t[5] });
+  }
+  if (!allHavePosition || positioned.length === 0) {
+    return items.map((item) => (typeof item.str === "string" ? item.str : "")).join(" ");
+  }
+  // pdf.js: Y makin besar = makin ke atas halaman -> urutkan turun (atas ke bawah), lalu X naik (kiri ke kanan).
+  const sorted = [...positioned].sort((a, b) => b.y - a.y || a.x - b.x);
+  const lines: Positioned[][] = [];
+  for (const p of sorted) {
+    const currentLine = lines.at(-1);
+    if (currentLine && Math.abs(currentLine[0].y - p.y) <= LINE_Y_TOLERANCE) {
+      currentLine.push(p);
+    } else {
+      lines.push([p]);
+    }
+  }
+  return lines
+    .map((line) =>
+      [...line]
+        .sort((a, b) => a.x - b.x)
+        .map((p) => p.str)
+        .join(" "),
+    )
+    .join("\n");
+}
+
 async function extractPdfTextLayer(doc: PdfDocumentProxy): Promise<string> {
   const pagesToRead = Math.min(doc.numPages, MAX_OCR_PAGES);
   const parts: string[] = [];
   for (let i = 1; i <= pagesToRead; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
-    parts.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+    parts.push(groupPdfTextItemsIntoLines(content.items as PdfTextItemLike[]));
     // Yield ke event loop antar halaman supaya UI tidak freeze.
     await new Promise((resolve) => setTimeout(resolve, 0));
   }

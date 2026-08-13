@@ -1062,3 +1062,36 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 - UI menampilkan `Membaca Berita Acara...`, auto-set Tahun/Bulan/Cutoff dari periode BA, auto-fill stok BA dari Stock Fisik Aktual, ringkasan item ditemukan/Cocok otomatis/Perlu Dicek, dan tetap meminta review sebelum finalisasi.
 - Regression fixture 7 item BA 01–16 Juli 2026: cutoff `2026-07-16`, termasuk ODEA RED/ROSE terpisah, PASS. OCR/text parser tests PASS; inventory stock-opname tests PASS; typecheck PASS; `git diff --check` PASS.
 - File berubah: `app/reconciliation/inventory/page.tsx`, `lib/inventory-ba-parser.ts`, `lib/inventory-ba-client.ts`, `lib/inventory-ba-parser.test.ts`, dan handoff.
+
+## BUG PRODUKSI: BA Juli 2026 0 item terbaca + fix silent-failure — 2026-08-13
+
+Bug produksi nyata: BA Stock Opname periode 01–16 Juli 2026 diupload, periode/cutoff terbaca benar (`2026-07-16`) tapi item terekstrak **0** (harusnya 7). Karena UI lama mengasumsikan seluruh 69 produk katalog "cocok" (`BA_OMITTED_ASSUMED_MATCH`) begitu checkbox BA-only dicentang, tombol Finalisasi terlihat aman diklik padahal BA belum benar-benar terbaca — silent-failure berbahaya pada sistem inventori produksi.
+
+### Root cause
+
+`extractPdfTextLayer` di `lib/reconciliation-berita-acara-client-ocr.ts` menggabungkan SEMUA item teks pdf.js pada satu halaman dengan `.join(" ")` — tidak ada newline antar baris tabel, hanya antar HALAMAN. pdf.js `getTextContent()` mengembalikan stream item DATAR tanpa newline literal antar baris visual. Akibatnya seluruh tabel (header + 7 baris produk) menjadi SATU baris teks raksasa. `lib/inventory-ba-parser.ts` mem-parse item PER BARIS (`raw.split("\n")`) — regex periode/cutoff tetap cocok (menyapu seluruh teks), tapi regex baris produk tidak pernah cocok karena baris fisik tabel tidak pernah terpisah `\n`. Fixture test sebelumnya (`lib/inventory-ba-parser.test.ts`) memakai teks sintetis yang SUDAH diberi `\n` per baris secara manual, sehingga bug ini tidak pernah tertangkap regression test lama.
+
+### Fix
+
+1. **`lib/reconciliation-berita-acara-client-ocr.ts`** — tambah `groupPdfTextItemsIntoLines` (diekspor untuk test): mengelompokkan item teks pdf.js berdasarkan posisi Y (baris, toleransi kecil untuk jitter), urutkan tiap baris berdasarkan X (kolom kiri→kanan), gabungkan antar-baris dengan `\n`. GENERIK — bekerja untuk tabel apa pun, tidak hardcode nama produk. Item tanpa `transform` valid tetap fallback ke perilaku lama (`.join(" ")`), jadi tidak regresi terhadap PDF/OCR lain yang sudah ada.
+2. **`lib/inventory-ba-parser.ts`** — tambah dua penanganan generik: (a) kolom "No." (indeks baris, maks 2 digit) di depan baris dilucuti HANYA pada baris fisik baru, bukan pada baris sambungan nama produk yang wrap; (b) nama produk yang wrap ke baris fisik terpisah (mis. `"NESTLE PURE LIFE"` lalu `"1500ML pcs 350 349 -1"`) digabung via `pendingPrefix`, dengan baris metadata (periode/tanggal) sengaja dikecualikan dari akumulasi prefix supaya tidak ikut tercampur ke deskripsi produk.
+3. **`lib/inventory-ba-finalize-guard.ts`** (baru, murni/testable) — kontrak safety: `isBaParseUnread`/`shouldBlockFinalizeForUnreadBa` (upload sukses tapi 0 item → blokir), `canApplyBaOmittedAssumedMatch` (assumed-match HANYA aktif setelah checkbox BA-only dicentang DAN minimal 1 item berhasil diparse — bukan lagi checkbox saja), `matchBaItemToCatalog` (nama ambigu dengan >1 kandidat katalog → `AMBIGUOUS`, tidak auto-pilih, tetap Perlu Dicek), dan pesan `BA_UNREAD_MESSAGE` = "Item pada Berita Acara belum berhasil dibaca. Periksa file atau isi secara manual."
+4. **`app/reconciliation/inventory/page.tsx`** — wiring: state `baItemsFound`/`baSourcedKeys`; branch `BA_OMITTED_ASSUMED_MATCH` sekarang digerbang oleh `canApplyBaOmittedAssumedMatch`; tombol Finalisasi ditambah kondisi `baUnread` (disabled) plus banner pesan block; badge "Dibaca dari BA" dirender di sebelah nama produk untuk baris yang benar-benar match hasil parse BA (bukan seluruh katalog); matching produk memakai `matchBaItemToCatalog` sehingga nama ambigu tidak auto-pilih. Ringkasan `Item ditemukan / Cocok otomatis / Perlu Dicek` sudah ada sebelumnya dan tetap dipertahankan.
+
+### Tests baru/diperluas
+
+- `lib/reconciliation-berita-acara-client-ocr.test.ts`: `groupPdfTextItemsIntoLines` merekonstruksi baris tabel dari item pdf.js berposisi (termasuk item yang urutannya tidak kiri-ke-kanan di array input), kontrak end-to-end dengan parser BA, dan fallback aman saat `transform` tidak tersedia.
+- `lib/inventory-ba-parser.test.ts`: kolom No. generik, nama produk wrap 2-baris, ODEA RED vs ODEA ROSE tidak tertukar, dan regresi eksplisit bug produksi asli (seluruh tabel jadi satu baris → 0 item, `PERLU_DICEK`, bukan crash/tebakan).
+- `lib/inventory-ba-finalize-guard.test.ts` (baru): 0 item → blokir finalisasi; assumed-match tidak aktif saat 0 item walau checkbox dicentang; assumed-match aktif hanya saat checkbox dicentang DAN ada item; matching ambigu → `AMBIGUOUS`, tidak salah tempel ke produk lain.
+
+### Catatan keterbatasan
+
+Tidak ada PDF produksi asli BA Juli 2026 yang tersedia sebagai fixture di repo (hanya `tmp/fixtures/ba-*-scan.pdf`, itu untuk fitur rekonsiliasi omzet berbeda, bukan stock opname). Perbaikan diverifikasi terhadap rekonstruksi layout realistis (item pdf.js berposisi, kolom No., nama wrap, tabel-jadi-satu-baris) yang menjelaskan gejala persis yang dilaporkan (periode/cutoff terbaca, 0 item), BUKAN terhadap file PDF produksi asli byte-for-byte. Bila PDF asli tersedia nanti, jalankan sebagai regression tambahan.
+
+### Validation
+
+`node --test lib/inventory-ba-parser.test.ts lib/inventory-ba-finalize-guard.test.ts` PASS 16/16; `npm run test:reconciliation-berita-acara` PASS 87/87; `npm run test:inventory-stock-opname` PASS 31+22; `npm run type-check` PASS; `npm run build` PASS; `git diff --check` PASS (hanya warning LF/CRLF normal Windows, exit 0).
+
+### File berubah
+
+`lib/reconciliation-berita-acara-client-ocr.ts`, `lib/reconciliation-berita-acara-client-ocr.test.ts`, `lib/inventory-ba-parser.ts`, `lib/inventory-ba-parser.test.ts`, `lib/inventory-ba-finalize-guard.ts` (baru), `lib/inventory-ba-finalize-guard.test.ts` (baru), `app/reconciliation/inventory/page.tsx`, dan handoff ini. Tidak menyentuh Financial, YONEX, ODEA, atau kategori penjualan.

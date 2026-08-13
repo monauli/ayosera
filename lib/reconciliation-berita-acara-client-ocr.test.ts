@@ -68,11 +68,14 @@ let extractBeritaAcaraTextClient!: typeof import("./reconciliation-berita-acara-
 let mergeOcrPages!: typeof import("./reconciliation-berita-acara-client-ocr.ts").mergeOcrPages;
 let averageConfidence!: typeof import("./reconciliation-berita-acara-client-ocr.ts").averageConfidence;
 let TESSERACT_ASSET_OPTIONS!: typeof import("./reconciliation-berita-acara-client-ocr.ts").TESSERACT_ASSET_OPTIONS;
+let groupPdfTextItemsIntoLines!: typeof import("./reconciliation-berita-acara-client-ocr.ts").groupPdfTextItemsIntoLines;
 let parseBeritaAcaraText!: typeof import("./reconciliation-berita-acara-parser.ts").parseBeritaAcaraText;
 let matchBeritaAcaraToSystemDifference!: typeof import("./reconciliation-berita-acara-parser.ts").matchBeritaAcaraToSystemDifference;
+let parseInventoryBaText!: typeof import("./inventory-ba-parser.ts").parseInventoryBaText;
 before(async () => {
-  ({ extractBeritaAcaraTextClient, mergeOcrPages, averageConfidence, TESSERACT_ASSET_OPTIONS } = await import("./reconciliation-berita-acara-client-ocr.ts"));
+  ({ extractBeritaAcaraTextClient, mergeOcrPages, averageConfidence, TESSERACT_ASSET_OPTIONS, groupPdfTextItemsIntoLines } = await import("./reconciliation-berita-acara-client-ocr.ts"));
   ({ parseBeritaAcaraText, matchBeritaAcaraToSystemDifference } = await import("./reconciliation-berita-acara-parser.ts"));
+  ({ parseInventoryBaText } = await import("./inventory-ba-parser.ts"));
 });
 
 function fakeFile(name: string, type: string, content = "x"): File {
@@ -96,6 +99,61 @@ test("mergeOcrPages: gabung antar halaman, bersihkan spasi/baris ganda artefak O
 test("averageConfidence: rerata benar, array kosong -> 0 (bukan NaN)", () => {
   assert.equal(averageConfidence([0.8, 0.6]), 0.7);
   assert.equal(averageConfidence([]), 0);
+});
+
+// ---------------------------------------------------------------------------
+// ROOT CAUSE bug produksi (BA Stock Opname Juli 2026, 0 item terbaca): pdf.js
+// getTextContent() mengembalikan item teks TANPA newline antar baris tabel;
+// kode lama menggabungkan SEMUA item satu halaman dengan satu spasi, membuat
+// seluruh tabel jadi satu baris raksasa yang tidak pernah cocok regex baris
+// produk di lib/inventory-ba-parser.ts (periode/cutoff tetap terbaca karena
+// regex-nya menyapu seluruh teks, bukan per baris — pola gejala yang PERSIS
+// dilaporkan di produksi). groupPdfTextItemsIntoLines mengelompokkan item
+// berdasarkan posisi Y (baris) lalu urut X (kolom kiri->kanan) — GENERIK,
+// bekerja untuk tabel apa pun, tidak hardcode nama produk.
+// ---------------------------------------------------------------------------
+
+test("groupPdfTextItemsIntoLines: item pdf.js dengan transform (posisi X/Y) direkonstruksi jadi baris tabel yang benar, bukan satu baris gabungan", () => {
+  // Simulasi realistis: setiap "kata" adalah item pdf.js terpisah (umum untuk
+  // PDF hasil export/print), TIDAK ADA newline literal di antaranya — hanya
+  // posisi Y (baris) dan X (kolom) yang membedakan baris tabel.
+  const row = (y: number, cells: string[]) => cells.map((str, i) => ({ str, transform: [1, 0, 0, 1, 50 + i * 60, y] }));
+  const items = [
+    ...row(700, ["Periode", "01", "Juli", "2026", "sampai", "16", "Juli", "2026"]),
+    ...row(650, ["No", "Deskripsi", "Barang", "Satuan", "Sistem", "Fisik", "Selisih"]),
+    ...row(620, ["1", "YONEX", "AC102", "pcs", "10", "9", "-1"]),
+    ...row(590, ["2", "ODEA", "RED", "pcs", "45", "47", "+2"]),
+  ];
+  const text = groupPdfTextItemsIntoLines(items);
+  const lines = text.split("\n");
+  assert.equal(lines.length, 4, "harus terpisah jadi 4 baris tabel, bukan 1 baris gabungan");
+  assert.match(lines[2], /^1 YONEX AC102 pcs 10 9 -1$/);
+  assert.match(lines[3], /^2 ODEA RED pcs 45 47 \+2$/);
+
+  // Kontrak dengan parser: begitu baris terpisah newline dengan benar, parser BA berhasil membaca item.
+  const parsed = parseInventoryBaText(text);
+  assert.equal(parsed.periodStart, "2026-07-01");
+  assert.equal(parsed.cutoffDate, "2026-07-16");
+  assert.equal(parsed.items.length, 2);
+});
+
+test("groupPdfTextItemsIntoLines: item dalam satu baris TIDAK harus urut X pada input (posisi tetap direkonstruksi kiri->kanan)", () => {
+  // pdf.js kadang mengembalikan item tidak dalam urutan visual kiri-ke-kanan
+  // (mis. render order berbeda dari reading order); kolom harus tetap benar
+  // berdasarkan X, bukan urutan array input.
+  const items = [
+    { str: "-1", transform: [1, 0, 0, 1, 290, 620] },
+    { str: "AC102", transform: [1, 0, 0, 1, 110, 620] },
+    { str: "YONEX", transform: [1, 0, 0, 1, 50, 620] },
+    { str: "9", transform: [1, 0, 0, 1, 230, 620] },
+    { str: "10", transform: [1, 0, 0, 1, 170, 620] },
+  ];
+  assert.equal(groupPdfTextItemsIntoLines(items), "YONEX AC102 10 9 -1");
+});
+
+test("groupPdfTextItemsIntoLines: item tanpa transform valid -> fallback ke perilaku lama (join spasi, tidak regresi/crash)", () => {
+  const items = [{ str: "Berita Acara" }, { str: "tanpa posisi" }];
+  assert.equal(groupPdfTextItemsIntoLines(items), "Berita Acara tanpa posisi");
 });
 
 test("PDF dengan text layer -> dibaca langsung, TIDAK memanggil OCR/canvas sama sekali", async () => {

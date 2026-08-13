@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, 
 import { visibleInventoryRows } from "@/lib/olsera-inventory-ui";
 import { analyzeInventoryBaFile } from "@/lib/inventory-ba-client";
 import { normalizeInventoryBaName } from "@/lib/inventory-ba-parser";
+import { BA_UNREAD_MESSAGE, canApplyBaOmittedAssumedMatch, isBaParseUnread, matchBaItemToCatalog, shouldBlockFinalizeForUnreadBa } from "@/lib/inventory-ba-finalize-guard";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 type OpnameStatus = "BELUM_DIISI" | "COCOK" | "PERLU_DICEK" | "BUTUH_ADJUST_MANUAL";
@@ -134,6 +135,12 @@ export default function InventoryOpnamePage() {
   const [unlocking, setUnlocking] = useState(false);
   const [readingBa, setReadingBa] = useState(false);
   const [baReadSummary, setBaReadSummary] = useState<{ periodStart: string | null; cutoffDate: string | null; found: number; autoCocok: number; perluDicek: number } | null>(null);
+  // BUG PRODUKSI (BA Juli 2026, 0 item terbaca): upload berhasil TAPI parser
+  // gagal menghasilkan baris apa pun -> WAJIB memblokir finalisasi dan TIDAK
+  // BOLEH mengasumsikan seluruh katalog cocok. Lihat lib/inventory-ba-finalize-guard.ts.
+  const [baItemsFound, setBaItemsFound] = useState<number | null>(null);
+  const [baSourcedKeys, setBaSourcedKeys] = useState<Set<string>>(new Set());
+  const baUnread = attachment !== null && baItemsFound !== null && isBaParseUnread({ uploadSucceeded: true, itemsFound: baItemsFound });
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -187,6 +194,8 @@ export default function InventoryOpnamePage() {
     setUploading(true);
     setFinalizeError("");
     setReadingBa(true);
+    setBaItemsFound(null);
+    setBaSourcedKeys(new Set());
     try {
       const form = new FormData();
       form.set("file", file);
@@ -207,23 +216,37 @@ export default function InventoryOpnamePage() {
         setCutoffDate(parsed.cutoffDate);
         setCutoffConfirmed(false);
       }
+      setBaItemsFound(parsed.items.length);
       let autoCocok = 0;
-      let perluDicek = parsed.status === "PERLU_DICEK" ? 1 : 0;
+      let perluDicek = parsed.status === "PERLU_DICEK" && parsed.items.length === 0 ? 1 : 0;
+      const sourcedKeys = new Set<string>();
       if (data) {
         const next = { ...edits };
         for (const item of parsed.items) {
-          const match = data.rows.find((row) => normalizeInventoryBaName(row.productName) === normalizeInventoryBaName(item.description) || (row.productSku && normalizeInventoryBaName(row.productSku) === normalizeInventoryBaName(item.description)));
-          if (!match || item.status !== "OK") {
+          if (item.status !== "OK") {
             perluDicek++;
             continue;
           }
-          next[rowKey(match.productId, match.variantId)] = { physicalQty: item.physicalQty, note: "Dibaca dari BA" };
+          // Ambigu (lebih dari satu baris katalog cocok) -> JANGAN auto-pilih, tandai Perlu Dicek.
+          const matchResult = matchBaItemToCatalog(item.description, data.rows, normalizeInventoryBaName);
+          if (matchResult.kind !== "MATCHED") {
+            perluDicek++;
+            continue;
+          }
+          const key = rowKey(matchResult.row.productId, matchResult.row.variantId);
+          next[key] = { physicalQty: item.physicalQty, note: "Dibaca dari BA" };
+          sourcedKeys.add(key);
           autoCocok++;
         }
         setEdits(next);
       }
+      setBaSourcedKeys(sourcedKeys);
       setBaReadSummary({ periodStart: parsed.periodStart, cutoffDate: parsed.cutoffDate, found: parsed.items.length, autoCocok, perluDicek });
-      setSaveMessage("Berita Acara selesai dibaca. Silakan review sebelum finalisasi.");
+      setSaveMessage(
+        parsed.items.length === 0
+          ? BA_UNREAD_MESSAGE
+          : "Berita Acara selesai dibaca. Silakan review sebelum finalisasi.",
+      );
     } catch (e) {
       setFinalizeError(e instanceof Error ? e.message : "Gagal mengunggah Berita Acara.");
     } finally {
@@ -234,6 +257,10 @@ export default function InventoryOpnamePage() {
 
   const finalize = async () => {
     if (!data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed) return;
+    if (shouldBlockFinalizeForUnreadBa({ uploadSucceeded: true, itemsFound: baItemsFound ?? 0 }) && baItemsFound !== null) {
+      setFinalizeError(BA_UNREAD_MESSAGE);
+      return;
+    }
     setFinalizing(true);
     setFinalizeError("");
     try {
@@ -325,7 +352,12 @@ export default function InventoryOpnamePage() {
     return data.rows.map((row) => {
       const edit = edits[rowKey(row.productId, row.variantId)];
       const physicalQty = edit?.physicalQty ?? row.physicalQty;
-      if (baOnlyDifferencesConfirmed && physicalQty === null && row.systemClosingQty !== null && !row.manualAdjust) {
+      // BA_OMITTED_ASSUMED_MATCH HANYA aktif setelah minimal 1 baris BERHASIL
+      // diparse dari BA (lib/inventory-ba-finalize-guard.ts) — bukan sekadar
+      // checkbox dicentang. Ini mencegah bug produksi: 0 item terbaca tapi
+      // seluruh katalog diam-diam dianggap cocok.
+      const canAssumeOmitted = canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed, itemsFound: baItemsFound ?? 0 });
+      if (canAssumeOmitted && physicalQty === null && row.systemClosingQty !== null && !row.manualAdjust) {
         return { ...row, physicalQty: row.systemClosingQty, differenceQty: 0, status: "COCOK" as OpnameStatus, evidenceSource: "BA_OMITTED_ASSUMED_MATCH" as const };
       }
       if (!edit) return row;
@@ -339,7 +371,7 @@ export default function InventoryOpnamePage() {
             : "COCOK";
       return { ...row, physicalQty, note: edit.note, differenceQty, status };
     });
-  }, [data, edits, baOnlyDifferencesConfirmed]);
+  }, [data, edits, baOnlyDifferencesConfirmed, baItemsFound]);
 
   const visibleRows = useMemo(() => visibleInventoryRows(rowsWithEdits, showHidden), [rowsWithEdits, showHidden]);
   const hiddenCount = rowsWithEdits.length - visibleRows.length;
@@ -474,9 +506,10 @@ export default function InventoryOpnamePage() {
             <p className="recon-readonly">File BA: {data.lock.attachment?.fileName ?? attachment?.fileName ?? "—"}</p>
             <p className="recon-readonly">Data pemeriksaan pada tanggal cutoff sudah dikunci. Transaksi inventori setelah tanggal tersebut tetap berjalan normal.</p>
             {supervisor && <><input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Alasan buka kunci" /><button className="recon-button danger" onClick={() => void unlock()} disabled={unlocking}>{unlocking ? <Loader2 className="spin" /> : <Unlock />} Buka Kunci</button></>}
-          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
+          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed || baUnread || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
         </div>
       </section>
+      {baUnread && <p className="recon-draft"><AlertTriangle /> {BA_UNREAD_MESSAGE}</p>}
       {finalizeError && <p className="recon-draft"><AlertTriangle /> {finalizeError}</p>}
 
       {saveMessage && <p className="recon-readonly">{saveMessage}</p>}
@@ -561,6 +594,7 @@ export default function InventoryOpnamePage() {
                         <button className="recon-link" onClick={() => setSelected(row)}>
                           {row.productName}
                         </button>
+                        {baSourcedKeys.has(rowKey(row.productId, row.variantId)) && <span className="recon-badge recon-badge-ok" style={{ marginLeft: ".375rem" }}>Dibaca dari BA</span>}
                       </td>
                       <td>{row.variantId ?? "—"}</td>
                       <td>{row.productSku ?? "—"}</td>

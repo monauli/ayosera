@@ -15,12 +15,45 @@ export function parseInventoryBaText(rawText: string): InventoryBaParseResult {
   const periodStart = period ? dateParts(period[1], period[2], period[3]) : null;
   const cutoffDate = period ? dateParts(period[4], period[5], period[6]) : null;
   const items: InventoryBaItem[] = [];
+  // Nama produk yang panjang kadang terbungkus (wrap) menjadi baris fisik
+  // terpisah pada text-layer PDF sebelum kolom angka muncul (mis. baris 1:
+  // "NESTLE PURE LIFE", baris 2: "1500ML pcs 350 349 -1"). `pendingPrefix`
+  // menampung fragmen deskripsi tanpa angka itu dan digabung ke baris
+  // berikutnya yang benar-benar berisi triplet angka — GENERIK, tidak
+  // bergantung pada nama produk tertentu.
+  let pendingPrefix = "";
   for (const originalLine of raw.split("\n")) {
-    const line = originalLine.trim();
-    if (!line || /deskripsi|stock\s+sistem|stok\s+sistem|kelompok barang/i.test(line)) continue;
+    let line = originalLine.trim();
+    if (!line) continue;
+    if (/deskripsi|stock\s+sistem|stok\s+sistem|kelompok barang|^no\.?\s/i.test(line)) {
+      pendingPrefix = "";
+      continue;
+    }
+    // Baris metadata (periode/tanggal, mis. "Periode 01 Juli 2026 sampai 16
+    // Juli 2026" atau baris tanda tangan) BUKAN fragmen nama produk yang wrap
+    // — jangan pernah dijadikan pendingPrefix.
+    if (new RegExp(`\\b(${monthPattern})\\b`, "i").test(line) && /20\d{2}/.test(line)) {
+      pendingPrefix = "";
+      continue;
+    }
+    // Kolom "No." (indeks baris) yang ikut terbaca di depan, mis. "1 YONEX AC102 pcs 10 9 -1".
+    // HANYA dilakukan pada awal baris FISIK baru (pendingPrefix kosong) dan
+    // maksimal 2 digit — angka mentah 3+ digit di awal baris wrap (mis. "500
+    // ML pcs ...", kelanjutan nama produk) TIDAK boleh disangka kolom No.
+    if (!pendingPrefix) line = line.replace(/^\d{1,2}\s+(?=[A-Za-zÀ-ÿ])/u, "");
     const match = /^(.*?)(?:\s+)([A-Za-zÀ-ÿ]+)?\s+(-?\d+)\s+(-?\d+)\s+([+-]?\d+)\s*(.*)$/u.exec(line);
-    if (!match) continue;
-    const description = match[1].trim();
+    if (!match) {
+      // Baris tanpa triplet angka: kemungkinan fragmen deskripsi yang wrap
+      // (bukan header/noise) -> simpan sebagai prefix untuk baris berikutnya.
+      if (/[A-Za-z]/.test(line) && line.length >= 2 && !/ditandatangani/i.test(line)) {
+        pendingPrefix = pendingPrefix ? `${pendingPrefix} ${line}` : line;
+      } else {
+        pendingPrefix = "";
+      }
+      continue;
+    }
+    const description = `${pendingPrefix} ${match[1].trim()}`.replace(/\s+/g, " ").trim();
+    pendingPrefix = "";
     if (description.length < 3 || !/[A-Za-z]/.test(description)) continue;
     const systemQty = numberValue(match[3]);
     const physicalQty = numberValue(match[4]);
