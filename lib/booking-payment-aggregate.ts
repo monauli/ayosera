@@ -67,3 +67,38 @@ export function withBookingPaymentTotals<T extends Pick<BookingDocument, "bookin
     return match ? { ...booking, total_price: match.totalAmount } : booking;
   });
 }
+
+/** Satu payment event, reduksi ke field yang aman ditampilkan di UI Transaksi (bukan payload mentah). */
+export type BookingPaymentDetail = {
+  /** `reservationPaymentId` bila ada (identitas AYO paling manusiawi); jatuh ke sourceId/nativeId/identity bila kosong. */
+  referenceId: string;
+  amount: number;
+};
+
+/**
+ * Rincian payment untuk SATU booking, diturunkan dari `aggregate.events` yang
+ * SAMA yang sudah menghasilkan `totalAmount` (bukan query/sumber terpisah),
+ * jadi jumlah detail selalu sama dengan total baris utama — tidak pernah bisa
+ * divergen.
+ *
+ * SENGAJA TIDAK menyertakan tanggal/jam: `AyoPaymentEvent.eventDate` untuk
+ * `source_table: "internal_reservation"` (satu-satunya sumber kasus
+ * multi-payment yang ditemukan pada audit, lihat komponen
+ * booking-session-row.tsx) hanya fallback ke tanggal sesi booking — identik
+ * untuk setiap payment pada booking yang sama, dikonfirmasi ulang lewat query
+ * read-only produksi. Menampilkannya akan terlihat seperti dua tanggal
+ * pembayaran berbeda padahal datanya sama persis; keputusan sadar untuk tidak
+ * ikut menampilkan field itu di sini, bukan kelalaian.
+ */
+export function paymentDetailsFor(aggregate: Pick<BookingPaymentAggregate, "events">): BookingPaymentDetail[] {
+  return [...aggregate.events]
+    .sort((a, b) => {
+      const aKey = a.reservationPaymentId ?? a.identity;
+      const bKey = b.reservationPaymentId ?? b.identity;
+      return aKey.localeCompare(bKey, undefined, { numeric: true });
+    })
+    .map((event) => ({
+      referenceId: event.reservationPaymentId || event.sourceId || event.nativeId || event.identity,
+      amount: event.amount,
+    }));
+}

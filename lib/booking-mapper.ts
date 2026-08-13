@@ -41,7 +41,36 @@ export function normalizeField(raw: Record<string, unknown>): FieldDocument {
   };
 }
 
-export function toTransactionRow(booking: BookingDocument) {
+/** Rincian pembayaran opsional (lihat lib/booking-payment-aggregate.ts paymentDetailsFor). */
+export type TransactionRowPayment = { count: number; details: { referenceId: string; amount: number }[] };
+
+const currencyFormat = new Intl.NumberFormat("id-ID", {
+  style: "currency",
+  currency: "IDR",
+  maximumFractionDigits: 0,
+});
+
+/**
+ * `payment` bila diberikan HARUS diturunkan dari aggregate yang sama yang
+ * mengoverwrite `booking.total_price` (lihat withBookingPaymentTotals) —
+ * supaya total baris ini dan jumlah nominal `paymentDetails` selalu identik,
+ * tidak pernah dihitung dari sumber terpisah yang bisa divergen. Hanya
+ * disertakan ke output bila `count > 1`; booking dengan 1 payment (atau tanpa
+ * payment-events sama sekali, fallback ke bookings.total_price) tetap tampil
+ * seperti sebelumnya, tanpa field payment tambahan.
+ */
+export function toTransactionRow(booking: BookingDocument, payment?: TransactionRowPayment) {
+  const paymentFields =
+    payment && payment.count > 1
+      ? {
+          paymentCount: payment.count,
+          paymentDetails: payment.details.map((detail) => ({
+            referenceId: detail.referenceId,
+            amount: currencyFormat.format(detail.amount),
+            amountValue: detail.amount,
+          })),
+        }
+      : {};
   return {
     id: booking.booking_id,
     orderDetailId: booking.order_detail_id ? String(booking.order_detail_id) : "-",
@@ -52,11 +81,7 @@ export function toTransactionRow(booking: BookingDocument) {
     branch: resolveVenueName(),
     service: booking.field_name,
     fieldId: booking.field_id ? String(booking.field_id) : "-",
-    amount: new Intl.NumberFormat("id-ID", {
-      style: "currency",
-      currency: "IDR",
-      maximumFractionDigits: 0,
-    }).format(booking.total_price),
+    amount: currencyFormat.format(booking.total_price),
     amountValue: booking.total_price,
     payment: booking.booking_source === "reservation" ? "Reservation" : "AYO Order",
     bookingSource: booking.booking_source || "-",
@@ -71,6 +96,7 @@ export function toTransactionRow(booking: BookingDocument) {
     changedAt: booking.changedAt?.toISOString?.() || undefined,
     previousSchedule: booking.previousSchedule,
     fieldChanges: booking.fieldChanges,
+    ...paymentFields,
   };
 }
 

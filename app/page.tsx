@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ElementType } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ElementType } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -47,6 +47,7 @@ import { DashboardStatCard } from "@/components/redesign/dashboard-stat-card";
 import { TransactionExportMenu } from "@/components/redesign/transaction-export-menu";
 import { OlseraExportMenu } from "@/components/redesign/olsera-export-menu";
 import { BookingSessionRow, statusLabel, statusVariant } from "@/components/booking-session-row";
+import { hasMultiPayment, PaymentDetailList, PaymentDetailToggle } from "@/components/booking-payment-detail";
 import { groupBookingsIntoSessions } from "@/lib/booking-session";
 import type { BookingStatusItem } from "@/components/redesign/booking-status-donut";
 import type { MonthlyRevenuePoint, MonthlyRevenueStatus } from "@/components/redesign/annual-revenue-chart";
@@ -104,6 +105,9 @@ type TransactionRow = {
   changedAt?: string;
   previousSchedule?: { date: string; start_time: string; end_time: string };
   fieldChanges?: { field: string; from: string; to: string }[];
+  /** Hanya diisi API saat booking punya >1 payment event (lihat lib/booking-payment-aggregate.ts). */
+  paymentCount?: number;
+  paymentDetails?: { referenceId: string; amount: string; amountValue: number }[];
 };
 type DatePreset = "today" | "yesterday" | "week" | "month" | "lastMonth" | "custom" | "manualMonth";
 
@@ -588,6 +592,18 @@ export default function DashboardPage() {
   // Session yang sedang dibuka (id deterministik dari helper). Default seluruhnya
   // tertutup, dan direset setiap kali halaman/filter/sort menghasilkan data baru.
   const [expandedSessions, setExpandedSessions] = useState<ReadonlySet<string>>(new Set());
+  // Booking id -> apakah detail "N pembayaran" terbuka. Independen dari
+  // expandedSessions: satu booking bisa punya sesi DAN payment yang expand
+  // sendiri-sendiri (lihat components/booking-payment-detail.tsx).
+  const [expandedPayments, setExpandedPayments] = useState<ReadonlySet<string>>(new Set());
+  function togglePaymentDetail(bookingId: string) {
+    setExpandedPayments((current) => {
+      const next = new Set(current);
+      if (next.has(bookingId)) next.delete(bookingId);
+      else next.add(bookingId);
+      return next;
+    });
+  }
   const emptyColumnFilters = { date: today, id: "", customer: "", service: "", status: "", change: "" };
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>(emptyColumnFilters);
 
@@ -2469,12 +2485,17 @@ export default function DashboardPage() {
                                     return next;
                                   })
                                 }
+                                expandedPayments={expandedPayments}
+                                onTogglePayment={togglePaymentDetail}
                               />
                             );
                           }
                           const transaction = entry.booking;
+                          const multiPayment = hasMultiPayment(transaction);
+                          const paymentExpanded = expandedPayments.has(transaction.id);
                           return (
-                          <tr key={transaction.id} className="h-[58px]">
+                          <Fragment key={transaction.id}>
+                          <tr className="h-[58px]">
                             <td className="whitespace-nowrap px-2 py-2">{transaction.date}</td>
                             <td className="whitespace-nowrap px-2 py-2">
                               {transaction.time} - {transaction.endTime || "-"}
@@ -2488,7 +2509,19 @@ export default function DashboardPage() {
                             <td className="max-w-[150px] truncate px-2 py-2">{transaction.customer}</td>
                             <td className="max-w-[130px] truncate px-2 py-2">{transaction.phone}</td>
                             <td className="max-w-[180px] truncate px-2 py-2">{transaction.service}</td>
-                            <td className="px-2 py-2 text-right font-medium">{transaction.amount}</td>
+                            <td className="px-2 py-2 text-right font-medium">
+                              {transaction.amount}
+                              {multiPayment && (
+                                <div className="flex justify-end">
+                                  <PaymentDetailToggle
+                                    count={transaction.paymentCount!}
+                                    expanded={paymentExpanded}
+                                    onToggle={() => togglePaymentDetail(transaction.id)}
+                                    customer={transaction.customer}
+                                  />
+                                </div>
+                              )}
+                            </td>
                             <td className="px-2 py-2">
                               <Badge variant={statusVariant(transaction.status)}>{statusLabel(transaction.status)}</Badge>
                             </td>
@@ -2509,6 +2542,14 @@ export default function DashboardPage() {
                               })()}
                             </td>
                           </tr>
+                          {multiPayment && paymentExpanded && (
+                            <tr>
+                              <td colSpan={9} className="border-t border-white/10 bg-white/[0.04] px-2 py-1">
+                                <PaymentDetailList details={transaction.paymentDetails!} />
+                              </td>
+                            </tr>
+                          )}
+                          </Fragment>
                           );
                         })
                       ) : (

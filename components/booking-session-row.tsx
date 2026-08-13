@@ -9,9 +9,15 @@ import {
   type SessionBooking,
 } from "@/lib/booking-session";
 import { getRevenueAmount } from "@/lib/revenue";
+import {
+  hasMultiPayment,
+  PaymentDetailList,
+  PaymentDetailToggle,
+  type PaymentDetailBooking,
+} from "@/components/booking-payment-detail";
 
 /** Baris transaksi yang sudah punya nominal terformat (dipakai apa adanya untuk tampilan). */
-export type SessionRowBooking = SessionBooking & { amount: string };
+export type SessionRowBooking = SessionBooking & { amount: string } & Partial<PaymentDetailBooking>;
 
 export function statusVariant(status: string): "success" | "warning" | "danger" {
   if (status === "Completed") return "success";
@@ -58,12 +64,17 @@ export function BookingSessionRow({
   onToggle,
   columnCount,
   formatAmount,
+  expandedPayments,
+  onTogglePayment,
 }: {
   session: BookingSession<SessionRowBooking>;
   expanded: boolean;
   onToggle: () => void;
   columnCount: number;
   formatAmount: (value: number) => string;
+  /** Booking id -> apakah detail payment slot itu terbuka. Independen dari `expanded` (buka/tutup sesi). */
+  expandedPayments: ReadonlySet<string>;
+  onTogglePayment: (bookingId: string) => void;
 }) {
   const Chevron = expanded ? ChevronDown : ChevronRight;
 
@@ -158,6 +169,17 @@ export function BookingSessionRow({
                     )}
                     {hasValidPriceChange(booking) && <Badge variant="warning">Harga Diubah</Badge>}
                     {excluded && <span className="text-slate-500">Tidak dihitung ke total sesi</span>}
+                    {hasMultiPayment(booking) && (
+                      <div className="basis-full">
+                        <PaymentDetailToggle
+                          count={booking.paymentCount!}
+                          expanded={expandedPayments.has(booking.id)}
+                          onToggle={() => onTogglePayment(booking.id)}
+                          customer={booking.customer}
+                        />
+                        {expandedPayments.has(booking.id) && <PaymentDetailList details={booking.paymentDetails!} />}
+                      </div>
+                    )}
                   </li>
                 );
               })}

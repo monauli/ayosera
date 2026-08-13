@@ -584,3 +584,91 @@ Inventory, Financial, YONEX, ODEA, kategori Olsera, skema `bookings` (struktur t
 ### Status akhir
 
 **SELESAI DAN DIVERIFIKASI.** Semua gate wajib (test relevan, typecheck, build, `git diff --check`) PASS. Validasi read-only production membuktikan fix bekerja untuk kasus contoh maupun keseluruhan window Agustus 1–13, tanpa regresi Juni–Juli. Commit dan push mengikuti setelah section ini.
+
+---
+
+## Fitur UI baru: expand/collapse detail multi-payment di Transaksi — 2026-08-13
+
+Fitur baru di atas fondasi section sebelumnya (total payment sudah benar). Menambah badge `N pembayaran` + expand pada baris Transaksi yang punya >1 payment event, mengikuti pola visual chevron/badge yang sudah ada untuk fitur "X sesi" (multi-session).
+
+### Temuan read-only PENTING sebelum implementasi (mengubah scope dari rencana awal)
+
+Sebelum menulis kode, dilakukan query read-only produksi langsung ke `ayo_payment_event_staging_events` untuk booking fixture `MN/2428/260809/0002994` (2 payment event: `reservationPaymentId 2742703` Rp150.000 dan `2760168` Rp50.000). Hasilnya:
+
+- **Kedua event punya `eventDate` yang PERSIS SAMA: `2026-08-12T00:00:00.000Z`, `eventDateSource: "date"`**, dan `startTime`/`endTime` juga identik (18:00–19:00) — BUKAN 10 Agustus & 12 Agustus seperti asumsi awal permintaan fitur ini. `eventDateSource: "date"` membuktikan ini fallback ke tanggal SESI booking (satu-satunya tanggal yang dikirim AYO untuk `source_table: "internal_reservation"`), identik untuk setiap payment pada booking yang sama — bukan tanggal pembayaran asli per payment.
+- Ini mengkonfirmasi ulang persis apa yang sudah didokumentasikan sebagai keputusan audit sebelumnya di `components/booking-session-row.tsx` (komentar baris 36–48): "detail pembayaran per booking SENGAJA TIDAK ditampilkan — keputusan C pada audit (data tidak cukup, bukan ditebak)" — karena AYO tidak pernah mengirim tanggal/urutan pembayaran asli untuk sumber ini.
+- **Keputusan yang diambil** (dikonfirmasi user sebelum implementasi lanjut): expand detail dibangun TANPA tanggal/jam sama sekali — hanya nominal + reference id (`reservationPaymentId`) per payment, supaya tidak ada tanggal palsu/menyesatkan yang ditampilkan.
+
+### Backend
+
+- `lib/booking-payment-aggregate.ts` — fungsi baru `paymentDetailsFor(aggregate)`, TIDAK mengubah/menduplikasi `aggregateBookingPayments`/`withBookingPaymentTotals` yang sudah production-critical. Mengambil detail dari `aggregate.events` yang SAMA yang sudah menghasilkan `totalAmount` — sehingga total baris utama dan jumlah nominal semua detail SELALU identik (sumber tunggal, tidak pernah divergen). Diurutkan by `reservationPaymentId` (fallback `identity`) secara numerik agar urutan tampilan stabil dan deterministik.
+- `lib/booking-mapper.ts` — `toTransactionRow(booking, payment?)` sekarang menerima parameter kedua opsional `{ count, details }`. Field `paymentCount`/`paymentDetails` HANYA disertakan ke output bila `count > 1` — booking 1 payment (atau fallback tanpa payment-events sama sekali) tetap identik seperti sebelumnya, tidak ada field tambahan yang bocor ke response.
+- `app/api/transactions/route.ts` — setelah `aggregateBookingPayments(staged.events)` (logic dedup/total TIDAK disentuh), setiap baris di-map lewat `toTransactionRow(booking, { count: match.paymentCount, details: paymentDetailsFor(match) })` bila ada match. Booking tetap satu baris per `booking_id`, tidak pernah dipecah jadi banyak transaksi.
+
+### Frontend
+
+- `lib/booking-payment-detail-ui.ts` (baru) — logic murni `hasMultiPayment()` (true hanya bila `paymentCount > 1` DAN `paymentDetails.length > 1`), dipisah dari komponen `.tsx` supaya bisa ditest dengan `node --test` biasa (pola sama seperti `lib/booking-session.ts` di belakang komponen "X sesi").
+- `components/booking-payment-detail.tsx` (baru) — `PaymentDetailToggle` (badge `N pembayaran` + chevron, styling identik pola BookingSessionRow) dan `PaymentDetailList` (baris detail: nominal + `Ref: <reservationPaymentId>`, TIDAK ADA tanggal/jam).
+- `components/booking-session-row.tsx` — tiap slot di dalam sesi yang di-expand sekarang juga bisa punya badge/expand payment sendiri (`expandedPayments`/`onTogglePayment` props baru, independen dari state expand sesi) — satu booking bisa punya multi-sesi DAN multi-payment sekaligus, dua toggle terpisah.
+- `app/page.tsx` — state baru `expandedPayments` (Set, terpisah dari `expandedSessions`) + `togglePaymentDetail()`. Baris transaksi "single" (bukan bagian sesi) mendapat badge di bawah kolom Nominal dan baris expand terpisah (`<Fragment>` per baris, colSpan 9) bila `hasMultiPayment(transaction)` true. `BookingSessionRow` menerima `expandedPayments`/`onTogglePayment` untuk slot di dalam sesi.
+
+### Regression test baru (semua PASS)
+
+- `lib/booking-payment-aggregate.test.ts` (+5 test baru): `paymentDetailsFor` untuk 1/2/3 payment, duplicate/re-sync tidak double count di detail, dan test eksplisit untuk `MN/2428/260809/0002994` — total 200000, 2 detail dengan `referenceId` `2742703` (Rp150.000) dan `2760168` (Rp50.000), jumlah detail == total (bukan hardcode di implementasi, hanya di fixture test — sesuai instruksi).
+- `lib/booking-payment-detail-ui.test.ts` (baru, 5 test) — `hasMultiPayment`: 1 payment (fallback maupun dari aggregate) → false; 2 payment → true; 3 payment → true; data cacat (count tidak match panjang details) → aman, tidak crash.
+- `lib/booking-mapper.test.ts` (baru, 4 test) — `toTransactionRow`: tanpa payment aggregate → tidak ada field tambahan; count=1 → tidak ada field tambahan (tidak bocor); count=2 (fixture `MN/2428/260809/0002994`) → `paymentCount`/`paymentDetails` benar, total = jumlah detail; count=3 → 3 detail.
+- Ditambahkan ke `package.json`: `test:booking-payment-detail-ui`, `test:booking-mapper`, keduanya didaftarkan ke `test:unit`.
+
+### Hasil test/typecheck/build
+
+- `lib/booking-payment-aggregate.test.ts` (via `test:booking-payment-aggregate` dan `test:ayo-payment-events`) — **12/12 PASS**.
+- `lib/booking-payment-detail-ui.test.ts` — **5/5 PASS**.
+- `lib/booking-mapper.test.ts` — **4/4 PASS**.
+- `lib/booking-session.test.ts` — **34/34 PASS** (fitur "X sesi" existing tidak berubah perilaku).
+- `npm run test:ayo-payment-events` — **37/37 PASS**.
+- `npm run test:court-revenue-reconciliation` — **62/62 PASS**.
+- `npm run test:reconciliation-omzet-ledger` — **39/39 PASS**.
+- `npm run test:olsera-export-formula-safety` — **3/3 PASS**.
+- `npm run test:dashboard-court-performance` — **18/18 PASS**.
+- `npm run type-check` — **PASS**, tanpa error.
+- `npm run build` — **PASS** (`✓ Compiled successfully`, exit 0).
+- `git diff --check` — **PASS** (exit 0; hanya warning LF/CRLF non-fatal, bukan whitespace error).
+- `npm run test:unit` (full suite) — **2 test GAGAL, PRE-EXISTING, TIDAK TERKAIT** tugas ini: `app/api/reconciliation/court-revenue/[period]/finalization/analyze/route.test.ts` ("Maret"/"April" COCOK vs PERLU_REVIEW). Dibuktikan gagal identik di `HEAD` bersih SEBELUM perubahan task ini (`git stash` lalu jalankan ulang `npm run test:reconciliation-omzet-endpoints`) — regresi lama di luar scope, sama sekali tidak tersentuh oleh perubahan fitur ini.
+
+### Validasi read-only production
+
+Query langsung (read-only, tanpa tulis) ke `ayo_payment_event_staging_events` untuk `MN/2428/260809/0002994` (script sementara di scratchpad, dihapus setelah verifikasi, TIDAK disimpan di project):
+
+```
+Event 1: reservationPaymentId=2742703, amount=150000, eventDate=2026-08-12 (fallback tanggal sesi), startTime=18:00, endTime=19:00
+Event 2: reservationPaymentId=2760168, amount=50000,  eventDate=2026-08-12 (fallback tanggal sesi), startTime=18:00, endTime=19:00
+Total: Rp200.000 (sesuai section sebelumnya)
+```
+
+**Tanggal berbeda (10 & 12 Agustus) yang disebut di permintaan awal fitur ini TIDAK sesuai data real** — kedua payment sebenarnya punya tanggal fallback yang identik (12 Agustus, tanggal sesi). Temuan ini dilaporkan apa adanya sebelum implementasi dilanjutkan, dan keputusan akhir (dikonfirmasi user) adalah TIDAK menampilkan tanggal/jam sama sekali di detail payment — hanya nominal + reference id, sesuai data yang benar-benar tersedia.
+
+### Konfirmasi scope lain TIDAK disentuh
+
+- **Export Bulanan/Harian** (`app/api/transactions/export/bulanan/route.ts`, `export/harian/route.ts`) — tidak diubah sama sekali (tidak ada di `git diff`).
+- **Rekonsiliasi/Dashboard** — tidak diubah; hanya `lib/booking-mapper.ts` (dipakai Transaksi saja) dan `lib/booking-payment-aggregate.ts` yang mendapat fungsi TAMBAHAN (`paymentDetailsFor`), fungsi lama (`aggregateBookingPayments`/`withBookingPaymentTotals`) tidak diubah satu baris pun. `app/api/dashboard/route.ts` tidak ada di `git diff`.
+- **Inventory/Financial/YONEX/ODEA** — tidak disentuh sama sekali, tidak ada file di area ini pada `git diff`.
+- Booking `MN/2428/260809/0002994` hanya dipakai sebagai fixture test (komentar eksplisit di setiap file test yang memakainya) — tidak ada logic produksi (`lib/booking-payment-aggregate.ts`, `lib/booking-mapper.ts`, `app/api/transactions/route.ts`) yang bercabang pada booking_id ini.
+
+### File yang diubah
+
+- `lib/booking-payment-aggregate.ts` (+`paymentDetailsFor`)
+- `lib/booking-payment-aggregate.test.ts` (+5 test)
+- `lib/booking-mapper.ts` (+parameter `payment?` di `toTransactionRow`)
+- `lib/booking-mapper.test.ts` (baru)
+- `lib/booking-payment-detail-ui.ts` (baru)
+- `lib/booking-payment-detail-ui.test.ts` (baru)
+- `components/booking-payment-detail.tsx` (baru)
+- `components/booking-session-row.tsx` (+props `expandedPayments`/`onTogglePayment`, badge per slot)
+- `app/api/transactions/route.ts` (kirim payment detail ke `toTransactionRow`)
+- `app/page.tsx` (state `expandedPayments`, badge+expand baris single, thread props ke `BookingSessionRow`)
+- `package.json` (script test baru + daftar `test:unit`)
+- `AYOSERA-HANDOFF-LATEST.md` (dokumen ini)
+
+### Status akhir
+
+**SELESAI DAN DIVERIFIKASI.** Semua gate wajib PASS (2 kegagalan di `test:unit` terbukti pre-existing, di luar scope). Fitur mengikuti pola visual existing ("X sesi"), coexist dengan multi-session, dan sengaja TIDAK menampilkan tanggal/jam payment karena data real membuktikan asumsi awal (tanggal berbeda per payment) salah — dilaporkan apa adanya, keputusan akhir dikonfirmasi user sebelum commit.

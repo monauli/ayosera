@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { aggregateBookingPayments, withBookingPaymentTotals } from "./booking-payment-aggregate.ts";
+import { aggregateBookingPayments, paymentDetailsFor, withBookingPaymentTotals } from "./booking-payment-aggregate.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 // Fixture example only — mirrors the real production booking found during the
@@ -111,6 +111,74 @@ test("withBookingPaymentTotals: booking dengan payment event memakai total agreg
   const result = withBookingPaymentTotals(bookings, aggregateBookingPayments(events));
   assert.equal(result.find((b) => b.booking_id === SPLIT_PAYMENT_BOOKING_ID)?.total_price, 200000);
   assert.equal(result.find((b) => b.booking_id === "BK-UNCOVERED")?.total_price, 42000);
+});
+
+// --- Detail per payment (fitur expand "N pembayaran" di UI Transaksi) ---
+
+test("paymentDetailsFor: 1 payment event -> 1 detail, tidak ada badge (dites di sisi UI)", () => {
+  const events = [event("BK-1", "1001", 75000)];
+  const aggregate = aggregateBookingPayments(events);
+  const details = paymentDetailsFor(aggregate.get("BK-1")!);
+  assert.equal(details.length, 1);
+  assert.equal(details[0].referenceId, "1001");
+  assert.equal(details[0].amount, 75000);
+});
+
+test("paymentDetailsFor: booking real MN/2428/260809/0002994 (2 pembayaran) -> total dan detail konsisten", () => {
+  // Data ini persis hasil query read-only produksi (2026-08-13): kedua event
+  // punya reservationPaymentId berbeda dan nominal berbeda, TAPI eventDate
+  // yang sama (fallback tanggal sesi untuk source_table internal_reservation)
+  // — karena itu UI sengaja tidak menampilkan tanggal/jam sama sekali, hanya
+  // nominal + reference id (lihat lib/booking-payment-detail-ui.ts).
+  const events = [
+    event(SPLIT_PAYMENT_BOOKING_ID, "2742703", 150000),
+    event(SPLIT_PAYMENT_BOOKING_ID, "2760168", 50000),
+  ];
+  const aggregate = aggregateBookingPayments(events);
+  const entry = aggregate.get(SPLIT_PAYMENT_BOOKING_ID)!;
+  const details = paymentDetailsFor(entry);
+
+  // Total baris utama dan jumlah nominal detail HARUS identik — sumber sama persis.
+  assert.equal(entry.totalAmount, 200000);
+  assert.equal(
+    details.reduce((sum, d) => sum + d.amount, 0),
+    entry.totalAmount,
+  );
+  assert.equal(details.length, 2);
+  assert.deepEqual(
+    details.map((d) => d.referenceId),
+    ["2742703", "2760168"],
+  );
+  assert.deepEqual(
+    details.map((d) => d.amount),
+    [150000, 50000],
+  );
+});
+
+test("paymentDetailsFor: 3 payment event -> 3 detail, jumlah nominal = total", () => {
+  const events = [
+    event("BK-3", "3001", 100000),
+    event("BK-3", "3002", 25000),
+    event("BK-3", "3003", 5000),
+  ];
+  const aggregate = aggregateBookingPayments(events);
+  const entry = aggregate.get("BK-3")!;
+  const details = paymentDetailsFor(entry);
+  assert.equal(details.length, 3);
+  assert.equal(
+    details.reduce((sum, d) => sum + d.amount, 0),
+    entry.totalAmount,
+  );
+});
+
+test("paymentDetailsFor: duplicate event (identity sama, re-sync) -> tidak double count di detail", () => {
+  const first = event("BK-DUP", "9001", 60000);
+  const resynced = { ...first };
+  const aggregate = aggregateBookingPayments([first, resynced]);
+  const entry = aggregate.get("BK-DUP")!;
+  const details = paymentDetailsFor(entry);
+  assert.equal(details.length, 1);
+  assert.equal(entry.totalAmount, 60000);
 });
 
 test("Transaksi, Dashboard, Rekonsiliasi, dan Export memakai helper agregasi payment yang sama (jalur konsisten)", async () => {

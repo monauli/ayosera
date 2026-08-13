@@ -7,7 +7,7 @@ import { isCancelledTransaction, isDisplayEligibleTransaction } from "@/lib/reve
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
-import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
+import { aggregateBookingPayments, withBookingPaymentTotals, paymentDetailsFor } from "@/lib/booking-payment-aggregate";
 
 // Data transaksi selalu realtime: nonaktifkan cache Next.js/Vercel.
 export const dynamic = "force-dynamic";
@@ -108,7 +108,8 @@ export async function GET(request: Request) {
       // payment-events) tetap memakai bookings.total_price sebagai fallback —
       // baris tidak pernah dibuang, beda dengan withCanonicalPaymentAmounts()
       // yang dipakai jalur export.
-      const withPayments = staged ? withBookingPaymentTotals(matched, aggregateBookingPayments(staged.events)) : matched;
+      const paymentAggregate = staged ? aggregateBookingPayments(staged.events) : null;
+      const withPayments = paymentAggregate ? withBookingPaymentTotals(matched, paymentAggregate) : matched;
 
       // Eligibility tampil (Rp0 / Internal Use) memakai rule yang sama seperti dashboard.
       const displayRows = withPayments
@@ -119,9 +120,16 @@ export async function GET(request: Request) {
       const safePage = Math.min(page, totalPages);
       const pageRows = displayRows.slice((safePage - 1) * limit, safePage * limit);
 
+      // Detail per payment (untuk expand UI "N pembayaran") diturunkan dari
+      // aggregate YANG SAMA yang sudah mengoverwrite total_price di atas —
+      // tidak ada query/sumber terpisah, jadi total baris dan jumlah detail
+      // tidak pernah divergen.
       return {
         matchedCount: matched.length,
-        data: pageRows.map(toTransactionRow),
+        data: pageRows.map((booking) => {
+          const match = paymentAggregate?.get(booking.booking_id);
+          return toTransactionRow(booking, match ? { count: match.paymentCount, details: paymentDetailsFor(match) } : undefined);
+        }),
         page: safePage,
         limit,
         total,
