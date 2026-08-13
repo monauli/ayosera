@@ -983,3 +983,8 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 - Child payment memakai struktur `ChildRow` yang sama: `Pembayaran N`, waktu payment asli hanya bila field timestamp payment tersedia, `Booking: <booking_id>`, `Nominal pembayaran: Rp...`, dan status `Selesai`.
 - `Ref:` dihapus dari UI; tidak ada badge/pill dan tidak ada child payment sebagai teks panjang. Total, agregasi, API source, export, dashboard, reconciliation, dan area lain tidak diubah.
 - Validasi: targeted booking/payment tests PASS, typecheck PASS, build PASS, `git diff --check` PASS.
+# Final polish UI multi-payment — 2026-08-13
+
+- Toggle `2 pembayaran` disamakan langsung dengan pola visual `2 sesi`: font, warna, chevron, gap, padding, alignment, hover, cursor, dan spacing kolom booking ID identik.
+- Tidak ada perubahan struktur, nominal, payment logic, Export, Dashboard, Rekonsiliasi, Inventory, atau Financial.
+- Targeted payment/session tests PASS, typecheck PASS, dan `git diff --check` PASS. Build sebelumnya PASS; pengulangan build style-only timeout di runner setelah proses Next menggantung.

@@ -8,10 +8,9 @@ import { hasMultiPayment, type PaymentDetailBooking, type PaymentDetailRow } fro
 export { hasMultiPayment, type PaymentDetailBooking, type PaymentDetailRow };
 
 /**
- * Chevron toggle polos (tanpa label teks) untuk expand/collapse detail
- * multi-payment, dipasang di bawah kolom Nominal. Sengaja tanpa badge/teks
- * "N pembayaran" apa pun — UI diminimalkan supaya baris utama transaksi
- * tetap ringkas seperti sebelum fitur multi-payment ada.
+ * Toggle parent multi-payment memakai pola visual yang sama persis dengan
+ * toggle parent multi-session: chevron, label, spacing, padding, hover, dan
+ * alignment. Label tetap membedakan konteks pembayaran.
  */
 export function PaymentDetailToggle({
   count,
@@ -31,7 +30,7 @@ export function PaymentDetailToggle({
       onClick={onToggle}
       aria-expanded={expanded}
       aria-label={`${expanded ? "Tutup" : "Buka"} detail ${count} pembayaran untuk ${customer}`}
-      className="-ml-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 py-1 text-left text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+      className="-ml-1 inline-flex min-h-[32px] cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-left text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
     >
       <Chevron className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
       <span className="whitespace-nowrap text-xs">{count} pembayaran</span>

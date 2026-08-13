@@ -93,7 +93,7 @@ export function BookingSessionRow({
             aria-expanded={expanded}
             aria-controls={session.id}
             aria-label={`${expanded ? "Tutup" : "Buka"} detail ${session.slotCount} sesi untuk ${session.customer}`}
-            className="-ml-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 py-1 text-left text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+            className="-ml-1 inline-flex min-h-[32px] cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-left text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
           >
             <Chevron className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
             <span className="whitespace-nowrap text-xs">{session.slotCount} sesi</span>
