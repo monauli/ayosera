@@ -988,3 +988,25 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 - Toggle `2 pembayaran` disamakan langsung dengan pola visual `2 sesi`: font, warna, chevron, gap, padding, alignment, hover, cursor, dan spacing kolom booking ID identik.
 - Tidak ada perubahan struktur, nominal, payment logic, Export, Dashboard, Rekonsiliasi, Inventory, atau Financial.
 - Targeted payment/session tests PASS, typecheck PASS, dan `git diff --check` PASS. Build sebelumnya PASS; pengulangan build style-only timeout di runner setelah proses Next menggantung.
+# Inventory finalization attempt — 2026-08-13
+
+## YONEX SHORTS MEN
+
+- Scoped dry-run was attempted for product `118420650`, alias `106743815`, periods Feb–Aug.
+- Database/source evidence does not match the supplied final chain: existing Feb–May snapshots are carry-forward `opening=4`, `closing=4`, `sales=0`; June is baseline-file `opening=4`, `sales=3`, `closing=1`; July is `opening=1`, `sales=1`, `closing=1`; August is current carry-forward `opening=1`, `closing=1`.
+- Existing raw inventory ledger reports Feb–May sales `0`, while the supplied chain requires `9/3/4/2`; July matches only the final sale. No existing stock-opname correction is recorded for YONEX. Dry-run therefore did not prove 100%; **no write/rebuild performed** and no August movement was created.
+
+## ODEA RED
+
+- No write performed. Exact July→August source chain was not established in this run; prior stored snapshot evidence is not sufficient to replace the newly supplied figures without a successful source/database read.
+- ODEA RED remained separate from ODEA ROSE.
+
+## ODEA ROSE read-only extraction
+
+- Exact 9 July transactions could not be extracted because the read-only MongoDB query timed out while connecting to the configured production cluster. No assumption was made about the 9-vs-11 mismatch, and ROSE was not written or modified.
+
+## Validation/status
+
+- No database write was performed for YONEX, RED, or ROSE.
+- Targeted inventory tests/typecheck from the existing codebase remain the next required validation after source access is available; build was not rerun because this attempt produced no code change.
+- Commit/push: not performed because the requested finalization and required exact ROSE extraction are blocked by unavailable database/source read.
