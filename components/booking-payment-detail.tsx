@@ -29,9 +29,9 @@ export function PaymentDetailToggle({
       onClick={onToggle}
       aria-expanded={expanded}
       aria-label={`${expanded ? "Tutup" : "Buka"} detail ${count} pembayaran untuk ${customer}`}
-      className="mt-1 inline-flex min-h-[28px] items-center gap-1 rounded-md px-1 py-0.5 text-left text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+      className="mt-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 py-1 text-left text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
     >
-      <Chevron className="h-3 w-3 shrink-0 opacity-60" aria-hidden="true" />
+      <Chevron className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
       <Badge variant="warning">{count} pembayaran</Badge>
     </button>
   );

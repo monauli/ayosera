@@ -672,3 +672,61 @@ Total: Rp200.000 (sesuai section sebelumnya)
 ### Status akhir
 
 **SELESAI DAN DIVERIFIKASI.** Semua gate wajib PASS (2 kegagalan di `test:unit` terbukti pre-existing, di luar scope). Fitur mengikuti pola visual existing ("X sesi"), coexist dengan multi-session, dan sengaja TIDAK menampilkan tanggal/jam payment karena data real membuktikan asumsi awal (tanggal berbeda per payment) salah — dilaporkan apa adanya, keputusan akhir dikonfirmasi user sebelum commit.
+
+---
+
+# Update — Refactor konsistensi visual "N pembayaran" vs "X sesi" (13 Agustus 2026)
+
+## Permintaan
+
+Setelah commit `6b0846a` (fitur expand/collapse detail multi-payment), user meminta audit ulang dan refactor supaya badge/expand "N pembayaran" 100% menyatu secara visual+behavioral dengan pola "X sesi" yang sudah ada, bukan komponen/gaya terpisah.
+
+## Langkah 1 — Audit ulang timestamp payment asli AYO
+
+- Field kandidat timestamp sudah dan tetap dicek di `lib/ayo-payment-events.ts` (`eventDateCandidates`: `payment_date`, `transaction_date`, `created_at`, `date`) — field ini SUDAH dipetakan ke `AyoPaymentEvent.eventDate`, bukan field yang hilang/belum dipakai.
+- Temuan audit sebelumnya (didokumentasikan di komentar `lib/booking-payment-aggregate.ts`, `components/booking-session-row.tsx`, `components/booking-payment-detail.tsx`, dan section handoff sebelumnya di atas) sudah membuktikan lewat query read-only produksi bahwa untuk `source_table: internal_reservation` nilai `eventDate` hasil resolusi kandidat-kandidat itu **identik** antar payment pada booking yang sama (fallback ke tanggal sesi booking), sehingga tidak membawa informasi urutan/waktu pembayaran asli.
+- Percobaan re-verifikasi read-only pada sesi ini terhadap `MN/2428/260809/0002994` (koleksi `ayo_payment_event_staging_events`) **tidak bisa dijalankan** dari environment kerja saat ini — resolusi DNS SRV ke `cluster0.dqvtxp8.mongodb.net` gagal (`ECONNREFUSED` pada `querySrv`, tidak ada akses jaringan keluar ke Atlas dari sandbox ini), baik dengan maupun tanpa sandbox bash. Tidak ada perubahan kesimpulan diklaim tanpa bukti baru — kesimpulan yang dipakai adalah kesimpulan audit sebelumnya (sudah diverifikasi lewat query produksi asli sebelum commit `6b0846a`), bukan klaim baru dari sesi ini.
+- **Kesimpulan tetap: TIDAK ada timestamp payment asli yang tersedia dan belum dipakai.** Field `payment_date`/`created_at` dkk sudah dicek kodenya, hasilnya sudah dipetakan ke `eventDate`, dan sudah terbukti tidak membawa info per-payment yang berguna untuk kasus multi-payment. Rekomendasi tetap sama seperti sebelumnya: TIDAK menambahkan tanggal ke UI, karena datanya memang tidak ada/tidak berguna, bukan karena belum dipetakan.
+- **Rekomendasi next-step (tidak dikerjakan, di luar scope UI ini):** jika AYO API suatu saat menambah field payment-level timestamp yang benar-benar berbeda per payment (bukan fallback tanggal sesi), field baru itu perlu ditambahkan ke skema `AyoPaymentEvent`/`ayo_payment_event_staging_events` dan dibackfill sebelum bisa ditampilkan di UI dengan aman.
+
+## Langkah 2 — Refactor UI
+
+Inspeksi kode menunjukkan commit `6b0846a` **sudah** mengimplementasikan reuse yang sangat dekat dengan pola "X sesi", bukan pola terpisah:
+
+- State: `expandedPayments` di `app/page.tsx` memakai `useState<ReadonlySet<string>>` — pola IDENTIK dengan `expandedSessions` (bukan `Record`/pendekatan lain), dan keduanya independen (booking bisa expand sesi saja, payment saja, atau keduanya).
+- Baris detail expand: `<tr><td colSpan={...} className="border-t border-white/10 bg-white/[0.04] px-2 py-1">` — className IDENTIK dengan baris detail "X sesi", baik di level top-level (`app/page.tsx`) maupun di dalam `BookingSessionRow`.
+- `PaymentDetailToggle` sudah dipakai berdampingan dengan badge "Reschedule"/"Harga Diubah" (varian `Badge variant="warning"`) di dalam daftar slot `BookingSessionRow`, konsisten dengan pola badge lain di baris yang sama.
+
+Satu perbedaan visual kecil yang masih ditemukan: tombol toggle "X sesi" (`components/booking-session-row.tsx` baris ~89-100) memakai chevron `h-3.5 w-3.5` dan `className` button `min-h-[32px] items-center gap-1 rounded-md px-1.5 py-1 ...`, sedangkan `PaymentDetailToggle` (`components/booking-payment-detail.tsx`) sebelumnya memakai chevron `h-3 w-3` dan button `min-h-[28px] px-1 py-0.5 ...` — ukuran chevron dan padding tombol sedikit lebih kecil dari toggle "X sesi". Diperbaiki: `PaymentDetailToggle` sekarang memakai className tombol dan ukuran chevron yang SAMA PERSIS dengan toggle "X sesi" (`min-h-[32px] px-1.5 py-1`, chevron `h-3.5 w-3.5`), supaya kedua toggle terasa sebagai satu sistem UI yang sama, bukan dua ukuran berbeda. Isi badge count (`Badge variant="warning"` untuk "N pembayaran") sengaja DIPERTAHANKAN sebagai pill Badge (bukan diubah jadi teks polos meniru "X sesi") karena dalam konteks `BookingSessionRow` badge ini tampil BERDAMPINGAN dengan badge lain (`Reschedule`, `Harga Diubah`) yang juga memakai `Badge variant="warning"` — mengubahnya jadi teks polos justru akan membuatnya BEDA dari sibling badge di baris yang sama. Variasi warna/bentuk pill vs plain-text ini konsisten dengan aturan "variasi minimal untuk membedakan jenis badge yang wajar", bukan pola visual baru yang tidak berhubungan.
+
+Ekstraksi shared generic component (`ExpandableDetailRow`) TIDAK dilakukan — struktur `expanded && (<tr>...)` di `app/page.tsx` (baris top-level) dan di `BookingSessionRow` sudah cukup sederhana dan className-nya sudah identik by design; memaksakan ekstraksi berisiko regresi pada fitur sesi yang stabil tanpa manfaat visual tambahan (sudah tidak ada 2 gaya berbeda setelah perbaikan chevron/padding di atas). Keputusan ini mengikuti instruksi "prioritaskan SAFETY" bila risiko ekstraksi tidak sebanding manfaatnya.
+
+## File yang diubah sesi ini
+
+- `components/booking-payment-detail.tsx` — samakan className tombol (`min-h-[32px] px-1.5 py-1`) dan ukuran chevron (`h-3.5 w-3.5`) `PaymentDetailToggle` dengan tombol "X sesi" di `booking-session-row.tsx`. Tidak ada perubahan logic/state/data.
+- `AYOSERA-HANDOFF-LATEST.md` — section ini.
+
+Tidak ada file lain yang diubah (lihat `git diff --stat` sebelum commit).
+
+## Hasil test/typecheck/build
+
+- `npm run test:booking-payment-aggregate` — 12/12 PASS.
+- `npm run test:booking-payment-detail-ui` — 5/5 PASS.
+- `npm run test:booking-mapper` — 4/4 PASS.
+- `npm run test:booking-session` — 36/36 PASS.
+- `npm run type-check` — PASS, tanpa error.
+- `npm run build` — PASS, build production sukses.
+- `git diff --check` — PASS, tidak ada whitespace error.
+- Tidak ada test baru ditambahkan — perubahan hanya className/ukuran (visual), tidak ada logic baru yang butuh test tambahan; test existing sudah menutupi behavior (badge muncul/tidak, dedup, total).
+
+## Konfirmasi scope lain TIDAK disentuh
+
+- **Export Bulanan/Harian** (`app/api/transactions/export/bulanan/route.ts`, `export/harian/route.ts`) — tidak ada di `git diff` sesi ini.
+- **Dashboard** (`app/api/dashboard/route.ts`) — tidak ada di `git diff`. Dikonfirmasi juga `BookingSessionRow`/`PaymentDetailToggle` HANYA dipakai di `app/page.tsx` (Transaksi) — `grep` komponen ini di seluruh `.tsx` project tidak menemukan pemakaian di Dashboard, jadi tidak ada risiko behavior Dashboard berubah oleh perubahan className ini.
+- **Rekonsiliasi** (`lib/reconciliation-court-revenue-source.ts`, `lib/reconciliation-omzet-ledger.ts`) — tidak disentuh.
+- **Logic nominal/dedup** (`aggregateBookingPayments`, `withBookingPaymentTotals`, `paymentEventIdentity`) — tidak diubah satu baris pun sesi ini.
+- Booking `MN/2428/260809/0002994` tetap hanya dipakai sebagai fixture test, tidak ada logic produksi yang bercabang padanya.
+
+## Status akhir
+
+**SELESAI DAN DIVERIFIKASI.** Perubahan sesi ini murni penyelarasan visual (ukuran chevron + padding tombol toggle payment disamakan dengan toggle sesi) karena hasil audit ulang menunjukkan reuse state/struktur/className sudah sangat dekat sejak commit sebelumnya. Audit timestamp payment tidak menemukan temuan baru — field kandidat sudah dipetakan sejak awal dan sudah terbukti tidak berguna untuk kasus multi-payment (fallback identik ke tanggal sesi); re-verifikasi query produksi langsung tidak bisa dijalankan sesi ini karena environment kerja tidak punya akses jaringan ke MongoDB Atlas, dicatat secara eksplisit sebagai limitasi, bukan diklaim sebagai verifikasi baru.
