@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, Moon, RefreshCw, Save, Search, Sun, Unlock, X } from "lucide-react";
 import { visibleInventoryRows } from "@/lib/olsera-inventory-ui";
+import { analyzeInventoryBaFile } from "@/lib/inventory-ba-client";
+import { normalizeInventoryBaName } from "@/lib/inventory-ba-parser";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 type OpnameStatus = "BELUM_DIISI" | "COCOK" | "PERLU_DICEK" | "BUTUH_ADJUST_MANUAL";
@@ -130,6 +132,8 @@ export default function InventoryOpnamePage() {
   const [finalizeError, setFinalizeError] = useState("");
   const [unlockReason, setUnlockReason] = useState("");
   const [unlocking, setUnlocking] = useState(false);
+  const [readingBa, setReadingBa] = useState(false);
+  const [baReadSummary, setBaReadSummary] = useState<{ periodStart: string | null; cutoffDate: string | null; found: number; autoCocok: number; perluDicek: number } | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -182,6 +186,7 @@ export default function InventoryOpnamePage() {
   const uploadBa = async (file: File) => {
     setUploading(true);
     setFinalizeError("");
+    setReadingBa(true);
     try {
       const form = new FormData();
       form.set("file", file);
@@ -191,10 +196,39 @@ export default function InventoryOpnamePage() {
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || "Gagal mengunggah Berita Acara.");
       setAttachment(result.data);
+      const analysis = await analyzeInventoryBaFile(file, (status) => setSaveMessage(status));
+      const parsed = analysis.parsed;
+      if (parsed.periodStart) {
+        const [parsedYear, parsedMonth] = parsed.periodStart.split("-");
+        setYear(parsedYear);
+        setMonth(String(Number(parsedMonth)));
+      }
+      if (parsed.cutoffDate) {
+        setCutoffDate(parsed.cutoffDate);
+        setCutoffConfirmed(false);
+      }
+      let autoCocok = 0;
+      let perluDicek = parsed.status === "PERLU_DICEK" ? 1 : 0;
+      if (data) {
+        const next = { ...edits };
+        for (const item of parsed.items) {
+          const match = data.rows.find((row) => normalizeInventoryBaName(row.productName) === normalizeInventoryBaName(item.description) || (row.productSku && normalizeInventoryBaName(row.productSku) === normalizeInventoryBaName(item.description)));
+          if (!match || item.status !== "OK") {
+            perluDicek++;
+            continue;
+          }
+          next[rowKey(match.productId, match.variantId)] = { physicalQty: item.physicalQty, note: "Dibaca dari BA" };
+          autoCocok++;
+        }
+        setEdits(next);
+      }
+      setBaReadSummary({ periodStart: parsed.periodStart, cutoffDate: parsed.cutoffDate, found: parsed.items.length, autoCocok, perluDicek });
+      setSaveMessage("Berita Acara selesai dibaca. Silakan review sebelum finalisasi.");
     } catch (e) {
       setFinalizeError(e instanceof Error ? e.message : "Gagal mengunggah Berita Acara.");
     } finally {
       setUploading(false);
+      setReadingBa(false);
     }
   };
 
@@ -426,6 +460,8 @@ export default function InventoryOpnamePage() {
         </label>
         <div className="recon-finalization">
           {attachment ? <p className="recon-lock-summary"><CheckCircle2 /> {attachment.fileName} — Berhasil diupload</p> : <p className="recon-readonly">PDF/JPG/PNG, maksimal 4 MB.</p>}
+          {readingBa && <p className="recon-readonly"><Loader2 className="spin" /> Membaca Berita Acara...</p>}
+          {baReadSummary && <p className="recon-readonly">Periode BA: {baReadSummary.periodStart ?? "Perlu Dicek"} · Cutoff: {baReadSummary.cutoffDate ?? "Perlu Dicek"} · Item ditemukan: {baReadSummary.found} · Cocok otomatis: {baReadSummary.autoCocok} · Perlu Dicek: {baReadSummary.perluDicek}</p>}
           {attachment && data?.lock?.status !== "LOCKED" && <label className="recon-button secondary">Ganti file<input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} /></label>}
         </div>
         <label className="recon-check">

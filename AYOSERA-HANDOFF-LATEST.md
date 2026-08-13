@@ -1054,3 +1054,11 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 - Finalisasi UI menyimpan input checker terlebih dahulu, lalu memanggil finalize existing; unlock tetap memakai action existing.
 - Cutoff tetap divalidasi terhadap tahun/bulan terpilih. BA periode `01–16 Juli 2026` memakai cutoff `2026-07-16`; cutoff Juli untuk bulan Agustus ditolak oleh guard existing.
 - Tests baru mencakup BA-only kosong → Cocok/evidence assumed match dan BA-only off → tetap memblokir. Inventory stock-opname tests 31 + 22 PASS; typecheck PASS; `git diff --check` PASS.
+# Auto-read BA Stock Opname — 2026-08-13
+
+- Upload BA di Rekonsiliasi Inventori sekarang otomatis membaca dokumen setelah upload menggunakan extractor browser existing: PDF text layer terlebih dahulu, lalu PDF scan/image OCR fallback.
+- Parser baru `lib/inventory-ba-parser.ts` hanya mengambil periode/rentang cutoff dan baris tabel item; tanggal tanda tangan tidak dipakai sebagai cutoff. Parser fail-safe: angka tidak konsisten atau format tidak yakin menjadi `PERLU_DICEK`.
+- Matching awal memakai normalized exact product name/SKU terhadap row checker yang sudah dimuat; item tidak match tidak diisi diam-diam dan dilaporkan `Perlu Dicek`. Tidak ada hardcode produk, auto-finalize, auto-lock, movement, adjustment, atau perubahan raw Olsera.
+- UI menampilkan `Membaca Berita Acara...`, auto-set Tahun/Bulan/Cutoff dari periode BA, auto-fill stok BA dari Stock Fisik Aktual, ringkasan item ditemukan/Cocok otomatis/Perlu Dicek, dan tetap meminta review sebelum finalisasi.
+- Regression fixture 7 item BA 01–16 Juli 2026: cutoff `2026-07-16`, termasuk ODEA RED/ROSE terpisah, PASS. OCR/text parser tests PASS; inventory stock-opname tests PASS; typecheck PASS; `git diff --check` PASS.
+- File berubah: `app/reconciliation/inventory/page.tsx`, `lib/inventory-ba-parser.ts`, `lib/inventory-ba-client.ts`, `lib/inventory-ba-parser.test.ts`, dan handoff.
