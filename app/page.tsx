@@ -35,6 +35,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { OlseraFinancialPanel } from "@/components/olsera-financial-panel";
 import { OlseraInventoryPanel } from "@/components/olsera-inventory-panel";
+import { OlseraValidationPanel } from "@/components/olsera-validation-panel";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-sync-lock";
 import { runOlseraSyncAll, type StageId, type StageStatus } from "@/lib/olsera-sync-orchestrator";
 import { UsersPanel } from "@/components/users-panel";
@@ -2232,6 +2233,7 @@ export default function DashboardPage() {
                 hanya tersedia untuk akun yang diizinkan mengakses Private Integration Tools.
               </p>
               <PrivateIntegrationMonitor />
+              <OlseraValidationPanel />
             </div>
           )}
 
