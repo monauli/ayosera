@@ -30,9 +30,10 @@ export async function GET(request: Request) {
       (async () => {
         if (section && section !== "category") return { status: "Data Belum Lengkap" as Status };
         const [live, stored] = await withTimeout(Promise.all([fetchOlseraSalesAuditSource(start, end), withMongo(async () => { const { olseraSalesByCategory } = await collections(); return olseraSalesByCategory.find({ date: { $gte: start, $lte: end } }).toArray(); })]), 45_000);
-        const liveTotal = live.items.reduce((x, row) => x + row.amount, 0), liveQty = live.items.reduce((x, row) => x + row.qty, 0);
+        const liveTotal = live.items.reduce((x, row) => x + (Number.isFinite(row.amount) ? row.amount : 0), 0), liveQty = live.items.reduce((x, row) => x + (Number.isFinite(row.qty) ? row.qty : 0), 0);
         const storedTotal = stored.reduce((x, row) => x + row.totalAmount, 0), storedQty = stored.reduce((x, row) => x + row.qty, 0);
-        return { status: current ? "Data Belum Lengkap" : liveTotal === storedTotal && liveQty === storedQty ? "Cocok" : "Selisih", label: "Cocok dengan API Olsera", ayosera: { qty: storedQty, total: storedTotal }, olseraLive: { qty: liveQty, total: liveTotal }, orders: live.orders.length };
+        const status = current ? "Data Belum Lengkap" : live.orders.length === 0 ? "Data Belum Lengkap" : liveTotal === storedTotal && liveQty === storedQty ? "Cocok" : "Selisih";
+        return { status, label: "Cocok dengan API Olsera", reason: live.orders.length === 0 ? "API Olsera tidak mengembalikan order pada periode ini." : null, ayosera: { qty: storedQty, total: storedTotal }, olseraLive: { qty: liveQty, total: liveTotal }, delta: { qty: liveQty - storedQty, total: liveTotal - storedTotal }, orders: live.orders.length };
       })(),
       (async () => {
         if (section && section !== "inventory") return { status: "Data Belum Lengkap" as Status };
@@ -41,7 +42,7 @@ export async function GET(request: Request) {
         const byProduct = new Map(live.rows.map((row) => [String(row.productId), row]));
         const details: Array<{ product: string; ayosera: number | null; olseraLive: number | null; delta: number | null; fields: string[] }> = [];
         for (const row of stored) { const liveRow = byProduct.get(String(row.productId)); if (!liveRow) { details.push({ product: row.productName, ayosera: row.closingQty, olseraLive: null, delta: null, fields: ["product tidak ditemukan"] }); continue; } const mapping = { openingQty: "beginningQty", incomingQty: "incomingQty", returnQty: "returnQty", salesQty: "salesQty", outgoingQty: "outgoingQty", closingQty: "sisa" } as const; const fields = (Object.keys(mapping) as Array<keyof typeof mapping>).filter((key) => row[key] !== liveRow[mapping[key]]); if (fields.length) details.push({ product: row.productName, ayosera: row.closingQty, olseraLive: liveRow.sisa, delta: liveRow.sisa - (row.closingQty ?? 0), fields }); }
-        return { status: details.length ? "Selisih" : "Cocok", checked: stored.length, matching: stored.length - details.length, differences: details, source: "/en/inventory/stockmovement" };
+        return { status: stored.length === 0 || live.rows.length === 0 ? "Data Belum Lengkap" : details.length ? "Selisih" : "Cocok", checked: stored.length, liveItems: live.rows.length, matching: stored.length - details.length, incomplete: stored.length === 0 || live.rows.length === 0 ? stored.length : 0, reason: live.rows.length === 0 ? "Stockmovement API kosong untuk periode ini; tidak dianggap 0/0 Cocok." : null, differences: details, source: "/en/inventory/stockmovement" };
       })(),
       (async () => {
         if (section && section !== "financial") return { status: "Data Belum Lengkap" as Status };

@@ -31,7 +31,8 @@ export async function GET() {
         const classification = !known ? "SOURCE_DATA_INCOMPLETE" : expectedClosing === row.closingQty ? "CONSISTENT" : "INCONSISTENT";
         return { ...row, period: `${row.year}-${String(row.month).padStart(2, "0")}`, expectedClosing, classification, diagnostic: classification === "INCONSISTENT" ? `Expected closing ${expectedClosing}, stored closing ${row.closingQty}.` : classification === "SOURCE_DATA_INCOMPLETE" ? "Komponen formula belum lengkap." : null };
       });
-      return { checkedAt: new Date().toISOString(), scope: targets, periods, products, evidence: { movements, sales, aliases, opname } };
+      const identitySources = targets.map((target) => ({ key: target.key, name: target.name, sources: target.ids.map((productId) => ({ productId, snapshotPeriods: snapshots.filter((row) => row.productId === productId).map((row) => `${row.year}-${String(row.month).padStart(2, "0")}`), movementPeriods: movements.filter((row) => row.productId === productId).map((row) => row.date), salesRows: sales.filter((row) => row.productId === productId || row.resolvedProductId === productId).length })), verifiedAliases: aliases.filter((alias) => alias.confidence === "verified" && (target.ids.includes(alias.oldProductId as never) || target.ids.includes(alias.newProductId as never))) }));
+      return { checkedAt: new Date().toISOString(), scope: targets, periods, identitySources, products, evidence: { movements, sales, aliases, opname } };
     });
     return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Preview histori inventori gagal dibaca." }, { status: 500 }); }

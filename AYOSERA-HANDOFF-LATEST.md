@@ -1375,3 +1375,13 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - Date/month control in Audit dark mode now follows the active color scheme.
 - Local Mongo remains unavailable; Vercel/runtime endpoint must be used for production preview.
 - Tests: financial 29/29, inventory monthly 229/229, integration 45/45, type-check PASS, build PASS, diff-check PASS.
+## 2026-08-14 — Validator NaN/0-0 and historical identity preview fix
+
+- Category validator now normalizes nullable quantities/nominal values, returns explicit delta fields, and never renders `NaN`. Empty live orders are `Data Belum Lengkap`; request failures remain `Gagal Dicek`.
+- Inventory validator now exposes live item count and refuses to label stored-items + empty stockmovement as `0/0 Cocok`; it returns `Data Belum Lengkap` with reason and mismatch details.
+- Financial cards now render component totals/deltas; Buku Besar renders mismatch account details where available.
+- Historical preview now returns `identitySources` for both old and canonical IDs for YONEX and ODEA ROSE, while ODEA RED remains outside the ROSE lineage. No aggregation/write is performed by the endpoint.
+- ODEA ROSE February arithmetic remains preview-only `INCONSISTENT`/unresolved when stored closing 130 differs from known-field expected closing 66; no +64 adjustment is treated as proven. July current production chain is not altered.
+- Dark-mode date inputs in Cek & Tutup Gap Data now use theme-aware color scheme.
+- No historical snapshot write performed.
+- Tests: financial 29/29, inventory monthly 229/229, integration 45/45, type-check PASS, build PASS, diff-check PASS.

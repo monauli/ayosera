@@ -937,5 +937,5 @@ th[scope],
 .recon-ba-cards .recon-sport-card b{font-size:.95rem;overflow-wrap:anywhere}
 @media (max-width:720px){.recon-ba-cards{grid-template-columns:1fr}.recon-ba-preview-frame-wrap{height:min(60vh,480px)}}
 /* Native month/date controls in the dark Audit panel must use the active theme. */
-.pim-panel input[type="month"] { color-scheme: dark; }
-[data-mode="light"] .pim-panel input[type="month"] { color-scheme: light; }
+.pim-panel input[type="month"], .pim-panel input[type="date"] { color-scheme: dark; }
+[data-mode="light"] .pim-panel input[type="month"], [data-mode="light"] .pim-panel input[type="date"] { color-scheme: light; }

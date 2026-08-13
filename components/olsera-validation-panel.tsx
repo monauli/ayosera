@@ -68,13 +68,14 @@ export function OlseraValidationPanel() {
         </div>
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">2. Inventori</h3>
-          <ValidationRow title="API stockmovement live" detail={result?.inventory ? `${result.inventory.matching ?? 0} / ${result.inventory.checked ?? 0} item Cocok · ${result.inventory.differences?.length ?? 0} Selisih` : "Tekan Validasi Sekarang untuk mengambil stockmovement live."} status={status("inventory", "Data Belum Lengkap")} />
+          <ValidationRow title="API stockmovement live" detail={result?.inventory ? `${result.inventory.matching ?? 0} / ${result.inventory.checked ?? 0} stored item Cocok · ${result.inventory.liveItems ?? 0} item live · ${result.inventory.differences?.length ?? 0} Selisih${result.inventory.reason ? ` · ${result.inventory.reason}` : ""}` : "Tekan Validasi Sekarang untuk mengambil API Olsera live."} status={status("inventory", "Data Belum Lengkap")} />
           <DetailList items={result?.inventory?.differences} />
           <p className="mt-2 text-xs text-slate-400">BA Stock Opname tetap diagnostic terpisah: tidak menjadi satu-satunya pembanding.</p>
         </div>
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">3. Laporan Keuangan</h3>
           <ValidationRow title="Neraca, Laba Rugi, Arus Kas" detail="Dibandingkan dengan snapshot AYOSERA menggunakan response API live." status={result?.financial ? (result.financial.status === "Cocok" ? "Cocok" : result.financial.status) : "Data Belum Lengkap"} />
+          <DetailList items={result?.financial ? [result.financial.balanceSheet?.totals, result.financial.profitLoss?.totals, result.financial.cashFlow?.totals] : undefined} />
           <ValidationRow title="Buku Besar" detail={result?.financial?.ledgerAccounts ? `${result.financial.ledgerAccounts.checked} akun dicek dari API live.` : "Semua akun dicek saat validasi live."} status={result?.financial?.ledgerSummary?.status ?? "Data Belum Lengkap"} />
           <DetailList items={result?.financial?.ledgerSummary?.differences} />
         </div>
