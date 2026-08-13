@@ -184,6 +184,63 @@ export function groupPdfTextItemsIntoLines(items: readonly PdfTextItemLike[]): s
     .join("\n");
 }
 
+export type PositionedPdfTextItem = { str: string; x: number; y: number };
+
+/**
+ * Ekstrak text item pdf.js MENTAH (str + posisi X/Y asli dari `transform`),
+ * TANPA digabung jadi baris teks. Dipakai khusus oleh parser tabel BA Stock
+ * Opname (lib/inventory-ba-table-parser.ts) yang merekonstruksi tabel secara
+ * spasial — lihat AYOSERA-HANDOFF-LATEST.md untuk root cause kenapa parsing
+ * lewat baris teks gabungan (groupPdfTextItemsIntoLines, dipakai flow BA
+ * rekonsiliasi omzet lain) TERBUKTI salah untuk tabel ini. Mengembalikan
+ * `null` bila ADA item tanpa koordinat valid (pemanggil WAJIB jatuh ke
+ * fail-safe, bukan menebak layout dari urutan ekstraksi).
+ */
+export async function extractPdfTextLayerItems(doc: PdfDocumentProxy): Promise<PositionedPdfTextItem[] | null> {
+  const pagesToRead = Math.min(doc.numPages, MAX_OCR_PAGES);
+  const all: PositionedPdfTextItem[] = [];
+  for (let i = 1; i <= pagesToRead; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    for (const item of content.items as PdfTextItemLike[]) {
+      const str = typeof item.str === "string" ? item.str : "";
+      if (!str) continue;
+      const t = item.transform;
+      if (!Array.isArray(t) || t.length < 6 || typeof t[4] !== "number" || typeof t[5] !== "number") return null;
+      all.push({ str, x: t[4], y: t[5] });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return all;
+}
+
+/**
+ * Buka file PDF di browser dan kembalikan text item MENTAH dengan posisi
+ * (untuk parser tabel spasial), atau `null` bila text layer tidak ada/kosong
+ * (mis. PDF hasil scan) atau item tidak menyertakan koordinat valid — dalam
+ * kedua kasus itu, caller (lib/inventory-ba-client.ts) WAJIB jatuh ke
+ * fail-safe eksplisit (inventoryBaParseFailure), TIDAK PERNAH memakai parser
+ * baris teks lama sebagai fallback diam-diam.
+ */
+export async function extractInventoryBaPdfItems(file: File, onStatus: OnOcrStatus = () => {}): Promise<PositionedPdfTextItem[] | null> {
+  if (file.type !== "application/pdf") return null;
+  onStatus(STATUS_READING);
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  const loadingTask = pdfjs.getDocument({ data: buffer });
+  try {
+    const doc = await loadingTask.promise;
+    const items = await extractPdfTextLayerItems(doc);
+    if (!items) return null;
+    const totalLength = items.reduce((sum, item) => sum + item.str.length, 0);
+    if (totalLength < MIN_TEXT_LAYER_LENGTH) return null;
+    return items;
+  } finally {
+    await loadingTask.destroy();
+  }
+}
+
 async function extractPdfTextLayer(doc: PdfDocumentProxy): Promise<string> {
   const pagesToRead = Math.min(doc.numPages, MAX_OCR_PAGES);
   const parts: string[] = [];

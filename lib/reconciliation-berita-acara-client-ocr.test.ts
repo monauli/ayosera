@@ -11,7 +11,7 @@ import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import test, { before, mock } from "node:test";
 
-type FakePage = { text: string; renderCalls: number };
+type FakePage = { text: string; renderCalls: number; positionedItems?: Array<{ str: string; x: number; y: number }> };
 
 const pages: FakePage[] = [{ text: "", renderCalls: 0 }];
 let pdfPageCount = 1;
@@ -30,6 +30,7 @@ mock.module("pdfjs-dist", {
           const p = pages[i - 1] ?? { text: "", renderCalls: 0 };
           return {
             async getTextContent() {
+              if (p.positionedItems) return { items: p.positionedItems.map((it) => ({ str: it.str, transform: [1, 0, 0, 1, it.x, it.y] })) };
               return { items: [{ str: p.text }] };
             },
             getViewport({ scale }: { scale: number }) {
@@ -69,13 +70,12 @@ let mergeOcrPages!: typeof import("./reconciliation-berita-acara-client-ocr.ts")
 let averageConfidence!: typeof import("./reconciliation-berita-acara-client-ocr.ts").averageConfidence;
 let TESSERACT_ASSET_OPTIONS!: typeof import("./reconciliation-berita-acara-client-ocr.ts").TESSERACT_ASSET_OPTIONS;
 let groupPdfTextItemsIntoLines!: typeof import("./reconciliation-berita-acara-client-ocr.ts").groupPdfTextItemsIntoLines;
+let extractInventoryBaPdfItems!: typeof import("./reconciliation-berita-acara-client-ocr.ts").extractInventoryBaPdfItems;
 let parseBeritaAcaraText!: typeof import("./reconciliation-berita-acara-parser.ts").parseBeritaAcaraText;
 let matchBeritaAcaraToSystemDifference!: typeof import("./reconciliation-berita-acara-parser.ts").matchBeritaAcaraToSystemDifference;
-let parseInventoryBaText!: typeof import("./inventory-ba-parser.ts").parseInventoryBaText;
 before(async () => {
-  ({ extractBeritaAcaraTextClient, mergeOcrPages, averageConfidence, TESSERACT_ASSET_OPTIONS, groupPdfTextItemsIntoLines } = await import("./reconciliation-berita-acara-client-ocr.ts"));
+  ({ extractBeritaAcaraTextClient, mergeOcrPages, averageConfidence, TESSERACT_ASSET_OPTIONS, groupPdfTextItemsIntoLines, extractInventoryBaPdfItems } = await import("./reconciliation-berita-acara-client-ocr.ts"));
   ({ parseBeritaAcaraText, matchBeritaAcaraToSystemDifference } = await import("./reconciliation-berita-acara-parser.ts"));
-  ({ parseInventoryBaText } = await import("./inventory-ba-parser.ts"));
 });
 
 function fakeFile(name: string, type: string, content = "x"): File {
@@ -129,12 +129,12 @@ test("groupPdfTextItemsIntoLines: item pdf.js dengan transform (posisi X/Y) dire
   assert.equal(lines.length, 4, "harus terpisah jadi 4 baris tabel, bukan 1 baris gabungan");
   assert.match(lines[2], /^1 YONEX AC102 pcs 10 9 -1$/);
   assert.match(lines[3], /^2 ODEA RED pcs 45 47 \+2$/);
-
-  // Kontrak dengan parser: begitu baris terpisah newline dengan benar, parser BA berhasil membaca item.
-  const parsed = parseInventoryBaText(text);
-  assert.equal(parsed.periodStart, "2026-07-01");
-  assert.equal(parsed.cutoffDate, "2026-07-16");
-  assert.equal(parsed.items.length, 2);
+  // Catatan: groupPdfTextItemsIntoLines (baris teks gabungan) dipakai HANYA
+  // oleh flow BA rekonsiliasi omzet (lib/reconciliation-berita-acara-parser.ts),
+  // BUKAN lagi oleh parser tabel BA Stock Opname — parser itu sekarang
+  // membaca text item MENTAH (posisi X/Y) langsung lewat
+  // extractInventoryBaPdfItems/parseInventoryBaTable, lihat
+  // lib/inventory-ba-table-parser.ts dan AYOSERA-HANDOFF-LATEST.md.
 });
 
 test("groupPdfTextItemsIntoLines: item dalam satu baris TIDAK harus urut X pada input (posisi tetap direkonstruksi kiri->kanan)", () => {
@@ -172,6 +172,34 @@ test("PDF dengan text layer -> dibaca langsung, TIDAK memanggil OCR/canvas sama 
   assert.match(result.text, /Rp740\.000/);
   assert.equal(canvasCalls.length, 0, "text-layer PDF tidak boleh merender canvas");
   assert.equal(recognizeCalls.length, 0, "text-layer PDF tidak boleh memanggil OCR");
+});
+
+// ---------------------------------------------------------------------------
+// extractInventoryBaPdfItems: dipakai KHUSUS parser tabel BA Stock Opname
+// (lib/inventory-ba-table-parser.ts). WAJIB mengembalikan item posisi X/Y
+// mentah untuk PDF dengan text layer valid, dan `null` (bukan menebak) bila
+// tidak ada koordinat sama sekali — caller lib/inventory-ba-client.ts WAJIB
+// jatuh ke fail-safe eksplisit pada kasus itu, bukan parser baris lama.
+// ---------------------------------------------------------------------------
+
+test("extractInventoryBaPdfItems: PDF dengan text layer + koordinat -> item mentah (str,x,y) dikembalikan apa adanya", async () => {
+  pages[0] = { text: "", renderCalls: 0, positionedItems: [{ str: "YONEX AC102", x: 170, y: 600 }, { str: "10", x: 350, y: 600 }, { str: "9", x: 420, y: 600 }, { str: "-1", x: 490, y: 600 }, { str: "padding padding padding padding padding padding padding padding padding", x: 0, y: 0 }] };
+  pdfPageCount = 1;
+  const items = await extractInventoryBaPdfItems(fakeFile("ba-opname.pdf", "application/pdf"));
+  assert.ok(items, "harus mengembalikan item, bukan null, ketika koordinat lengkap");
+  assert.ok(items!.some((i) => i.str === "YONEX AC102" && i.x === 170 && i.y === 600));
+});
+
+test("extractInventoryBaPdfItems: item tanpa koordinat (transform) -> null, bukan menebak/jatuh ke parser lama", async () => {
+  pages[0] = { text: "teks tanpa posisi apa pun", renderCalls: 0 };
+  pdfPageCount = 1;
+  const items = await extractInventoryBaPdfItems(fakeFile("ba-no-position.pdf", "application/pdf"));
+  assert.equal(items, null);
+});
+
+test("extractInventoryBaPdfItems: file bukan PDF -> null", async () => {
+  const items = await extractInventoryBaPdfItems(fakeFile("ba.jpg", "image/jpeg"));
+  assert.equal(items, null);
 });
 
 test("PDF hasil scan (text layer kosong) -> rasterisasi canvas lalu OCR client-side, source pdf-scanned-ocr", async () => {

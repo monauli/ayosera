@@ -1131,3 +1131,55 @@ Masih TIDAK ADA file PDF BA produksi asli di repo sebagai fixture (dicek ulang: 
 ### File berubah
 
 `lib/inventory-ba-parser.ts`, `lib/inventory-ba-parser.test.ts`, `lib/inventory-ba-finalize-guard.ts`, `lib/inventory-ba-finalize-guard.test.ts`, `app/reconciliation/inventory/page.tsx`, dan handoff ini. Tidak menyentuh Financial, YONEX, ODEA, kategori penjualan, atau `lib/reconciliation-berita-acara-client-ocr.ts` (fix pass ini murni di layer parsing baris BA, bukan di layer pengelompokan posisi Y pdf.js).
+
+## BA Stock Opname parser — REWRITE STRUKTURAL ke rekonstruksi tabel spasial (2026-08-14, iterasi ke-4)
+
+### Root cause (pembuktian, bukan dugaan)
+
+BA Juli 2026: baris YONEX AC102 seharusnya Sistem 10 / Fisik 9 / Selisih -1, tapi produksi membacanya sebagai Sistem 201 / Fisik 350 / Selisih +349. Angka 201 dan 350 itu SEBENARNYA milik baris NESTLE PURE LIFE 1500ML (Satuan BA = 201, Stock Sistem = 350) — bukan angka rusak, melainkan angka baris lain yang tertukar masuk ke baris YONEX. Ini membuktikan parser baris/text-stream (`lib/inventory-ba-parser.ts` versi lama + heuristik `pendingPrefix`/orphan-suffix yang ditambahkan di 2 iterasi sebelumnya) SALAH SECARA STRUKTURAL, bukan sekadar butuh tambalan heuristik lagi: begitu urutan token per baris teks gabungan sedikit meleset (kolom melebar/menyempit antar baris, wrap tidak konsisten antar produk), regex per-baris salah menafsirkan token mana milik kolom mana, dan angka antar baris tertukar. Menambal heuristik di atas heuristik lama hanya memindahkan bug ke kasus lain (sudah 3x: iterasi ke-2 "6 dari 7 item hilang", iterasi ke-3 "top-aligned wrap", sekarang iterasi ke-4 "angka tertukar antar baris").
+
+### Kenapa rekonstruksi spasial X/Y menggantikannya
+
+pdf.js `getTextContent()` menyertakan `transform` per text item — posisi X/Y ASLI pada halaman, bukan urutan ekstraksi. Alih-alih meratakan seluruh tabel jadi baris teks lalu mem-parse ulang dengan regex sequential (yang membuang informasi kolom), parser baru (`lib/inventory-ba-table-parser.ts`) bekerja LANGSUNG pada text item dengan posisi:
+
+1. Kolom ditentukan dari X label header ("No.", "Kelompok Barang", "Deskripsi Barang", "Satuan", "Stock Sistem/Olsera", "Stock Fisik/Aktual", "Selisih", "Keterangan") — batas kolom = dari X label kolom itu sendiri sampai X label kolom berikutnya, GENERIK (bukan konstanta piksel hardcode, bukan tergantung nama produk).
+2. Baris dikelompokkan dari Y anchor kolom "No." (item angka murni dalam rentang X kolom No.) — baris N mencakup Y dari anchor N turun sampai SEBELUM anchor N+1.
+3. Setiap text item body ditempatkan ke kolom berdasarkan X-nya SENDIRI terhadap batas kolom hasil langkah 1 — bukan urutan token dalam baris gabungan, bukan tebakan "angka pertama setelah nama".
+4. Sel multi-baris (deskripsi yang wrap, mis. "NESTLE PURE LIFE" + "1500ML" sebagai 2 text item terpisah) otomatis tergabung karena kedua item berada di kolom X yang sama dan Y-band baris yang sama.
+
+Ini menghilangkan SELURUH kelas bug "angka nyasar ke baris tetangga" karena kolom tidak lagi ditentukan dari posisi token dalam satu baris teks gabungan — independen dari urutan ekstraksi pdf.js (dibuktikan test "urutan ekstraksi acak tetap direkonstruksi benar").
+
+### Perubahan
+
+- `lib/inventory-ba-parser.ts` — parser baris/text-stream lama (`parseInventoryBaText`, heuristik `pendingPrefix`/orphan-suffix) DIHAPUS SELURUHNYA. Sisa: tipe data (`InventoryBaItem` diperluas dengan field baru `kelompok`, `satuan` (angka, BUKAN unit teks seperti versi lama), dan `keterangan`), `numberValue`/`normalizeInventoryBaName` (helper murni, tidak berubah logika), `extractInventoryBaPeriod` (regex periode/cutoff atas teks bebas, tidak bergantung layout tabel, dipertahankan apa adanya), dan `inventoryBaParseFailure` — fail-safe eksplisit baru (0 baris, status PERLU_DICEK) untuk kasus tabel TIDAK BISA direkonstruksi spasial sama sekali.
+- `lib/inventory-ba-table-parser.ts` (BARU) — `parseInventoryBaTable(items)` implementasi rekonstruksi spasial di atas. Menerima `PositionedTextItem[]` (`{str, x, y}`). Header tidak ditemukan / tidak ada anchor baris / array item kosong -> `inventoryBaParseFailure` (tidak pernah menebak struktur).
+- `lib/reconciliation-berita-acara-client-ocr.ts` — ditambahkan `extractPdfTextLayerItems(doc)` (item mentah + posisi, `null` bila ADA item tanpa `transform` valid) dan `extractInventoryBaPdfItems(file, onStatus)` (load PDF, ambil item text-layer dengan posisi, `null` bila bukan PDF / text layer kosong / tidak ada koordinat). Fungsi `groupPdfTextItemsIntoLines` (dipakai flow BA rekonsiliasi omzet lain, `lib/reconciliation-berita-acara-parser.ts`) TIDAK DIUBAH — scope ini murni menambah jalur baru untuk BA Stock Opname, bukan mengubah flow BA omzet.
+- `lib/inventory-ba-client.ts` — `analyzeInventoryBaFile` sekarang: (1) PDF dengan text layer + posisi valid -> `parseInventoryBaTable` (jalur utama); (2) PDF hasil scan (tidak ada text layer dengan koordinat) atau file gambar (JPG/PNG) -> TIDAK ADA fallback ke OCR-based table extraction karena tidak ada modul semacam itu di codebase saat ini (grep `lib/reconciliation-berita-acara-ocr.ts` — itu untuk BA omzet berbasis teks paragraf, bukan tabel). Sesuai instruksi safety, ini diperlakukan sebagai hard parse failure (`inventoryBaParseFailure`: 0 baris, PERLU_DICEK, blokir Finalisasi) — bukan jatuh ke parser baris lama yang terbukti salah. GAP untuk iterasi berikutnya: belum ada OCR table extraction (word-level bounding box + rekonstruksi spasial serupa) untuk PDF BA hasil scan/foto; saat ini BA jenis itu SELALU wajib input manual.
+- `app/reconciliation/inventory/page.tsx` + `app/globals.css` — bug UI "panel Hasil Pembacaan Berita Acara terlihat kosong/tinggi tidak wajar": root cause section itu memakai class `.recon-filters` (grid 4 kolom yang didesain untuk field form kecil, BUKAN untuk judul+paragraf+tabel lebar penuh), sehingga isi terjepit ke 1 dari 4 kolom grid. Diperbaiki dengan class baru `.recon-ba-results` (layout block/grid 1 kolom, tinggi menyesuaikan konten, tetap dalam `overflow-x:auto` wrapper untuk tabel lebar). Struktur tabel & kolom (No. | Nama Barang | Stok Sistem BA | Stok Fisik Aktual | Selisih | Produk AYOSERA | Status) TIDAK diubah — sudah benar sejak f4f1ab6. Badge "Dibaca dari BA" tetap hanya untuk baris status COCOK (tidak diubah, sudah benar).
+- Safety yang dipertahankan/diverifikasi: validasi aritmetika (Fisik - Sistem = Selisih) dan kelengkapan sel wajib (Nama, Sistem, Fisik, Selisih) dilakukan DI DALAM parser (`parseInventoryBaTable`), bukan di UI — baris yang gagal salah satunya berstatus `PERLU_DICEK` dan TIDAK PERNAH meminjam angka dari baris tetangga (dibuktikan test khusus). Guard finalisasi (`lib/inventory-ba-finalize-guard.ts`, tidak diubah logikanya) tetap memblokir Finalisasi selama ada baris bukan COCOK atau 0 baris terbaca.
+
+### Test
+
+- `lib/inventory-ba-parser.test.ts` — ditulis ulang total: helper murni (`extractInventoryBaPeriod`, `numberValue`, `normalizeInventoryBaName`, `inventoryBaParseFailure`) saja. Seluruh test lama yang menguji heuristik `pendingPrefix`/orphan-suffix (top-aligned wrap, kolom No. di depan baris, dll.) DIHAPUS karena mengetes implementasi yang sudah tidak ada.
+- `lib/inventory-ba-table-parser.test.ts` (BARU) — fixture text item pdf.js realistis (koordinat X/Y eksplisit per kolom, header dua baris "Stock Sistem"/"Olsera", sel deskripsi multi-baris untuk NESTLE 1500ML/600ML dan POCARI SWEAT/ION WATER) mencakup: 7 baris persis sesuai spesifikasi (termasuk `kelompok`/`satuan`/`keterangan`), regresi utama YONEX AC102 = Sistem 10 / Fisik 9 / Selisih -1 (bukan 201/350/+349), tidak ada kebocoran angka antar baris (Satuan 201 NESTLE tidak pernah muncul di baris lain, Sistem ODEA RED 45 ≠ ODEA ROSE 38), ODEA RED ≠ ODEA ROSE sebagai baris terpisah, aritmetika Fisik-Sistem=Selisih untuk seluruh 7 baris, sel deskripsi multi-baris tergabung benar, baris tidak lengkap/aritmetika salah -> PERLU_DICEK tanpa meminjam angka tetangga, header tidak ditemukan / 0 item -> fail-safe, dan urutan ekstraksi acak tetap direkonstruksi benar berdasarkan X/Y (bukan urutan array).
+- `lib/reconciliation-berita-acara-client-ocr.test.ts` — ditambah test untuk `extractInventoryBaPdfItems` (item + posisi dikembalikan apa adanya untuk PDF dengan koordinat; `null` untuk item tanpa `transform` atau file bukan PDF). Test lama yang memanggil `parseInventoryBaText` (fungsi yang sudah dihapus) pada output `groupPdfTextItemsIntoLines` disesuaikan — assertion `groupPdfTextItemsIntoLines` sendiri (dipakai flow BA omzet, tidak diubah) tetap dipertahankan.
+- `lib/inventory-ba-finalize-guard.test.ts` — tidak diubah (guard-nya tidak disentuh); tetap lulus karena hanya bergantung pada `normalizeInventoryBaName` yang dipertahankan.
+
+### Validasi
+
+- `node --test lib/inventory-ba-parser.test.ts lib/inventory-ba-table-parser.test.ts lib/inventory-ba-finalize-guard.test.ts`: 36/36 PASS, termasuk regresi utama YONEX AC102 = Sistem 10/Fisik 9/Selisih -1.
+- `npm run test:reconciliation-berita-acara` (parser BA omzet + client-ocr + UI, flow lain yang bersinggungan lewat file yang sama): 90/90 PASS.
+- `npm run test:inventory-stock-opname`: 22/22 PASS.
+- `npm run type-check`: PASS.
+- `npm run build`: PASS (exit 0), termasuk halaman `/reconciliation/inventory`.
+- `git diff --check`: PASS (hanya warning LF/CRLF Windows, bukan whitespace error).
+
+### Gap yang belum diselesaikan (out of scope pass ini)
+
+Tidak ada OCR table extraction (word-level bounding box + rekonstruksi spasial) untuk PDF BA hasil scan/foto atau JPG/PNG — untuk kasus itu hasil SELALU `inventoryBaParseFailure` (0 baris, PERLU_DICEK, wajib input manual), bukan ditebak dari OCR plain text. Ini konsisten dengan kebijakan "jangan pernah menebak", tapi berarti BA hasil scan/foto (bukan PDF native dengan text layer) tetap butuh input manual total di iterasi ini.
+
+Masih TIDAK ADA file PDF BA produksi asli di repo sebagai fixture (sama seperti dicatat di iterasi sebelumnya). Root cause dan fix di atas diverifikasi terhadap rekonstruksi koordinat X/Y realistis yang disintesis menirukan layout tabel BA produksi (header, urutan kolom, wrap deskripsi), BUKAN terhadap file PDF produksi asli byte-for-byte. Rekomendasi tetap sama: commit PDF BA Juli 2026 asli (redacted bila perlu) sebagai fixture di `tmp/fixtures/` untuk verifikasi byte-for-byte di iterasi berikutnya.
+
+### File berubah
+
+`lib/inventory-ba-parser.ts`, `lib/inventory-ba-parser.test.ts`, `lib/inventory-ba-table-parser.ts` (baru), `lib/inventory-ba-table-parser.test.ts` (baru), `lib/reconciliation-berita-acara-client-ocr.ts`, `lib/reconciliation-berita-acara-client-ocr.test.ts`, `lib/inventory-ba-client.ts`, `app/reconciliation/inventory/page.tsx`, `app/globals.css`, dan handoff ini. Tidak menyentuh `lib/inventory-ba-finalize-guard.ts`, Financial, YONEX, ODEA, kategori penjualan, atau flow BA rekonsiliasi omzet (`lib/reconciliation-berita-acara-parser.ts`).

@@ -869,6 +869,12 @@ th[scope],
 .recon-header p,.recon-back { color:rgb(var(--rd-text-tertiary)); font-size:.875rem; }
 .recon-back { text-decoration:none; } .recon-back:hover { color:rgb(var(--rd-text)); text-decoration:underline; }
 .recon-filters { max-width:1500px; margin:0 auto 1rem; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.75rem; padding:1rem; border:1px solid rgb(var(--rd-card-border)); border-radius:.875rem; background:linear-gradient(180deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); }
+/* Bug produksi: "Hasil Pembacaan Berita Acara" sebelumnya memakai class
+   .recon-filters (grid 4 kolom untuk field form kecil) untuk membungkus
+   judul + tabel lebar penuh, menyebabkan panel kosong tinggi tidak wajar
+   (isi terjepit ke 1 dari 4 kolom grid). Section ini butuh layout block
+   normal (bukan grid multi-kolom filter), tinggi menyesuaikan konten. */
+.recon-ba-results { max-width:1500px; margin:0 auto 1rem; display:grid; gap:.6rem; padding:1rem; border:1px solid rgb(var(--rd-card-border)); border-radius:.875rem; background:linear-gradient(180deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); }
 .recon-filters label,.recon-form label { display:grid; gap:.3rem; color:rgb(var(--rd-text-tertiary)); font-size:.75rem; font-weight:600; }
 .recon-filters input,.recon-filters select,.recon-form input,.recon-form select,.recon-form textarea { min-width:0; border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha)); border-radius:.45rem; background:rgb(var(--rd-surface) / var(--rd-surface-alpha)); color:rgb(var(--rd-text-secondary)); padding:.55rem .65rem; font:inherit; font-weight:400; }
 .recon-form textarea { min-height:4.5rem; resize:vertical; }

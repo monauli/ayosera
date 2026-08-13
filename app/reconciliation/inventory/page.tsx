@@ -568,7 +568,7 @@ export default function InventoryOpnamePage() {
       {saveError && <p className="recon-draft"><AlertTriangle /> {saveError}</p>}
 
       {baRows.length > 0 && (
-        <section className="recon-filters" aria-label="Hasil Pembacaan Berita Acara">
+        <section className="recon-ba-results" aria-label="Hasil Pembacaan Berita Acara">
           <h2 style={{ margin: 0 }}>Hasil Pembacaan Berita Acara</h2>
           <p className="recon-readonly">
             Periode BA: {baPeriod?.periodStart ?? "Perlu Dicek"} s/d {baPeriod?.cutoffDate ?? "Perlu Dicek"} · Cutoff: {baPeriod?.cutoffDate ?? "Perlu Dicek"} · Item ditemukan: {baRows.length} · Cocok: {baCocokCount} · Perlu Dicek: {baPerluDicekCount + baTidakDitemukanCount}
