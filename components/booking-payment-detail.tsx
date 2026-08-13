@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChildRow, ChildRowLabel, ChildRowList } from "@/components/booking-child-row";
 import { hasMultiPayment, type PaymentDetailBooking, type PaymentDetailRow } from "@/lib/booking-payment-detail-ui";
 
 export { hasMultiPayment, type PaymentDetailBooking, type PaymentDetailRow };
@@ -37,36 +38,41 @@ export function PaymentDetailToggle({
 }
 
 /**
- * Baris detail payment (dalam <tr> tersendiri, colSpan penuh) — TIDAK
- * menampilkan tanggal/jam sama sekali. `AyoPaymentEvent.eventDate` untuk
- * source_table "internal_reservation" (satu-satunya sumber kasus
+ * Baris detail payment — SATU CHILD ROW per payment, struktur dan className
+ * SAMA PERSIS dengan child row "Slot N" (multi-session) di
+ * booking-session-row.tsx: dipakai lewat komponen generik
+ * ChildRowList/ChildRow/ChildRowLabel (components/booking-child-row.tsx) yang
+ * literal sama untuk kedua fitur, bukan disalin manual. Setiap kolom adalah
+ * elemen terpisah (bukan satu kalimat panjang dengan em-dash).
+ *
+ * TIDAK menampilkan tanggal/jam payment sama sekali. `AyoPaymentEvent.eventDate`
+ * untuk source_table "internal_reservation" (satu-satunya sumber kasus
  * multi-payment yang ditemukan) hanya fallback ke tanggal sesi booking,
  * identik untuk setiap payment pada booking yang sama (dikonfirmasi lewat
  * query read-only produksi) — menampilkannya akan terlihat seperti dua
- * tanggal pembayaran berbeda padahal datanya sama persis. Hanya nominal dan
- * reference ID yang ditampilkan, sesuai data yang benar-benar dikirim AYO.
+ * tanggal pembayaran berbeda padahal datanya sama persis, jadi kolom itu
+ * SENGAJA tidak ada. Status/metode payment per-item juga tidak ada di
+ * `PaymentDetailRow` (lib/booking-payment-aggregate.ts hanya menurunkan
+ * `referenceId` dan `amount` dari payment-events) sehingga kolom itu pun
+ * tidak ditampilkan. Hanya nominal dan reference ID yang ditampilkan, sesuai
+ * data yang benar-benar dikirim AYO.
  */
 export function PaymentDetailList({ details }: { details: PaymentDetailRow[] }) {
   return (
-    <ul className="pl-6">
+    <ChildRowList>
       {details.map((detail, index) => (
-        <li
-          key={detail.referenceId || index}
-          className={`flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 text-xs text-slate-500 ${index ? "border-t border-white/5" : ""}`}
-        >
-          <span>
-            Pembayaran {index + 1}
-            {detail.referenceId && (
-              <>
-                {" "}
-                — Ref: <span className="text-slate-300">{detail.referenceId}</span>
-              </>
-            )}
-            {" "}
-            — Nominal: <span className="font-medium text-slate-200">{detail.amount}</span>
+        <ChildRow key={detail.referenceId || index} index={index}>
+          <ChildRowLabel>Pembayaran {index + 1}</ChildRowLabel>
+          {detail.referenceId && (
+            <span className="break-all text-slate-500">
+              Ref: <span className="text-slate-300">{detail.referenceId}</span>
+            </span>
+          )}
+          <span className="whitespace-nowrap text-slate-500">
+            Nominal: <span className="font-medium text-slate-200">{detail.amount}</span>
           </span>
-        </li>
+        </ChildRow>
       ))}
-    </ul>
+    </ChildRowList>
   );
 }

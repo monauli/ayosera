@@ -9,6 +9,7 @@ import {
   type SessionBooking,
 } from "@/lib/booking-session";
 import { getRevenueAmount } from "@/lib/revenue";
+import { ChildRow, ChildRowLabel, ChildRowList } from "@/components/booking-child-row";
 import {
   hasMultiPayment,
   PaymentDetailList,
@@ -125,16 +126,13 @@ export function BookingSessionRow({
           <td colSpan={columnCount} className="border-t border-white/10 bg-white/[0.04] px-2 py-1">
             {/* Nama, tanggal, court, dan total sesi sengaja TIDAK diulang di sini —
                 keempatnya sudah terbaca pada baris ringkas tepat di atasnya. */}
-            <ul className="pl-6">
+            <ChildRowList>
               {session.bookings.map((booking, index) => {
                 const counted = getRevenueAmount(booking as Record<string, unknown>) > 0;
                 const excluded = !counted && Number(booking.amountValue ?? 0) > 0;
                 return (
-                  <li
-                    key={booking.id}
-                    className={`flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 text-xs ${index ? "border-t border-white/5" : ""}`}
-                  >
-                    <span className="w-12 shrink-0 text-slate-500">Slot {index + 1}</span>
+                  <ChildRow key={booking.id} index={index}>
+                    <ChildRowLabel>Slot {index + 1}</ChildRowLabel>
                     <span className="whitespace-nowrap font-medium">
                       {booking.time} - {booking.endTime || "-"}
                     </span>
@@ -180,10 +178,10 @@ export function BookingSessionRow({
                         {expandedPayments.has(booking.id) && <PaymentDetailList details={booking.paymentDetails!} />}
                       </div>
                     )}
-                  </li>
+                  </ChildRow>
                 );
               })}
-            </ul>
+            </ChildRowList>
           </td>
         </tr>
       )}

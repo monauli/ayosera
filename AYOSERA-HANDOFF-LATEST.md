@@ -847,4 +847,75 @@ Hasil PERSIS cocok dengan temuan riset — mengonfirmasi ulang secara independen
 
 - Tidak ada perubahan pada YONEX/ODEA (audit maupun logic baru — perubahan cutoff bersifat generik per-produk lewat katalog, tidak ada branch nama produk).
 - Tidak ada perubahan pada `booking-payment-*`, `lib/olsera-financial-*`, atau `lib/reconciliation-omzet-period-lock*` (Lock Omzet) — dikonfirmasi lewat `git diff --stat` (lihat daftar file di atas, tidak ada file-file tersebut di dalamnya).
+
+---
+
+## Fix UI: child row terpisah untuk detail multi-payment di Transaksi (reuse pola "Slot N") — 2026-08-13
+
+### Masalah yang diperbaiki
+
+Detail expand multi-payment di halaman Transaksi (`components/booking-payment-detail.tsx`, dipakai `components/booking-session-row.tsx` dan `app/page.tsx`) sebelumnya me-render satu payment sebagai SATU BARIS TEKS PANJANG digabung em-dash: `"Pembayaran 1 — Ref: 2742703 — Nominal: Rp150.000"`. Ini murni masalah visual (struktur JSX-nya satu `<span>` berisi seluruh kalimat) — bukan masalah data. Perbaikan ini SEPENUHNYA presentasi (JSX/className), tidak menyentuh logic total/dedup/API sama sekali.
+
+### Perubahan
+
+1. **`components/booking-child-row.tsx`** (BARU) — komponen struktural generik `ChildRowList` (`<ul className="pl-6">`), `ChildRow` (`<li>` dengan `flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 text-xs` + `border-t border-white/5` mulai index ke-2), dan `ChildRowLabel` (`<span className="w-12 shrink-0 text-slate-500">`) — diekstrak PERSIS dari pola child row "Slot N" (multi-session) yang sudah stabil, supaya kedua fitur (Slot N dan Pembayaran N) memakai className yang LITERAL SAMA dari satu sumber, bukan disalin manual dan berisiko menyimpang.
+2. **`components/booking-session-row.tsx`** — direfactor untuk memakai `ChildRowList`/`ChildRow`/`ChildRowLabel` alih-alih `<ul className="pl-6">`/`<li className={...}>`/`<span className="w-12 shrink-0 text-slate-500">` inline. Ini REFACTOR MURNI (classNames yang dipindah identik karakter-per-karakter dengan yang sebelumnya ada di file ini) — tidak ada perubahan visual pada fitur "Slot N" yang sudah stabil. Field lain di dalam tiap slot (waktu, Booking ID, Nominal slot, badge status, Reschedule, Harga Diubah) TIDAK diubah sama sekali.
+3. **`components/booking-payment-detail.tsx`** — `PaymentDetailList` ditulis ulang: setiap payment sekarang jadi SATU `ChildRow` dengan kolom terpisah sebagai elemen DOM sendiri-sendiri (bukan satu string dengan em-dash):
+   - `ChildRowLabel` → `Pembayaran {index + 1}` (posisi & style identik dengan `Slot {index + 1}`).
+   - `<span className="break-all text-slate-500">Ref: <span className="text-slate-300">{referenceId}</span></span>` — className identik dengan field "Booking: {id}" di Slot N.
+   - `<span className="whitespace-nowrap text-slate-500">Nominal: <span className="font-medium text-slate-200">{amount}</span></span>` — className identik dengan field "Nominal slot: {amount}" di Slot N.
+   - Kolom tanggal/jam payment asli **TIDAK ditambahkan** — `PaymentDetailRow` (`lib/booking-payment-aggregate.ts:paymentDetailsFor`) hanya punya field `referenceId` dan `amount`; tidak ada timestamp payment asli di pipeline (`lib/ayo-payment-events.ts`/`AyoPaymentEvent.eventDate` untuk `source_table: internal_reservation` adalah fallback ke tanggal sesi booking, BUKAN tanggal pembayaran — dikonfirmasi ulang lewat pembacaan `lib/ayo-payment-events.ts` dan komentar existing di `lib/booking-payment-aggregate.ts`/`components/booking-session-row.tsx`). Sesuai rule #9/#10 di task: kolom ini TIDAK ditampilkan, TIDAK diisi dengan tanggal sesi sebagai pengganti, dan TIDAK ada field baru ditambahkan ke pipeline (di luar scope UI-only).
+   - Kolom status/metode payment per-item **TIDAK ditambahkan** — field itu juga tidak ada di `PaymentDetailRow`/`paymentDetailsFor` (hanya `referenceId`+`amount` yang diturunkan dari payment-events untuk UI ini).
+   - Kalimat panjang dengan em-dash (`—`) sudah SEPENUHNYA dihapus dari file.
+4. Badge "N pembayaran" (dihapus di `b09d6a5`) TIDAK dimunculkan kembali — `PaymentDetailToggle` (chevron polos) tidak diubah sama sekali.
+
+### File yang diubah
+
+- `components/booking-child-row.tsx` (baru) — struktur child-row generik dipakai bersama.
+- `components/booking-session-row.tsx` — refactor pakai komponen generik (classNames identik, tidak ada perubahan visual pada fitur Slot N).
+- `components/booking-payment-detail.tsx` — `PaymentDetailList` ditulis ulang jadi child row terpisah per kolom.
+
+### Validasi visual/structural (tidak ada browser interaktif tersedia — dilakukan secara code-level)
+
+Karena agent ini headless tanpa browser, validasi dilakukan lewat perbandingan className literal di kode (pendekatan paling kuat untuk membuktikan "identik", bukan "mirip"):
+
+1. **Satu sumber untuk wrapper/label** — `booking-session-row.tsx` dan `booking-payment-detail.tsx` sama-sama `import { ChildRow, ChildRowLabel, ChildRowList } from "@/components/booking-child-row"` dan TIDAK ADA literal className `pl-6`/`flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 text-xs`/`w-12 shrink-0 text-slate-500` yang diketik ulang di kedua file itu (dicek dengan grep — nol hasil di luar `booking-child-row.tsx`). Karena keduanya memanggil fungsi React yang SAMA persis, wrapper `<ul>`/`<li>` dan label kolom pertama dijamin identik secara struktural oleh compiler, bukan oleh disiplin menyalin manual.
+2. **Field kolom lain dibandingkan literal berdampingan**:
+   - Slot: `<span className="break-all text-slate-500">Booking: <span className="text-slate-300">{booking.id}</span></span>`
+   - Payment: `<span className="break-all text-slate-500">Ref: <span className="text-slate-300">{detail.referenceId}</span></span>`
+   - Slot: `<span className="whitespace-nowrap text-slate-500">Nominal slot: <span className="font-medium text-slate-200">{booking.amount}</span></span>`
+   - Payment: `<span className="whitespace-nowrap text-slate-500">Nominal: <span className="font-medium text-slate-200">{detail.amount}</span></span>`
+
+   className pada tiap pasangan field identik karakter-per-karakter (hanya teks label dan variabel isi yang beda, sesuai instruksi).
+3. Tidak ada file `*.test.tsx`/DOM-render test di project ini (dicek `Glob **/*.test.tsx` → kosong) sehingga tidak ada test render existing yang bisa diperbarui/ditambah assert className langsung; validasi struktural di atas (satu sumber komponen + perbandingan literal) adalah bukti terkuat yang bisa dihasilkan tanpa browser.
+4. `npm run dev` + curl tidak dijalankan — halaman Transaksi (`/`) memerlukan session login (dikonfirmasi lewat middleware auth project), tidak ada route publik yang merender tabel Transaksi tanpa auth, sehingga langkah ini di-skip sesuai instruksi ("skip kalau butuh auth session yang tidak tersedia — jangan mencoba bypass auth").
+
+### Hasil test/typecheck/build
+
+- `npm run test:booking-payment-detail-ui` — **5/5 PASS** (logic `hasMultiPayment` tidak disentuh, tidak ada assertion string format yang perlu diupdate — test ini murni logic, bukan render).
+- `npm run test:booking-payment-aggregate` — **12/12 PASS** (total/dedup/`paymentDetailsFor` tidak disentuh sama sekali).
+- `npm run test:booking-session` — **36/36 PASS**, termasuk test #32 (komentar audit "detail pembayaran per booking SENGAJA TIDAK ditampilkan" tetap ada di `booking-session-row.tsx`, tidak terhapus oleh refactor).
+- `npm run test:booking-mapper` — **4/4 PASS**.
+- `npm run type-check` — PASS, tanpa error.
+- `npm run build` — PASS (exit code 0), build production sukses, tidak ada error compile di file yang diubah.
+- `git diff --check` — PASS, tanpa whitespace error.
+- Tidak ada test file lama yang assertion-nya menguji format teks em-dash secara literal (dicek: hanya `lib/booking-payment-aggregate.test.ts`, `lib/booking-mapper.test.ts`, `lib/booking-session.test.ts`, `lib/booking-payment-detail-ui.test.ts` yang relevan — semuanya test logic murni, tidak ada yang me-render JSX/assert string tampilan), jadi tidak ada assertion lama yang perlu diubah.
+
+### Konfirmasi rules keras dipenuhi
+
+- Setiap payment = child row terpisah secara struktural (elemen `<span>` per kolom, bukan satu string) — lihat kode di atas.
+- className/layout identik dengan child row Slot N — dijamin lewat komponen generik satu sumber (`booking-child-row.tsx`), bukan sekadar disalin.
+- Tidak ada kalimat panjang satu baris lagi — literal `—` (em-dash) sudah hilang dari `booking-payment-detail.tsx`.
+- Tidak ada badge "N pembayaran" — `PaymentDetailToggle` tidak diubah, tetap chevron polos.
+- Baris utama Transaksi tetap 1 booking = 1 baris — `app/page.tsx`/`booking-session-row.tsx` baris `<tr>` utama tidak disentuh.
+- Nominal utama tetap total, logic tidak disentuh — `lib/booking-payment-aggregate.ts`, `lib/booking-mapper.ts`, `app/api/transactions/route.ts` **0 baris diubah** (dikonfirmasi `git status`/`git diff --stat`).
+- Single payment tidak berubah — `hasMultiPayment` (logic gating expand) tidak diubah, chevron/expand tetap hanya muncul untuk >1 payment.
+- Chevron expand/collapse tetap ada — `PaymentDetailToggle` tidak disentuh.
+- Tidak ada tanggal/jam sesi booking dipakai sebagai tanggal payment — kolom itu memang tidak ditambahkan sama sekali (lihat penjelasan di atas).
+- Tidak ada field baru ditambahkan ke `lib/ayo-payment-events.ts`/pipeline data — dikonfirmasi `git status` (file itu tidak ada di daftar perubahan).
+
+### Konfirmasi scope lain TIDAK disentuh
+
+- `lib/booking-payment-aggregate.ts` (`aggregateBookingPayments`, `withBookingPaymentTotals`, `paymentDetailsFor`), `lib/ayo-payment-events.ts` (`paymentEventIdentity`), `app/api/transactions/route.ts` — **0 baris diubah** (dikonfirmasi `git status`: hanya `components/booking-child-row.tsx` (baru), `components/booking-payment-detail.tsx`, `components/booking-session-row.tsx` yang tersentuh, plus file handoff ini).
+- Export (`export/bulanan`, `export/harian`), Dashboard (`app/api/dashboard/route.ts`), Rekonsiliasi (`lib/reconciliation-*`), Inventory (`lib/inventory-stock-opname*`), Financial (`lib/olsera-financial-*`) — tidak ada satu pun file di area-area ini pada diff sesi ini.
 - Lock stock opname TIDAK memfreeze inventory setelah cutoff — dikonfirmasi arsitektural + test regresi baru (lihat Rule 5 di atas); cron `app/api/cron/olsera/inventory` tetap jalan untuk semua tanggal tanpa gate apa pun dari modul rekonsiliasi ini.
