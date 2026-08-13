@@ -170,6 +170,11 @@ function entryToDocument(entry: MonthlyLedgerEntry, storeId: number, month: Mont
   // ensureMonthlySnapshotChain akan menghitung ulang di panggilan berikutnya);
   // Date `now` bila bulan ini SUDAH "historical" saat ditulis (dipercaya final).
   const periodState = getInventoryPeriodState(month.year, month.month, now);
+  const valuesKnown = [entry.openingQty, entry.incomingQty, entry.returnQty, entry.salesQty, entry.outgoingQty, entry.closingQty].every((value) => value !== null && Number.isFinite(value));
+  const expectedClosing = valuesKnown ? (entry.openingQty as number) + (entry.incomingQty as number) + (entry.returnQty as number) - (entry.salesQty as number) - (entry.outgoingQty as number) : null;
+  const arithmeticMismatch = expectedClosing !== null && expectedClosing !== entry.closingQty;
+  const status = arithmeticMismatch ? "incomplete" : entry.status;
+  const diagnostics = arithmeticMismatch ? [...entry.diagnostics, `Formula histori tidak konsisten: closing ${entry.closingQty} berbeda dari hasil opening + incoming + return - sales - outgoing = ${expectedClosing}. Closing tidak dianggap final.`] : entry.diagnostics;
   return {
     _id: monthlySnapshotDocId(storeId, month.year, month.month, entry.productId, entry.variantId),
     storeId,
@@ -189,8 +194,8 @@ function entryToDocument(entry: MonthlyLedgerEntry, storeId: number, month: Mont
     outgoingQty: entry.outgoingQty,
     closingQty: entry.closingQty,
     source: entry.source,
-    status: entry.status,
-    diagnostics: entry.diagnostics,
+    status,
+    diagnostics,
     finalizedAt: periodState === "historical" ? now : null,
     createdAt: now,
     updatedAt: now,

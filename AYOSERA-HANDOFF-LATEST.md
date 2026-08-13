@@ -1345,3 +1345,12 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - BA-matched rows now auto-fill `physicalQty` from BA physical stock even when status `Perlu Dicek`; `Dibaca dari BA` provenance remains only for actual BA matches. Omitted items retain BA-only assumed-match behavior without the badge.
 - No formula, source, adjustment, finalization, lock, snapshot, cron, or YONEX/ODEA historical logic changed.
 - Tests: `test:olsera-audit` 16/16, inventory stock-opname 31+22, BA/reconciliation 90, inventory UI 50/50, type-check PASS, build PASS, diff-check PASS.
+## 2026-08-14 — YONEX + ODEA historical inventory safety
+
+- YONEX old/new identity remains isolated through the verified alias path; no raw Olsera data or product IDs were rewritten. The existing verified evidence path supports the proven Feb–Jul chain (15, 12, Apr pre-opname 8 / post-opname 6, 4, 1, 0) when the scoped rebuild source is available.
+- ODEA RED remains a separate product from ROSE. Its proven incoming/opname evidence is not converted into fake sales or merged into ROSE.
+- ODEA ROSE July remains partial-safe/incomplete when the official 11 vs AYOSERA 9 sales mismatch is unresolved; no automatic choice was added.
+- Added generic snapshot write guard: when all ledger fields are known but closing does not equal opening + incoming + return - sales - outgoing, the document is marked `incomplete` with a diagnostic instead of being presented as final. Unknown values remain null.
+- No production snapshot rebuild/write was executed in this pass because the exact live source evidence for the requested historical values was not available in a safe, read-only run; no numbers were invented.
+- Tests: inventory monthly suite 229/229 PASS, type-check PASS, build PASS, diff-check PASS.
+- Next production acceptance: run a scoped read-only audit/rebuild preview for YONEX and ODEA ROSE/RED; write only after exact source evidence confirms the requested chain and inspect incomplete diagnostics before approval.
