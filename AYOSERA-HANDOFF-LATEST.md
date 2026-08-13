@@ -1010,3 +1010,7 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 - No database write was performed for YONEX, RED, or ROSE.
 - Targeted inventory tests/typecheck from the existing codebase remain the next required validation after source access is available; build was not rerun because this attempt produced no code change.
 - Commit/push: not performed because the requested finalization and required exact ROSE extraction are blocked by unavailable database/source read.
+# Final label fix multi-payment — 2026-08-13
+
+- Label visible parent/toggle multi-payment diubah dari `${count} pembayaran` menjadi `${count} sesi`.
+- Child tetap memakai `Pembayaran 1`, `Pembayaran 2`, dst.; paymentCount, total, state expand/collapse, API, database, dan modul lain tidak disentuh.
