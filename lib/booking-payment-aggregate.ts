@@ -73,6 +73,8 @@ export type BookingPaymentDetail = {
   /** `reservationPaymentId` bila ada (identitas AYO paling manusiawi); jatuh ke sourceId/nativeId/identity bila kosong. */
   referenceId: string;
   amount: number;
+  eventDate: Date;
+  eventDateSource: string;
 };
 
 /**
@@ -100,5 +102,7 @@ export function paymentDetailsFor(aggregate: Pick<BookingPaymentAggregate, "even
     .map((event) => ({
       referenceId: event.reservationPaymentId || event.sourceId || event.nativeId || event.identity,
       amount: event.amount,
+      eventDate: event.eventDate,
+      eventDateSource: event.eventDateSource,
     }));
 }

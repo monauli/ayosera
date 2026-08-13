@@ -107,7 +107,7 @@ type TransactionRow = {
   fieldChanges?: { field: string; from: string; to: string }[];
   /** Hanya diisi API saat booking punya >1 payment event (lihat lib/booking-payment-aggregate.ts). */
   paymentCount?: number;
-  paymentDetails?: { referenceId: string; amount: string; amountValue: number }[];
+  paymentDetails?: { referenceId: string; amount: string; amountValue: number; paymentTime?: string }[];
 };
 type DatePreset = "today" | "yesterday" | "week" | "month" | "lastMonth" | "custom" | "manualMonth";
 
@@ -2501,7 +2501,16 @@ export default function DashboardPage() {
                               {transaction.time} - {transaction.endTime || "-"}
                             </td>
                             <td className="px-2 py-2">
-                              <p className="whitespace-nowrap font-medium">{transaction.id}</p>
+                              {multiPayment ? (
+                                <PaymentDetailToggle
+                                  count={transaction.paymentCount!}
+                                  expanded={paymentExpanded}
+                                  onToggle={() => togglePaymentDetail(transaction.id)}
+                                  customer={transaction.customer}
+                                />
+                              ) : (
+                                <p className="whitespace-nowrap font-medium">{transaction.id}</p>
+                              )}
                               {transaction.note && transaction.note !== "-" && (
                                 <p className="max-w-[240px] truncate text-xs text-slate-500">{transaction.note}</p>
                               )}
@@ -2511,16 +2520,6 @@ export default function DashboardPage() {
                             <td className="max-w-[180px] truncate px-2 py-2">{transaction.service}</td>
                             <td className="px-2 py-2 text-right font-medium">
                               {transaction.amount}
-                              {multiPayment && (
-                                <div className="flex justify-end">
-                                  <PaymentDetailToggle
-                                    count={transaction.paymentCount!}
-                                    expanded={paymentExpanded}
-                                    onToggle={() => togglePaymentDetail(transaction.id)}
-                                    customer={transaction.customer}
-                                  />
-                                </div>
-                              )}
                             </td>
                             <td className="px-2 py-2">
                               <Badge variant={statusVariant(transaction.status)}>{statusLabel(transaction.status)}</Badge>
@@ -2545,7 +2544,7 @@ export default function DashboardPage() {
                           {multiPayment && paymentExpanded && (
                             <tr>
                               <td colSpan={9} className="border-t border-white/10 bg-white/[0.04] px-2 py-1">
-                                <PaymentDetailList details={transaction.paymentDetails!} />
+                                <PaymentDetailList details={transaction.paymentDetails!} bookingId={transaction.id} />
                               </td>
                             </tr>
                           )}

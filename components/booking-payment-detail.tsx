@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { ChildRow, ChildRowLabel, ChildRowList } from "@/components/booking-child-row";
 import { hasMultiPayment, type PaymentDetailBooking, type PaymentDetailRow } from "@/lib/booking-payment-detail-ui";
 
@@ -30,9 +31,10 @@ export function PaymentDetailToggle({
       onClick={onToggle}
       aria-expanded={expanded}
       aria-label={`${expanded ? "Tutup" : "Buka"} detail ${count} pembayaran untuk ${customer}`}
-      className="mt-1 inline-flex min-h-[32px] items-center justify-center rounded-md px-1.5 py-1 text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+      className="-ml-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 py-1 text-left text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
     >
       <Chevron className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
+      <span className="whitespace-nowrap text-xs">{count} pembayaran</span>
     </button>
   );
 }
@@ -57,20 +59,20 @@ export function PaymentDetailToggle({
  * tidak ditampilkan. Hanya nominal dan reference ID yang ditampilkan, sesuai
  * data yang benar-benar dikirim AYO.
  */
-export function PaymentDetailList({ details }: { details: PaymentDetailRow[] }) {
+export function PaymentDetailList({ details, bookingId }: { details: PaymentDetailRow[]; bookingId: string }) {
   return (
     <ChildRowList>
       {details.map((detail, index) => (
         <ChildRow key={detail.referenceId || index} index={index}>
           <ChildRowLabel>Pembayaran {index + 1}</ChildRowLabel>
-          {detail.referenceId && (
-            <span className="break-all text-slate-500">
-              Ref: <span className="text-slate-300">{detail.referenceId}</span>
-            </span>
-          )}
-          <span className="whitespace-nowrap text-slate-500">
-            Nominal: <span className="font-medium text-slate-200">{detail.amount}</span>
+          {detail.paymentTime && <span className="whitespace-nowrap font-medium">{detail.paymentTime}</span>}
+          <span className="break-all text-slate-500">
+            Booking: <span className="text-slate-300">{bookingId}</span>
           </span>
+          <span className="whitespace-nowrap text-slate-500">
+            Nominal pembayaran: <span className="font-medium text-slate-200">{detail.amount}</span>
+          </span>
+          <Badge variant="success">Selesai</Badge>
         </ChildRow>
       ))}
     </ChildRowList>

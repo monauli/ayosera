@@ -977,3 +977,9 @@ export function ChildRowLabel({ children }: { children: ReactNode }) {
 - `git status` menunjukkan hanya `components/booking-child-row.tsx` (plus file handoff ini) yang berubah pada sesi ini.
 - Tidak ada perubahan pada `lib/booking-payment-aggregate.ts`, `lib/ayo-payment-events.ts`, `app/api/transactions/route.ts`, Export, Dashboard, Rekonsiliasi, Inventory, Financial, YONEX, ODEA.
 - Baris utama Transaksi (1 booking = 1 baris, total payment) tidak disentuh. Single payment tidak berubah. Chevron toggle tetap ada, tidak diubah.
+# Final fix UI multi-payment — 2026-08-13
+
+- Parent multi-payment di Transaksi sekarang memakai mekanisme parent/child yang sama dengan `2 sesi`: toggle berada di kolom booking, chevron/spacing/behavior sama, label `2 pembayaran`, dan ID booking tidak tampil di parent.
+- Child payment memakai struktur `ChildRow` yang sama: `Pembayaran N`, waktu payment asli hanya bila field timestamp payment tersedia, `Booking: <booking_id>`, `Nominal pembayaran: Rp...`, dan status `Selesai`.
+- `Ref:` dihapus dari UI; tidak ada badge/pill dan tidak ada child payment sebagai teks panjang. Total, agregasi, API source, export, dashboard, reconciliation, dan area lain tidak diubah.
+- Validasi: targeted booking/payment tests PASS, typecheck PASS, build PASS, `git diff --check` PASS.

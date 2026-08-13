@@ -5,7 +5,7 @@
  * lib/booking-session.ts di belakang komponen "X sesi".
  */
 
-export type PaymentDetailRow = { referenceId: string; amount: string };
+export type PaymentDetailRow = { referenceId: string; amount: string; paymentTime?: string };
 
 /** Bentuk minimal baris transaksi yang punya rincian payment (structural, bukan duplikasi tipe UI). */
 export type PaymentDetailBooking = {

@@ -42,12 +42,20 @@ export function normalizeField(raw: Record<string, unknown>): FieldDocument {
 }
 
 /** Rincian pembayaran opsional (lihat lib/booking-payment-aggregate.ts paymentDetailsFor). */
-export type TransactionRowPayment = { count: number; details: { referenceId: string; amount: number }[] };
+export type TransactionRowPayment = { count: number; details: { referenceId: string; amount: number; eventDate?: Date; eventDateSource?: string }[] };
 
 const currencyFormat = new Intl.NumberFormat("id-ID", {
   style: "currency",
   currency: "IDR",
   maximumFractionDigits: 0,
+});
+const paymentDateFormat = new Intl.DateTimeFormat("id-ID", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
 });
 
 /**
@@ -68,6 +76,10 @@ export function toTransactionRow(booking: BookingDocument, payment?: Transaction
             referenceId: detail.referenceId,
             amount: currencyFormat.format(detail.amount),
             amountValue: detail.amount,
+            paymentTime:
+              detail.eventDate && detail.eventDateSource !== "date" && detail.eventDateSource !== "fallback-synced-at"
+                ? paymentDateFormat.format(detail.eventDate)
+                : undefined,
           })),
         }
       : {};

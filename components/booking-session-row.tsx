@@ -175,7 +175,7 @@ export function BookingSessionRow({
                           onToggle={() => onTogglePayment(booking.id)}
                           customer={booking.customer}
                         />
-                        {expandedPayments.has(booking.id) && <PaymentDetailList details={booking.paymentDetails!} />}
+                        {expandedPayments.has(booking.id) && <PaymentDetailList details={booking.paymentDetails!} bookingId={booking.id} />}
                       </div>
                     )}
                   </ChildRow>
