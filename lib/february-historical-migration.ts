@@ -12,9 +12,11 @@ type BuiltInRow = FebruaryHistoricalRow;
 function resolve(rows: readonly BuiltInRow[], products: readonly OlseraInventoryProductDocument[]): HistoricalInventoryRow[] {
   return rows.map((source) => {
     const wanted = normalize(source.product);
+    const embeddedSku = source.product.match(/#\s*([A-Z0-9-]+)$/i)?.[1] ?? source.sku;
     const candidates = products.filter((product) => {
       const name = normalize(product.name);
-      return name === wanted || (wanted === "bolapadelodea" && name.includes("odearose")) || (wanted.includes("plocomfort") && name.includes("xplocomfort"));
+      const skuMatches = embeddedSku && product.sku && normalize(product.sku) === normalize(embeddedSku);
+      return skuMatches || name === wanted || (wanted === "bolapadelodea" && name.includes("odearose")) || (wanted.includes("plocomfort") && name.includes("xplocomfort"));
     });
     if (candidates.length !== 1) throw new Error(`Identitas historical tidak unik: ${source.product}`);
     const product = candidates[0];
