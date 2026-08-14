@@ -21,6 +21,7 @@ import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-cron-lock";
 import { isDatabaseTimeoutError, withDatabaseRetry } from "@/lib/mongodb-errors";
 import { shouldStopCronLoop, type CronLoopStopReason } from "@/lib/olsera-inventory-core";
+import { runFebruaryHistoricalMigration } from "@/lib/february-historical-migration";
 
 // HARUS <= maxDuration route (app/api/cron/olsera/inventory/route.ts) — loop
 // berhenti memulai step BARU jauh sebelum Vercel mematikan function, supaya
@@ -79,6 +80,7 @@ export async function runOlseraInventoryCron(authHeader: string | null): Promise
   console.log(`[cron:olsera:inventory] runId=${runId} startedAt=${startedAt.toISOString()} deadline=${new Date(deadlineMs).toISOString()}`);
 
   try {
+    const historical = await runFebruaryHistoricalMigration();
     // startInventorySync melanjutkan run "running" yang belum selesai
     // (checkpoint tersimpan), bukan membuat run baru — aman dipanggil ulang.
     // Dipanggil TEPAT SEKALI per invocation; loop di bawah HANYA memanggil
@@ -125,6 +127,7 @@ export async function runOlseraInventoryCron(authHeader: string | null): Promise
           iterations,
           done: false,
           continuation: "none",
+          historical,
           safeErrorCode: "step-failed",
         },
       };
@@ -156,6 +159,7 @@ export async function runOlseraInventoryCron(authHeader: string | null): Promise
         // run SENGAJA dibiarkan status "running" untuk dilanjutkan invocation
         // cron berikutnya — bukan kegagalan.
         continuation,
+        historical,
         message: finished
           ? `Sync selesai dalam ${iterations} langkah pada invocation ini.`
           : continuation === "max-iterations"

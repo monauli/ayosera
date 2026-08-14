@@ -695,6 +695,15 @@ export type OlseraInventoryStateDocument = {
   /** API Olsera tidak menyediakan histori mutasi/adjustment — hanya stok saat ini + penjualan. */
   historyCoverage: "snapshot-only";
   updatedAt: Date;
+  februaryHistoricalImport?: {
+    status: "running" | "complete" | "failed";
+    startedAt?: Date;
+    completedAt?: Date;
+    failedAt?: Date;
+    counts?: { sold: number; unsold: number; overall: number };
+    incomplete?: number;
+    message?: string;
+  };
 };
 
 /**

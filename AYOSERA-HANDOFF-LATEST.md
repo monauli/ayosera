@@ -1805,3 +1805,13 @@ Keep the decided tabs for the follow-up task: `Stok Terjual`, `Stok Tidak Terjua
 ### Next controlled scope
 
 Restore read-only Mongo connectivity, re-run the same 17-item join against the 31 rows plus verified aliases and all available February–August sources, then review the report. Only after review may a separate task define any February write scope. No production write was performed by this audit.
+# CRON FEBRUARI 2026 — DIRECT SERVER IMPORT (2026-08-15)
+
+- Ditambahkan importer langsung di jalur cron inventori existing: tanpa HTTP, browser, login user, atau perubahan stok Olsera.
+- Source built-in tervalidasi: 31 terjual, 17 tidak terjual, 48 keseluruhan; identitas memakai katalog production yang sama dengan alur historical.
+- Import memakai marker atomik `februaryHistoricalImport` pada state inventori. Status `complete` dilewati pada cron berikutnya; status gagal dapat divalidasi ulang. Snapshot di-upsert dengan ID deterministik sehingga tidak menggandakan barang.
+- Dua selisih aritmetika tetap disimpan sebagai `incomplete` dengan diagnostics. Februari tidak dikunci dan tidak ada pemanggilan fungsi lock.
+- Pemeriksaan lokal: typecheck PASS; cron inventory tests 15 PASS; inventory core 48 PASS; inventory UI PASS; monthly inventory suite 230 PASS; source/import tests 4 PASS; `git diff --check` PASS; build PASS. `npm test` tidak tersedia sebagai script repo.
+- Production write/read-back belum dijalankan pada sesi ini karena cron existing memerlukan pemicu scheduler/secret yang tidak tersedia secara aman di workspace. Tidak ada write production dan tidak ada lock yang dilakukan oleh sesi ini.
+- Commit `e27cf37` sudah dibuat dan dipush ke `origin/main`. Endpoint production saat dibaca anonim mengembalikan HTTP 401; tidak ada sesi/token yang digunakan.
+- Langkah berikutnya: deploy commit ini, biarkan scheduler existing menjalankan cron, lalu baca status marker/API Februari dan verifikasi tab Stok Terjual, Stok Tidak Terjual, Stok Keseluruhan, Riwayat Mutasi, Rekonsiliasi, dan Export.

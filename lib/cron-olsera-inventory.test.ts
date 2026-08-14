@@ -65,6 +65,10 @@ mock.module("@/lib/olsera-cron-lock", {
   },
 });
 
+mock.module("@/lib/february-historical-migration", {
+  namedExports: { runFebruaryHistoricalMigration: mock.fn(async () => ({ status: "skipped" })) },
+});
+
 const { runOlseraInventoryCron, ROUTE_MAX_DURATION_MS, LOOP_BUDGET_MS, MAX_STEP_ITERATIONS } = await import("./cron-olsera-inventory.ts");
 
 /** Antrean implementasi manual untuk stepInventorySyncMock — lihat catatan di atas soal mockImplementationOnce. */
