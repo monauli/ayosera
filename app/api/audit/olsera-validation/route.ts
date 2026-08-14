@@ -59,9 +59,14 @@ export async function GET(request: Request) {
         return { ...reports, status: Object.values(reports).every((x) => x.status === "Cocok") ? "Cocok" : "Selisih", ledgerAccounts: { checked: newRows.length, matching: newRows.length - differences.length, differences } };
       })(),
     ]);
-    result.category = sections[0].status === "fulfilled" ? sections[0].value : failed(sections[0].reason);
-    result.inventory = sections[1].status === "fulfilled" ? sections[1].value : failed(sections[1].reason);
-    result.financial = sections[2].status === "fulfilled" ? sections[2].value : failed(sections[2].reason);
+    // Saat `section` diisi, IIFE section lain sengaja short-circuit ke stub
+    // `{status}` di atas (baris 31/39/48) — TIDAK diikutsertakan di sini, supaya
+    // response tidak membawa key stub yang, lewat Object.assign berurutan di
+    // OlseraValidationPanel.validate(), akan menimpa hasil section lain yang
+    // sudah lengkap dari fetch sebelumnya (root cause NaN/"-"/0-0 di production).
+    if (!section || section === "category") result.category = sections[0].status === "fulfilled" ? sections[0].value : failed(sections[0].reason);
+    if (!section || section === "inventory") result.inventory = sections[1].status === "fulfilled" ? sections[1].value : failed(sections[1].reason);
+    if (!section || section === "financial") result.financial = sections[2].status === "fulfilled" ? sections[2].value : failed(sections[2].reason);
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Validasi Olsera gagal dijalankan." }, { status: 500 }); }
 }

@@ -34,6 +34,71 @@ function DetailList({ items }: { items: unknown[] | undefined }) {
   return <div className="mt-2 space-y-1 text-xs text-slate-400">{items.slice(0, 10).map((item, index) => <div key={index} className="rounded bg-black/10 px-2 py-1">{typeof item === "string" ? item : JSON.stringify(item)}</div>)}</div>;
 }
 
+// Null-safe numeric display — sumber utama NaN production sebelumnya adalah
+// subtraction langsung atas field yang bisa undefined. Semua angka di panel
+// ini WAJIB lewat sini, tidak pernah subtraction/interpolasi mentah lagi.
+function fmt(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("id-ID") : "-";
+}
+function fmtDelta(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${value > 0 ? "+" : ""}${value.toLocaleString("id-ID")}`;
+}
+
+type ReportTotals = Record<string, { ayosera: number | null; olsera: number | null; delta: number | null } | undefined>;
+
+function TotalsTable({ title, totals }: { title: string; totals: ReportTotals | undefined }) {
+  const keys = totals ? Object.keys(totals) : [];
+  if (!keys.length) return null;
+  return (
+    <details className="mt-2 rounded-lg border border-white/10 bg-black/10 p-2">
+      <summary className="cursor-pointer text-xs font-medium text-slate-200">{title}</summary>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="text-slate-500"><tr><th className="pr-2 py-1">Field</th><th className="pr-2 py-1">AYOSERA</th><th className="pr-2 py-1">Olsera</th><th className="py-1">Delta</th></tr></thead>
+          <tbody>
+            {keys.map((key) => (
+              <tr key={key} className="border-t border-white/5 text-slate-300">
+                <td className="pr-2 py-1">{key}</td>
+                <td className="pr-2 py-1">{fmt(totals![key]?.ayosera)}</td>
+                <td className="pr-2 py-1">{fmt(totals![key]?.olsera)}</td>
+                <td className="py-1">{fmtDelta(totals![key]?.delta)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
+type LedgerDifference = { accountCode: string; name: unknown; ayosera: Record<string, unknown>; olsera: Record<string, unknown> };
+
+function LedgerMismatchTable({ checked, differences }: { checked: number | undefined; differences: LedgerDifference[] | undefined }) {
+  if (!differences?.length) return null;
+  return (
+    <details className="mt-2 rounded-lg border border-white/10 bg-black/10 p-2">
+      <summary className="cursor-pointer text-xs font-medium text-slate-200">{differences.length} dari {fmt(checked)} akun mismatch — lihat detail</summary>
+      <div className="mt-2 max-h-72 overflow-y-auto overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="text-slate-500"><tr><th className="pr-2 py-1">Kode</th><th className="pr-2 py-1">Nama</th><th className="pr-2 py-1">Debit A/O</th><th className="pr-2 py-1">Credit A/O</th><th className="py-1">Saldo A/O</th></tr></thead>
+          <tbody>
+            {differences.map((row) => (
+              <tr key={row.accountCode} className="border-t border-white/5 text-slate-300">
+                <td className="pr-2 py-1">{row.accountCode}</td>
+                <td className="pr-2 py-1">{typeof row.name === "string" ? row.name : "-"}</td>
+                <td className="pr-2 py-1">{fmt(row.ayosera?.debit)} / {fmt(row.olsera?.debit)}</td>
+                <td className="pr-2 py-1">{fmt(row.ayosera?.credit)} / {fmt(row.olsera?.credit)}</td>
+                <td className="py-1">{fmt(row.ayosera?.balance)} / {fmt(row.olsera?.balance)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
 export function OlseraValidationPanel() {
   const [period, setPeriod] = useState("2026-07");
   const [busy, setBusy] = useState(false);
@@ -63,7 +128,7 @@ export function OlseraValidationPanel() {
       <div className="mt-5 grid gap-4 lg:grid-cols-3">
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">1. Kategori Penjualan</h3>
-          <ValidationRow title="Periode dan kategori" detail={result?.category ? `AYOSERA ${result.category.ayosera?.qty ?? "-"} qty / Rp ${result.category.ayosera?.total ?? "-"} · Olsera Live ${result.category.olseraLive?.qty ?? "-"} qty / Rp ${result.category.olseraLive?.total ?? "-"} · Delta qty ${result.category.olseraLive?.qty - result.category.ayosera?.qty} / nominal ${result.category.olseraLive?.total - result.category.ayosera?.total}` : "Tekan Validasi Sekarang untuk mengambil API Olsera live."} status={status("category", "Data Belum Lengkap")} />
+          <ValidationRow title="Periode dan kategori" detail={result?.category ? `AYOSERA ${fmt(result.category.ayosera?.qty)} qty / Rp ${fmt(result.category.ayosera?.total)} · Olsera Live ${fmt(result.category.olseraLive?.qty)} qty / Rp ${fmt(result.category.olseraLive?.total)} · Delta qty ${fmtDelta(result.category.delta?.qty)} / nominal ${fmtDelta(result.category.delta?.total)}` : "Tekan Validasi Sekarang untuk mengambil API Olsera live."} status={status("category", "Data Belum Lengkap")} />
           <DetailList items={result?.category?.differences} />
         </div>
         <div>
@@ -75,9 +140,11 @@ export function OlseraValidationPanel() {
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">3. Laporan Keuangan</h3>
           <ValidationRow title="Neraca, Laba Rugi, Arus Kas" detail="Dibandingkan dengan snapshot AYOSERA menggunakan response API live." status={result?.financial ? (result.financial.status === "Cocok" ? "Cocok" : result.financial.status) : "Data Belum Lengkap"} />
-          <DetailList items={result?.financial ? [result.financial.balanceSheet?.totals, result.financial.profitLoss?.totals, result.financial.cashFlow?.totals] : undefined} />
-          <ValidationRow title="Buku Besar" detail={result?.financial?.ledgerAccounts ? `${result.financial.ledgerAccounts.checked} akun dicek dari API live.` : "Semua akun dicek saat validasi live."} status={result?.financial?.ledgerSummary?.status ?? "Data Belum Lengkap"} />
-          <DetailList items={result?.financial?.ledgerSummary?.differences} />
+          <TotalsTable title={`Neraca — ${result?.financial?.balanceSheet?.status ?? "Data Belum Lengkap"}`} totals={result?.financial?.balanceSheet?.totals} />
+          <TotalsTable title={`Laba Rugi — ${result?.financial?.profitLoss?.status ?? "Data Belum Lengkap"}`} totals={result?.financial?.profitLoss?.totals} />
+          <TotalsTable title={`Arus Kas — ${result?.financial?.cashFlow?.status ?? "Data Belum Lengkap"}`} totals={result?.financial?.cashFlow?.totals} />
+          <ValidationRow title="Buku Besar" detail={result?.financial?.ledgerAccounts ? `${result.financial.ledgerAccounts.checked} akun dicek dari API live, ${result.financial.ledgerAccounts.matching} cocok.` : "Semua akun dicek saat validasi live."} status={result?.financial?.ledgerSummary?.status ?? "Data Belum Lengkap"} />
+          <LedgerMismatchTable checked={result?.financial?.ledgerAccounts?.checked} differences={result?.financial?.ledgerAccounts?.differences} />
         </div>
       </div>
 

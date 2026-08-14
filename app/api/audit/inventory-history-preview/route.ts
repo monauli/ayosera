@@ -29,7 +29,23 @@ export async function GET() {
         const known = [row.openingQty, row.incomingQty, row.returnQty, row.salesQty, row.outgoingQty, row.closingQty].every((value) => value !== null && value !== undefined);
         const expectedClosing = known ? (row.openingQty ?? 0) + (row.incomingQty ?? 0) + (row.returnQty ?? 0) - (row.salesQty ?? 0) - (row.outgoingQty ?? 0) : null;
         const classification = !known ? "SOURCE_DATA_INCOMPLETE" : expectedClosing === row.closingQty ? "CONSISTENT" : "INCONSISTENT";
-        return { ...row, period: `${row.year}-${String(row.month).padStart(2, "0")}`, expectedClosing, classification, diagnostic: classification === "INCONSISTENT" ? `Expected closing ${expectedClosing}, stored closing ${row.closingQty}.` : classification === "SOURCE_DATA_INCOMPLETE" ? "Komponen formula belum lengkap." : null };
+        // unresolvedGap murni aritmetika (stored closing - expected closing) untuk
+        // ditampilkan sebagai diagnostic mentah — BUKAN proven adjustment/movement.
+        // Tidak pernah dipakai untuk menulis/mengoreksi angka apa pun di sini.
+        const unresolvedGap = classification === "INCONSISTENT" ? (row.closingQty as number) - (expectedClosing as number) : null;
+        return {
+          ...row,
+          period: `${row.year}-${String(row.month).padStart(2, "0")}`,
+          expectedClosing,
+          classification,
+          unresolvedGap,
+          diagnostic:
+            classification === "INCONSISTENT"
+              ? `Stored closing ${row.closingQty} vs arithmetic expected ${expectedClosing} (gap ${unresolvedGap! >= 0 ? "+" : ""}${unresolvedGap} tidak diverifikasi/tidak proven — status unresolved, bukan final).`
+              : classification === "SOURCE_DATA_INCOMPLETE"
+                ? "Komponen formula belum lengkap."
+                : null,
+        };
       });
       const identitySources = targets.map((target) => ({ key: target.key, name: target.name, sources: target.ids.map((productId) => ({ productId, snapshotPeriods: snapshots.filter((row) => row.productId === productId).map((row) => `${row.year}-${String(row.month).padStart(2, "0")}`), movementPeriods: movements.filter((row) => row.productId === productId).map((row) => row.date), salesRows: sales.filter((row) => row.productId === productId || row.resolvedProductId === productId).length })), verifiedAliases: aliases.filter((alias) => alias.confidence === "verified" && (target.ids.includes(alias.oldProductId as never) || target.ids.includes(alias.newProductId as never))) }));
       return { checkedAt: new Date().toISOString(), scope: targets, periods, identitySources, products, evidence: { movements, sales, aliases, opname } };

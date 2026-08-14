@@ -936,6 +936,18 @@ th[scope],
 .recon-ba-cards .recon-sport-card span{color:rgb(var(--rd-text-muted));font-size:.68rem}
 .recon-ba-cards .recon-sport-card b{font-size:.95rem;overflow-wrap:anywhere}
 @media (max-width:720px){.recon-ba-cards{grid-template-columns:1fr}.recon-ba-preview-frame-wrap{height:min(60vh,480px)}}
-/* Native month/date controls in the dark Audit panel must use the active theme. */
-.pim-panel input[type="month"], .pim-panel input[type="date"] { color-scheme: dark; }
-[data-mode="light"] .pim-panel input[type="month"], [data-mode="light"] .pim-panel input[type="date"] { color-scheme: light; }
+/* Native month/date controls in the dark Audit panel must use the active theme.
+   The shared shadcn Input component hardcodes bg-white for its normal (light,
+   .rd-legacy) callers, so it stays stuck white here too unless overridden —
+   scoped to .pim-panel only, same pattern as the light-mode overrides above. */
+.pim-panel input[type="month"], .pim-panel input[type="date"] {
+  color-scheme: dark;
+  background-color: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
+  color: rgb(var(--rd-text-secondary));
+  border-color: rgb(var(--rd-border) / var(--rd-border-alpha));
+}
+[data-mode="light"] .pim-panel input[type="month"], [data-mode="light"] .pim-panel input[type="date"] {
+  color-scheme: light;
+  background-color: white;
+  color: rgb(15 23 42);
+}

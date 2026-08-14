@@ -1385,3 +1385,58 @@ Matching 7/7 berhasil (termasuk 3 kasus prefix kategori via tier `suffix` baru: 
 - Dark-mode date inputs in Cek & Tutup Gap Data now use theme-aware color scheme.
 - No historical snapshot write performed.
 - Tests: financial 29/29, inventory monthly 229/229, integration 45/45, type-check PASS, build PASS, diff-check PASS.
+
+## 2026-08-14 — Validator NaN/0-0/detail: real root cause found and fixed (previous fix claim was incomplete)
+
+The previous "Validator NaN/0-0 and historical identity preview fix" entry above claimed the category NaN, inventory 0/0, and missing financial/ledger detail were already fixed. Production acceptance re-tested this and all three were still broken. This pass re-derived the exact root cause from the live code (not from the prior claim) and found it.
+
+### 1. Category NaN root cause + fix
+
+`GET /api/audit/olsera-validation` always set `result.category`/`result.inventory`/`result.financial` on every response, even when the caller asked for one `section` — the two non-requested sections were bare stubs `{status:"Data Belum Lengkap"}` with no `ayosera`/`olseraLive`/`delta` fields. `OlseraValidationPanel.validate()` (components/olsera-validation-panel.tsx) fetches `section=category`, then `section=inventory`, then `section=financial` in sequence and merges each response body with `Object.assign(merged, body)`. Because every response body carried keys for **all three** sections, each subsequent fetch's stub for the *other* sections clobbered the previously-fetched full data. By the time `financial` was fetched last, `merged.category` and `merged.inventory` had both been overwritten back down to their bare stubs — `ayosera`/`olseraLive` became `undefined`, and the panel's old code computed the delta as a raw `olseraLive.qty - ayosera.qty` subtraction of two `undefined`s → `NaN`. Same mechanism produced `checked`/`matching` as `undefined` → rendered as `0/0`.
+**Fix:** `app/api/audit/olsera-validation/route.ts` now only assigns `result.<section>` for the section(s) actually computed (`if (!section || section === "category") …`), so a scoped response never carries a stub key for another section, and the frontend merge can no longer clobber already-fetched data. `components/olsera-validation-panel.tsx` also switched to the backend's precomputed `delta.qty`/`delta.total` instead of a raw subtraction, through a null-safe `fmt`/`fmtDelta` helper that renders `-` instead of `NaN` whenever a value isn't a finite number.
+
+### 2. Inventory 0/0 root cause + fix
+
+Same clobber bug as #1 — `inventory` was fetched second, then overwritten to its bare stub by the `financial` fetch that ran last. The inventory section's own status logic (`stored.length === 0 || live.rows.length === 0 → "Data Belum Lengkap"`, never `0/0 Cocok`) was already correct and did not need changing. Fixed by the same backend change as #1.
+
+### 3. Financial detail + Buku Besar mismatch detail
+
+`components/olsera-validation-panel.tsx` only ever rendered a status badge for Neraca/Laba Rugi/Arus Kas, and the Buku Besar mismatch list read `result.financial.ledgerSummary.differences` — that path doesn't exist (`ledgerSummary` only has `{status, detail, totals}`; the actual mismatch array is `result.financial.ledgerAccounts.differences`), so it silently rendered nothing regardless of how many of the 85 accounts checked mismatched.
+**Fix:** added `TotalsTable` (collapsible, per-field AYOSERA/Olsera/delta for each of Neraca/Laba Rugi/Arus Kas) and `LedgerMismatchTable` (collapsible, per-account kode/nama/debit/credit/saldo AYOSERA vs Olsera) reading from the correct `ledgerAccounts.differences` path. Only fields the backend actually returns (`debit`, `credit`, `balance`) are shown — there is no `opening` field in the normalized ledger-summary row shape, so it was not fabricated.
+
+### 4. YONEX old/new source result
+
+`GET /api/audit/inventory-history-preview` already queried both `106743815` (old) and `118420650` (new) and reported per-id `snapshotPeriods`/`movementPeriods`/`salesRows` separately — verified this is correct by test (`app/api/audit/inventory-history-preview/route.test.ts`), no code change needed here. If old id genuinely has zero snapshot documents in production, the route now reports that as an explicit empty array for that id (accurate), not a bug in the query. Production acceptance must confirm the real counts (see "Not executed" below).
+
+### 5. ODEA ROSE old/canonical source result
+
+Same as #4: both `106817649` (old) and `116138490` (canonical) are queried and reported per id; verified by test.
+
+### 6. ODEA RED separation
+
+`odea-red` (`119043265`) is queried independently and `verifiedAliases` is filtered per-target by id membership, so a ROSE alias can never appear under RED's `identitySources` entry; verified by test.
+
+### 7. Feb ROSE unresolved +64 status
+
+Classification logic (`SOURCE_DATA_INCOMPLETE` / `CONSISTENT` / `INCONSISTENT`) was already correct and untouched. Added an explicit `unresolvedGap` field (`stored closing − arithmetic expected`, e.g. `130 − 66 = +64`) to the `products` rows only when `classification === "INCONSISTENT"`, purely as a displayed diagnostic number — it is never written anywhere and never treated as a proven adjustment. Diagnostic text now says explicitly "tidak diverifikasi/tidak proven — status unresolved, bukan final."
+
+### 8. July ROSE current production truth
+
+Formula check for the given July numbers (opening 21 + incoming 24 + return 0 − sales 11 − outgoing 2 = 32 = stored closing 32) already classifies as `CONSISTENT` under the existing arithmetic rule — verified by test. The "11 vs 9" mismatch referenced in an earlier handoff entry does not appear anywhere in the current route logic or in the July numbers given for this acceptance round. Per instruction: **previous 11-vs-9 claim not reproduced by current production preview**. No Jul ROSE code was changed.
+
+### 9. Dark date input fix
+
+`components/private-integration-monitor.tsx`'s "Cek & Tutup Gap Data" date inputs use the shared shadcn `<Input>` (`components/ui/input.tsx`), which hardcodes `bg-white` for its normal (light, `.rd-legacy`) callers. `.pim-panel` is a dark-first-by-default panel (see the Phase 5B comment already in `app/globals.css`), so this hardcoded white stayed white in Dark Mode even though `color-scheme: dark` was already set on it, producing a washed-out white box with a barely-visible native calendar icon. Added `background-color`/`color`/`border-color` overrides scoped to `.pim-panel input[type="date"]` (and `[data-mode="light"] .pim-panel input[type="date"]` for the light-mode counterpart) in `app/globals.css`, following the same `.pim-panel`-scoped override pattern already used for this component's other surfaces. The shared `Input` component itself was not touched, so its other (legitimately light) callers are unaffected.
+
+### 10. Tests
+
+New: `app/api/audit/olsera-validation/route.test.ts` (10 tests — clobber-fix regression via simulated sequential fetch, category NaN/Gagal Dicek/Data Belum Lengkap, inventory 0/0 guard, financial totals mismatch, ledger mismatch rendering) and `app/api/audit/inventory-history-preview/route.test.ts` (5 tests — YONEX/ROSE old+new per-id sourcing, RED alias isolation, Feb unresolvedGap +64, Jul CONSISTENT). Added as `npm run test:olsera-validation` / `npm run test:inventory-history-preview`. Also reran `test:olsera-inventory` (48/48 PASS) and `test:olsera-financial` (29/29 PASS) as regression checks since both touch the same normalized payload shapes. `npm run type-check`: PASS. `npm run build`: PASS. `git diff --check`: PASS.
+
+### Not executed in this pass
+
+- **Phase 10 production acceptance** (calling the deployed `GET /api/audit/inventory-history-preview` and validator endpoints against live Vercel/Mongo) was **not run** — this environment has no reachable production Mongo/Olsera credentials (consistent with every prior "Local Mongo remains unavailable" entry above). The route logic is verified correct by mocked route-level tests, but the real production numbers for YONEX/ROSE old-id coverage still need to be read from the deployed endpoint after this deploys.
+- No controlled write, no historical inventory rebuild, no snapshot adjustment, no hardcoded product numbers — this pass is diagnostic/preview/UI only, exactly as scoped.
+
+### Files changed
+
+`app/api/audit/olsera-validation/route.ts`, `components/olsera-validation-panel.tsx`, `app/api/audit/inventory-history-preview/route.ts`, `app/globals.css`, `package.json` (two new test scripts), `app/api/audit/olsera-validation/route.test.ts` (new), `app/api/audit/inventory-history-preview/route.test.ts` (new), and this handoff.
