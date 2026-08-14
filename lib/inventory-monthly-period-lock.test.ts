@@ -5,10 +5,11 @@ import type { InventoryMonthlyPeriodLockDocument, OlseraInventoryMonthlySnapshot
 
 const snapshot = (closingQty = 15): OlseraInventoryMonthlySnapshotDocument => ({ _id: "1:2026-02:1:0", storeId: 1, year: 2026, month: 2, snapshotDate: "2026-02-28", productId: 1, variantId: null, canonicalProductId: null, productName: "YONEX SHORTS MEN", productSku: "SM-J035-2906-RW1-S", groupName: "YONEX", openingQty: 24, incomingQty: 0, returnQty: 0, salesQty: 9, outgoingQty: 0, closingQty, source: "baseline-file", status: "complete", diagnostics: [], createdAt: new Date(), updatedAt: new Date() });
 
-function fakeContext(initial: InventoryMonthlyPeriodLockDocument | null = null): InventoryMonthlyPeriodLockContext {
+function fakeContext(initial: InventoryMonthlyPeriodLockDocument | null = null, products: Array<{ productId: number; variantId: number | null; active?: boolean; stockQty?: number }> = []): InventoryMonthlyPeriodLockContext {
   let lock = initial;
   return {
     snapshots: { find: () => ({ toArray: async () => [snapshot()] }) },
+    products: { find: () => ({ toArray: async () => products }) },
     locks: {
       findOne: async () => lock,
       findOneAndUpdate: async (_filter, update) => {
@@ -38,4 +39,11 @@ test("locked monthly snapshot is immutable and unlock keeps audit history", asyn
 
 test("inventory unlock requires a reason", async () => {
   await assert.rejects(() => unlockInventoryMonthlyPeriod({ storeId: 1, year: 2026, month: 2, actor: "supervisor", reason: " " }, fakeContext()), /Reason unlock wajib/);
+});
+
+test("lock rejects unresolved catalog-only candidates", async () => {
+  await assert.rejects(
+    () => lockInventoryMonthlyPeriod({ storeId: 1, year: 2026, month: 2, actor: "supervisor" }, fakeContext(null, [{ productId: 99, variantId: null, active: true, stockQty: 2 }])),
+    /produk katalog yang belum diverifikasi/,
+  );
 });

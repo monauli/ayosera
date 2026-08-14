@@ -11,7 +11,7 @@ import {
 import { isValidIsoDate } from "@/lib/inventory-stock-opname";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { currentStoreId } from "@/lib/reconciliation-store";
-import { getInventoryMonthlyPeriodLock, InventoryMonthlyPeriodLockError, lockInventoryMonthlyPeriod, unlockInventoryMonthlyPeriod } from "@/lib/inventory-monthly-period-lock";
+import { getInventoryMonthlyPeriodLock, getInventoryPeriodCompleteness, InventoryMonthlyPeriodLockError, lockInventoryMonthlyPeriod, unlockInventoryMonthlyPeriod } from "@/lib/inventory-monthly-period-lock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,8 +50,8 @@ export async function GET(request: Request) {
       const result = await loadInventoryOpnameCutoff({ storeId: currentStoreId(), year, month, cutoffDate: cutoffDateParam });
       return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
     }
-    const [result, monthlyLock] = await Promise.all([loadInventoryOpnameMonth({ storeId: currentStoreId(), year, month }), getInventoryMonthlyPeriodLock(currentStoreId(), year, month)]);
-    return NextResponse.json({ ...result, monthlyLock }, { headers: NO_CACHE_HEADERS });
+    const [result, monthlyLock, completeness] = await Promise.all([loadInventoryOpnameMonth({ storeId: currentStoreId(), year, month }), getInventoryMonthlyPeriodLock(currentStoreId(), year, month), getInventoryPeriodCompleteness({ storeId: currentStoreId(), year, month })]);
+    return NextResponse.json({ ...result, monthlyLock, completeness }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     return errorResponse(error);
   }

@@ -1597,3 +1597,10 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 - Export dua-sheet memakai universe yang sama: katalog-only current row masuk `Keseluruhan`, `Terjual` tetap hanya `salesQty > 0`.
 - ODEA RED/ROSE dan verified alias YONEX tetap memakai identity key/lineage existing. Tidak ada lock Februari otomatis dan tidak ada production write dari task ini.
 - Audit 17 item live satu per satu belum dapat dinyatakan selesai tanpa read-back katalog/stockmovement production; deploy harus direview dulu sebelum lock Februari.
+## INVENTORY RECONCILIATION COMPLETENESS GUARD + UI — 2026-08-14
+
+- Root cause false `31/31 Cocok`: row validity dihitung terhadap snapshot yang ada, sementara product universe historical belum dibandingkan dengan katalog aktif yang masih memiliki stok.
+- GET rekonsiliasi sekarang mengembalikan completeness dinamis: movement products, catalog-only candidates, verified, unverified, dan total universe. Tidak ada angka 31/17 hardcode.
+- Status lock hanya aktif jika snapshot arithmetic valid, tidak ada mismatch/incomplete, dan completeness pass. Server lock juga menolak catalog-only yang belum diverifikasi; BA tidak dapat menutup gap product universe.
+- UI menampilkan ringkasan completeness, alasan disabled yang spesifik, dan riwayat Lock/Unlock actor, waktu, alasan, serta version bila tersedia. BA tetap hanya muncul saat mismatch/flow BA.
+- Februari tidak dikunci otomatis. ODEA ROSE dan YONEX correction tidak disentuh.

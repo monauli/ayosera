@@ -7,7 +7,8 @@ type LockCollection = {
   findOneAndUpdate(filter: Record<string, unknown>, update: Record<string, unknown>, options: { upsert?: boolean; returnDocument: "after" }): Promise<InventoryMonthlyPeriodLockDocument | null>;
 };
 type SnapshotCollection = { find(filter: Record<string, unknown>): { toArray(): Promise<OlseraInventoryMonthlySnapshotDocument[]> } };
-export type InventoryMonthlyPeriodLockContext = { locks: LockCollection; snapshots: SnapshotCollection };
+type ProductCollection = { find(filter: Record<string, unknown>): { toArray(): Promise<Array<{ productId: number; variantId: number | null; active?: boolean; stockQty?: number }>> } };
+export type InventoryMonthlyPeriodLockContext = { locks: LockCollection; snapshots: SnapshotCollection; products?: ProductCollection; };
 
 function id(storeId: number, year: number, month: number) {
   return `${storeId}:${year}-${String(month).padStart(2, "0")}`;
@@ -18,7 +19,21 @@ function currentPeriod(now: Date): string {
 }
 
 function source(): Promise<InventoryMonthlyPeriodLockContext> {
-  return collections().then((c) => ({ locks: c.inventoryMonthlyPeriodLocks, snapshots: c.olseraInventoryMonthlySnapshots }));
+  return collections().then((c) => ({ locks: c.inventoryMonthlyPeriodLocks, snapshots: c.olseraInventoryMonthlySnapshots, products: c.olseraInventoryProducts }));
+}
+
+export type InventoryPeriodCompleteness = { movementProducts: number; catalogOnlyCandidates: number; verifiedForPeriod: number; unverified: number; totalUniverse: number; pass: boolean };
+
+export async function getInventoryPeriodCompleteness(input: { storeId: number; year: number; month: number }, context?: InventoryMonthlyPeriodLockContext): Promise<InventoryPeriodCompleteness> {
+  const c = context ?? await source();
+  const snapshots = await c.snapshots.find({ storeId: input.storeId, year: input.year, month: input.month }).toArray();
+  const snapshotKeys = new Set(snapshots.map((row) => `${row.productId}:${row.variantId ?? 0}`));
+  const movementProducts = new Set(snapshots.filter((row) => row.source !== "catalog").map((row) => `${row.productId}:${row.variantId ?? 0}`));
+  const products = c.products ? await c.products.find({ storeId: { $in: [input.storeId, null] }, active: true, stockQty: { $gt: 0 } }).toArray() : [];
+  const catalogOnlyCandidates = products.filter((product) => !snapshotKeys.has(`${product.productId}:${product.variantId ?? 0}`));
+  const verifiedForPeriod = snapshotKeys.size;
+  const unverified = catalogOnlyCandidates.length;
+  return { movementProducts: movementProducts.size, catalogOnlyCandidates: catalogOnlyCandidates.length, verifiedForPeriod, unverified, totalUniverse: movementProducts.size + catalogOnlyCandidates.length, pass: unverified === 0 };
 }
 
 export async function getInventoryMonthlyPeriodLock(storeId: number, year: number, month: number, context?: InventoryMonthlyPeriodLockContext) {
@@ -37,6 +52,8 @@ export async function lockInventoryMonthlyPeriod(input: { storeId: number; year:
   const snapshots = await c.snapshots.find({ storeId: input.storeId, year: input.year, month: input.month }).toArray();
   if (!snapshots.length) throw new InventoryMonthlyPeriodLockError("Snapshot periode belum tersedia.");
   if (snapshots.some((snapshot) => !isValidInventoryMonthlySnapshot(snapshot))) throw new InventoryMonthlyPeriodLockError("Periode belum valid/final; masih ada snapshot incomplete atau arithmetic inconsistency.");
+  const completeness = await getInventoryPeriodCompleteness(input, c);
+  if (!completeness.pass) throw new InventoryMonthlyPeriodLockError(`Periode belum lengkap; masih ada ${completeness.unverified} produk katalog yang belum diverifikasi untuk periode ini.`);
   const existing = await c.locks.findOne({ _id: id(input.storeId, input.year, input.month) });
   if (existing?.status === "locked") throw new InventoryMonthlyPeriodLockError("Periode inventori sudah terkunci.");
   const now = new Date();

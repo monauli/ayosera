@@ -64,7 +64,8 @@ type Summary = {
 type Attachment = { url: string; fileName: string; mimeType: string; size: number; uploadedBy?: string; uploadedAt?: string };
 type LockState = { status: "LOCKED" | "UNLOCKED"; cutoff: string | null; cutoffDate: string | null; lockedBy: string | null; lockedAt: string | null; attachment: Attachment | null };
 type MonthlyLockState = { status: "locked" | "unlocked"; lockedBy: string | null; lockedAt: string | null; history: unknown[] } | null;
-type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string; lock: LockState | null; monthlyLock?: MonthlyLockState };
+type Completeness = { movementProducts: number; catalogOnlyCandidates: number; verifiedForPeriod: number; unverified: number; totalUniverse: number; pass: boolean };
+type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string; lock: LockState | null; monthlyLock?: MonthlyLockState; completeness?: Completeness };
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 type Edit = { physicalQty: number | null; note: string | null };
 
@@ -505,7 +506,8 @@ export default function InventoryOpnamePage() {
 
   const baBlocksFinalize = baRows.length > 0 && shouldBlockFinalizeForBaRows(baRows);
   const needsBa = liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0;
-  const periodReadyToLock = Boolean(data && data.monthlyLock?.status !== "locked" && !needsBa && data.rows.length > 0);
+  const completeness = data?.completeness;
+  const periodReadyToLock = Boolean(data && data.monthlyLock?.status !== "locked" && completeness?.pass === true && !needsBa && data.rows.length > 0);
   const showBaFlow = needsBa || Boolean(attachment) || baRows.length > 0;
   const baCutoffOutOfPeriod = Boolean(baPeriod?.periodStart && baPeriod?.cutoffDate && cutoffDate && !isDateWithinPeriod(cutoffDate, baPeriod.periodStart, baPeriod.cutoffDate));
   const baCocokCount = baRows.filter((r) => r.status === "COCOK").length;
@@ -602,10 +604,12 @@ export default function InventoryOpnamePage() {
       )}
 
       <section className="recon-filters" aria-label="Ringkasan Rekonsiliasi Inventori">
+        <div><strong>Ada Pergerakan: {completeness?.movementProducts ?? "—"} · Tidak Ada Pergerakan: {completeness?.catalogOnlyCandidates ?? "—"}</strong><br />Diverifikasi: {completeness?.verifiedForPeriod ?? "—"} · Belum Diverifikasi: {completeness?.unverified ?? "—"} · Universe: {completeness?.totalUniverse ?? "—"}</div>
         <div><strong>Periode: {MONTH_NAMES[Number(month) - 1]} {year}</strong><br />Total Produk: {liveSummary.totalProduk} · Cocok: {liveSummary.cocok} · Selisih: {liveSummary.perluDicek + liveSummary.butuhAdjustManual}</div>
         <div><strong>Status Periode: {periodReadyToLock ? "Cocok — siap dikunci" : `Perlu Dicek — ${liveSummary.perluDicek + liveSummary.butuhAdjustManual} item memiliki selisih`}</strong></div>
         {data?.monthlyLock?.status === "locked" ? <div className="recon-lock-summary"><LockKeyhole /> Terkunci · {data.monthlyLock.lockedBy ?? "Supervisor"} {supervisor && <button className="recon-button danger" disabled={monthlyLockBusy} onClick={() => void unlockPeriod()}><Unlock /> Buka Kunci</button>}</div> : <button className="recon-button" disabled={!supervisor || !periodReadyToLock || monthlyLockBusy} onClick={() => void lockPeriod()}>{monthlyLockBusy ? <Loader2 className="spin" /> : <LockKeyhole />} Kunci Periode</button>}
-        {!periodReadyToLock && data?.monthlyLock?.status !== "locked" && <p className="recon-draft">Belum dapat dikunci: {liveSummary.perluDicek + liveSummary.butuhAdjustManual} item masih memiliki selisih atau data belum valid.</p>}
+        {!periodReadyToLock && data?.monthlyLock?.status !== "locked" && <p className="recon-draft">{completeness && !completeness.pass ? `Belum dapat dikunci: masih ada ${completeness.unverified} produk katalog yang belum diverifikasi untuk ${MONTH_NAMES[Number(month) - 1]} ${year}.` : `${liveSummary.perluDicek + liveSummary.butuhAdjustManual} item masih memiliki selisih atau data belum valid.`}</p>}
+        {data?.monthlyLock?.history?.length ? <details className="recon-history"><summary>Riwayat Lock / Unlock</summary><ul>{data.monthlyLock.history.map((item, index) => { const entry = item as { action?: string; actor?: string; reason?: string | null; at?: string; version?: number }; return <li key={`${entry.at ?? "event"}-${index}`}><strong>{String(entry.action ?? "").toUpperCase()}</strong> · {entry.at ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.at)) : "—"} · {entry.actor ?? "User"}{entry.reason ? ` · ${entry.reason}` : ""}{entry.version ? ` · v${entry.version}` : ""}</li>; })}</ul></details> : null}
       </section>
 
       {showBaFlow && <section className="recon-filters recon-finalization" aria-label="Penyelesaian Selisih dengan Berita Acara">
