@@ -18,7 +18,7 @@ function resolve(rows: readonly BuiltInRow[], products: readonly OlseraInventory
       const skuMatches = embeddedSku && product.sku && normalize(product.sku) === normalize(embeddedSku);
       return skuMatches || name === wanted || (wanted === "bolapadelodea" && name.includes("odearose")) || (wanted.includes("plocomfort") && name.includes("xplocomfort"));
     });
-    if (candidates.length !== 1) throw new Error(`Identitas historical tidak unik: ${source.product}`);
+    if (candidates.length !== 1) throw new Error(`Identitas historical tidak unik: ${source.product} (${candidates.map((candidate) => `${candidate.productId}:${candidate.variantId ?? 0}:${candidate.name}:${candidate.sku ?? ""}`).join(" | ")})`);
     const product = candidates[0];
     return { productId: product.productId, variantId: product.variantId, productName: source.product, productSku: source.sku ?? product.sku ?? null, groupName: source.group, openingQty: source.opening, incomingQty: source.incoming, returnQty: source.returnQty, salesQty: source.salesQty, outgoingQty: source.outgoingQty, closingQty: source.closing };
   });
