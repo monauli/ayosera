@@ -1756,6 +1756,15 @@ Keep the decided tabs for the follow-up task: `Stok Terjual`, `Stok Tidak Terjua
 
 ## HISTORICAL IMPORT API — IMPLEMENTED, DRY-RUN PRODUCTION PENDING — 2026-08-15
 
+## WORKBOOK CONTENT VERIFICATION — `Inventory ilegal.xlsx` ACCEPTED — 2026-08-15
+
+- Read-only inspection used workbook content, not filename.
+- Required sheets exist: `February Terjual` and `February Keseluruhan`.
+- Excluding the header row, counts are exactly 31 sold and 48 overall; the derived unsold set is 17.
+- `BOLA PADEL ODEA`: opening 96, sales 30, closing 66.
+- `YONEX SHORTS MEN # SM-J035-2906-RW1-S`: opening 24, sales 9, closing 15.
+- Workbook is accepted as the February historical source. No workbook, production data, or period lock was changed by this verification.
+
 - Added supervisor-only `POST /api/supervisor/olsera/inventory/historical`.
 - Modes: `dry-run` and `confirm`; period must be `YYYY-MM`; locked periods are rejected.
 - Historical values are written only to `olsera_inventory_monthly_snapshots`; current Olsera stock and Olsera stock APIs are never changed.
