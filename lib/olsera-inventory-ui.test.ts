@@ -31,6 +31,19 @@ import {
   visibleInventoryTabs,
   visibleMonthlyInventoryRows,
 } from "./olsera-inventory-ui.ts";
+import { isInventoryPeriod } from "./olsera-inventory-period.ts";
+
+test("periode inventori hanya valid YYYY-MM; periode kosong tidak boleh memulai request", () => {
+  assert.equal(isInventoryPeriod("2026-02"), true);
+  assert.equal(isInventoryPeriod(""), false);
+  assert.equal(isInventoryPeriod("2026-13"), false);
+});
+
+test("panel guards period-dependent effects before constructing requests", () => {
+  const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes("if (!isInventoryPeriod(period)) return;"));
+  assert.ok(source.includes("if (isInventoryPeriod(event.target.value)) setPeriod(event.target.value);"));
+});
 
 // ---- 1. Nilai kosong TIDAK ditampilkan sebagai "-" ------------------------
 

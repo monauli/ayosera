@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InventoryExportMenu } from "@/components/redesign/inventory-export-menu";
 import { OLSERA_INVENTORY_BASELINE_DATE } from "@/lib/olsera-baseline";
+import { isInventoryPeriod } from "@/lib/olsera-inventory-period";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock, subscribeOlseraSyncLock } from "@/lib/olsera-sync-lock";
 import {
   displayValue,
@@ -199,7 +200,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [period, setPeriod] = useState(() => {
     if (typeof window === "undefined") return today.slice(0, 7);
     const value = new URLSearchParams(window.location.search).get("inventoryPeriod");
-    return value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : today.slice(0, 7);
+    return value && isInventoryPeriod(value) ? value : today.slice(0, 7);
   });
 
   // Stok Saat Ini
@@ -237,6 +238,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   useEffect(() => {
+    if (!isInventoryPeriod(period)) return;
     const params = new URLSearchParams(window.location.search);
     params.set("inventoryPeriod", period);
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
@@ -251,6 +253,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   // Status sync tetap memakai endpoint status; kartu/tabel bulanan memakai
   // endpoint snapshot yang sama agar tidak pernah mencampur stok current.
   useEffect(() => {
+    if (!isInventoryPeriod(period)) return;
     let cancelled = false;
     fetch(`/api/olsera/inventory/summary?_t=${Date.now()}`, { cache: "no-store" })
       .then(async (response) => {
@@ -267,6 +270,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   // status periode & tombol export harus tetap segar walau user sedang di
   // tab Riwayat Mutasi saat mengganti periode.
   useEffect(() => {
+    if (!isInventoryPeriod(period)) return;
     let cancelled = false;
     setStockLoading(true);
     setStockError(false);
@@ -676,7 +680,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                 value={period}
                 className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
                 onClick={(event) => event.currentTarget.showPicker?.()}
-                onChange={(event) => setPeriod(event.target.value)}
+                onChange={(event) => {
+                  if (isInventoryPeriod(event.target.value)) setPeriod(event.target.value);
+                }}
               />
             </div>
             <p className="text-xs text-slate-500">Periode aktif: {period} · kartu, tabel, mutasi, dan export mengikuti periode ini.</p>

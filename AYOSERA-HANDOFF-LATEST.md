@@ -1633,6 +1633,63 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 
 Next step: provide the verified February workbook, then perform a read-only join against the existing 31 rows and catalog/alias identities. Only after user review may a separate controlled-write task populate proven rows and consider lock readiness.
 
+## FINAL FEBRUARI INVENTORY WRITE + VERIFY — BLOCKED ON PRODUCTION MONGO — 2026-08-14
+
+- Workbook verified: `tmp/fixtures/Inventory ilegal.xlsx` (the supplied path/name `Inventory Februari.xlsx` was not present, but this workbook contains both required sheets).
+- `February Terjual`: **31** data rows.
+- `February Keseluruhan`: **48** data rows.
+- Workbook set difference: **17** candidate rows.
+- Live catalog identity matching: **16 exact identities plus XPLO spelling correction** (`BULLPADEL XPLO COMFORT...` → productId `106779003`); all 17 candidates have a current catalog name match after this correction.
+- `PLO COMFORT` status: **resolved as XPLO COMFORT**, exact catalog match, productId `106779003`, category `RAKET PADEL`.
+- Important workbook evidence discrepancy: `Bullpadel Sniper 2.0 Power Light Blue 2026` is in `February Keseluruhan` but absent from `February Terjual` while its historical `sales` cell is `1`; this value was not normalized or invented.
+- One candidate has `closing = "Salah input"`: `BULLPADEL VERTEX 05 COMFORT 2026-360-370 BLACK/BLUE`, productId `106778998`. It is not safe for numeric snapshot write until corrected/confirmed.
+- Controlled write: **0 rows written**. The required production Mongo read/write path could not be reached; attempts remained blocked while connecting to the configured Atlas direct hosts. No local fallback write was attempted.
+- Production read-back: **NOT PERFORMED** because no write occurred; exact blocker is unavailable MongoDB production connectivity, not a fabricated data result.
+- February lock: **not run**.
+- ODEA ROSE, YONEX SHORTS, and ODEA RED were not modified.
+
+### Final pending scope
+
+Restore production Mongo connectivity, read the existing February snapshots/aliases, then write only numeric workbook rows with proven identity and provenance `USER_HISTORICAL_INVENTORY` / `OLSERA_CATALOG`. Keep the `Salah input` row and any unresolved source discrepancy in `Perlu Verifikasi`; perform read-back and user review before any lock decision.
+
+## FINAL FEBRUARI INVENTORY VERIFY RETRY — 2026-08-14
+
+- Requested source path `tmp/fixtures/Inventory Februari.xlsx` is absent. The previously verified local workbook `tmp/fixtures/Inventory ilegal.xlsx` was used; it contains both required February sheets.
+- Fresh workbook read: `February Terjual` **31**, `February Keseluruhan` **48**, calculated difference **17**.
+- Fresh identity read against live catalog: 16 exact catalog names plus `BULLPADEL XPLO COMFORT 2026-360-370 BLACK/GREY` productId `106779003` as the verified spelling corresponding to the requested PLO item. No current-catalog quantity was used as February quantity.
+- Workbook evidence preserved: ODEA ROSE `96 / 30 / 66`; YONEX SHORTS `24 / 9 / 15`; ODEA RED remains a separate catalog identity.
+- Controlled write: **0 rows**. Production Mongo read-back/write remained unavailable while connecting to configured Atlas direct hosts. No fallback or guessed write was attempted.
+- Pages/export were not production-verified because the write/read-back gate failed. Existing targeted code tests, typecheck, build, and `git diff --check` passed in this retry.
+- February remains unlocked. No code/data push was made because the required production verification did not pass.
+
+## PRODUCTION WRITE RETRY — BLOCKED BY EMPTY MONGODB_URI — 2026-08-15
+
+- Workbook source remains the verified `tmp/fixtures/Inventory ilegal.xlsx` because the requested `Inventory Februari.xlsx` filename is absent.
+- No February write was attempted. Preflight failed while initializing the production Mongo client: `.env.local` contains `MONGODB_URI` with an empty value (`len=0`).
+- `MONGODB_DIRECT_HOSTS` alone is not a valid authenticated Mongo connection string; no host, credential, or token was inferred.
+- Production read-back, four-tab production verification, reconciliation verification, and Excel export read-back remain **NOT PERFORMED**.
+- February remains unlocked. No commit, push, or deploy was made for this retry.
+
+Next step: provide a valid production `MONGODB_URI` in the runtime environment, then rerun the controlled 48-row write with a pre-write backup and production read-back.
+
+## FINAL FEBRUARI PRODUCTION RETRY — PREFLIGHT BLOCKED — 2026-08-15
+
+- Branch: `main`; latest commit before this retry: `9d5f5af`.
+- `.env.local` is ignored by Git (`.gitignore:27`), and no secret content was printed.
+- Required workbook path `tmp/fixtures/Inventory Februari.xlsx` is absent; the previously verified `tmp/fixtures/Inventory ilegal.xlsx` remains present.
+- Database preflight failed before any query/write: `MONGODB_URI` does not start with a valid `mongodb://` or `mongodb+srv://` scheme. No fallback or guessed connection was used.
+- Data written: **0**. Production read-back, UI tabs, reconciliation, and export verification were not attempted.
+- February remains unlocked. No commit, push, or deploy was made.
+
+Next step: place the real production MongoDB URI in the runtime `.env.local` without exposing it, then rerun the controlled write/read-back gate.
+
+## ENV LOADER RETRY — `.env.local` READ CONFIRMED, URI INVALID — 2026-08-15
+
+- Checked `.env.local` directly with a tolerant parser supporting whitespace, optional `export`, and quoted values.
+- `MONGODB_URI` was found and read from `.env.local`; it is not absent and does not have a valid `mongodb://` or `mongodb+srv://` prefix.
+- The failure is therefore not caused by reading only `.env`; no MongoDB address, username, password, token, or secret value was printed.
+- No database query/write, production read-back, push, deploy, or February lock was performed.
+
 ## AUDIT 17 CATALOG-ONLY ITEM FEBRUARI 2026 — 2026-08-14
 
 Audit live read-only dilakukan terhadap katalog Olsera `/api/open-api/v1/id/product`. Tidak ada write/lock/correction. Exact catalog matching menghasilkan:
@@ -1668,6 +1725,34 @@ Audit live read-only dilakukan terhadap katalog Olsera `/api/open-api/v1/id/prod
 ### UI backlog handoff
 
 Keep the decided tabs for the follow-up task: `Stok Terjual`, `Stok Tidak Terjual`, `Stok Keseluruhan`, `Riwayat Mutasi`. Definitions remain: sold/movement products; verified catalog-only no-sales; deduped union; existing movement history.
+
+## CONNECTION PREFLIGHT — APPLICATION PATH CONFIRMED, READ BLOCKED — 2026-08-15
+
+- Traced the production connection code in `lib/mongodb.ts`.
+- `MONGODB_URI` is the required primary connection setting.
+- `MONGODB_DB` selects the database; `MONGODB_DIRECT_HOSTS` is only an optional SRV-to-direct-host transformation.
+- `lib/mongodb-dns.ts` only adjusts DNS resolution for an SRV URI; it is not an alternate database connection.
+- Loaded `.env.local` explicitly before dynamically importing the same Mongo module used by the application.
+- Read-only preflight stopped before MongoDB because the loaded `MONGODB_URI` did not have a valid `mongodb://` or `mongodb+srv://` prefix. No value was displayed.
+- No February data was written, no lock was changed, and no push/deploy was performed.
+- Required correction: restore the production `MONGODB_URI` setting in `.env.local`; this handoff does not change it.
+
+## PRODUCTION API PREFLIGHT — READ BLOCKED, NO WRITE — 2026-08-15
+
+- Reused the existing authenticated production browser session at `https://ayosera.vercel.app`.
+- Confirmed the existing UI route uses `/api/olsera/inventory/monthly`, `/api/olsera/inventory/movements`, and the existing export/reconciliation routes; no new API was created.
+- Production authentication and general API health were valid.
+- The February period request through the existing inventory UI/API failed to load, including one retry. The read gate therefore did not pass.
+- No February data was written, no lock was changed, no deploy was made, and no commit/push was performed.
+- Controlled write remains pending until the existing production API can read February successfully and all identity/duplicate checks pass.
+
+## PRODUCTION API ERROR ANALYSIS — ROOT CAUSE NOT OBSERVABLE — 2026-08-15
+
+- Compared the UI request shape: February uses the valid `period=2026-02` format; the same authenticated session successfully opened August.
+- The route returns HTTP 200 with `hasData: false` when February data is absent, so the generic UI message does not establish “data unavailable”.
+- The UI discards non-401 status codes and error bodies, exposing only “Gagal memuat data”. Direct API navigation is blocked by the connected browser client, and Vercel CLI/log access is not available in this workspace.
+- Therefore the exact production HTTP status and server error cannot be established safely from available read-only surfaces. No code change is justified.
+- No write, lock change, deploy, commit, or push was performed.
 
 ### Next controlled scope
 
