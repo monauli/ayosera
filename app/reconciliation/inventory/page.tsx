@@ -694,7 +694,7 @@ export default function InventoryOpnamePage() {
             </section>
           ) : (
             <section className="recon-table-wrap">
-              <table className="recon-table">
+              <table className="recon-table recon-inventory-table">
                 <thead>
                   <tr>
                     <th>Produk</th>
@@ -715,7 +715,7 @@ export default function InventoryOpnamePage() {
                   {filteredRows.map((row) => (
                     <tr key={rowKey(row.productId, row.variantId)}>
                       <td>
-                        <button className="recon-link" onClick={() => setSelected(row)}>
+                        <button className="recon-link" title={row.productName} onClick={() => setSelected(row)}>
                           {row.productName}
                         </button>
                         {baSourcedKeys.has(rowKey(row.productId, row.variantId)) && <span className="recon-badge recon-badge-ok" style={{ marginLeft: ".375rem" }}>Dibaca dari BA</span>}

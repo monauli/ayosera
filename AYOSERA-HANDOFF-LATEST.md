@@ -1549,3 +1549,13 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 - Carry-forward read-back: Mar opening `66`, closing `30`; Apr `opening=30, closing=-21`; May `opening=-21, closing=-19`; Jun `opening=-19, closing=-43`; Jul `opening=-43, closing=-32`. Semua arithmetic konsisten dengan movement existing; negative downstream tidak ditutup dengan angka rekaan.
 - Alias `106817649:0 → 116138490`, `confidence=verified`, `source=manual-verified` tetap digunakan. ODEA RED snapshot dibandingkan sebelum/sesudah dan tidak berubah.
 - UI source snapshot sekarang membaca Feb ODEA ROSE dengan `Stok Awal 96`, `Penjualan 30`, `Sisa Stok 66`.
+# QUICK FIX — YONEX SHORTS MEN Februari 2026 (2026-08-14)
+
+- Scope: hanya Februari 2026; Maret dan bulan berikutnya tidak ditulis/rebuild.
+- Root cause: canonical snapshot `324175:2026:02:118420650:0` carry-forward salah (`opening=4, sales=0, closing=4`); old ID tidak punya snapshot Februari.
+- Evidence: 8 `olsera_order_items` Februari dengan oldId `106743815`, semuanya `resolvedProductId=118420650`, total sales qty `9`; tidak ada double-count old+new.
+- Controlled correction: snapshot canonical menjadi `opening=24, incoming=0, return=0, sales=9, outgoing=0, closing=15`, status `complete`, tanpa movement palsu.
+- Verified lineage tetap `106743815 → 118420650`, alias `confidence=verified`, `source=manual-verified`.
+- Expected March opening: `15`; Maret read-back guard PASS dan tidak berubah.
+- UI inventory: kolom Produk diperlebar, nama boleh wrap, dan tooltip full name ditambahkan. Snapshot memakai `YONEX SHORTS MEN # SM-J035-2906-RW1-S` tanpa suffix `duplicate`.
+- Unrelated YONEX snapshot Februari dibandingkan sebelum/sesudah dan tidak berubah.
