@@ -1589,3 +1589,11 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 - Lock inventori memakai `inventory_monthly_period_locks`, menyimpan snapshot immutable; unlock wajib supervisor dan alasan, dengan audit. Snapshot terkunci dibaca kembali sebagai sumber periode berikutnya.
 - UI inventori menampilkan urutan kolom operasional, nama produk penuh/wrap, serta kontrol select/date yang terbaca pada dark mode.
 - Tidak mengubah raw AYO/Olsera, data historis produk, YONEX/ODEA, cron, export, atau arsitektur lock yang sudah ada.
+## INVENTORY COMPLETENESS — UNION STOCKMOVEMENT + KATALOG — 2026-08-14
+
+- Root cause: monthly snapshot forward step hanya memasukkan anchor dan baris `stockmovement`; katalog aktif dengan `stockQty > 0` tetapi tanpa movement tidak pernah menjadi row.
+- Source katalog existing: Open API Olsera `/api/open-api/v1/id/product` (paged), melalui `fetchInventoryProducts` lalu `flattenOlseraProduct`; field identity productId/variantId, SKU, nama, kategori, active, dan stockQty dipertahankan. `stockmovement` tetap memakai endpoint existing `fetchStockMovementRange`.
+- Fix: bulan berjalan membentuk union anchor + matched stockmovement + katalog aktif `stockQty > 0`, dedupe berdasarkan `storeId:productId:variantId`, dan memberi provenance `source: "catalog"`; incoming/return/sales/outgoing = 0, opening/closing = live catalog qty. Historical tidak memakai current catalog qty secara buta.
+- Export dua-sheet memakai universe yang sama: katalog-only current row masuk `Keseluruhan`, `Terjual` tetap hanya `salesQty > 0`.
+- ODEA RED/ROSE dan verified alias YONEX tetap memakai identity key/lineage existing. Tidak ada lock Februari otomatis dan tidak ada production write dari task ini.
+- Audit 17 item live satu per satu belum dapat dinyatakan selesai tanpa read-back katalog/stockmovement production; deploy harus direview dulu sebelum lock Februari.

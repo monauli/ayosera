@@ -321,6 +321,9 @@ export async function runForwardBackfillMonth(input: {
     catalogById: input.matchingContext.catalogById,
     rawSalesActivityByKey,
     verifiedAliasCanonicalKeys: input.matchingContext.verifiedAliasCanonicalKeys,
+    catalogOnly: getInventoryPeriodState(input.month.year, input.month.month, input.now ?? new Date()) === "current"
+      ? new Map(input.matchingContext.catalogProducts.map((product) => [`${input.storeId}:${product.productId}:${product.variantId ?? 0}`, product]))
+      : undefined,
   });
 
   const scopedEntries = input.entityFilter ? filterMapToKey(step.entries, entityFilterKey(input.storeId, input.entityFilter)) : step.entries;

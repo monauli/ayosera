@@ -122,7 +122,7 @@ export async function parseSummaryWorkbookBuffer(buffer: ArrayBuffer | Buffer): 
  * - "no-snapshot": snapshot bulanan belum/tidak bisa direkonstruksi untuk produk ini —
  *   Stok Awal/Stock Akhir TIDAK diisi (bukan 0/ditebak), selalu masuk diagnostik.
  */
-export type StockDataSource = "manual-file" | "baseline-file" | "stockmovement-backward" | "stockmovement-forward" | "carry-forward" | "no-snapshot";
+export type StockDataSource = "manual-file" | "baseline-file" | "stockmovement-backward" | "stockmovement-forward" | "carry-forward" | "catalog" | "no-snapshot";
 
 export type MonthlyRowModel = {
   rowIndex: number;

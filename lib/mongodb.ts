@@ -606,7 +606,7 @@ export type OlseraInventoryMonthlySnapshotDocument = {
   salesQty: number | null;
   outgoingQty: number | null;
   closingQty: number | null;
-  source: "baseline-file" | "stockmovement-backward" | "stockmovement-forward" | "carry-forward";
+  source: "baseline-file" | "stockmovement-backward" | "stockmovement-forward" | "carry-forward" | "catalog";
   status: "complete" | "boundary-only" | "incomplete";
   diagnostics: string[];
   /**

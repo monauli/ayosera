@@ -567,6 +567,15 @@ test("computeMonthlyStepForward: TIDAK ada baris API DAN TIDAK ada anchor -> pro
   assert.equal(result.entries.size, 0);
 });
 
+test("computeMonthlyStepForward: katalog aktif qty > 0 tanpa movement -> muncul sebagai source catalog tanpa mengarang movement", () => {
+  const catalogProduct = { ...product({ _id: "1:777:0", productId: 777, name: "CATALOG ONLY" }), stockQty: 2, active: true };
+  const key = "1:777:0";
+  const result = computeMonthlyStepForward({ anchors: new Map(), matched: new Map(), catalogById: new Map([[key, catalogProduct]]), catalogOnly: new Map([[key, catalogProduct]]) });
+  const entry = result.entries.get(key);
+  assert.equal(entry?.source, "catalog");
+  assert.deepEqual([entry?.openingQty, entry?.incomingQty, entry?.returnQty, entry?.salesQty, entry?.outgoingQty, entry?.closingQty], [2, 0, 0, 0, 0, 2]);
+});
+
 // ---- recoverNullProductIdSales ----
 
 test("recoverNullProductIdSales: movement productId:null dipulihkan via resolvedProductId order item (kasus YONEX SHORTS)", () => {

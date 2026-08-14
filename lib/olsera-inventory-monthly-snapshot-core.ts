@@ -208,7 +208,7 @@ export function buildVerifiedAliasCanonicalKeys(catalogProducts: InventoryProduc
 // OlseraInventoryMonthlySnapshotDocument oleh layer store)
 // ---------------------------------------------------------------------------
 
-export type MonthlyLedgerSource = "baseline-file" | "stockmovement-backward" | "stockmovement-forward" | "carry-forward";
+export type MonthlyLedgerSource = "baseline-file" | "stockmovement-backward" | "stockmovement-forward" | "carry-forward" | "catalog";
 export type MonthlyLedgerStatus = "complete" | "boundary-only" | "incomplete";
 
 export type MonthlyLedgerEntry = {
@@ -541,6 +541,8 @@ export function computeMonthlyStepForward(input: {
   rawSalesActivityByKey?: RawSalesActivityByKey;
   /** Opsional (additive) — lihat applyVerifiedAliasLedgerFallback. Default: tidak diisi, perilaku lama TIDAK berubah. */
   verifiedAliasCanonicalKeys?: Set<string>;
+  /** Katalog aktif dengan stok live > 0 tanpa anchor/movement; hanya dipakai current month. */
+  catalogOnly?: Map<string, InventoryProductInput>;
 }): MonthlyStepForwardResult {
   const entries = new Map<string, MonthlyLedgerEntry>();
   const nextAnchors = new Map<string, ForwardAnchor>();
@@ -630,6 +632,29 @@ export function computeMonthlyStepForward(input: {
       productSku: product.sku,
       groupName: movement.row.productGroupName ?? product.category,
     });
+  }
+
+  for (const [key, product] of input.catalogOnly ?? []) {
+    if (seen.has(key) || entries.has(key) || !product.active || product.stockQty <= 0) continue;
+    const productName = product.variantName ? `${product.name} - ${product.variantName}` : product.name;
+    entries.set(key, {
+      productId: product.productId,
+      variantId: product.variantId,
+      canonicalProductId: null,
+      productName,
+      productSku: product.sku,
+      groupName: product.category,
+      openingQty: product.stockQty,
+      incomingQty: 0,
+      returnQty: 0,
+      salesQty: 0,
+      outgoingQty: 0,
+      closingQty: product.stockQty,
+      source: "catalog",
+      status: "complete",
+      diagnostics: ["Produk aktif tidak memiliki movement bulan berjalan; stok penutupan berasal dari katalog live Olsera.", "Provenance: CATALOG."],
+    });
+    nextAnchors.set(key, { openingQty: product.stockQty, productName, productSku: product.sku, groupName: product.category });
   }
 
   // Fallback ledger historis untuk identity-change TERVERIFIKASI — lihat

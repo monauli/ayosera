@@ -146,12 +146,12 @@ export function buildTwoSheetInventoryRows(input: {
       sku: product?.sku ?? doc?.productSku ?? null,
       category: product?.category || doc?.groupName || "",
       uom: product?.uom ?? null,
-      openingQty: doc ? doc.openingQty : 0,
+      openingQty: doc ? doc.openingQty : (isCurrentMonth ? product?.stockQty ?? 0 : 0),
       incomingQty: doc ? doc.incomingQty : 0,
       returnQty: doc ? doc.returnQty : 0,
       salesQty: doc ? doc.salesQty : 0,
       outgoingQty: doc ? doc.outgoingQty : 0,
-      closingQty: doc ? doc.closingQty : 0,
+      closingQty: doc ? doc.closingQty : (isCurrentMonth ? product?.stockQty ?? 0 : 0),
       hasSnapshot: Boolean(doc),
     };
   });
