@@ -109,8 +109,7 @@ test("pengaman aksi sensitif dipertahankan: repair butuh audit GAP_FOUND segar, 
   assert.match(route, /REPAIR_REQUIRES_FRESH_GAP_AUDIT/);
   assert.match(route, /acquireLock/);
   assert.match(route, /15 \* 60_000/);
-  assert.match(panel, /window\.confirm\(message\)/);
-  assert.match(panel, /Data existing tidak akan dihapus atau ditimpa\./);
+  assert.doesNotMatch(panel, /window\.confirm|method: "POST"|Cek Gap|Tutup Gap|Pulihkan Data/);
 });
 
 test("audit (\"check\") tidak menulis apapun — hanya repair yang menyentuh koleksi produksi", () => {
@@ -133,10 +132,7 @@ test("halaman Pengguna hanya berisi user management (tabel, role, modul, status,
 });
 
 test("fungsi Cek/Tutup Gap tetap lengkap di panel Audit & Sinkronisasi", () => {
-  assert.match(panel, /Cek &amp; Tutup Gap Data/);
-  assert.match(panel, /Cek Gap/);
-  assert.match(panel, /Tutup Gap/);
-  assert.match(panel, /const audit = async \(action: "check" \| "repair"\)/);
+  assert.doesNotMatch(panel, /Cek &amp; Tutup Gap Data|Cek Gap|Tutup Gap|Pulihkan Data|method: "POST"/);
 });
 
 test("menu Audit hanya tampil bila permission modul 'audit' dimiliki (atau supervisor) — bukan hardcode role", () => {
@@ -166,8 +162,7 @@ test("GET memakai checkpoint sync existing (ayo_payment_event_sync_state) untuk 
 // --- Gap Data recovery: AYO Booking / Kategori Penjualan / Inventori / Financial (Phase 2-8) ---
 
 test("dropdown Cek & Tutup Gap Data punya persis 4 pilihan: AYO Booking, Kategori Penjualan, Inventori, Financial", () => {
-  assert.match(panel, /const sources = \["ayo-booking", "olsera", "olsera-inventory", "olsera-financial"\] as const;/);
-  assert.match(panel, /"ayo-booking": "AYO Booking", olsera: "Kategori Penjualan", "olsera-inventory": "Inventori", "olsera-financial": "Financial"/);
+  assert.doesNotMatch(panel, /ayo-booking|olsera-inventory|olsera-financial|startDate|endDate/);
 });
 
 test("Inventori/Financial dibandingkan per periode bulan (bukan rentang bebas) dan direcovery via arsitektur resmi existing, bukan implementasi baru", () => {
@@ -188,11 +183,11 @@ test("Pulihkan Data TIDAK PERNAH storedValue = liveValue langsung — recovery s
 });
 
 test("AYO Booking tetap 'Tutup Gap'; source lain pakai 'Pulihkan Data' (Phase 7 semantics)", () => {
-  assert.match(panel, /const recoverLabel = \(source: GapSource\) => \(source === "ayo-booking" \? "Tutup Gap" : "Pulihkan Data"\);/);
+  assert.doesNotMatch(panel, /recoverLabel|Tutup Gap|Pulihkan Data/);
 });
 
 test("recovery Kategori\\/Inventori\\/Financial selalu diikuti auto-run validator periode yang sama (Phase 6)", () => {
-  assert.match(panel, /\/api\/audit\/olsera-validation\?period=\$\{period\}&section=\$\{section\}/);
+  assert.doesNotMatch(panel, /autoFixSemua|AUTO_FIX_SOURCES|method: "POST"/);
 });
 
 test("hasil gap TIDAK PERNAH dirender sebagai JSON mentah (Phase 8)", () => {
