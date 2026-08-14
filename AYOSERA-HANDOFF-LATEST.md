@@ -1540,3 +1540,12 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 - Preview: BA cocok menampilkan `Cocok berdasarkan BA — belum disimpan`, plus Penyesuaian BA dan Residual pembulatan.
 - Setelah Simpan: status `Cocok`; banner menyebut selisih telah dijelaskan dengan nominal BA.
 - Raw AYO/Olsera, file BA, historical data, dan lock architecture tidak diubah.
+# QUICK FIX — ODEA ROSE Februari 2026 (2026-08-14)
+
+- Scope: hanya `BOLA PADEL ODEA ROSE`, canonical `116138490`, lineage old `106817649`; ODEA RED `119043265` tidak disentuh.
+- Root cause: snapshot `324175:2026:02:116138490:0` menyimpan `opening=96`, `sales=30`, tetapi `closing=130` dan field lama `manualAdjustmentQty=64`; diagnostic lama mempertahankan gap +64 tanpa bukti movement.
+- Controlled correction production: Feb menjadi `opening=96, incoming=0, return=0, sales=30, outgoing=0, closing=66`, status `complete`; field fake adjustment +64 dihapus, tidak ada movement baru dibuat.
+- Diagnostic tersimpan: `Closing corrected from 130 to 66 based on verified opening 96 and sales 30; previous +64 gap had no proven source movement.`
+- Carry-forward read-back: Mar opening `66`, closing `30`; Apr `opening=30, closing=-21`; May `opening=-21, closing=-19`; Jun `opening=-19, closing=-43`; Jul `opening=-43, closing=-32`. Semua arithmetic konsisten dengan movement existing; negative downstream tidak ditutup dengan angka rekaan.
+- Alias `106817649:0 → 116138490`, `confidence=verified`, `source=manual-verified` tetap digunakan. ODEA RED snapshot dibandingkan sebelum/sesudah dan tidak berubah.
+- UI source snapshot sekarang membaca Feb ODEA ROSE dengan `Stok Awal 96`, `Penjualan 30`, `Sisa Stok 66`.
