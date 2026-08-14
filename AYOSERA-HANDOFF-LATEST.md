@@ -1754,6 +1754,18 @@ Keep the decided tabs for the follow-up task: `Stok Terjual`, `Stok Tidak Terjua
 - Therefore the exact production HTTP status and server error cannot be established safely from available read-only surfaces. No code change is justified.
 - No write, lock change, deploy, commit, or push was performed.
 
+## PERIOD FIX DEPLOYED — FEBRUARY READ PASSED, CONTROLLED WRITE PENDING — 2026-08-15
+
+- Fixed the month selector source: invalid/transient empty month values are rejected, period-dependent effects are guarded, and valid input is synchronized from both change/input events.
+- Added tests for valid `YYYY-MM` periods and the no-request guard.
+- Tests, typecheck, build, and diff check passed; build used a process-only placeholder URI for bundling because local `.env.local` is intentionally invalid and was not changed.
+- Commit pushed: `6c59a6b`.
+- Production deployment was observed after push.
+- Production February read now succeeds with `period=2026-02`, status `Final`, and existing tab counts: Stok Terjual 30, Stok Tidak Terjual 1, Stok Keseluruhan 31.
+- Production read-back confirms ODEA ROSE `96 / 30 / 66`.
+- Controlled workbook target remains 48 rows, but the existing production API surface has no endpoint for importing/upserting user historical monthly snapshots. Available inventory write paths are sync/lock or unrelated reconciliation storage; none was invoked.
+- No February write, no lock change, and no further deploy was performed. Further work requires an approved existing write path or a separately authorized API addition.
+
 ### Next controlled scope
 
 Restore read-only Mongo connectivity, re-run the same 17-item join against the 31 rows plus verified aliases and all available February–August sources, then review the report. Only after review may a separate task define any February write scope. No production write was performed by this audit.
