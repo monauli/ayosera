@@ -224,7 +224,6 @@ export function OlseraValidationPanel() {
           <ValidationRow title="API stockmovement live" detail={result?.inventory ? `${result.inventory.matching ?? 0} / ${result.inventory.checked ?? 0} stored item Cocok · ${result.inventory.liveItems ?? 0} item live · ${result.inventory.differences?.length ?? 0} Selisih${result.inventory.reason ? ` · ${result.inventory.reason}` : ""}` : "Tekan Validasi Sekarang untuk mengambil API Olsera live."} status={status("inventory", "Data Belum Lengkap")} />
           <FailureReason section={result?.inventory} />
           <DetailList items={result?.inventory?.differences} />
-          <p className="mt-2 text-xs text-slate-400">BA Stock Opname tetap diagnostic terpisah: tidak menjadi satu-satunya pembanding.</p>
         </div>
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">3. Laporan Keuangan</h3>

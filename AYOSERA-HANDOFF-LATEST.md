@@ -1881,3 +1881,10 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Cron production: belum ada bukti log untuk rata-rata/terlama/gagal/timeout/bentrok; tidak ada angka yang ditebak.
 - Backup ZIP lokal sudah diverifikasi lewat hasil ekstraksi 471 file dan manifest. Belum di Google Drive.
 - Laporan lengkap: `AYOSERA-AUDIT-OTOMATIS-2026-08-15.md`. Tidak ada kode/database/lock/deploy yang diubah oleh audit read-only ini.
+
+## AUDIT UI — HAPUS TEKS BA STOCK OPNAME (2026-08-15)
+
+- Teks `BA Stock Opname tetap diagnostic terpisah: tidak menjadi satu-satunya pembanding.` dihapus dari halaman Audit & Sinkronisasi.
+- Fungsi, data, rekonsiliasi, dan aturan BA tidak diubah.
+- Test terkait: audit-sync-menu-ui 31 PASS; private-integration-monitor 45 PASS; typecheck PASS; `git diff --check` PASS.
+- Build tidak lulus karena `MONGODB_URI` lokal berformat invalid saat Next.js mengumpulkan route; environment tidak diubah dan nilainya tidak ditampilkan.
