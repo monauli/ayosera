@@ -162,3 +162,39 @@ test("GET memakai checkpoint sync existing (ayo_payment_event_sync_state) untuk 
     /fetchAyoPaymentEvents|fetchAyoBookingsByDateRange|fetchOlseraSalesAuditSource/,
   );
 });
+
+// --- Gap Data recovery: AYO Booking / Kategori Penjualan / Inventori / Financial (Phase 2-8) ---
+
+test("dropdown Cek & Tutup Gap Data punya persis 4 pilihan: AYO Booking, Kategori Penjualan, Inventori, Financial", () => {
+  assert.match(panel, /const sources = \["ayo-booking", "olsera", "olsera-inventory", "olsera-financial"\] as const;/);
+  assert.match(panel, /"ayo-booking": "AYO Booking", olsera: "Kategori Penjualan", "olsera-inventory": "Inventori", "olsera-financial": "Financial"/);
+});
+
+test("Inventori/Financial dibandingkan per periode bulan (bukan rentang bebas) dan direcovery via arsitektur resmi existing, bukan implementasi baru", () => {
+  assert.match(route, /periodFromSameMonthRange/);
+  assert.match(route, /ensureMonthlySnapshotChain/);
+  assert.match(route, /startFinancialSync/);
+  assert.match(route, /stepFinancialSync/);
+  // reuse computeInventoryValidation/computeFinancialValidation — SAMA persis
+  // dengan GET /api/audit/olsera-validation, bukan logic pembanding paralel.
+  assert.match(route, /computeInventoryValidation/);
+  assert.match(route, /computeFinancialValidation/);
+});
+
+test("Pulihkan Data TIDAK PERNAH storedValue = liveValue langsung — recovery selalu lewat rebuild/sync resmi", () => {
+  assert.doesNotMatch(route, /storedValue\s*=\s*liveValue/);
+  assert.match(route, /repairInventoryGap/);
+  assert.match(route, /repairFinancialGap/);
+});
+
+test("AYO Booking tetap 'Tutup Gap'; source lain pakai 'Pulihkan Data' (Phase 7 semantics)", () => {
+  assert.match(panel, /const recoverLabel = \(source: GapSource\) => \(source === "ayo-booking" \? "Tutup Gap" : "Pulihkan Data"\);/);
+});
+
+test("recovery Kategori\\/Inventori\\/Financial selalu diikuti auto-run validator periode yang sama (Phase 6)", () => {
+  assert.match(panel, /\/api\/audit\/olsera-validation\?period=\$\{period\}&section=\$\{section\}/);
+});
+
+test("hasil gap TIDAK PERNAH dirender sebagai JSON mentah (Phase 8)", () => {
+  assert.doesNotMatch(panel, /JSON\.stringify\(result/);
+});

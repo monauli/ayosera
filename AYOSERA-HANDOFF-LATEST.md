@@ -1440,3 +1440,62 @@ New: `app/api/audit/olsera-validation/route.test.ts` (10 tests — clobber-fix r
 ### Files changed
 
 `app/api/audit/olsera-validation/route.ts`, `components/olsera-validation-panel.tsx`, `app/api/audit/inventory-history-preview/route.ts`, `app/globals.css`, `package.json` (two new test scripts), `app/api/audit/olsera-validation/route.test.ts` (new), `app/api/audit/inventory-history-preview/route.test.ts` (new), and this handoff.
+
+## 2026-08-14 — Gap Recovery (Kategori/Inventori/Financial) + Category "Gagal Dicek" real root cause
+
+Follow-up production acceptance found Category still `Gagal Dicek` (AYOSERA/Olsera/Delta = `-`), Inventory `29/31 Cocok`, Financial `53/85 akun Cocok`, and `Cek & Tutup Gap Data` only covering AYO Booking. This pass fixes the real timeout root cause for #1, and adds Gap Data recovery for Category/Inventory/Financial reusing existing sync/rebuild architecture — no historical YONEX/ODEA write, no invented movement, no forced `Cocok`.
+
+### 1. Category "Gagal Dicek" exact root cause
+
+`GET /api/audit/olsera-validation` had **no `export const maxDuration`** at all (Vercel platform default, as low as 10-15s) and an in-code category timeout of only **45 seconds**. `computeCategoryValidation` (now in `lib/olsera-validation-sections.ts`) fetches closeorder+openorder lists **plus per-order detail** for **every day in the month**, sequentially per day — the exact same workload the cron sync gives **300 seconds** (`app/api/cron/olsera/sales/route.ts`). 45s (or an unset platform default) is provably too small for a full month with real order volume, so category always hit the timeout race and returned `Gagal Dicek` — this was never a comparison-logic bug.
+
+### 2. Category fix
+
+- Added `export const maxDuration = 300;` to the validator route (matches every other route doing the same Olsera-fetch workload) and raised the in-code category budget from 45s to `CATEGORY_TIMEOUT_MS = 240_000` (240s), leaving a safety buffer under the 300s function limit — same buffer convention used in `lib/cron-olsera-financial.ts`.
+- Separately (still relevant even after the timeout fix): `failed()`/`failedSection()` now returns `stage`/`code` (`TOKEN_ERROR`, `SOURCE_INCOMPLETE`, `TIMEOUT`, `UNKNOWN` — never token/credential/raw response/stack trace) alongside `detail`, and `OlseraValidationPanel`/`PrivateIntegrationMonitor` now actually **render** that reason (`FailureReason`/`RevalidateSummary`) — previously the backend already computed a reason but no UI ever displayed it for any of the three sections, so `Gagal Dicek` always looked like a bare `-` with no explanation.
+- Extracted `computeCategoryValidation`/`computeInventoryValidation`/`computeFinancialValidation`/`failedSection`/`periodEnd` into `lib/olsera-validation-sections.ts` so the new Gap Data recovery endpoint reuses the **exact same comparison logic** as the validator (not a parallel reimplementation that could drift) — validator route itself is now a thin composition of these functions with unchanged behavior (proven by the pre-existing 10-test suite passing unmodified).
+
+### 3. Gap dropdown final
+
+`components/private-integration-monitor.tsx` "Cek & Tutup Gap Data" now has exactly 4 sources: **AYO Booking**, **Kategori Penjualan**, **Inventori**, **Financial**. `ayo-payment-events` is no longer selectable from this dropdown (per spec) but the backend still accepts it (zod enum unchanged) since other things may still rely on it — nothing was removed, only the UI list was narrowed. AYO Booking keeps its existing date-range UX unchanged; Inventori/Financial are validated as a single calendar-month period (`periodFromSameMonthRange`) since that's what `computeInventoryValidation`/`computeFinancialValidation` compare against — a same-month startDate/endDate is required or the request is rejected with a clear 400.
+
+### 4. Category recovery behavior
+
+Kategori Penjualan gap check/recovery was **already implemented** (source `"olsera"`, `compareOlseraSalesGap`/`repairOlsera`) before this task — only the UI label changed (Olsera Sales → Kategori Penjualan). "Tutup Gap" for this source inserts (never overwrites) only the exact orders/items the last fresh check found missing (`$setOnInsert`, existing behavior, unchanged). After recovery, the panel now additionally calls `GET /api/audit/olsera-validation?period=X&section=category` and shows the real aggregate validator status (Phase 6) — previously the gap tool and the validator were two disconnected checks.
+
+### 5. Inventory 2 mismatch — exact products
+
+`Cek Gap` for Inventori (`runInventoryGapAudit`) reuses `computeInventoryValidation` — the same function the validator uses — so it reports the same per-product `{product, ayosera, olseraLive, delta, fields}` rows the validator's Inventory section shows. Which 2 SKUs are mismatched for Februari 2026 specifically can only be read from the live comparison (Olsera API + stored snapshot) at request time — this pass did not have production Mongo/Olsera access to name them (see "Not executed" below); the mechanism to surface them exists and is tested with synthetic mismatches.
+
+### 6. Inventory recovery result
+
+Recovery calls `ensureMonthlySnapshotChain({ year, month })` — the same self-healing rebuild already used by inventory export/monitoring (`lib/olsera-inventory-monthly-snapshot-store.ts`), never a custom rewrite. It **never fabricates movement**. Important, tested behavior: for a "historical" month that already has a finalized snapshot document, `ensureMonthlySnapshotChain` is a deliberate **no-op** (protects finalized data) — so if the 2 mismatched Februari products are in that state, recovery legitimately does nothing and the auto-rerun validator correctly still reports `Selisih` with the same 2 products. This is **not a bug**, it's the guard working as designed — the task explicitly required "jangan overwrite agar kelihatan Cocok," and this is what makes that true even under recovery.
+
+### 7. Financial 32 mismatch — exact cause/summary
+
+Same pattern as #5: `Cek Gap` for Financial (`runFinancialGapAudit`) reuses `computeFinancialValidation`, returning the exact same `balanceSheet/profitLoss/cashFlow` totals-with-delta and `ledgerAccounts.{checked, matching, differences}` shape the validator's Buku Besar section already renders (from the previous session's Phase 3 work). The 32 specific mismatched account codes for Februari require a live production read this environment doesn't have (see below); the comparison path itself is unchanged and already tested.
+
+### 8. Financial recovery result
+
+Recovery drives `startFinancialSync(year, month)` + a bounded loop of `stepFinancialSync(runId)` (existing checkpointed sync from `lib/olsera-financial-sync.ts`, same code the manual/cron sync already uses) until `status === "success"` or a 240s budget is spent, with a stagnation guard (stops early if `accountsProcessed` stops advancing, e.g. a permanently-failed account after retries) so it never spins the full budget uselessly. `runId` is **deterministic per period** (`financialSyncRunId`) — if a prior attempt is still `"running"`/`"partial"`, the next repair click **resumes that same run** instead of restarting from account 0. Every report/account write is an upsert (`upsertMonthlyReport`/`upsertAccounts`, unchanged) — an old valid snapshot is never deleted before its replacement is fetched. If the budget runs out mid-sync, the response is `Gagal Dicek` / `SYNC_IN_PROGRESS` with `"{processed}/{total} akun"` progress and an explicit instruction to click Pulihkan Data again to continue — never a false success.
+
+### 9. Auto-validator rerun
+
+`components/private-integration-monitor.tsx`'s `audit()` now calls the Gap POST endpoint and, for Category/Inventory/Financial (never AYO Booking, which has no validator section), immediately follows with `GET /api/audit/olsera-validation?period=X&section=Y` and renders that as `RevalidateSummary`. Progress stages are tied to the two real awaited network calls only (`"Memeriksa & mengambil ulang data"` → `"Memvalidasi ulang"` → `"Selesai"`) — no fake timer; the spec's separate "Menyimpan hasil sync" stage happens server-side inside the single repair request and isn't a real client-observable step, so it wasn't invented as one.
+
+### 10. Unresolved mismatch status
+
+Both Inventory and Financial recovery paths report the validator's real post-recovery status verbatim (`RevalidateSummary` shows an explicit amber warning when still `Selisih`: "Masih ada selisih nyata setelah recovery — TIDAK dipaksa Cocok"). Nothing in this pass sets `storedValue = liveValue` directly anywhere — confirmed by a regression test asserting that literal pattern never appears in the route.
+
+### 11. Tests
+
+New: `app/api/private/integration-monitor/route.test.ts` (13 tests — same-month period validation, inventory check Cocok/Selisih with exact mismatch detail, repair without fresh check rejected, repair via real rebuild reaching Cocok, repair on a protected historical month staying Selisih, rebuild failure surfaced as Gagal Dicek, no fake movement payload, financial check mismatch detection reusing `computeFinancialValidation`, financial repair reaching Cocok via the sync loop, financial repair timeout reported honestly with progress, AYO Booking repair-without-check regression, no secret/token leak in responses). Added 7 new assertions to `lib/audit-sync-menu-ui.test.ts` (dropdown has exactly 4 sources, Inventory/Financial reuse the existing rebuild/sync architecture and `compute*Validation` — not parallel logic, no `storedValue = liveValue` pattern, `Tutup Gap` vs `Pulihkan Data` labeling, auto-revalidate call present, no `JSON.stringify(result` raw dump). All pass, plus regression: `test:olsera-inventory` 48/48, `test:olsera-financial` 29/29, `test:audit-sync-menu-ui` 31/31 (25 existing + 6 new — includes the pre-existing gap-safety tests unmodified), `test:olsera-validation` 10/10 (proves the extraction into `lib/olsera-validation-sections.ts` didn't change validator behavior), `test:inventory-history-preview` 5/5. `npm run type-check`: PASS. `npm run build`: PASS. `git diff --check`: PASS.
+
+### Not executed in this pass
+
+- **Phase 10 production acceptance** — same blocker as every prior entry above: no reachable production Mongo/Olsera credentials in this environment. All new logic is verified through mocked route-level tests reusing the real comparison functions, but the actual Februari 2026 numbers (which 2 inventory SKUs, which 32 ledger accounts, whether recovery changes them) still need to be read from the deployed endpoint/UI after this deploys.
+- No YONEX/ODEA historical write, no controlled write of any kind, no hardcoded product numbers.
+
+### Files changed
+
+`app/api/audit/olsera-validation/route.ts` (maxDuration + refactor to use shared lib), `lib/olsera-validation-sections.ts` (new — shared comparison logic), `components/olsera-validation-panel.tsx` (surface failure reason), `app/api/private/integration-monitor/route.ts` (new Inventory/Financial gap check+recovery), `components/private-integration-monitor.tsx` (4-source dropdown, auto-revalidate, compact result rendering, Pulihkan Data semantics), `app/api/private/integration-monitor/route.test.ts` (new), `lib/audit-sync-menu-ui.test.ts` (new assertions), `package.json` (new test script), and this handoff.

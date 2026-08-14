@@ -19,6 +19,7 @@
     "test:olsera-audit": "node --no-warnings --experimental-strip-types --test lib/olsera-audit.test.ts",
     "test:olsera-validation": "tsx --conditions=react-server --experimental-test-module-mocks --test app/api/audit/olsera-validation/route.test.ts",
     "test:inventory-history-preview": "tsx --conditions=react-server --experimental-test-module-mocks --test app/api/audit/inventory-history-preview/route.test.ts",
+    "test:gap-recovery": "tsx --conditions=react-server --experimental-test-module-mocks --test app/api/private/integration-monitor/route.test.ts",
     "test:olsera-financial": "node --no-warnings --experimental-strip-types --test lib/olsera-financial-core.test.ts lib/olsera-financial-diagnostics-ui.test.ts",
     "test:mongodb-errors": "node --no-warnings --experimental-strip-types --test lib/mongodb-errors.test.ts",
     "test:financial-response": "node --no-warnings --experimental-strip-types --test lib/olsera-financial-response.test.ts",

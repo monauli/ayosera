@@ -29,6 +29,19 @@ function ValidationRow({ title, detail, status }: { title: string; detail: strin
     </div>
   );
 }
+// Root cause Phase 1 production: status "Gagal Dicek" pernah dirender tanpa
+// alasan sama sekali (backend sudah punya `detail`/`code`/`stage` tapi UI
+// tidak pernah membacanya) — semua section sekarang WAJIB lewat sini.
+function FailureReason({ section }: { section: { status?: string; detail?: string; code?: string } | undefined }) {
+  if (section?.status !== "Gagal Dicek" || !section.detail) return null;
+  return (
+    <p className="mt-1 text-xs text-rose-300">
+      {section.detail}
+      {section.code ? ` (${section.code})` : ""}
+    </p>
+  );
+}
+
 function DetailList({ items }: { items: unknown[] | undefined }) {
   if (!items?.length) return null;
   return <div className="mt-2 space-y-1 text-xs text-slate-400">{items.slice(0, 10).map((item, index) => <div key={index} className="rounded bg-black/10 px-2 py-1">{typeof item === "string" ? item : JSON.stringify(item)}</div>)}</div>;
@@ -129,17 +142,20 @@ export function OlseraValidationPanel() {
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">1. Kategori Penjualan</h3>
           <ValidationRow title="Periode dan kategori" detail={result?.category ? `AYOSERA ${fmt(result.category.ayosera?.qty)} qty / Rp ${fmt(result.category.ayosera?.total)} · Olsera Live ${fmt(result.category.olseraLive?.qty)} qty / Rp ${fmt(result.category.olseraLive?.total)} · Delta qty ${fmtDelta(result.category.delta?.qty)} / nominal ${fmtDelta(result.category.delta?.total)}` : "Tekan Validasi Sekarang untuk mengambil API Olsera live."} status={status("category", "Data Belum Lengkap")} />
+          <FailureReason section={result?.category} />
           <DetailList items={result?.category?.differences} />
         </div>
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">2. Inventori</h3>
           <ValidationRow title="API stockmovement live" detail={result?.inventory ? `${result.inventory.matching ?? 0} / ${result.inventory.checked ?? 0} stored item Cocok · ${result.inventory.liveItems ?? 0} item live · ${result.inventory.differences?.length ?? 0} Selisih${result.inventory.reason ? ` · ${result.inventory.reason}` : ""}` : "Tekan Validasi Sekarang untuk mengambil API Olsera live."} status={status("inventory", "Data Belum Lengkap")} />
+          <FailureReason section={result?.inventory} />
           <DetailList items={result?.inventory?.differences} />
           <p className="mt-2 text-xs text-slate-400">BA Stock Opname tetap diagnostic terpisah: tidak menjadi satu-satunya pembanding.</p>
         </div>
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">3. Laporan Keuangan</h3>
           <ValidationRow title="Neraca, Laba Rugi, Arus Kas" detail="Dibandingkan dengan snapshot AYOSERA menggunakan response API live." status={result?.financial ? (result.financial.status === "Cocok" ? "Cocok" : result.financial.status) : "Data Belum Lengkap"} />
+          <FailureReason section={result?.financial} />
           <TotalsTable title={`Neraca — ${result?.financial?.balanceSheet?.status ?? "Data Belum Lengkap"}`} totals={result?.financial?.balanceSheet?.totals} />
           <TotalsTable title={`Laba Rugi — ${result?.financial?.profitLoss?.status ?? "Data Belum Lengkap"}`} totals={result?.financial?.profitLoss?.totals} />
           <TotalsTable title={`Arus Kas — ${result?.financial?.cashFlow?.status ?? "Data Belum Lengkap"}`} totals={result?.financial?.cashFlow?.totals} />

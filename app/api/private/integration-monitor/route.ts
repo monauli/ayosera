@@ -11,12 +11,21 @@ import { integrationTokenHealth, classifyAyoMobileToken } from "@/lib/private-in
 import { getConnectionHealthSummary } from "@/lib/connection-health";
 import { requireModule } from "@/lib/auth";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+import { computeInventoryValidation, computeFinancialValidation, failedSection, periodEnd, type ValidationStatus } from "@/lib/olsera-validation-sections";
+import { ensureMonthlySnapshotChain } from "@/lib/olsera-inventory-monthly-snapshot-store";
+import { startFinancialSync, stepFinancialSync, getFinancialSyncStatus } from "@/lib/olsera-financial-sync";
+import { financialSyncRunId, getFinancialSyncRun } from "@/lib/olsera-financial-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Recovery Inventori (ensureMonthlySnapshotChain) dan Financial
+// (startFinancialSync/stepFinancialSync loop, Phase 5) memanggil Olsera live
+// berkali-kali untuk satu bulan penuh — arsitektur sama dengan cron sync
+// bulanan sejenis, yang diberi maxDuration 300s.
+export const maxDuration = 300;
 
 const schema = z.object({
-  source: z.enum(["olsera", "ayo-booking", "ayo-payment-events"]),
+  source: z.enum(["olsera", "ayo-booking", "ayo-payment-events", "olsera-inventory", "olsera-financial"]),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   action: z.enum(["check", "repair"]),
@@ -25,6 +34,132 @@ const maxRangeDays = 31;
 const stateId = (source: AyoGapSource, startDate: string, endDate: string) => `ayo-gap:${source}:${startDate}:${endDate}`;
 const lockId = (source: string, startDate: string, endDate: string) => `${source}-gap-lock:${startDate}:${endDate}`;
 const olseraStateId = (startDate: string, endDate: string) => `olsera-sales-gap:${startDate}:${endDate}`;
+const periodGapStateId = (source: "olsera-inventory" | "olsera-financial", period: string) => `${source}-gap:${period}`;
+// Inventori/Financial (Phase 4/5) dibandingkan per PERIODE bulan (sama dengan
+// GET /api/audit/olsera-validation), bukan rentang tanggal bebas seperti
+// AYO Booking/Payment Events/Kategori Penjualan — startDate/endDate dari UI
+// yang sama harus berada di bulan kalender yang sama.
+function periodFromSameMonthRange(startDate: string, endDate: string): string | null {
+  const startMonth = startDate.slice(0, 7);
+  if (endDate.slice(0, 7) !== startMonth || startDate.slice(8) !== "01" || endDate !== periodEnd(startMonth)) return null;
+  return startMonth;
+}
+// Budget re-fetch Financial (start + loop step) — jauh di bawah maxDuration
+// 300s supaya masih ada waktu menulis run log/response sebelum function di-kill.
+const FINANCIAL_RECOVERY_BUDGET_MS = 240_000;
+const FRESH_AUDIT_WINDOW_MS = 15 * 60_000;
+
+type PeriodGapResult = {
+  source: "olsera-inventory" | "olsera-financial";
+  period: string;
+  checkedAt: string;
+  startedBy: string;
+  repaired: number;
+  status: ValidationStatus;
+  [key: string]: unknown;
+};
+type StoredPeriodGap = PeriodGapResult & { _id: string; completedAt: Date };
+
+async function runInventoryGapAudit(period: string, actor: string): Promise<PeriodGapResult> {
+  const [year, month] = period.split("-").map(Number);
+  const validation = await computeInventoryValidation(year, month, `${period}-01`, periodEnd(period));
+  const result: PeriodGapResult = { ...validation, source: "olsera-inventory", period, checkedAt: new Date().toISOString(), startedBy: actor, repaired: 0 };
+  const db = await getDb();
+  await db.collection<StoredPeriodGap>("data_gap_audit_state").updateOne({ _id: periodGapStateId("olsera-inventory", period) }, { $set: { ...result, _id: periodGapStateId("olsera-inventory", period), completedAt: new Date() } }, { upsert: true });
+  await db.collection("data_gap_audit_runs").insertOne({ source: "olsera-inventory", action: "check", status: result.status, period, actor, createdAt: new Date() });
+  return result;
+}
+
+async function requireFreshGap(source: "olsera-inventory" | "olsera-financial", period: string) {
+  const db = await getDb();
+  const stored = await db.collection<StoredPeriodGap>("data_gap_audit_state").findOne({ _id: periodGapStateId(source, period) });
+  if (!stored || stored.status !== "Selisih" || Date.now() - stored.completedAt.getTime() > FRESH_AUDIT_WINDOW_MS) throw new Error("REPAIR_REQUIRES_FRESH_GAP_AUDIT");
+  return db;
+}
+
+/**
+ * Recovery Inventori = ensureMonthlySnapshotChain (self-healing rebuild yang
+ * SUDAH dipakai di jalur export/monitoring lain, lihat lib/olsera-inventory-monthly-snapshot-store.ts).
+ * TIDAK PERNAH membuat movement palsu. Untuk bulan "historical" yang sudah
+ * pernah difinalisasi, fungsi ini SENGAJA tidak menghitung ulang (melindungi
+ * data final) — bila 2 produk masih Selisih setelah recovery, itu berarti
+ * datanya memang dilindungi/butuh review manual, BUKAN gagal recovery; hasil
+ * validator setelahnya tetap dilaporkan apa adanya (Selisih), tidak dipaksa Cocok.
+ */
+async function repairInventoryGap(period: string, actor: string): Promise<PeriodGapResult> {
+  const db = await requireFreshGap("olsera-inventory", period);
+  const release = await acquireLock("olsera-inventory", `${period}-01`, periodEnd(period), actor);
+  try {
+    const [year, month] = period.split("-").map(Number);
+    const rebuild = await ensureMonthlySnapshotChain({ year, month });
+    if (!rebuild.ok) {
+      const failure = failedSection("inventory", new Error(rebuild.error));
+      const result: PeriodGapResult = { ...failure, source: "olsera-inventory", period, checkedAt: new Date().toISOString(), startedBy: actor, repaired: 0 };
+      await db.collection("data_gap_audit_runs").insertOne({ source: "olsera-inventory", action: "repair", status: result.status, period, actor, createdAt: new Date(), error: rebuild.error });
+      return result;
+    }
+    const after = await runInventoryGapAudit(period, actor);
+    const result: PeriodGapResult = { ...after, repaired: rebuild.docs.length };
+    await db.collection("data_gap_audit_runs").insertOne({ source: "olsera-inventory", action: "repair", status: result.status, period, actor, createdAt: new Date(), repaired: result.repaired });
+    return result;
+  } finally { await release(); }
+}
+
+async function runFinancialGapAudit(period: string, actor: string): Promise<PeriodGapResult> {
+  const validation = await computeFinancialValidation(period);
+  const result: PeriodGapResult = { ...validation, source: "olsera-financial", period, checkedAt: new Date().toISOString(), startedBy: actor, repaired: 0 };
+  const db = await getDb();
+  await db.collection<StoredPeriodGap>("data_gap_audit_state").updateOne({ _id: periodGapStateId("olsera-financial", period) }, { $set: { ...result, _id: periodGapStateId("olsera-financial", period), completedAt: new Date() } }, { upsert: true });
+  await db.collection("data_gap_audit_runs").insertOne({ source: "olsera-financial", action: "check", status: result.status, period, actor, createdAt: new Date() });
+  return result;
+}
+
+/**
+ * Recovery Financial = drive startFinancialSync/stepFinancialSync (checkpoint
+ * existing dari lib/olsera-financial-sync.ts, dipakai jalur manual sync/cron
+ * juga) sampai selesai atau budget habis. runId DETERMINISTIK per periode
+ * (financialSyncRunId) — bila run sebelumnya masih "running"/"partial"
+ * (mis. timeout di percobaan lalu), lanjutkan run YANG SAMA (resume), TIDAK
+ * restart dari awal. Setiap report/akun ditulis via upsert (lihat
+ * upsertMonthlyReport/upsertAccounts) — snapshot lama valid tidak pernah
+ * dihapus sebelum data baru berhasil diambil untuk report/akun itu.
+ */
+async function repairFinancialGap(period: string, actor: string): Promise<PeriodGapResult> {
+  const db = await requireFreshGap("olsera-financial", period);
+  const release = await acquireLock("olsera-financial", `${period}-01`, periodEnd(period), actor);
+  try {
+    const runId = financialSyncRunId(period);
+    const existing = await getFinancialSyncRun(runId);
+    if (!existing || existing.status === "success" || existing.finalized) {
+      const [year, month] = period.split("-").map(Number);
+      await startFinancialSync(year, month);
+    }
+    const deadline = Date.now() + FINANCIAL_RECOVERY_BUDGET_MS;
+    let status = await getFinancialSyncStatus(runId);
+    let lastProcessed = -1;
+    // Berhenti bila stagnan (mis. status "partial"+finalized: beberapa akun
+    // gagal permanen setelah retry, step berikutnya tidak lagi maju) — jangan
+    // menghabiskan seluruh budget pada run yang sudah tidak bisa progress lagi.
+    while (status && (status.status === "running" || status.status === "partial") && status.progress.accountsProcessed !== lastProcessed && Date.now() < deadline) {
+      lastProcessed = status.progress.accountsProcessed;
+      await stepFinancialSync(runId);
+      status = await getFinancialSyncStatus(runId);
+    }
+    if (!status || status.status !== "success") {
+      const result: PeriodGapResult = {
+        source: "olsera-financial", period, checkedAt: new Date().toISOString(), startedBy: actor, repaired: 0,
+        status: "Gagal Dicek", stage: "financial", code: "SYNC_IN_PROGRESS",
+        detail: `Sinkronisasi Financial belum selesai (${status?.progress.accountsProcessed ?? 0}/${status?.progress.accountsTotal ?? 0} akun) — klik Pulihkan Data lagi untuk melanjutkan, checkpoint tersimpan.`,
+      };
+      await db.collection("data_gap_audit_runs").insertOne({ source: "olsera-financial", action: "repair", status: result.status, period, actor, createdAt: new Date(), progress: status?.progress ?? null });
+      return result;
+    }
+    const after = await runFinancialGapAudit(period, actor);
+    const result: PeriodGapResult = { ...after, repaired: status.progress.accountsProcessed };
+    await db.collection("data_gap_audit_runs").insertOne({ source: "olsera-financial", action: "repair", status: result.status, period, actor, createdAt: new Date(), repaired: result.repaired });
+    return result;
+  } finally { await release(); }
+}
 
 type StoredAudit = GapComparison & {
   _id: string;
@@ -196,6 +331,14 @@ export async function POST(request: Request) {
   try {
     const user = await requireModule("audit");
     const body = schema.parse(await request.json());
+    if (body.source === "olsera-inventory" || body.source === "olsera-financial") {
+      const period = periodFromSameMonthRange(body.startDate, body.endDate);
+      if (!period) return NextResponse.json({ error: "Inventori/Financial hanya mendukung satu periode bulan penuh (tanggal awal dan akhir harus di bulan kalender yang sama)." }, { status: 400 });
+      const result = body.source === "olsera-inventory"
+        ? body.action === "repair" ? await repairInventoryGap(period, user.id) : await runInventoryGapAudit(period, user.id)
+        : body.action === "repair" ? await repairFinancialGap(period, user.id) : await runFinancialGapAudit(period, user.id);
+      return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
+    }
     if (!rangeIsValid(body.startDate, body.endDate)) return NextResponse.json({ error: "Rentang tanggal harus valid dan maksimal 31 hari." }, { status: 400 });
     const result = body.source === "olsera" ? body.action === "repair" ? await repairOlsera(body.startDate, body.endDate, user.id) : await runOlseraGapAudit(body.startDate, body.endDate, user.id) : body.action === "repair" ? await repair(body.source, body.startDate, body.endDate, user.id) : await runAyoGapAudit(body.source, body.startDate, body.endDate, user.id);
     return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
