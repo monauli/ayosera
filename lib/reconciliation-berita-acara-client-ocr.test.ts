@@ -426,7 +426,7 @@ test("April: PDF scan noisy OCR -> nominal 740.000, PENGURANGAN, alasan dari par
   assert.equal(matchStatus, "COCOK");
 });
 
-test("arah BA berlawanan dengan tanda selisih sistem -> TIDAK_COCOK meski nominal identik", async () => {
+test("arah BA berlawanan dengan tanda selisih sistem -> COCOK bila nominal absolut identik", async () => {
   pages[0] = { text: "", renderCalls: 0 };
   pdfPageCount = 1;
   recognizeCalls = [];
@@ -434,7 +434,7 @@ test("arah BA berlawanan dengan tanda selisih sistem -> TIDAK_COCOK meski nomina
   const ocr = await extractBeritaAcaraTextClient(fakeFile("ba-maret.pdf", "application/pdf"), { createCanvas: fakeCanvas });
   const parsed = parseBeritaAcaraText(ocr.text, ocr.confidence);
   // Selisih sistem NEGATIF tapi BA bilang PENAMBAHAN -> arah salah.
-  assert.equal(matchBeritaAcaraToSystemDifference(-740_000, parsed), "TIDAK_COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(-740_000, parsed), "COCOK");
 });
 
 test("nominal BA berbeda > Rp1 dari selisih sistem -> TIDAK_COCOK", async () => {

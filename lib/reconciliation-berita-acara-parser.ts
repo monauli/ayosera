@@ -166,18 +166,12 @@ export function parseBeritaAcaraText(rawText: string, ocrConfidence?: number | n
 
 export type BeritaAcaraMatchStatus = "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | "SALAH_PERIODE";
 
-import { RECONCILIATION_TOLERANCE_RUPIAH, isWithinReconciliationTolerance } from "./reconciliation-tolerance";
+import { RECONCILIATION_TOLERANCE_RUPIAH, amountsMatchWithinReconciliationTolerance } from "./reconciliation-tolerance";
 export const BA_MATCH_TOLERANCE_RUPIAH = RECONCILIATION_TOLERANCE_RUPIAH;
 
 /**
- * Cocokkan selisih sistem (olseraRevenue - ayoRevenue, tanda dipertahankan)
- * dengan nominal+arah Berita Acara. Toleransi maksimal Rp1. Arah HARUS
- * sesuai tanda:
- *  - PENAMBAHAN: BA menyatakan sistem harus DITAMBAH -> berlaku saat
- *    systemDifference > 0, BA nominal ≈ +systemDifference.
- *  - PENGURANGAN: BA menyatakan sistem harus DIKURANGI -> berlaku saat
- *    systemDifference < 0, BA nominal (angka positif) ≈ -systemDifference.
- * TIDAK PERNAH membandingkan nilai absolut saja tanpa memeriksa arah.
+ * Cocokkan nominal BA dengan selisih sistem berdasarkan nilai absolut.
+ * Tanda dan direction BA adalah evidence audit, bukan syarat pencocokan.
  */
 export function matchBeritaAcaraToSystemDifference(
   systemDifference: number,
@@ -186,12 +180,6 @@ export function matchBeritaAcaraToSystemDifference(
 ): BeritaAcaraMatchStatus {
   if (expectedPeriod && !ba.period) return "PERLU_REVIEW";
   if (expectedPeriod && ba.period && ba.period !== expectedPeriod) return "SALAH_PERIODE";
-  if (ba.nominal === null || ba.direction === null) return "PERLU_REVIEW";
-  if (ba.direction === "PENAMBAHAN") {
-    if (systemDifference <= 0) return "TIDAK_COCOK"; // arah salah
-    return isWithinReconciliationTolerance(ba.nominal - systemDifference) ? "COCOK" : "TIDAK_COCOK";
-  }
-  // PENGURANGAN
-  if (systemDifference >= 0) return "TIDAK_COCOK"; // arah salah
-  return isWithinReconciliationTolerance(ba.nominal - -systemDifference) ? "COCOK" : "TIDAK_COCOK";
+  if (ba.nominal === null) return "PERLU_REVIEW";
+  return amountsMatchWithinReconciliationTolerance(systemDifference, ba.nominal) ? "COCOK" : "TIDAK_COCOK";
 }

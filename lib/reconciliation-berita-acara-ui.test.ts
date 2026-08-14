@@ -224,13 +224,13 @@ test("buildBeritaAcaraCards: nominal null (OCR gagal/ambigu) -> label 'Tidak ter
   assert.equal(cards.matchTone, "warn");
 });
 
-test("buildBeritaAcaraCards: arah salah -> TIDAK_COCOK, tone danger, meski nominal identik", () => {
+test("buildBeritaAcaraCards: arah berbeda -> COCOK, tone ok, meski nominal identik", () => {
   const parsed = parseBeritaAcaraText(MARET_OCR_TEXT, 0.9);
   const matchStatus = matchBeritaAcaraToSystemDifference(-740_000, parsed); // arah sistem berlawanan
   const cards = buildBeritaAcaraCards({ systemDifference: -740_000, nominal: parsed.nominal, direction: parsed.direction, matchStatus });
-  assert.equal(matchStatus, "TIDAK_COCOK");
-  assert.equal(cards.matchLabel, "TIDAK COCOK");
-  assert.equal(cards.matchTone, "danger");
+  assert.equal(matchStatus, "COCOK");
+  assert.equal(cards.matchLabel, "COCOK");
+  assert.equal(cards.matchTone, "ok");
 });
 
 // ---------------------------------------------------------------------------

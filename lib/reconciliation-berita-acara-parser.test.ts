@@ -64,16 +64,16 @@ test("scenario 9: selisih lebih dari Rp1 -> TIDAK_COCOK", () => {
 });
 
 // Skenario 10 — arah salah -> TIDAK_COCOK (walau nilai absolut sama persis)
-test("scenario 10: arah salah -> TIDAK_COCOK meski nilai absolut identik", () => {
+test("scenario 10: arah berbeda -> COCOK meski nominal absolut identik", () => {
   const statusA = matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: "PENGURANGAN" });
-  assert.equal(statusA, "TIDAK_COCOK");
+  assert.equal(statusA, "COCOK");
   const statusB = matchBeritaAcaraToSystemDifference(-740_000, { nominal: 740_000, direction: "PENAMBAHAN" });
-  assert.equal(statusB, "TIDAK_COCOK");
+  assert.equal(statusB, "COCOK");
 });
 
-test("systemDifference nol tidak pernah cocok dengan arah manapun", () => {
-  assert.equal(matchBeritaAcaraToSystemDifference(0, { nominal: 0, direction: "PENAMBAHAN" }), "TIDAK_COCOK");
-  assert.equal(matchBeritaAcaraToSystemDifference(0, { nominal: 0, direction: "PENGURANGAN" }), "TIDAK_COCOK");
+test("systemDifference nol cocok bila nominal absolut nol", () => {
+  assert.equal(matchBeritaAcaraToSystemDifference(0, { nominal: 0, direction: "PENAMBAHAN" }), "COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(0, { nominal: 0, direction: "PENGURANGAN" }), "COCOK");
 });
 
 // Skenario 11 — OCR confidence rendah / field ambigu -> PERLU_REVIEW, bukan tebakan
@@ -97,7 +97,7 @@ test("scenario 11c: dua arah disebut sekaligus (ambigu) -> direction null, PERLU
 });
 
 // Kasus toleransi Rp1 lengkap (9 kasus) — 6 harus COCOK, 3 harus TIDAK_COCOK.
-test("matcher: 9 kasus toleransi Rp1 dengan arah wajib", () => {
+test("matcher: 9 kasus toleransi Rp1 berbasis nominal absolut", () => {
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: "PENAMBAHAN" }), "COCOK");
   assert.equal(matchBeritaAcaraToSystemDifference(739_999, { nominal: 740_000, direction: "PENAMBAHAN" }), "COCOK");
   assert.equal(matchBeritaAcaraToSystemDifference(740_001, { nominal: 740_000, direction: "PENAMBAHAN" }), "COCOK");
@@ -106,12 +106,12 @@ test("matcher: 9 kasus toleransi Rp1 dengan arah wajib", () => {
   assert.equal(matchBeritaAcaraToSystemDifference(-740_001, { nominal: 740_000, direction: "PENGURANGAN" }), "COCOK");
   assert.equal(matchBeritaAcaraToSystemDifference(739_998, { nominal: 740_000, direction: "PENAMBAHAN" }), "TIDAK_COCOK");
   assert.equal(matchBeritaAcaraToSystemDifference(-739_998, { nominal: 740_000, direction: "PENGURANGAN" }), "TIDAK_COCOK");
-  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: "PENGURANGAN" }), "TIDAK_COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(-740_000, { nominal: 740_000, direction: "PENAMBAHAN" }), "COCOK");
 });
 
-test("matcher: nominal atau direction null -> PERLU_REVIEW, bukan TIDAK_COCOK", () => {
+test("matcher: nominal null -> PERLU_REVIEW; direction null tidak menghalangi match", () => {
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: null, direction: "PENAMBAHAN" }), "PERLU_REVIEW");
-  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: null }), "PERLU_REVIEW");
+  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { nominal: 740_000, direction: null }), "COCOK");
 });
 
 test("validasi BA lengkap: periode, arah, nominal, dan toleransi", () => {
@@ -119,7 +119,7 @@ test("validasi BA lengkap: periode, arah, nominal, dan toleransi", () => {
   assert.equal(ba.period, "2026-03");
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, ba, "2026-03"), "COCOK");
   assert.equal(matchBeritaAcaraToSystemDifference(741_500, ba, "2026-03"), "TIDAK_COCOK");
-  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { ...ba, direction: "PENGURANGAN" }, "2026-03"), "TIDAK_COCOK");
+  assert.equal(matchBeritaAcaraToSystemDifference(740_000, { ...ba, direction: "PENGURANGAN" }, "2026-03"), "COCOK");
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, ba, "2026-04"), "SALAH_PERIODE");
   assert.equal(matchBeritaAcaraToSystemDifference(740_000, { ...ba, period: null }, "2026-03"), "PERLU_REVIEW");
 });

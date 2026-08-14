@@ -1559,3 +1559,10 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 - Expected March opening: `15`; Maret read-back guard PASS dan tidak berubah.
 - UI inventory: kolom Produk diperlebar, nama boleh wrap, dan tooltip full name ditambahkan. Snapshot memakai `YONEX SHORTS MEN # SM-J035-2906-RW1-S` tanpa suffix `duplicate`.
 - Unrelated YONEX snapshot Februari dibandingkan sebelum/sesudah dan tidak berubah.
+# QUICK FIX — Final BA Omzet April 2026 (2026-08-14)
+
+- Root cause: `matchBeritaAcaraToSystemDifference` masih memaksa arah BA (`PENAMBAHAN/PENGURANGAN`) cocok dengan tanda `systemDifference`, sehingga April `-739.999` vs BA `+740.000` tidak lolos.
+- Fix shared: `absoluteAmountResidual = abs(abs(systemDifference) - abs(baAmount))`; match bila residual `<= Rp1`. Direction/sign tetap disimpan sebagai audit evidence, bukan syarat status.
+- Preview April: nominal BA Rp740.000 dengan system difference -Rp739.999 menjadi `COCOK`; state sebelum Simpan memakai `Cocok berdasarkan BA — belum disimpan` dari wiring existing.
+- Setelah Simpan: server matcher menghasilkan `COCOK`, sehingga status Pickleball/total/banner/row utama mengikuti status BA tersimpan. Raw AYO, Olsera, dan original difference tidak diubah.
+- Residual UI kini dihitung absolut dan ditampilkan sebagai Rp1 — Pembulatan.

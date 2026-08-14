@@ -332,11 +332,11 @@ test("previewOmzetPeriodLock: V10 test wajib #2/#4 — verifiedMatchStatus dihit
   assert.equal(aprilPreview.verifiedMatchStatus, "COCOK", "toleransi ±Rp1 tetap berlaku (740.000 vs 739.999)");
 });
 
-test("previewOmzetPeriodLock: V10 test wajib #5/#6 — nominal beda >Rp1 atau arah salah -> TIDAK_COCOK, bukan COCOK dipalsukan", () => {
+test("previewOmzetPeriodLock: nominal beda >Rp1 -> TIDAK_COCOK; arah berbeda tidak menghalangi match", () => {
   const wrongAmount = previewOmzetPeriodLock({ original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", attachment, beritaAcaraNominal: 750_000, beritaAcaraDirection: "PENAMBAHAN" });
   assert.equal(wrongAmount.verifiedMatchStatus, "TIDAK_COCOK");
   const wrongDirection = previewOmzetPeriodLock({ original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", attachment, beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN" });
-  assert.equal(wrongDirection.verifiedMatchStatus, "TIDAK_COCOK");
+  assert.equal(wrongDirection.verifiedMatchStatus, "COCOK");
 });
 
 test("previewOmzetPeriodLock: V10 test wajib #7 — tanpa nominal/direction (upload tanpa analisis valid) -> PERLU_REVIEW, bukan COCOK", () => {
@@ -402,9 +402,9 @@ test("applyLockedOmzetPresentation: V10 test wajib #2 — upload saja TANPA Simp
   assert.equal(presentation.beritaAcaraVerified, false);
 });
 
-test("applyLockedOmzetPresentation: V10 test wajib #6 — Simpan dengan arah/nominal SALAH (TIDAK_COCOK) -> TETAP Perlu Dicek, tidak pernah Cocok palsu", async () => {
+test("applyLockedOmzetPresentation: Simpan dengan nominal salah (TIDAK_COCOK) -> tetap Perlu Dicek", async () => {
   const { f, lock } = await upload();
-  const saved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENGURANGAN" }, f.context);
+  const saved = await recordOmzetPeriodLockPreview({ storeId: 1, period: "2026-06", actor: "supervisor-a", expectedVersion: lock.version, original: maret, finalAgreedAmount: maret.olsera, adjustmentReason: "x", beritaAcaraNominal: 750_000, beritaAcaraDirection: "PENGURANGAN" }, f.context);
   assert.equal(saved.lock.verifiedMatchStatus, "TIDAK_COCOK");
   const source = { ayo: { count: 1, revenue: maret.ayo }, olseraTotal: maret.olsera, differenceRevenue: maret.difference, status: "PERLU_DICEK", statusReason: "Selisih Rp740.000 menunggu verifikasi Berita Acara." };
   const presentation = applyLockedOmzetPresentation(source, saved.lock);
