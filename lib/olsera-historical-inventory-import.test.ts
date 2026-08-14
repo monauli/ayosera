@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildHistoricalImportPlan, type HistoricalInventoryRow } from "./olsera-historical-inventory-import.ts";
+import { buildHistoricalImportPlan, historicalDiagnostics, type HistoricalInventoryRow } from "./olsera-historical-inventory-import.ts";
 
 const row = (id: number, sales = 1, opening = 2, closing = opening - sales): HistoricalInventoryRow => ({ productId: id, variantId: null, productName: id === 1 ? "ODEA ROSE" : "ODEA RED", productSku: null, groupName: "BOLA PADEL", openingQty: opening, incomingQty: 0, returnQty: 0, salesQty: sales, outgoingQty: 0, closingQty: closing });
 
@@ -11,8 +11,8 @@ test("dry-run plan is idempotent, validates formula, and keeps distinct identiti
   assert.equal(plan.duplicates.length, 0);
 });
 
-test("duplicate identity and arithmetic mismatch are rejected", () => {
+test("duplicate identity is rejected while arithmetic mismatch is retained as incomplete", () => {
   const plan = buildHistoricalImportPlan({ sold: [row(1)], overall: [row(1), row(1), row(2, 1, 2, 99)], existing: [], expected: { sold: 1, unsold: 1, overall: 2 } });
   assert.ok(plan.duplicates.length > 0);
-  assert.ok(plan.rejected.some((item) => item.endsWith(":formula")));
+  assert.equal(historicalDiagnostics(row(2, 1, 2, 99)).length, 1);
 });

@@ -39,6 +39,7 @@ import { OlseraValidationPanel } from "@/components/olsera-validation-panel";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-sync-lock";
 import { runOlseraSyncAll, type StageId, type StageStatus } from "@/lib/olsera-sync-orchestrator";
 import { UsersPanel } from "@/components/users-panel";
+import { HistoricalInventoryPanel } from "@/components/historical-inventory-panel";
 import { PrivateIntegrationMonitor } from "@/components/private-integration-monitor";
 import { AyoseraHeader } from "@/components/redesign/ayosera-header";
 import { AyoseraShell } from "@/components/redesign/ayosera-shell";
@@ -3040,6 +3041,7 @@ export default function DashboardPage() {
           {activeNavAllowed && activeNav === "OlseraInventori" && (
             <div className="min-h-[calc(100vh-8rem)]">
               <OlseraInventoryPanel isSupervisor={isSupervisor} />
+              {isSupervisor && <HistoricalInventoryPanel />}
             </div>
           )}
 

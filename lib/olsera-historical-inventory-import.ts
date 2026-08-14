@@ -12,6 +12,7 @@ export type HistoricalInventoryRow = {
   salesQty: number;
   outgoingQty: number;
   closingQty: number;
+  diagnostics?: string[];
 };
 
 export type HistoricalImportPlan = {
@@ -42,7 +43,8 @@ export function buildHistoricalImportPlan(input: {
   for (const row of byKey.values()) {
     const values = [row.openingQty, row.incomingQty, row.returnQty, row.salesQty, row.outgoingQty, row.closingQty];
     if (values.some((value) => !Number.isFinite(value) || value < 0)) rejected.push(`${row.productId}:${row.variantId ?? 0}:angka`);
-    if (row.closingQty !== row.openingQty + row.incomingQty + row.returnQty - row.salesQty - row.outgoingQty) rejected.push(`${row.productId}:${row.variantId ?? 0}:formula`);
+    // Workbook values are authoritative. Arithmetic gaps are retained as
+    // incomplete diagnostics and intentionally do not abort the batch.
   }
   const rows = [...byKey.values()];
   const counts = { sold: rows.filter((row) => soldKeys.has(`${row.productId}:${row.variantId ?? 0}`)).length, unsold: rows.filter((row) => !soldKeys.has(`${row.productId}:${row.variantId ?? 0}`)).length, overall: rows.length };
@@ -56,4 +58,9 @@ export function buildHistoricalImportPlan(input: {
     else unchanged++;
   }
   return { rows, rejected, duplicates, counts, changes: { added, updated, unchanged } };
+}
+
+export function historicalDiagnostics(row: HistoricalInventoryRow): string[] {
+  const expected = row.openingQty + row.incomingQty + row.returnQty - row.salesQty - row.outgoingQty;
+  return row.diagnostics?.length ? row.diagnostics : row.closingQty === expected ? [] : [`Stok awal ${row.openingQty}, terjual ${row.salesQty}, stok akhir ${row.closingQty}. Selisih ${row.closingQty - expected}; bukti arus tambahan belum ditemukan.`];
 }
