@@ -112,6 +112,28 @@ function LedgerMismatchTable({ checked, differences }: { checked: number | undef
   );
 }
 
+// Akhir bulan (ISO yyyy-mm-dd) dari period "YYYY-MM" — versi client-side dari
+// lib/olsera-validation-sections.ts periodEnd (itu "server-only", tidak bisa
+// diimpor ke client component ini), logika identik.
+function periodEndClient(period: string): string {
+  return new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).toISOString().slice(0, 10);
+}
+
+// Phase 1: "Auto Fix Semua" HANYA menjalankan recovery yang sudah ada per
+// source (Cek Gap -> Pulihkan Data lewat /api/private/integration-monitor,
+// SAMA PERSIS endpoint yang dipakai panel Gap Data — bukan jalur baru) untuk
+// Kategori/Inventori/Financial berurutan. Recovery = re-fetch/re-sync/rebuild
+// resmi (lihat repairInventoryGap/repairFinancialGap/repairOlsera di route
+// itu) — TIDAK PERNAH memaksa nilai stored disamakan begitu saja ke live,
+// dan TIDAK PERNAH memaksa delta jadi 0. Repair hanya dipanggil bila Cek Gap
+// SEGAR menunjukkan mismatch (source sudah
+// Cocok -> dilewati, tidak ada yang perlu dipulihkan).
+const AUTO_FIX_SOURCES = [
+  { source: "olsera" as const, label: "Kategori", needsRepairStatus: "GAP_FOUND" },
+  { source: "olsera-inventory" as const, label: "Inventori", needsRepairStatus: "Selisih" },
+  { source: "olsera-financial" as const, label: "Financial", needsRepairStatus: "Selisih" },
+];
+
 export function OlseraValidationPanel() {
   const [period, setPeriod] = useState("2026-07");
   const [busy, setBusy] = useState(false);
@@ -122,6 +144,42 @@ export function OlseraValidationPanel() {
   const stages = ["Menghubungkan ke Olsera", "Memeriksa Kategori Penjualan", "Memeriksa Inventori", "Memeriksa Neraca, Laba Rugi & Arus Kas", "Memeriksa semua akun Buku Besar", "Menyusun hasil"];
   const validate = async () => { setBusy(true); setResult(null); setStageError(null); const merged: Record<string, any> = {}; try { for (let i = 0; i < stages.length; i++) { setStage(i); if (i === 0 || i === 5) continue; const section = i === 1 ? "category" : i === 2 ? "inventory" : "financial"; const response = await fetch(`/api/audit/olsera-validation?period=${period}&section=${section}`, { cache: "no-store" }); const body = await response.json(); Object.assign(merged, body); if (!response.ok || body[section]?.status === "Gagal Dicek") setStageError(i); } setStage(5); setResult(merged); setCheckedAt(merged.checkedAt ?? new Date().toISOString()); } catch { setStageError(stage < 0 ? 0 : stage); } finally { setBusy(false); } };
   const status = (key: string, fallback: ValidationStatus): ValidationStatus => result?.[key]?.status ?? fallback;
+
+  const [autoFixBusy, setAutoFixBusy] = useState(false);
+  const [autoFixStage, setAutoFixStage] = useState(-1);
+  const [autoFixSourceErrors, setAutoFixSourceErrors] = useState<string[]>([]);
+  const autoFixStages = ["Memeriksa masalah", "Memulihkan Kategori", "Memulihkan Inventori", "Memulihkan Financial", "Memvalidasi ulang", "Selesai"];
+  const autoFixSemua = async () => {
+    if (!window.confirm("Auto Fix Semua akan menjalankan re-fetch/rebuild resmi untuk Kategori, Inventori, dan Financial yang masih bermasalah pada periode ini. Data existing tidak ditimpa paksa — hanya dipulihkan dari source Olsera.")) return;
+    setAutoFixBusy(true); setAutoFixStage(0); setAutoFixSourceErrors([]);
+    const start = `${period}-01`, end = periodEndClient(period);
+    const errors: string[] = [];
+    try {
+      setAutoFixStage(0);
+      for (let i = 0; i < AUTO_FIX_SOURCES.length; i++) {
+        const { source, label, needsRepairStatus } = AUTO_FIX_SOURCES[i];
+        setAutoFixStage(i + 1);
+        try {
+          const checkRes = await fetch("/api/private/integration-monitor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, startDate: start, endDate: end, action: "check" }) });
+          const checkBody = await checkRes.json();
+          if (checkBody?.status === needsRepairStatus) {
+            const repairRes = await fetch("/api/private/integration-monitor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, startDate: start, endDate: end, action: "repair" }) });
+            const repairBody = await repairRes.json();
+            if (repairBody?.status === "Gagal Dicek" || repairBody?.status === "MANUAL_REVIEW_REQUIRED" || repairBody?.status === "LOCKED") errors.push(`${label}: ${repairBody?.detail ?? repairBody?.status}`);
+          }
+        } catch {
+          // Satu source gagal TIDAK menggagalkan seluruh Auto Fix — source
+          // berikutnya tetap lanjut, source ini tetap tampil apa adanya
+          // (Gagal Dicek/Selisih) setelah re-run validator di bawah.
+          errors.push(`${label}: gagal dijalankan`);
+        }
+      }
+      setAutoFixSourceErrors(errors);
+      setAutoFixStage(4);
+      await validate();
+      setAutoFixStage(5);
+    } finally { setAutoFixBusy(false); }
+  };
   return (
     <section className="mt-6 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4" aria-labelledby="olsera-validation-title">
       <div className="flex items-start gap-3">
@@ -133,10 +191,26 @@ export function OlseraValidationPanel() {
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <input aria-label="Periode validasi Olsera" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-100" />
-        <button type="button" onClick={() => void validate()} disabled={busy || !period} className="rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">{busy ? "Sedang memeriksa data Olsera..." : "Validasi Sekarang"}</button>
+        <button type="button" onClick={() => void validate()} disabled={busy || autoFixBusy || !period} className="rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">{busy ? "Sedang memeriksa data Olsera..." : "Validasi Sekarang"}</button>
+        <button type="button" onClick={() => void autoFixSemua()} disabled={busy || autoFixBusy || !period} className="rounded-md border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-sm font-semibold text-amber-200 disabled:opacity-50">{autoFixBusy ? "Auto Fix berjalan..." : "Auto Fix Semua"}</button>
         {checkedAt && <span className="text-xs text-slate-400">Terakhir dicek: {new Date(checkedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</span>}
       </div>
       {busy && <div className="mt-4 space-y-2 rounded-lg border border-white/10 bg-black/10 p-3">{stages.map((label, index) => <div key={label} className="flex items-center gap-2 text-xs">{stageError === index ? <CircleAlert className="h-4 w-4 text-rose-300" /> : stage > index ? <Check className="h-4 w-4 text-emerald-300" /> : stage === index ? <Loader2 className="h-4 w-4 animate-spin text-cyan-300" /> : <span className="h-4 w-4 rounded-full border border-white/20" />}<span className={stage === index ? "text-cyan-200" : stage > index ? "text-emerald-200" : stageError === index ? "text-rose-200" : "text-slate-500"}>{label}</span></div>)}</div>}
+      {autoFixStage >= 0 && (
+        <div className="mt-4 space-y-2 rounded-lg border border-amber-300/20 bg-amber-950/10 p-3">
+          {autoFixStages.map((label, index) => (
+            <div key={label} className="flex items-center gap-2 text-xs">
+              {autoFixStage > index ? <Check className="h-4 w-4 text-emerald-300" /> : autoFixStage === index && autoFixBusy ? <Loader2 className="h-4 w-4 animate-spin text-amber-300" /> : autoFixStage === index ? <Check className="h-4 w-4 text-emerald-300" /> : <span className="h-4 w-4 rounded-full border border-white/20" />}
+              <span className={autoFixStage === index ? "text-amber-200" : autoFixStage > index ? "text-emerald-200" : "text-slate-500"}>{label}</span>
+            </div>
+          ))}
+          {autoFixSourceErrors.length > 0 && (
+            <div className="mt-1 space-y-0.5 border-t border-amber-300/10 pt-2">
+              {autoFixSourceErrors.map((line) => <p key={line} className="text-xs text-rose-300">{line} — tetap tampil apa adanya, source lain tetap lanjut diproses.</p>)}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-5 grid gap-4 lg:grid-cols-3">
         <div>

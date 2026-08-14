@@ -37,6 +37,8 @@ export type OmzetExportInput = {
   periodLabel?: string;
   /** Daftar tanggal YYYY-MM-DD yang dicakup export periode (Summary range/bulanan). */
   dateList?: string[];
+  /** booking_id -> payment type (lib/ayo-payment-events.ts paymentType) — dipakai classifyBookingExportSource untuk MN yang dibayar via Payment Link. Tanpa map ini, MN tetap fallback ke behavior lama (Walk In). */
+  paymentTypeByBooking?: ReadonlyMap<string, string | null>;
 };
 
 /**
@@ -78,8 +80,35 @@ function courtLabel(fieldName: string) {
   return fieldName;
 }
 
-function isAyoSource(b: BookingDocument) {
-  return (b.booking_source || "order") === "order";
+/**
+ * SATU-SATUNYA classifier AYO vs Walk In dipakai seluruh export (harian/
+ * bulanan/range — semua reuse builder di file ini, lihat komentar di bawah).
+ *
+ * Root cause bug produksi: prefix booking_id "MN" (dibuat manual/reservation
+ * oleh staff, lihat booking_source AYO "reservation") SEBELUMNYA otomatis
+ * berarti Walk In — padahal booking manual bisa saja dibayar customer lewat
+ * Payment Link (mekanisme pembayaran, bukan siapa yang membuat booking), yang
+ * artinya tetap transaksi AYO. "BK" (dibuat lewat app AYO) selalu AYO. Untuk
+ * prefix lain (jarang, bukan BK/MN) tetap pakai booking_source AYO apa adanya
+ * (behavior existing, tidak diubah) sebagai fallback aman.
+ *
+ * `paymentType` HARUS berasal dari payment event (lib/ayo-payment-events.ts
+ * paymentType, canonical field yang sudah ada) untuk booking_id yang sama —
+ * TIDAK PERNAH ditebak. Bila tidak diketahui (null/kosong/tidak match), MN
+ * tetap Walk In — behavior aman existing, bukan otomatis dianggap Payment Link.
+ */
+export function classifyBookingExportSource(input: { bookingId: string; bookingSource: string; paymentType?: string | null }): "order" | "manual" {
+  const id = (input.bookingId || "").trim();
+  if (id.startsWith("BK")) return "order";
+  if (id.startsWith("MN")) {
+    const normalized = (input.paymentType ?? "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
+    return normalized === "payment link" ? "order" : "manual";
+  }
+  return (input.bookingSource || "order") === "order" ? "order" : "manual";
+}
+
+function isAyoSource(b: BookingDocument, input: OmzetExportInput) {
+  return classifyBookingExportSource({ bookingId: b.booking_id, bookingSource: b.booking_source, paymentType: input.paymentTypeByBooking?.get(b.booking_id) ?? null }) === "order";
 }
 
 function sessionLength(b: BookingDocument) {
@@ -278,7 +307,7 @@ function buildWalkInSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const columns = BASE_COLUMNS;
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (Walk In)", periodText(input), columns);
 
-  const rows = input.dayBookings.filter((b) => !isAyoSource(b));
+  const rows = input.dayBookings.filter((b) => !isAyoSource(b, input));
   // Dikelompokkan per tanggal (urut naik); tiap tanggal ditutup 1 baris subtotal.
   // Tanpa grand total di akhir (sesuai referensi; beda dengan sheet ALL).
   let r = 5;
@@ -306,7 +335,7 @@ function buildAyoSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     paymentFail: "Payment Fail",
   });
 
-  const rows = input.dayBookings.filter((b) => isAyoSource(b));
+  const rows = input.dayBookings.filter((b) => isAyoSource(b, input));
   // Pola sama dengan Walk In: subtotal per tanggal, tanpa grand total.
   // Nomor urut ("No") berjalan menerus lintas tanggal.
   let r = 5;
@@ -470,7 +499,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     if (!day) continue;
     const ci = courtCols.find((c) => matchesCourtColumn(c.court, b.field_name));
     if (!ci) continue;
-    const col = isAyoSource(b) ? ci.ayoCol : ci.walkCol;
+    const col = isAyoSource(b, input) ? ci.ayoCol : ci.walkCol;
     const key = `${day}|${col}`;
     agg.set(key, (agg.get(key) ?? 0) + getRevenueAmount(b));
   }
@@ -707,7 +736,7 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   for (const b of input.dayBookings) {
     const ci = courtCols.find((c) => matchesCourtColumn(c.court, b.field_name));
     if (!ci) continue;
-    const col = isAyoSource(b) ? ci.ayoCol : ci.walkCol;
+    const col = isAyoSource(b, input) ? ci.ayoCol : ci.walkCol;
     const key = `${b.date}|${col}`;
     agg.set(key, (agg.get(key) ?? 0) + getRevenueAmount(b));
   }

@@ -21,6 +21,21 @@ export function dashboardPaymentAmountsByBooking(paymentEvents: readonly AyoPaym
   return amounts;
 }
 
+/**
+ * booking_id -> paymentType (lib/ayo-payment-events.ts, canonical field from
+ * the payment event, never guessed) — dipakai lib/omzet-export.ts
+ * classifyBookingExportSource untuk membedakan booking "MN" yang dibayar
+ * lewat Payment Link (tetap AYO) dari yang benar-benar manual/Walk In.
+ */
+export function dashboardPaymentTypeByBooking(paymentEvents: readonly AyoPaymentEvent[]) {
+  const types = new Map<string, string | null>();
+  for (const event of uniqueDashboardPaymentEvents(paymentEvents)) {
+    if (!event.bookingId || types.has(event.bookingId)) continue;
+    types.set(event.bookingId, event.paymentType);
+  }
+  return types;
+}
+
 /** Payment events are a separate dataset from bookings: never apply booking-status eligibility here. */
 export function buildDashboardPaymentMetrics(input: { bookingTotal: number; fallbackTransactions: number; fallbackRevenue: number; paymentEvents: readonly AyoPaymentEvent[] | null }) {
   if (!input.paymentEvents) return { totalTransactions: input.fallbackTransactions, revenueMonth: input.fallbackRevenue, bookingTotal: input.bookingTotal };

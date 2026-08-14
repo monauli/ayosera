@@ -161,6 +161,63 @@ test("akun 40001 hanya dibandingkan Court, 40004 hanya Pickleball, dan toleransi
 });
 
 // ---------------------------------------------------------------------------
+// Phase 6 (MASTER FIX FINAL) — April 2026: COURT AYO Rp227.119.999 vs Olsera
+// Rp227.120.000 (residual Rp1, sudah dalam toleransi pembulatan existing),
+// PICKLEBALL AYO Rp15.010.000 vs Olsera Rp14.270.000 (selisih Rp740.000,
+// dijelaskan Berita Acara terverifikasi). Membuktikan mekanisme LOCK+BA yang
+// SUDAH ADA (bukan logic baru) menangani skenario ini persis seperti diminta:
+// aggregate differenceRevenue = -Rp739.999 (net Rp1 court + -Rp740.000
+// pickleball) — locked HANYA bila explainedAmount sama persis dgn ini.
+// ---------------------------------------------------------------------------
+test("April 2026: BA terverifikasi Rp740.000 (pickleball) + residual Rp1 (court, sudah toleransi) -> locked SELISIH_TERJELASKAN, bukan Perlu Dicek", () => {
+  const breakdown = { court: { count: 10, revenue: 227_119_999 }, pickleball: { count: 5, revenue: 15_010_000 }, unmapped: { count: 0, revenue: 0 }, total: { count: 15, revenue: 242_129_999 } };
+  const entries40001 = [
+    entry({ transactionNo: "JU-APR-COURT", transactionDate: "2026-04-05", credit: 227_120_000 }),
+    entry({ transactionNo: "CL-APR-COURT", transactionDate: "2026-04-30", debit: 227_120_000 }),
+  ];
+  const entries40004 = [
+    entry({ transactionNo: "JU-APR-PICKLE", transactionDate: "2026-04-05", credit: 14_270_000 }),
+    entry({ transactionNo: "JU-APR-REKLAS", transactionDate: "2026-04-30", debit: 14_270_000 }),
+  ];
+  const entries21003 = [entry({ transactionNo: "JU-APR-REKLAS", transactionDate: "2026-04-30", credit: 14_270_000 })];
+
+  // Tanpa BA: aggregate differenceRevenue harus -Rp739.999 persis (root cause
+  // banner lama "Selisih -Rp739.999 menunggu verifikasi BA") dan status Perlu Dicek.
+  const unexplained = computeOmzetOlseraLedger("2026-04", breakdown.total, entries40001, entries40004, entries21003, null, NOW, breakdown);
+  assert.equal(unexplained.differenceRevenue, -739_999);
+  assert.equal(unexplained.status, "PERLU_DICEK");
+  assert.equal(unexplained.sportReconciliation.court.status, "COCOK", "residual Rp1 sudah dalam toleransi ±Rp1 existing — court sendiri sudah Cocok tanpa BA");
+  assert.equal(unexplained.sportReconciliation.pickleball.status, "PERLU_DICEK");
+
+  // BA verified+locked dengan explainedAmount = differenceRevenue PERSIS -> SELISIH_TERJELASKAN, dibekukan.
+  const verifiedBa: OmzetExplanation = {
+    evidenceType: "correction",
+    description: "Berita Acara terverifikasi: penyesuaian Pickleball Rp740.000.",
+    explainedAmount: -739_999,
+    createdBy: "supervisor-april",
+    createdAt: NOW,
+    updatedAt: NOW,
+    locked: true,
+    lockedBy: "supervisor-april",
+    lockedAt: NOW,
+  };
+  const explained = computeOmzetOlseraLedger("2026-04", breakdown.total, entries40001, entries40004, entries21003, verifiedBa, NOW, breakdown);
+  assert.equal(explained.status, "SELISIH_TERJELASKAN");
+  assert.match(explained.statusReason, /supervisor-april/);
+  // Original AYO/Olsera amounts tidak pernah diubah oleh proses penjelasan BA.
+  assert.equal(explained.ayo.revenue, 242_129_999);
+  assert.equal(explained.olseraTotal, 241_390_000);
+  assert.equal(explained.differenceRevenue, -739_999);
+
+  // Catatan: engine murni ini (computeOmzetOlseraLedger) menerima `explanation`
+  // apa adanya dari pemanggil — gate "upload BA saja belum cukup, harus
+  // verified/accepted" ada di UPSTREAM (alur Simpan/Kunci Periode di
+  // app/reconciliation/page.tsx + lib/reconciliation-omzet-note-store.ts,
+  // lihat resolveContext.loadExplanation), bukan di fungsi ini. Tidak diuji
+  // ulang di sini — di luar scope module ini.
+});
+
+// ---------------------------------------------------------------------------
 // 1. Cocok persis
 // ---------------------------------------------------------------------------
 test("cocok persis: 40001 tutup buku + 40004 reklasifikasi terverifikasi, sama persis dengan AYO", () => {

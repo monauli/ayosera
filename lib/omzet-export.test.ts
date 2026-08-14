@@ -9,10 +9,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import ExcelJS from "exceljs";
-import { buildOmzetHarianWorkbook, buildOmzetPeriodWorkbook, type OmzetExportInput, withCanonicalPaymentAmounts } from "./omzet-export.ts";
+import { buildOmzetHarianWorkbook, buildOmzetPeriodWorkbook, classifyBookingExportSource, type OmzetExportInput, withCanonicalPaymentAmounts } from "./omzet-export.ts";
 import type { BookingDocument } from "./mongodb.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
-import { dashboardPaymentAmountsByBooking } from "./dashboard-payment-metrics.ts";
+import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "./dashboard-payment-metrics.ts";
 
 function fakeBooking(overrides: Partial<BookingDocument>): BookingDocument {
   return {
@@ -212,4 +212,78 @@ test("Export Bulanan Juni menambah tepat Rp600.000 dan tidak membuat booking tan
   assert.equal(canonical.some((booking) => booking.booking_id === "NO-PAYMENT"), false);
   assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0), 242895499);
   assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0) - bookings.filter((booking) => booking.booking_id !== "NO-PAYMENT").reduce((sum, booking) => sum + booking.total_price, 0), 600000);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 7: classifyBookingExportSource — prefix MN TIDAK selalu Walk In.
+// Root cause produksi: booking manual (booking_id "MN...", booking_source
+// AYO "reservation") sebelumnya SELALU masuk Walk In walau dibayar customer
+// lewat Payment Link — payment MECHANISM, bukan siapa yang membuat booking,
+// yang menentukan channel. "BK" selalu AYO (dibuat lewat app).
+// ---------------------------------------------------------------------------
+
+test("classifyBookingExportSource: BK selalu AYO, terlepas payment method", () => {
+  assert.equal(classifyBookingExportSource({ bookingId: "BK/1/1", bookingSource: "order", paymentType: "MANUAL" }), "order");
+  assert.equal(classifyBookingExportSource({ bookingId: "BK/1/1", bookingSource: "order", paymentType: null }), "order");
+});
+
+test("classifyBookingExportSource: MN + Payment Link -> AYO (case/spacing dinormalisasi)", () => {
+  assert.equal(classifyBookingExportSource({ bookingId: "MN/2428/260227/0001", bookingSource: "reservation", paymentType: "Payment Link" }), "order");
+  assert.equal(classifyBookingExportSource({ bookingId: "MN/2428/260227/0001", bookingSource: "reservation", paymentType: "payment_link" }), "order");
+  assert.equal(classifyBookingExportSource({ bookingId: "MN/2428/260227/0001", bookingSource: "reservation", paymentType: "  PAYMENT   LINK  " }), "order");
+});
+
+test("classifyBookingExportSource: MN + manual/tunai -> Walk In", () => {
+  assert.equal(classifyBookingExportSource({ bookingId: "MN/2428/260227/0002", bookingSource: "reservation", paymentType: "MANUAL" }), "manual");
+  assert.equal(classifyBookingExportSource({ bookingId: "MN/2428/260227/0002", bookingSource: "reservation", paymentType: "CASH" }), "manual");
+});
+
+test("classifyBookingExportSource: MN + payment method TIDAK diketahui (null/kosong) -> tetap Walk In (behavior aman existing, tidak menebak)", () => {
+  assert.equal(classifyBookingExportSource({ bookingId: "MN/2428/260227/0003", bookingSource: "reservation", paymentType: null }), "manual");
+  assert.equal(classifyBookingExportSource({ bookingId: "MN/2428/260227/0003", bookingSource: "reservation" }), "manual");
+});
+
+test("classifyBookingExportSource: prefix selain BK/MN fallback ke booking_source AYO existing", () => {
+  assert.equal(classifyBookingExportSource({ bookingId: "OTHER-1", bookingSource: "order", paymentType: null }), "order");
+  assert.equal(classifyBookingExportSource({ bookingId: "OTHER-1", bookingSource: "reservation", paymentType: null }), "manual");
+});
+
+test("REGRESSION 27 Feb: MN + Payment Link Rp200.000 muncul di sheet AYO, TIDAK di Walk In, satu kali, totals reconcile", async () => {
+  const targetId = "MN/2428/260227/0001581";
+  const otherAyoId = "BK/1/1";
+  const bookings = [
+    fakeBooking({ booking_id: targetId, date: "2026-02-27", booking_source: "reservation", total_price: 999999 }), // stale total_price sengaja beda -> dibuktikan hanya canonical amount dari payment event yang dipakai
+    fakeBooking({ booking_id: otherAyoId, date: "2026-02-27", booking_source: "order", total_price: 500000 }),
+  ];
+  const events: AyoPaymentEvent[] = [
+    { ...paymentEvent("feb27-a", targetId, 200000, "2026-02-27"), paymentType: "Payment Link" },
+    paymentEvent("feb27-b", otherAyoId, 500000, "2026-02-27"),
+  ];
+  const paymentAmounts = dashboardPaymentAmountsByBooking(events);
+  const paymentTypeByBooking = dashboardPaymentTypeByBooking(events);
+  const canonicalBookings = withCanonicalPaymentAmounts(bookings, paymentAmounts);
+  const input: OmzetExportInput = {
+    date: "2026-02-27",
+    venueName: "BC Padel Club",
+    dayBookings: canonicalBookings,
+    monthBookings: canonicalBookings,
+    paymentTypeByBooking,
+  };
+  const bytes = await buildOmzetHarianWorkbook(input);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const ayo = wb.getWorksheet("AYO")!;
+  const walkIn = wb.getWorksheet("Walk In")!;
+  const all = wb.getWorksheet("ALL")!;
+
+  assert.equal(revenueForBooking(ayo, targetId), 200000, "MN + Payment Link harus muncul di sheet AYO dengan nominal canonical Rp200.000");
+  assert.throws(() => revenueForBooking(walkIn, targetId), /tidak ditemukan/, "MN + Payment Link TIDAK BOLEH muncul di sheet Walk In");
+
+  // Tidak boleh muncul dua kali di AYO (no double-count), dan total gabungan (ALL) reconcile.
+  let ayoOccurrences = 0;
+  const bookingColumn = headerColumn(ayo, "Booking ID");
+  for (let row = 5; row <= ayo.rowCount; row++) if (ayo.getCell(row, bookingColumn).value === targetId) ayoOccurrences++;
+  assert.equal(ayoOccurrences, 1);
+  assert.equal(revenueForBooking(all, targetId), 200000);
+  assert.equal(revenueForBooking(all, otherAyoId), 500000);
 });

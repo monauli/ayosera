@@ -5,7 +5,7 @@ import { resolveVenueName } from "@/lib/booking-mapper";
 import { buildOmzetPeriodWorkbook, dateRange, periodLabelMonth, withCanonicalPaymentAmounts } from "@/lib/omzet-export";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
-import { dashboardPaymentAmountsByBooking } from "@/lib/dashboard-payment-metrics";
+import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
 
 export const runtime = "nodejs";
 
@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     const start = `${month}-01`;
     const end = `${month}-${String(lastDay).padStart(2, "0")}`;
 
-    const { periodBookings, sportByFieldId, venueName } = await withMongo(async () => {
+    const { periodBookings, sportByFieldId, venueName, paymentTypeByBooking } = await withMongo(async () => {
       const { bookings, fields, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
       const [rows, fieldRows] = await Promise.all([
         bookings
@@ -63,6 +63,7 @@ export async function GET(request: Request) {
           : rows as BookingDocument[],
         sportByFieldId: map,
         venueName: resolveVenueName(),
+        paymentTypeByBooking: staged ? dashboardPaymentTypeByBooking(staged.events) : undefined,
       };
     });
 
@@ -74,6 +75,7 @@ export async function GET(request: Request) {
       sportByFieldId,
       periodLabel: periodLabelMonth(month),
       dateList: dateRange(start, end),
+      paymentTypeByBooking,
     });
 
     const filename = `Omzet Bulanan ${MONTHS_FILE[mon - 1]} ${year}.xlsx`;
