@@ -1754,6 +1754,17 @@ Keep the decided tabs for the follow-up task: `Stok Terjual`, `Stok Tidak Terjua
 - Therefore the exact production HTTP status and server error cannot be established safely from available read-only surfaces. No code change is justified.
 - No write, lock change, deploy, commit, or push was performed.
 
+## HISTORICAL IMPORT API — IMPLEMENTED, DRY-RUN PRODUCTION PENDING — 2026-08-15
+
+- Added supervisor-only `POST /api/supervisor/olsera/inventory/historical`.
+- Modes: `dry-run` and `confirm`; period must be `YYYY-MM`; locked periods are rejected.
+- Historical values are written only to `olsera_inventory_monthly_snapshots`; current Olsera stock and Olsera stock APIs are never changed.
+- Identity is verified against the AYOSERA catalog by `productId`, `variantId`, and SKU when present. Snapshot IDs make reruns idempotent; ODEA RED/ROSE remain separate keys.
+- Dry-run validates arithmetic, duplicates, and required counts 31/17/48 before any write. Confirm uses upsert and never locks the period.
+- Added core and route tests covering supervisor guard, period validation, dry-run/write shape, duplicate rejection, idempotence, and no-lock behavior.
+- Local focused tests, typecheck, build, and diff check passed.
+- Production dry-run/confirm/read-back were not executed in this turn because no authenticated client path for POSTing the workbook-derived payload is available in the existing UI. No production write or lock change was performed.
+
 ## PERIOD FIX DEPLOYED — FEBRUARY READ PASSED, CONTROLLED WRITE PENDING — 2026-08-15
 
 - Fixed the month selector source: invalid/transient empty month values are rejected, period-dependent effects are guarded, and valid input is synchronized from both change/input events.
