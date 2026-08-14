@@ -1605,6 +1605,34 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 - UI menampilkan ringkasan completeness, alasan disabled yang spesifik, dan riwayat Lock/Unlock actor, waktu, alasan, serta version bila tersedia. BA tetap hanya muncul saat mismatch/flow BA.
 - Februari tidak dikunci otomatis. ODEA ROSE dan YONEX correction tidak disentuh.
 
+## MASTER FIX INVENTORI FEBRUARI — CODE-ONLY PENDING HISTORICAL WORKBOOK — 2026-08-14
+
+- UI inventory sekarang memakai empat tab dinamis: `Stok Terjual`, `Stok Tidak Terjual`, `Stok Keseluruhan`, `Riwayat Mutasi`.
+- API monthly memakai parameter tab yang sama dan menghitung jumlah sold/unsold/overall dari snapshot periode; tidak ada angka 31/17/48 yang di-hardcode.
+- Dedupe tetap memakai `storeId:productId:variantId`. Snapshot source diteruskan sebagai provenance (`STOCK_MOVEMENT` untuk snapshot movement dan `CATALOG` untuk snapshot catalog); identity incomplete tetap ditandai dan tidak dianggap lengkap.
+- Export dua-sheet existing tetap memakai snapshot universe yang sama: `Terjual` hanya `salesQty > 0`, `Keseluruhan` seluruh baris beraktivitas; current catalog qty tidak menggantikan angka historical.
+- Rekonsiliasi dan lock guard existing tetap menjadi pagar completeness; unresolved/incomplete identity membuat lock disabled. Riwayat lock/unlock tidak diubah.
+- ODEA ROSE, YONEX SHORTS, dan ODEA RED tidak disentuh oleh perubahan ini.
+
+### February data/write status
+
+- Workbook dengan sheet `February Terjual` dan `February Keseluruhan` belum tersedia.
+- Controlled write Februari: **PENDING**. Tidak ada snapshot historical Februari yang ditulis oleh pass ini.
+- February actual counts, 17-item identity completion, PLO COMFORT, dan production read-back: **PENDING** sampai workbook tersedia dan Mongo production read-only dapat dibaca.
+- February lock: **tidak dilakukan**.
+
+### Validation
+
+- `npm run test:olsera-inventory-monthly`: PASS (230 tests).
+- `npm run test:inventory-stock-opname`: PASS (53 tests).
+- `npm run test:reconciliation-core`: PASS (84 tests).
+- `npm run test:olsera-inventory-ui`: PASS (52 tests).
+- `npm run type-check`: PASS.
+- `npm run build`: PASS.
+- `git diff --check`: PASS.
+
+Next step: provide the verified February workbook, then perform a read-only join against the existing 31 rows and catalog/alias identities. Only after user review may a separate controlled-write task populate proven rows and consider lock readiness.
+
 ## AUDIT 17 CATALOG-ONLY ITEM FEBRUARI 2026 — 2026-08-14
 
 Audit live read-only dilakukan terhadap katalog Olsera `/api/open-api/v1/id/product`. Tidak ada write/lock/correction. Exact catalog matching menghasilkan:

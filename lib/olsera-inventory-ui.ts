@@ -267,14 +267,35 @@ export function stockEmptyStateMessage(input: {
 // Tab
 // ---------------------------------------------------------------------------
 
-export type InventoryTabKey = "stock" | "movements";
+export type InventorySource = "STOCK_MOVEMENT" | "USER_HISTORICAL_INVENTORY";
+export type InventoryUniverseRow = { key: string; salesQty: number | null; source: InventorySource; identityResolved: boolean };
+
+export function buildInventoryUniverse<T extends InventoryUniverseRow>(rows: readonly T[]): T[] {
+  const byKey = new Map<string, T>();
+  for (const row of rows) if (!byKey.has(row.key)) byKey.set(row.key, row);
+  return [...byKey.values()];
+}
+
+export function universeCounts(rows: readonly InventoryUniverseRow[]) {
+  const universe = buildInventoryUniverse(rows);
+  return {
+    sold: universe.filter((row) => (row.salesQty ?? 0) > 0).length,
+    unsold: universe.filter((row) => (row.salesQty ?? 0) <= 0 && row.identityResolved).length,
+    overall: universe.filter((row) => row.identityResolved).length,
+    unresolved: universe.filter((row) => !row.identityResolved).length,
+  };
+}
+
+export type InventoryTabKey = "sold" | "unsold" | "overall" | "movements";
 
 export const INVENTORY_TABS: {
   key: InventoryTabKey;
   label: string;
   supervisorOnly: boolean;
 }[] = [
-  { key: "stock", label: "Stok Bulanan", supervisorOnly: false },
+  { key: "sold", label: "Stok Terjual", supervisorOnly: false },
+  { key: "unsold", label: "Stok Tidak Terjual", supervisorOnly: false },
+  { key: "overall", label: "Stok Keseluruhan", supervisorOnly: false },
   { key: "movements", label: "Riwayat Mutasi", supervisorOnly: false },
 ];
 

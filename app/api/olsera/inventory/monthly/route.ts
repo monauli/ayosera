@@ -22,6 +22,7 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   sort: z.enum(["stock", "value", "name"]).default("name"),
   dir: z.enum(["asc", "desc"]).default("asc"),
+  tab: z.enum(["sold", "unsold", "overall"]).default("overall"),
 });
 
 function jakartaPeriod() {
@@ -89,11 +90,20 @@ export async function GET(request: Request) {
         usesDefaultThreshold: product?.lowStockAlert == null,
         trackInventory: base.trackInventory,
         diagnostics: snapshot.diagnostics,
+        source: snapshot.source === "catalog" ? "CATALOG" : "STOCK_MOVEMENT",
+        identityResolved: snapshot.status !== "incomplete",
       };
     });
 
     const summary = summarizeMonthlyInventory(rows);
+    const tabCounts = {
+      sold: rows.filter((row) => (row.salesQty ?? 0) > 0).length,
+      unsold: rows.filter((row) => (row.salesQty ?? 0) <= 0).length,
+      overall: rows.length,
+    };
     const filtered = rows.filter((row) => {
+      if (params.tab === "sold" && (row.salesQty ?? 0) <= 0) return false;
+      if (params.tab === "unsold" && (row.salesQty ?? 0) > 0) return false;
       if (params.q) {
         const query = params.q.toLocaleLowerCase();
         if (![row.name, row.variantName, row.sku, row.category].some((value) => value?.toLocaleLowerCase().includes(query))) return false;
@@ -116,6 +126,7 @@ export async function GET(request: Request) {
       priceSource: "current-master",
       priceNote: "Snapshot bulanan belum menyimpan unit cost historis; harga modal memakai master inventori saat ini.",
       summary,
+      tabCounts,
       data: filtered.slice(start, start + params.limit),
       total: filtered.length,
       page: params.page,

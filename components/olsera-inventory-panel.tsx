@@ -31,6 +31,7 @@ import {
   syncStatusLabel,
   visibleInventoryTabs,
   visibleMonthlyInventoryRows,
+  type InventoryTabKey,
 } from "@/lib/olsera-inventory-ui";
 
 const TITLE = "text-[16px] font-semibold tracking-tight text-slate-50";
@@ -150,6 +151,8 @@ type ProductRow = {
   modifiedTime: string | null;
   snapshotStatus?: "complete" | "boundary-only" | "incomplete";
   diagnostics?: string[];
+  source?: "STOCK_MOVEMENT" | "USER_HISTORICAL_INVENTORY" | "CATALOG";
+  identityResolved?: boolean;
 };
 type PeriodLock = { status: "locked" | "unlocked"; lockedAt: string | null; lockedBy: string | null; history: unknown[] } | null;
 
@@ -191,7 +194,8 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [externallyLocked, setExternallyLocked] = useState(false);
   useEffect(() => subscribeOlseraSyncLock(setExternallyLocked), []);
 
-  const [tab, setTab] = useState<"stock" | "movements">("stock");
+  const [tab, setTab] = useState<InventoryTabKey>("overall");
+  const [tabCounts, setTabCounts] = useState({ sold: 0, unsold: 0, overall: 0 });
   const [period, setPeriod] = useState(() => {
     if (typeof window === "undefined") return today.slice(0, 7);
     const value = new URLSearchParams(window.location.search).get("inventoryPeriod");
@@ -276,6 +280,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       limit: "50",
       sort: stockSort.key,
       dir: stockSort.dir,
+      tab: tab === "movements" ? "overall" : tab,
       _t: String(Date.now()),
     });
     if (stockSearch.trim()) params.set("q", stockSearch.trim());
@@ -289,7 +294,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
             return null;
           }
           return (await response.json().catch(() => null)) as
-            | { hasData?: boolean; data?: ProductRow[]; total?: number; totalPages?: number; categories?: string[]; summary?: Summary; syncStatus?: SyncStatus; status?: string; periodLock?: PeriodLock }
+            | { hasData?: boolean; data?: ProductRow[]; total?: number; totalPages?: number; categories?: string[]; summary?: Summary; tabCounts?: typeof tabCounts; syncStatus?: SyncStatus; status?: string; periodLock?: PeriodLock }
             | null;
         })
         .then((payload) => {
@@ -303,6 +308,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
           setStockMeta({ total: payload.total ?? 0, totalPages: payload.totalPages ?? 1 });
           if (payload.categories) setStockCategories(payload.categories);
           if (payload.summary) setSummary({ ...payload.summary, hasData: payload.hasData });
+          if (payload.tabCounts) setTabCounts(payload.tabCounts);
           if (payload.syncStatus) setSyncStatus(payload.syncStatus);
           if (payload.status) setPeriodStatus(payload.status);
           setPeriodLock(payload.periodLock ?? null);
@@ -768,12 +774,12 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                   onClick={() => setTab(item.key)}
                   className={`rd-capsule ${tab === item.key ? "rd-capsule-active" : ""}`}
                 >
-                  {item.label}
+                  {item.label}{item.key !== "movements" ? ` (${tabCounts[item.key]})` : ""}
                 </button>
               ))}
             </div>
 
-            {tab === "stock" && (
+            {tab !== "movements" && (
               <>
                 <div className="mb-4 flex flex-wrap items-center gap-2.5">
                   <div className={`${FIELD} w-full sm:w-64`}>
