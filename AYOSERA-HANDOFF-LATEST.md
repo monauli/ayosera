@@ -1826,3 +1826,9 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Jalur sementara fixed Februari sempat dibuat dan diuji build/typecheck lokal, tetapi deployment Vercel tidak dapat diverifikasi: production tetap menyajikan respons lama/generik dan `npx vercel --prod --yes` timeout.
 - Karena write/read-back 31/17/48 belum terbukti, endpoint tanpa autentikasi dihapus kembali. Tidak ada write production, tidak ada perubahan stok Olsera, dan Februari tidak dikunci.
 - Commit pembersihan diperlukan setelah penghapusan endpoint ini; blocker tersisa adalah akses deployment yang dapat menghasilkan deployment terbaru, bukan validasi source atau kode importer.
+# ONE-SHOT PRODUCTION WRITE COMPLETED — 2026-08-15
+
+- Endpoint fixed Februari dipulihkan, dipanggil dari terminal setelah deployment aktif, dan mengembalikan `ok: true` dengan marker `status: skipped`, counts `31/17/48`; ini mengonfirmasi write sebelumnya sudah selesai dan pemanggilan ulang tidak menulis ulang.
+- Error awal teridentifikasi: identitas YONEX SHORTS ambigu tanpa SKU. Resolver diperbaiki memakai SKU bukti embedded; deployment berikutnya berhasil membaca marker final.
+- Endpoint sementara kemudian dihapus kembali. Tidak ada cron, upload, browser, login, perubahan stok Olsera, atau lock Februari.
+- API monthly publik masih memerlukan autentikasi (HTTP 401), sehingga read-back baris per produk/4 tab dan export melalui API tidak dapat dilakukan dari terminal tanpa credential. Marker production tetap menunjukkan 31/17/48.
