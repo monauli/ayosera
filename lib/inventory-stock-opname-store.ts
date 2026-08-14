@@ -26,6 +26,7 @@ import {
   type StockOpnameBaEntry,
 } from "./inventory-stock-opname.ts";
 import { attachMovementsToProducts, type UnmatchedMovementEntry } from "./olsera-inventory-monthly-core.ts";
+import { visibleMonthlyInventoryRows } from "./olsera-inventory-ui.ts";
 import type { MatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchMatchingContext } from "./olsera-inventory-monthly-snapshot-store.ts";
 import { fetchStockMovementRange, type FetchStockMovementResult } from "./olsera-inventory-stockmovement.ts";
@@ -226,7 +227,11 @@ export async function loadInventoryOpnameMonth(
 
   const opnameByKey = new Map(opnameRows.map((doc) => [opnameKey(doc.productId, doc.variantId), doc]));
 
-  const rows: InventoryOpnameRow[] = snapshotRows.map((snap) => {
+  const visibleSnapshots = visibleMonthlyInventoryRows(
+    snapshotRows.map((snap) => ({ ...snap, category: snap.groupName })),
+    false,
+  );
+  const rows: InventoryOpnameRow[] = visibleSnapshots.map((snap) => {
     const flow = {
       openingQty: snap.openingQty,
       incomingQty: snap.incomingQty,

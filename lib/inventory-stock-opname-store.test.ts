@@ -466,6 +466,17 @@ test("ringkasan bulan menghitung total selisih & tally status dari gabungan snap
   assert.equal(result.summary.totalSelisihNegatif, -2);
 });
 
+test("rekonsiliasi memakai universe bulanan yang sama dengan Stok Keseluruhan", async () => {
+  const ctx = context([
+    snapshotDoc({ productId: 1, groupName: "BOLA PADEL", closingQty: 10 }),
+    snapshotDoc({ productId: 2, groupName: "LABERS", closingQty: 10 }),
+    snapshotDoc({ productId: 3, groupName: "BOLA PADEL", openingQty: 0, closingQty: 0 }),
+  ], fakeOpnameCollection());
+  const result = await loadInventoryOpnameMonth({ storeId: 324175, year: 2026, month: 5 }, ctx);
+  assert.deepEqual(result.rows.map((row) => row.productId), [1]);
+  assert.equal(result.summary.totalProduk, 1);
+});
+
 test("end-to-end finalisasi lalu lock event tidak melakukan double adjustment", async () => {
   const opname = fakeOpnameCollection();
   const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
