@@ -15,7 +15,7 @@ function resolve(rows: readonly BuiltInRow[], products: readonly OlseraInventory
     const embeddedSku = source.product.match(/#\s*([A-Z0-9-]+)$/i)?.[1] ?? source.sku;
     const candidates = products.filter((product) => {
       const name = normalize(product.name);
-      const skuMatches = embeddedSku && product.sku && normalize(product.sku) === normalize(embeddedSku);
+      const skuMatches = embeddedSku && ((product.sku && normalize(product.sku) === normalize(embeddedSku)) || name.includes(normalize(embeddedSku)));
       return skuMatches || name === wanted || (wanted === "bolapadelodea" && name.includes("odearose")) || (wanted.includes("plocomfort") && name.includes("xplocomfort"));
     });
     if (candidates.length !== 1) throw new Error(`Identitas historical tidak unik: ${source.product} (${candidates.map((candidate) => `${candidate.productId}:${candidate.variantId ?? 0}:${candidate.name}:${candidate.sku ?? ""}`).join(" | ")})`);
