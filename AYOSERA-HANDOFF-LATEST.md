@@ -1765,6 +1765,16 @@ Keep the decided tabs for the follow-up task: `Stok Terjual`, `Stok Tidak Terjua
 - `YONEX SHORTS MEN # SM-J035-2906-RW1-S`: opening 24, sales 9, closing 15.
 - Workbook is accepted as the February historical source. No workbook, production data, or period lock was changed by this verification.
 
+## BUILT-IN FEBRUARY IMPORT — DEPLOYED, PRODUCTION DRY-RUN PENDING SUPERVISOR SESSION — 2026-08-15
+
+- Embedded the verified February source in code; source tests confirm 31 sold, 48 overall, 48 unique identities, and required ODEA/YONEX evidence.
+- Historical importer now accepts arithmetic mismatches as `incomplete` with diagnostics rather than dropping the row. Workbook numbers remain unchanged.
+- Added automatic built-in source mode, supervisor-only panel, dry-run/confirm controls, idempotent snapshot upsert, and no-lock behavior.
+- Known workbook incomplete rows from the full audit: `Bullpadel Sniper 2.0 Power Light Blue 2026` (opening 2, sales 1, closing 2; delta +1) and `GRIP YONEX AC102` (incoming 60, closing 56; delta -4). No values were guessed.
+- Local tests, typecheck, build, and diff check passed. Commit pushed: `b6c54ff`.
+- Production deployment and general health check passed.
+- Production dry-run/confirm/read-back were not executed because the current production browser session is not authenticated as supervisor and the historical control is therefore not visible. No production write or lock change was performed.
+
 - Added supervisor-only `POST /api/supervisor/olsera/inventory/historical`.
 - Modes: `dry-run` and `confirm`; period must be `YYYY-MM`; locked periods are rejected.
 - Historical values are written only to `olsera_inventory_monthly_snapshots`; current Olsera stock and Olsera stock APIs are never changed.
