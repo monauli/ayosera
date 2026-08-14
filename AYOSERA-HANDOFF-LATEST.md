@@ -1604,3 +1604,43 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 - Status lock hanya aktif jika snapshot arithmetic valid, tidak ada mismatch/incomplete, dan completeness pass. Server lock juga menolak catalog-only yang belum diverifikasi; BA tidak dapat menutup gap product universe.
 - UI menampilkan ringkasan completeness, alasan disabled yang spesifik, dan riwayat Lock/Unlock actor, waktu, alasan, serta version bila tersedia. BA tetap hanya muncul saat mismatch/flow BA.
 - Februari tidak dikunci otomatis. ODEA ROSE dan YONEX correction tidak disentuh.
+
+## AUDIT 17 CATALOG-ONLY ITEM FEBRUARI 2026 — 2026-08-14
+
+Audit live read-only dilakukan terhadap katalog Olsera `/api/open-api/v1/id/product`. Tidak ada write/lock/correction. Exact catalog matching menghasilkan:
+
+| # | Evidence name | productId | variantId | SKU | category | current qty | classification |
+|---:|---|---:|---:|---|---|---:|---|
+| 1 | Bullpadel Sniper 2.0 Power Light Blue 2026 | 106771148 | — | — | RAKET PADEL | 2 | SOURCE_DATA_INCOMPLETE |
+| 2 | Bullpadel Sniper 2.0 Oil Petroleo 2026 | 106778573 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 3 | Bullpadel Indiga Mundial Argentina LTD 1988 | 106778612 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 4 | Nox X ONE Black | 106778626 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 5 | BULLPADEL IONIC CONTROL 25-365-375G NAVY | 106778839 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 6 | BULLPADEL K2 POWER 25-360-370G NAVY | 106778862 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 7 | BULLPADEL BP10 EVO 25-360-370G GREY | 106778873 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 8 | BULLPADEL FLOW LIGHT 25-350-360G RED | 106778882 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 9 | BULLPADEL INDIGA PWR 25-360-370G WHITE | 106778891 | — | — | RAKET PADEL | 0 | SOURCE_DATA_INCOMPLETE |
+| 10 | BULLPADEL INDIGA CTR 25-360-370G GREEN | 106778905 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 11 | BULLPADEL INDIGA W 25-350-360G WHITE | 106778939 | — | — | RAKET PADEL | 0 | SOURCE_DATA_INCOMPLETE |
+| 12 | BULLPADEL HACK JR 25-335-345G GREEN | 106778965 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 13 | BULLPADEL VERTEX JR 25-335-345G BLACK | 106778974 | — | — | RAKET PADEL | 0 | SOURCE_DATA_INCOMPLETE |
+| 14 | BULLPADEL VERTEX 05 COMFORT 2026-360-370 BLACK/BLUE | 106778998 | — | — | RAKET PADEL | 0 | SOURCE_DATA_INCOMPLETE |
+| 15 | BULLPADEL PLO COMFORT 2026-360-370 BLACK/GREY | — | — | — | — | — | IDENTITY_UNRESOLVED |
+| 16 | BULLPADEL FLOW LEGEND 2026-345-350 GREY/WHITE | 106779008 | — | — | RAKET PADEL | 1 | SOURCE_DATA_INCOMPLETE |
+| 17 | YONEX MEN SOCKS SSM-1086ID-MP6-S | 106743690 | — | — | KAOS KAKI | 1 | SOURCE_DATA_INCOMPLETE |
+
+### Completeness and blockers
+
+- Catalog live: 136 flattened product/variant rows; 16/17 evidence names matched exactly. No verified alias was available in the reachable source path.
+- Live stockmovement endpoint was reachable, but this run did not establish February historical existence for these identities; current quantity is not used as February quantity.
+- MongoDB read of the existing 31 February inventory rows, aliases, monthly snapshots, sales, incoming/purchase, outgoing, and stockopname is **BLOCKED**: local configuration resolved to `127.0.0.1:27017` and returned `ECONNREFUSED`.
+- SAFE_HISTORICAL: **0**. SOURCE_DATA_INCOMPLETE: **16**. NOT_EXIST_YET_IN_FEB: **0**. DUPLICATE: **0 proven**. IDENTITY_UNRESOLVED: **1**.
+- Existing movement rows: **31 claimed by task, not re-read**. Final February universe candidate: **not computable until the 31 rows and verified aliases are readable**; do not hardcode 48.
+
+### UI backlog handoff
+
+Keep the decided tabs for the follow-up task: `Stok Terjual`, `Stok Tidak Terjual`, `Stok Keseluruhan`, `Riwayat Mutasi`. Definitions remain: sold/movement products; verified catalog-only no-sales; deduped union; existing movement history.
+
+### Next controlled scope
+
+Restore read-only Mongo connectivity, re-run the same 17-item join against the 31 rows plus verified aliases and all available February–August sources, then review the report. Only after review may a separate task define any February write scope. No production write was performed by this audit.
