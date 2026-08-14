@@ -5,6 +5,7 @@ import { buildHistoricalImportPlan, historicalDiagnostics, type HistoricalInvent
 import { FEBRUARY_HISTORICAL_SOURCE, type FebruaryHistoricalRow } from "@/lib/february-historical-source";
 
 const period = "2026-02";
+const sourceRevision = "2026-02-final-corrections-v2";
 const normalize = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
 type BuiltInRow = FebruaryHistoricalRow;
 
@@ -24,10 +25,10 @@ function resolve(rows: readonly BuiltInRow[], products: readonly OlseraInventory
 export async function runFebruaryHistoricalMigration() {
   const c = await collections();
   const current = await c.olseraInventoryState.findOne({ _id: "olsera-inventory" });
-  if (current?.februaryHistoricalImport?.status === "complete") return { status: "skipped", counts: current.februaryHistoricalImport.counts };
+  if (current?.februaryHistoricalImport?.status === "complete" && current.februaryHistoricalImport.sourceRevision === sourceRevision) return { status: "skipped", counts: current.februaryHistoricalImport.counts };
   const claimed = await c.olseraInventoryState.findOneAndUpdate(
     { _id: "olsera-inventory", $or: [{ "februaryHistoricalImport.status": { $exists: false } }, { "februaryHistoricalImport.status": "failed" }] },
-    { $set: { februaryHistoricalImport: { status: "running", startedAt: new Date() } } },
+    { $set: { februaryHistoricalImport: { status: "running", sourceRevision, startedAt: new Date() } } },
     { upsert: true, returnDocument: "after" },
   );
   if (claimed?.februaryHistoricalImport?.status !== "running") return { status: "skipped" };
@@ -53,7 +54,7 @@ export async function runFebruaryHistoricalMigration() {
     await c.olseraInventoryMonthlySnapshots.bulkWrite(docs.map((doc) => { const { createdAt, ...rest } = doc; return { updateOne: { filter: { _id: doc._id }, update: { $set: rest, $setOnInsert: { createdAt } }, upsert: true } }; }));
     const incomplete = docs.filter((doc) => doc.status === "incomplete").length;
     const counts = plan.counts;
-    await c.olseraInventoryState.updateOne({ _id: "olsera-inventory" }, { $set: { februaryHistoricalImport: { status: "complete", completedAt: now, counts, incomplete } } });
+    await c.olseraInventoryState.updateOne({ _id: "olsera-inventory" }, { $set: { februaryHistoricalImport: { status: "complete", sourceRevision, completedAt: now, counts, incomplete } } });
     return { status: "complete", counts, incomplete };
   } catch (error) {
     await c.olseraInventoryState.updateOne({ _id: "olsera-inventory" }, { $set: { februaryHistoricalImport: { status: "failed", failedAt: new Date(), message: error instanceof Error ? error.message : "unknown" } } });

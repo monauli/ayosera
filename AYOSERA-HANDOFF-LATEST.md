@@ -1815,3 +1815,9 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Production write/read-back belum dijalankan pada sesi ini karena cron existing memerlukan pemicu scheduler/secret yang tidak tersedia secara aman di workspace. Tidak ada write production dan tidak ada lock yang dilakukan oleh sesi ini.
 - Commit `e27cf37` sudah dibuat dan dipush ke `origin/main`. Endpoint production saat dibaca anonim mengembalikan HTTP 401; tidak ada sesi/token yang digunakan.
 - Langkah berikutnya: deploy commit ini, biarkan scheduler existing menjalankan cron, lalu baca status marker/API Februari dan verifikasi tab Stok Terjual, Stok Tidak Terjual, Stok Keseluruhan, Riwayat Mutasi, Rekonsiliasi, dan Export.
+# FINAL SOURCE CORRECTIONS — FEBRUARI (2026-08-15)
+
+- Source built-in diperbarui sesuai koreksi user: Bullpadel Sniper 2.0 Power Light Blue 2026 = 2/1/1; GRIP YONEX AC102 = 0/60/60. Keduanya tidak lagi menghasilkan diagnostics `incomplete`.
+- Marker cron diberi `sourceRevision` final agar data lama dari revision sebelumnya dapat diperbaiki tepat satu kali; revision yang sama selalu skip. Tidak ada payload luar, HTTP importer, perubahan stok Olsera, atau lock Februari.
+- Validasi lokal PASS: 31/17/48, 48 identitas unik, ODEA ROSE 96/30/66, YONEX SHORTS 24/9/15, formula dua koreksi PASS; cron inventory 15 PASS, inventory UI PASS, monthly suite 230 PASS, source/migration tests 4 PASS, typecheck PASS, build PASS, diff check PASS.
+- Production read-back belum dapat dilakukan dari workspace tanpa scheduler credential; endpoint anonim tetap 401. Deploy berikutnya akan menjalankan revision final melalui cron existing. Februari tetap tidak dikunci.

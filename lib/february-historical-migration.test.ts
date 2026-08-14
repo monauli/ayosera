@@ -6,5 +6,6 @@ test("February historical cron migration claims a marker and never locks the per
     const source = readFileSync(new URL("./february-historical-migration.ts", import.meta.url), "utf8");
     assert.match(source, /februaryHistoricalImport/);
     assert.match(source, /status: "complete"/);
+    assert.match(source, /sourceRevision/);
     assert.doesNotMatch(source, /lockInventoryMonthlyPeriod/);
 });

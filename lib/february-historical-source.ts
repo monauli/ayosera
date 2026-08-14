@@ -296,7 +296,7 @@ export const FEBRUARY_HISTORICAL_SOURCE = {
       "returnQty": 0,
       "salesQty": 1,
       "outgoingQty": 0,
-      "closing": 2
+      "closing": 1
     },
     {
       "product": "Bullpadel Sniper 2.0 Power Black 2026",
@@ -518,7 +518,7 @@ export const FEBRUARY_HISTORICAL_SOURCE = {
       "returnQty": 0,
       "salesQty": 1,
       "outgoingQty": 0,
-      "closing": 2
+      "closing": 1
     },
     {
       "product": "Bullpadel Sniper 2.0 Oil Petroleo 2026",
@@ -793,7 +793,7 @@ export const FEBRUARY_HISTORICAL_SOURCE = {
       "returnQty": 0,
       "salesQty": 0,
       "outgoingQty": 0,
-      "closing": 56
+      "closing": 60
     },
     {
       "product": "NESTLE PURE LIFE 1500ML",
@@ -874,4 +874,3 @@ export const FEBRUARY_HISTORICAL_SOURCE = {
     }
   ]
 } as const;
-

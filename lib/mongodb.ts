@@ -697,6 +697,7 @@ export type OlseraInventoryStateDocument = {
   updatedAt: Date;
   februaryHistoricalImport?: {
     status: "running" | "complete" | "failed";
+    sourceRevision?: string;
     startedAt?: Date;
     completedAt?: Date;
     failedAt?: Date;
