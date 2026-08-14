@@ -46,6 +46,12 @@ test("panel guards period-dependent effects before constructing requests", () =>
   assert.ok(source.includes("if (isInventoryPeriod(event.currentTarget.value)) setPeriod(event.currentTarget.value);"));
 });
 
+test("historical import control allows confirmed incomplete rows after count validation", () => {
+  const source = readFileSync(new URL("../components/historical-inventory-panel.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes("result.ok === true"));
+  assert.doesNotMatch(source, /incomplete\?\.length/);
+});
+
 // ---- 1. Nilai kosong TIDAK ditampilkan sebagai "-" ------------------------
 
 test("isMeaningfulValue: null/undefined/''/'-'/spasi dianggap TIDAK bermakna", () => {

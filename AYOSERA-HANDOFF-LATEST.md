@@ -1767,6 +1767,12 @@ Keep the decided tabs for the follow-up task: `Stok Terjual`, `Stok Tidak Terjua
 
 ## BUILT-IN FEBRUARY IMPORT — DEPLOYED, PRODUCTION DRY-RUN PENDING SUPERVISOR SESSION — 2026-08-15
 
+## SUPERVISOR CONTROL FIX — PRODUCTION WRITE NOT EXECUTED — 2026-08-15
+
+- Confirm control now remains enabled when counts/identities are valid even if rows are `incomplete`; incomplete rows are written with diagnostics and remain a lock barrier.
+- Local UI tests: 55 passed; historical source/import tests: 5 passed; typecheck, build, and diff check passed.
+- No server-side authenticated execution token/session is available in this run. No production write, no Olsera stock mutation, and no February lock occurred.
+
 - Embedded the verified February source in code; source tests confirm 31 sold, 48 overall, 48 unique identities, and required ODEA/YONEX evidence.
 - Historical importer now accepts arithmetic mismatches as `incomplete` with diagnostics rather than dropping the row. Workbook numbers remain unchanged.
 - Added automatic built-in source mode, supervisor-only panel, dry-run/confirm controls, idempotent snapshot upsert, and no-lock behavior.
