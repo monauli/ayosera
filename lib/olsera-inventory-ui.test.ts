@@ -43,6 +43,7 @@ test("panel guards period-dependent effects before constructing requests", () =>
   const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
   assert.ok(source.includes("if (!isInventoryPeriod(period)) return;"));
   assert.ok(source.includes("if (isInventoryPeriod(event.target.value)) setPeriod(event.target.value);"));
+  assert.ok(source.includes("if (isInventoryPeriod(event.currentTarget.value)) setPeriod(event.currentTarget.value);"));
 });
 
 // ---- 1. Nilai kosong TIDAK ditampilkan sebagai "-" ------------------------

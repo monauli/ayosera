@@ -238,7 +238,10 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   useEffect(() => {
-    if (!isInventoryPeriod(period)) return;
+    if (!isInventoryPeriod(period)) {
+      setPeriod(today.slice(0, 7));
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     params.set("inventoryPeriod", period);
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
@@ -682,6 +685,9 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                 onClick={(event) => event.currentTarget.showPicker?.()}
                 onChange={(event) => {
                   if (isInventoryPeriod(event.target.value)) setPeriod(event.target.value);
+                }}
+                onInput={(event) => {
+                  if (isInventoryPeriod(event.currentTarget.value)) setPeriod(event.currentTarget.value);
                 }}
               />
             </div>
