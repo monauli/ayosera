@@ -1838,3 +1838,46 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Endpoint supervisor historical sementara yang tidak lagi dipakai juga dihapus. Importer server-side, marker, source Februari, data production, API inventori, rekonsiliasi, export, dan lock period dipertahankan.
 - Tests inventory UI PASS, cron inventory PASS, source/migration tests PASS, typecheck PASS, build PASS, `git diff --check` PASS.
 - Production verification dilakukan setelah deployment pada endpoint inventori existing; data/marker tidak disentuh oleh perubahan UI ini. Februari tetap tidak dikunci.
+
+## SIX-PHASE AUDIT RUN — BASELINE AND PHASE 1 LOCAL CHECKS (2026-08-15)
+
+- Baseline: `origin/main` sudah terbaru pada commit `ba3fe3c`; file user untracked tetap dipertahankan.
+- Phase 1 local evidence: monthly 230 PASS, inventory core 48 PASS, inventory UI 54 PASS, stock-opname 53 PASS, type-check PASS, dan `git diff --check` PASS.
+- Test coverage confirms carry-forward, empty-period guard, identity dedupe, product-new detection, name-change stability, formula `opening + incoming + return - sales - outgoing`, export/display parity, and no automatic period lock.
+- Production February–August read/export dan workbook nyata belum dapat dibuktikan tanpa koneksi Mongo/session produksi yang valid. Tidak ada production write, perubahan stok Olsera, atau lock.
+- Build terblokir saat Next.js mengumpulkan route karena `MONGODB_URI` lokal berformat tidak valid. Nilai environment tidak ditampilkan atau diubah.
+- Status Phase 1: **Perlu Verifikasi Production**; angka source Februari 31/17/48 tetap tidak diubah dan belum menjadi keputusan lock user.
+
+## PHASE 2–4 READ-ONLY CODE CHECKS (2026-08-15)
+
+- Phase 2 token health: 45 integration-monitor tests PASS; active/warning/expired/unknown/unavailable tersedia, token mentah tidak dikembalikan, dan opaque token tidak ditebak.
+- Phase 3 export/reconciliation: export safety 24 PASS, financial export 49 PASS, omzet ledger/UI 41 PASS, notes/lock 17 PASS. Sumber pembayaran tervalidasi dan toleransi April Rp1 tetap.
+- Phase 4 pre-audit: audit menemukan baseline 2 high transitive (`nanoid`, `postcss`) dan 1 moderate; CI membatasi kegagalan pada kenaikan di atas baseline. Lint masih gagal pada baseline `no-explicit-any`; tidak ada perbaikan massal dibuat.
+- Production token status, workbook export nyata, CI run, dan log cron belum terbukti dari koneksi tersedia. Tidak ada secret ditampilkan.
+
+## PHASE 5 BACKUP (2026-08-15)
+
+- Arsip lokal berhasil dibuat dan dibuka ulang: `D:\PROJECTS\ayosera-backups\ayosera-backup-2026-08-15-001.zip`.
+- Arsip berisi source ter-tracked, dokumentasi, handoff, konfigurasi non-secret, dan manifest; 471 file setelah ekstraksi.
+- `.env*`, token, password, credential, `node_modules`, `.next`, `.vercel`, `tmp`, workbook, PDF, archive, dan log dikecualikan.
+- Google Drive tidak tersedia sebagai konektor pada sesi ini; backup lokal adalah satu-satunya hasil yang diklaim.
+- Source commit: `ba3fe3c`.
+
+## PHASE 6 CRON READ-ONLY AUDIT (2026-08-15)
+
+- Vercel schedule yang terbukti dari `vercel.json`: `/api/cron/sync` setiap hari pukul 17:00 UTC (00:00 WIB).
+- Sales, Inventory, dan Financial Olsera dinyatakan dijadwalkan melalui cron-job.org di komentar route; jadwal aktual, durasi, sukses/gagal, timeout, retry, dan overlap tidak tersedia di workspace ini.
+- Kode route menunjukkan auth cron, distributed lock, step budget, dan checkpoint/resume untuk jalur Olsera. Tidak ada perubahan jadwal atau proses production dilakukan.
+- Status Phase 6: **Perlu Verifikasi Log Production**; angka durasi tidak ditebak.
+
+## AUTOMATED READ-ONLY AUDIT — 2026-08-15
+
+- Production browser session berhasil membaca Inventori untuk Februari–Agustus: `31/17/48`, `25/11/36`, `26/11/37`, `28/32/60`, `33/27/60`, `32/36/68`, `22/47/69`.
+- Production Rekonsiliasi Inventori menampilkan `73/73 Cocok` untuk setiap periode, tetapi universe 73 berbeda dari tab Inventori setiap bulan. Ini adalah selisih universe yang belum memiliki penyebab terbukti; tidak ada lock ditekan.
+- Februari production: status `Final`; ODEA ROSE dan ODEA RED terlihat terpisah. Bukti penuh identity/productId/SKU, Sniper target, GRIP target, dan PLO COMFORT belum seluruhnya tersedia dari tabel browser.
+- Export Inventori nyata gagal menghasilkan event download dari sesi browser, sehingga tidak dinyatakan PASS. Omzet Feb–Jul juga belum dibuktikan pada audit ini.
+- Audit & Sinkronisasi production tetap `Memuat status integrasi...`; status token AYO/Olsera tidak dapat diperiksa tanpa respons endpoint lengkap. Token tidak terlihat.
+- Typecheck PASS dan diff check PASS. Full unit suite gagal pada assertion security route yang mengharapkan `requireSupervisor()`; lint tetap memiliki baseline `no-explicit-any`; dependency audit tetap menemukan baseline 2 high transitive + 1 moderate.
+- Cron production: belum ada bukti log untuk rata-rata/terlama/gagal/timeout/bentrok; tidak ada angka yang ditebak.
+- Backup ZIP lokal sudah diverifikasi lewat hasil ekstraksi 471 file dan manifest. Belum di Google Drive.
+- Laporan lengkap: `AYOSERA-AUDIT-OTOMATIS-2026-08-15.md`. Tidak ada kode/database/lock/deploy yang diubah oleh audit read-only ini.
