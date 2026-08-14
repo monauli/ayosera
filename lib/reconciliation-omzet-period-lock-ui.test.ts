@@ -148,7 +148,7 @@ test("V7: gating Simpan/Kunci memakai fungsi murni yang bisa dites (canSaveBerit
   assert.match(page, /disabled=\{!canSaveFinalization\}/);
   assert.match(page, /disabled=\{!canLockFinalization\}/);
   assert.match(page, /const canSaveFinalization = canSaveBeritaAcaraFinalization\(/);
-  assert.match(page, /const canLockFinalization = canLockAfterSave\(/);
+  assert.match(page, /canLockAfterSave\(/);
 });
 
 test("detail reconciliation stays compact: desktop 2+1 grid, accessible disclosures, and mobile single column", () => {

@@ -361,7 +361,7 @@ test("save: penyimpanan ulang produk yang sama tidak membuat duplikat (upsert id
   assert.equal(only.physicalQty, 9, "nilai terbaru menimpa yang lama pada _id yang sama");
 });
 
-test("save: physicalQty null menghapus dokumen (kembali ke Belum Diisi)", async () => {
+test("save: physicalQty null menghapus dokumen (snapshot valid kembali Cocok tanpa BA)", async () => {
   const opname = fakeOpnameCollection();
   const ctx = context([snapshotDoc({ productId: 1 })], opname);
   await saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8 }] }, ctx);
@@ -369,7 +369,7 @@ test("save: physicalQty null menghapus dokumen (kembali ke Belum Diisi)", async 
   await saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: null }] }, ctx);
   assert.equal(opname.store.size, 0);
   const result = await loadInventoryOpnameMonth({ storeId: 324175, year: 2026, month: 5 }, ctx);
-  assert.equal(result.rows[0].status, "BELUM_DIISI");
+  assert.equal(result.rows[0].status, "COCOK");
 });
 
 // 7. Viewer tidak dapat menyimpan.
@@ -460,9 +460,9 @@ test("ringkasan bulan menghitung total selisih & tally status dari gabungan snap
   );
   const result = await loadInventoryOpnameMonth({ storeId: 324175, year: 2026, month: 5 }, ctx);
   assert.equal(result.summary.totalProduk, 3);
-  assert.equal(result.summary.cocok, 1);
+  assert.equal(result.summary.cocok, 2);
   assert.equal(result.summary.perluDicek, 1);
-  assert.equal(result.summary.belumDiisi, 1);
+  assert.equal(result.summary.belumDiisi, 0);
   assert.equal(result.summary.totalSelisihNegatif, -2);
 });
 

@@ -63,7 +63,8 @@ type Summary = {
 // (undefined) berarti Stok Akhir Sistem masih basis snapshot akhir bulan (perilaku lama).
 type Attachment = { url: string; fileName: string; mimeType: string; size: number; uploadedBy?: string; uploadedAt?: string };
 type LockState = { status: "LOCKED" | "UNLOCKED"; cutoff: string | null; cutoffDate: string | null; lockedBy: string | null; lockedAt: string | null; attachment: Attachment | null };
-type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string; lock: LockState | null };
+type MonthlyLockState = { status: "locked" | "unlocked"; lockedBy: string | null; lockedAt: string | null; history: unknown[] } | null;
+type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string; lock: LockState | null; monthlyLock?: MonthlyLockState };
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 type Edit = { physicalQty: number | null; note: string | null };
 
@@ -144,6 +145,7 @@ export default function InventoryOpnamePage() {
   const [finalizeError, setFinalizeError] = useState("");
   const [unlockReason, setUnlockReason] = useState("");
   const [unlocking, setUnlocking] = useState(false);
+  const [monthlyLockBusy, setMonthlyLockBusy] = useState(false);
   const [readingBa, setReadingBa] = useState(false);
   const [baReadSummary, setBaReadSummary] = useState<{ periodStart: string | null; cutoffDate: string | null; found: number; autoCocok: number; perluDicek: number } | null>(null);
   // BUG PRODUKSI (BA Juli 2026, 0 item terbaca): upload berhasil TAPI parser
@@ -383,6 +385,32 @@ export default function InventoryOpnamePage() {
     }
   };
 
+  const lockPeriod = async () => {
+    if (!data || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0) return;
+    setMonthlyLockBusy(true); setFinalizeError("");
+    try {
+      const response = await fetch("/api/reconciliation/inventory-opname", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "lock-period", year: Number(year), month: Number(month) }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Periode belum dapat dikunci.");
+      setSaveMessage("Periode inventori berhasil dikunci.");
+      await load();
+    } catch (e) { setFinalizeError(e instanceof Error ? e.message : "Periode belum dapat dikunci."); }
+    finally { setMonthlyLockBusy(false); }
+  };
+
+  const unlockPeriod = async () => {
+    const reason = window.prompt("Alasan buka kunci wajib diisi");
+    if (!reason?.trim()) return;
+    setMonthlyLockBusy(true); setFinalizeError("");
+    try {
+      const response = await fetch("/api/reconciliation/inventory-opname", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "unlock-period", year: Number(year), month: Number(month), reason }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Gagal membuka kunci periode.");
+      await load();
+    } catch (e) { setFinalizeError(e instanceof Error ? e.message : "Gagal membuka kunci periode."); }
+    finally { setMonthlyLockBusy(false); }
+  };
+
   const setEdit = (row: Row, patch: Partial<Edit>) => {
     setEdits((prev) => {
       const key = rowKey(row.productId, row.variantId);
@@ -440,7 +468,7 @@ export default function InventoryOpnamePage() {
       const status: OpnameStatus = row.manualAdjust
         ? "BUTUH_ADJUST_MANUAL"
         : physicalQty === null
-          ? "BELUM_DIISI"
+          ? row.snapshotStatus === "complete" ? "COCOK" : "BELUM_DIISI"
           : row.systemClosingQty === null || physicalQty !== row.systemClosingQty
             ? "PERLU_DICEK"
             : "COCOK";
@@ -476,6 +504,9 @@ export default function InventoryOpnamePage() {
   }, [rowsWithEdits]);
 
   const baBlocksFinalize = baRows.length > 0 && shouldBlockFinalizeForBaRows(baRows);
+  const needsBa = liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0;
+  const periodReadyToLock = Boolean(data && data.monthlyLock?.status !== "locked" && !needsBa && data.rows.length > 0);
+  const showBaFlow = needsBa || Boolean(attachment) || baRows.length > 0;
   const baCutoffOutOfPeriod = Boolean(baPeriod?.periodStart && baPeriod?.cutoffDate && cutoffDate && !isDateWithinPeriod(cutoffDate, baPeriod.periodStart, baPeriod.cutoffDate));
   const baCocokCount = baRows.filter((r) => r.status === "COCOK").length;
   const baPerluDicekCount = baRows.filter((r) => r.status === "PERLU_DICEK").length;
@@ -541,20 +572,22 @@ export default function InventoryOpnamePage() {
             ))}
           </select>
         </label>
-        <label>
-          Cutoff tanggal BA (opsional)
-          <input
-            type="date"
-            value={cutoffDate}
-            onChange={(e) => {
-              setCutoffDate(e.target.value);
-              setCutoffConfirmed(false);
-            }}
-          />
-        </label>
-        <label className="recon-check" style={{ alignSelf: "end" }}>
-          <input type="checkbox" checked={cutoffConfirmed} disabled={!cutoffDate.trim()} onChange={(e) => setCutoffConfirmed(e.target.checked)} /> Konfirmasi cutoff — Stok Akhir Sistem dihitung persis pada tanggal ini
-        </label>
+        {showBaFlow && <>
+          <label>
+            Cutoff tanggal BA (opsional)
+            <input
+              type="date"
+              value={cutoffDate}
+              onChange={(e) => {
+                setCutoffDate(e.target.value);
+                setCutoffConfirmed(false);
+              }}
+            />
+          </label>
+          <label className="recon-check" style={{ alignSelf: "end" }}>
+            <input type="checkbox" checked={cutoffConfirmed} disabled={!cutoffDate.trim()} onChange={(e) => setCutoffConfirmed(e.target.checked)} /> Konfirmasi cutoff — Stok Akhir Sistem dihitung persis pada tanggal ini
+          </label>
+        </>}
         <label className="recon-check" style={{ alignSelf: "end" }}>
           <button className="recon-button secondary" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 className="spin" /> : <RefreshCw />} Tampilkan Data
@@ -568,7 +601,14 @@ export default function InventoryOpnamePage() {
         </p>
       )}
 
-      <section className="recon-filters recon-finalization" aria-label="Berita Acara dan finalisasi">
+      <section className="recon-filters" aria-label="Ringkasan Rekonsiliasi Inventori">
+        <div><strong>Periode: {MONTH_NAMES[Number(month) - 1]} {year}</strong><br />Total Produk: {liveSummary.totalProduk} · Cocok: {liveSummary.cocok} · Selisih: {liveSummary.perluDicek + liveSummary.butuhAdjustManual}</div>
+        <div><strong>Status Periode: {periodReadyToLock ? "Cocok — siap dikunci" : `Perlu Dicek — ${liveSummary.perluDicek + liveSummary.butuhAdjustManual} item memiliki selisih`}</strong></div>
+        {data?.monthlyLock?.status === "locked" ? <div className="recon-lock-summary"><LockKeyhole /> Terkunci · {data.monthlyLock.lockedBy ?? "Supervisor"} {supervisor && <button className="recon-button danger" disabled={monthlyLockBusy} onClick={() => void unlockPeriod()}><Unlock /> Buka Kunci</button>}</div> : <button className="recon-button" disabled={!supervisor || !periodReadyToLock || monthlyLockBusy} onClick={() => void lockPeriod()}>{monthlyLockBusy ? <Loader2 className="spin" /> : <LockKeyhole />} Kunci Periode</button>}
+        {!periodReadyToLock && data?.monthlyLock?.status !== "locked" && <p className="recon-draft">Belum dapat dikunci: {liveSummary.perluDicek + liveSummary.butuhAdjustManual} item masih memiliki selisih atau data belum valid.</p>}
+      </section>
+
+      {showBaFlow && <section className="recon-filters recon-finalization" aria-label="Penyelesaian Selisih dengan Berita Acara">
         <label>
           Berita Acara Stock Opname
           <input type="file" accept="application/pdf,image/jpeg,image/png" disabled={!supervisor || uploading || data?.lock?.status === "LOCKED"} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} />
@@ -591,7 +631,8 @@ export default function InventoryOpnamePage() {
             {supervisor && <><input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Alasan buka kunci" /><button className="recon-button danger" onClick={() => void unlock()} disabled={unlocking}>{unlocking ? <Loader2 className="spin" /> : <Unlock />} Buka Kunci</button></>}
           </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
         </div>
-      </section>
+      </section>}
+      {!showBaFlow && data && <p className="recon-readonly">Berita Acara tidak diperlukan karena seluruh stok sudah cocok.</p>}
       {baUnread && <p className="recon-draft"><AlertTriangle /> {BA_UNREAD_MESSAGE}</p>}
       {baBlocksFinalize && <p className="recon-draft"><AlertTriangle /> Ada item Berita Acara berstatus Perlu Dicek atau Tidak Ditemukan — selesaikan review sebelum finalisasi.</p>}
       {baCutoffOutOfPeriod && <p className="recon-draft"><AlertTriangle /> Cutoff yang dipilih berada di luar periode Berita Acara ({baPeriod?.periodStart} s/d {baPeriod?.cutoffDate}).</p>}
@@ -697,23 +738,23 @@ export default function InventoryOpnamePage() {
               <table className="recon-table recon-inventory-table">
                 <thead>
                   <tr>
+                    <th>Kategori</th>
                     <th>Produk</th>
                     <th>Varian</th>
-                    <th>SKU</th>
                     <th>Stok Awal</th>
                     <th>Barang Masuk</th>
                     <th>Retur Masuk</th>
                     <th>Penjualan</th>
                     <th>Barang Keluar</th>
                     <th>Stok Akhir Sistem</th>
-                    <th>Stok Berita Acara</th>
-                    <th>Selisih</th>
+                    {showBaFlow && <><th>Stok Berita Acara</th><th>Selisih</th></>}
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredRows.map((row) => (
                     <tr key={rowKey(row.productId, row.variantId)}>
+                      <td>{row.category}</td>
                       <td>
                         <button className="recon-link" title={row.productName} onClick={() => setSelected(row)}>
                           {row.productName}
@@ -721,14 +762,13 @@ export default function InventoryOpnamePage() {
                         {baSourcedKeys.has(rowKey(row.productId, row.variantId)) && <span className="recon-badge recon-badge-ok" style={{ marginLeft: ".375rem" }}>Dibaca dari BA</span>}
                       </td>
                       <td>{row.variantId ?? "—"}</td>
-                      <td>{row.productSku ?? "—"}</td>
                       <td>{formatQty(row.openingQty)}</td>
                       <td>{formatQty(row.incomingQty)}</td>
                       <td>{formatQty(row.returnQty)}</td>
                       <td>{formatQty(row.salesQty)}</td>
                       <td>{formatQty(row.outgoingQty)}</td>
                       <td>{formatQty(row.systemClosingQty)}</td>
-                      <td>
+                      {showBaFlow && <><td>
                         <div className="recon-opname-cell">
                           <input
                             className="recon-opname-input"
@@ -744,7 +784,7 @@ export default function InventoryOpnamePage() {
                           )}
                         </div>
                       </td>
-                      <td>{formatSignedQty(row.differenceQty)}</td>
+                      <td>{formatSignedQty(row.differenceQty)}</td></>}
                       <td>
                         <StatusBadge status={row.status} />
                       </td>

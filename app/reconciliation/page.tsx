@@ -609,8 +609,8 @@ export default function ReconciliationPage() {
     finally { setFinalBusy(false); }
   };
   const lockFinalization = async () => {
-    if (!finalization) return; setFinalBusy(true); setFinalError("");
-    try { await finalizationRequest("lock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization.version, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason }) }); if (selectedPeriod) { await openDetail(selectedPeriod); await refresh(); } }
+    setFinalBusy(true); setFinalError("");
+    try { await finalizationRequest("lock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version ?? 0, finalAgreedAmount: Number(finalAmount || detail?.olseraTotal || 0), adjustmentReason: finalReason || "Rekonsiliasi Cocok; tidak ada penyesuaian." }) }); if (selectedPeriod) { await openDetail(selectedPeriod); await refresh(); } }
     catch (error) { setFinalError(error instanceof Error ? error.message : "Gagal mengunci periode."); }
     finally { setFinalBusy(false); }
   };
@@ -674,7 +674,8 @@ export default function ReconciliationPage() {
   // Belum ada analisis (dokumen lama/kompat mundur) atau PERLU_REVIEW tetap
   // membuka jalur manual (user isi sendiri lalu preview ulang), sesuai
   // instruksi: jangan pernah memblokir total user pada data yang tidak pasti.
-  const canLockFinalization = canLockAfterSave({ hasPreview: Boolean(finalPreview), busy: finalBusy, matchStatus: analysis?.matchStatus });
+  const rawReconciliationCocok = Boolean(detail && detail.status === "COCOK" && Math.abs(detail.differenceRevenue) <= 1);
+  const canLockFinalization = rawReconciliationCocok || canLockAfterSave({ hasPreview: Boolean(finalPreview), busy: finalBusy, matchStatus: analysis?.matchStatus });
 
   // V10 Goal 7/8: diturunkan LANGSUNG dari `finalization` (state periodLock,
   // di-update setiap Simpan/Lock/Unlock — lihat previewFinalization dkk di
@@ -922,7 +923,7 @@ export default function ReconciliationPage() {
                       backend (finalization.attachment) dan tetap terlihat, dalam
                       bentuk manusiawi (nama aktor, bukan raw id), di Riwayat
                       Aktivitas di bawah. */}
-                  {!finalization?.attachment && <p className="recon-before">Unggah berita acara PDF/JPG/JPEG/PNG (maks. 10MB) sebelum preview dan lock.</p>}
+                  {!finalization?.attachment && !rawReconciliationCocok && <p className="recon-before">Unggah berita acara PDF/JPG/JPEG/PNG (maks. 10MB) sebelum preview dan lock.</p>}
                   {/* Goal 2/10: preview tampil begitu ada attachment, TERLEPAS dari status OCR/lock — user harus tetap bisa melihat dokumennya walau OCR gagal atau periode sudah terkunci. key={url}: upload baru (URL beda) -> preview otomatis terbuka lagi (Goal 2 V8). */}
                   {finalization?.attachment && <BeritaAcaraPreview key={finalization.attachment.url} attachment={finalization.attachment} />}
                   {finalization?.status !== "locked" && (

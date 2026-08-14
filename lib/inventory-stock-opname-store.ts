@@ -240,7 +240,7 @@ export async function loadInventoryOpnameMonth(
     const opnameDoc = opnameByKey.get(opnameKey(snap.productId, snap.variantId)) ?? null;
     const physicalQty = opnameDoc?.physicalQty ?? null;
     const differenceQty = computeDifferenceQty(physicalQty, systemClosingQty);
-    const status = determineOpnameStatus({ physicalQty, systemClosingQty, manualAdjust });
+    const status = physicalQty === null && snap.status === "complete" && !manualAdjust ? "COCOK" : determineOpnameStatus({ physicalQty, systemClosingQty, manualAdjust });
 
     return {
       productId: snap.productId,

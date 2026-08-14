@@ -1582,3 +1582,10 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 - Preview April: nominal BA Rp740.000 dengan system difference -Rp739.999 menjadi `COCOK`; state sebelum Simpan memakai `Cocok berdasarkan BA — belum disimpan` dari wiring existing.
 - Setelah Simpan: server matcher menghasilkan `COCOK`, sehingga status Pickleball/total/banner/row utama mengikuti status BA tersimpan. Raw AYO, Olsera, dan original difference tidak diubah.
 - Residual UI kini dihitung absolut dan ditampilkan sebagai Rp1 — Pembulatan.
+## FINAL FIX — LOCK OMZET + REKONSILIASI INVENTORI FLOW/UI — 2026-08-14
+
+- Root cause Omzet `Kunci Periode` disabled saat status sudah `Cocok`: UI dan API lama mensyaratkan draft/finalisasi BA tersimpan, walaupun data sumber sudah resolved tanpa selisih. UI sekarang mengizinkan lock untuk status `Cocok`/tolerance-Cocok dan server membuat snapshot lock no-BA dengan nominal sumber asli, adjustment `0`, serta audit history.
+- Rekonsiliasi inventori normal memakai snapshot bulanan: baris lengkap dan aritmetis valid menjadi `COCOK` tanpa BA; BA dan cutoff hanya ditampilkan bila ada mismatch. Ringkasan menampilkan total, Cocok, selisih, Perlu Dicek, dan alasan kesiapan lock.
+- Lock inventori memakai `inventory_monthly_period_locks`, menyimpan snapshot immutable; unlock wajib supervisor dan alasan, dengan audit. Snapshot terkunci dibaca kembali sebagai sumber periode berikutnya.
+- UI inventori menampilkan urutan kolom operasional, nama produk penuh/wrap, serta kontrol select/date yang terbaca pada dark mode.
+- Tidak mengubah raw AYO/Olsera, data historis produk, YONEX/ODEA, cron, export, atau arsitektur lock yang sudah ada.

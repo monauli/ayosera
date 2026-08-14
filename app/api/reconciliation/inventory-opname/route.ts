@@ -11,6 +11,7 @@ import {
 import { isValidIsoDate } from "@/lib/inventory-stock-opname";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { currentStoreId } from "@/lib/reconciliation-store";
+import { getInventoryMonthlyPeriodLock, InventoryMonthlyPeriodLockError, lockInventoryMonthlyPeriod, unlockInventoryMonthlyPeriod } from "@/lib/inventory-monthly-period-lock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ const MAX_BODY_BYTES = 512 * 1024;
 
 function errorResponse(error: unknown) {
   if (error instanceof Response) return error;
+  if (error instanceof InventoryMonthlyPeriodLockError) return NextResponse.json({ error: error.message }, { status: 400, headers: NO_CACHE_HEADERS });
   if (error instanceof InventoryStockOpnameError) {
     const status = error.code === "FORBIDDEN" ? 403 : 400;
     return NextResponse.json({ error: error.message }, { status, headers: NO_CACHE_HEADERS });
@@ -48,8 +50,8 @@ export async function GET(request: Request) {
       const result = await loadInventoryOpnameCutoff({ storeId: currentStoreId(), year, month, cutoffDate: cutoffDateParam });
       return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
     }
-    const result = await loadInventoryOpnameMonth({ storeId: currentStoreId(), year, month });
-    return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
+    const [result, monthlyLock] = await Promise.all([loadInventoryOpnameMonth({ storeId: currentStoreId(), year, month }), getInventoryMonthlyPeriodLock(currentStoreId(), year, month)]);
+    return NextResponse.json({ ...result, monthlyLock }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     return errorResponse(error);
   }
@@ -72,6 +74,14 @@ export async function POST(request: Request) {
     }
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new InventoryStockOpnameError("JSON body harus object.");
     const body = parsed as Record<string, unknown>;
+
+    if (body.action === "lock-period" || body.action === "unlock-period") {
+      const year = Number(body.year); const month = Number(body.month);
+      const result = body.action === "lock-period"
+        ? await lockInventoryMonthlyPeriod({ storeId: currentStoreId(), year, month, actor: user.email })
+        : await unlockInventoryMonthlyPeriod({ storeId: currentStoreId(), year, month, actor: user.email, reason: String(body.reason ?? "") });
+      return NextResponse.json({ data: result }, { headers: NO_CACHE_HEADERS });
+    }
 
     if (body.action === "unlock") {
       const result = await unlockInventoryStockOpname({ storeId: currentStoreId(), year: Number(body.year), month: Number(body.month), actor: user.email, reason: String(body.reason ?? "") });
