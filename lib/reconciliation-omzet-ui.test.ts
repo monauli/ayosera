@@ -37,3 +37,8 @@ test("beritaAcaraVerified default false -> perilaku lama TIDAK berubah (backward
   assert.equal(reconciliationOmzetUiStatus("PERLU_DICEK", 740_000), "PERLU_DICEK");
   assert.equal(reconciliationOmzetUiStatus("PERLU_DICEK", 740_000, false), "PERLU_DICEK");
 });
+
+test("April BA preview: selisih 739999 dijelaskan BA 740000 dalam residual Rp1", () => {
+  assert.equal(reconciliationOmzetUiStatus("PERLU_DICEK", -739_999, true), "COCOK");
+  assert.equal(Math.abs(-739_999 + 740_000), 1);
+});

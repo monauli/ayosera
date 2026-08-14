@@ -1533,3 +1533,10 @@ New/changed this pass: `lib/omzet-export.test.ts` (+12 tests — `classifyBookin
 ### Production acceptance (Phase 12)
 
 **Not run.** No reachable production Mongo/Olsera in this environment — same blocker documented in every prior entry in this file. After deploy, still needed: run Validasi Sekarang + Auto Fix Semua for Februari 2026 and read the real result; check the ODEA ROSE Feb/Maret carry-forward and YONEX status via the existing (already correct) diagnostic endpoints; upload+verify April's real Berita Acara through the existing `/reconciliation` UI flow and confirm it locks to `SELISIH_TERJELASKAN` as the new test proves it will; export 27 Feb and confirm the MN+Payment Link booking lands in the AYO sheet in the real workbook, not just the test.
+# QUICK FIX — Rekonsiliasi Omzet April 2026 (2026-08-14)
+
+- Root cause: hasil OCR BA `COCOK` hanya menjadi status periode setelah `Simpan`; preview analysis belum dipresentasikan sebagai state sehingga banner masih `Perlu Dicek`.
+- Fix: shared helper `isWithinReconciliationTolerance` dengan rule `abs(residual) <= Rp1` dipakai parser BA, ledger status, dan UI status.
+- Preview: BA cocok menampilkan `Cocok berdasarkan BA — belum disimpan`, plus Penyesuaian BA dan Residual pembulatan.
+- Setelah Simpan: status `Cocok`; banner menyebut selisih telah dijelaskan dengan nominal BA.
+- Raw AYO/Olsera, file BA, historical data, dan lock architecture tidak diubah.

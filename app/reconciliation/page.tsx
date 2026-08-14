@@ -911,7 +911,7 @@ export default function ReconciliationPage() {
               {/* V10 Goal 7: status Cocok begitu Simpan sukses server-verified,
                   TIDAK menunggu Kunci Periode (yang tetap langkah terpisah,
                   lihat tombol Kunci Periode di bawah). */}
-              {beritaAcaraVerified && <p className="recon-lock-summary"><FileCheck size={14} /> Cocok — Selisih telah diverifikasi dengan Berita Acara.</p>}
+              {beritaAcaraVerified ? <p className="recon-lock-summary"><FileCheck size={14} /> Cocok — selisih telah dijelaskan dengan Berita Acara {formatRupiah(finalization?.beritaAcaraNominal ?? Math.abs(detail.differenceRevenue))}.</p> : analysis?.matchStatus === "COCOK" && <p className="recon-lock-summary"><FileCheck size={14} /> Cocok berdasarkan BA — belum disimpan</p>}
               {supervisor && (
                 <CollapsibleSection title="Berita Acara dan Finalisasi">
                 <section className="recon-finalization">
@@ -929,6 +929,7 @@ export default function ReconciliationPage() {
                       {analysisLoading && <p className="recon-before">{analysisStatus || "Membaca berita acara..."}</p>}
                       {analysisError && <p className="recon-error">{analysisError} <button className="recon-link" onClick={() => selectedPeriod && void analyzeAttachment(selectedPeriod, detail?.olseraTotal ?? 0)}>Coba baca ulang</button></p>}
                       {analysis && <BeritaAcaraResultCards analysis={analysis} />}
+                      {analysis?.matchStatus === "COCOK" && <p className="recon-readonly"><strong>Penyesuaian berdasarkan Berita Acara:</strong> {formatRupiah(analysis.nominal ?? 0)}<br /><strong>Residual:</strong> {formatRupiah(Math.abs(analysis.systemDifference - (analysis.direction === "PENAMBAHAN" ? (analysis.nominal ?? 0) : -(analysis.nominal ?? 0))))} — Pembulatan</p>}
                       {analysis?.matchStatus === "TIDAK_COCOK" && <p className="recon-error"><AlertTriangle size={14} /> Nominal/arah Berita Acara TIDAK cocok dengan selisih sistem. Periksa dokumen sebelum melanjutkan; preview dan lock ditahan sampai direview.</p>}
                       {analysis?.matchStatus === "PERLU_REVIEW" && <p className="recon-special"><AlertTriangle size={14} /> Berita Acara perlu direview manual (nominal/arah tidak terbaca otomatis, atau OCR belum yakin). Isi field di bawah secara manual.</p>}
                       {analysis?.matchStatus === "SALAH_PERIODE" && <p className="recon-error"><AlertTriangle size={14} /> Periode Berita Acara tidak sesuai dengan periode yang sedang dibuka. Periksa dokumen sebelum melanjutkan.</p>}

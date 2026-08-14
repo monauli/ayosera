@@ -166,7 +166,8 @@ export function parseBeritaAcaraText(rawText: string, ocrConfidence?: number | n
 
 export type BeritaAcaraMatchStatus = "COCOK" | "TIDAK_COCOK" | "PERLU_REVIEW" | "SALAH_PERIODE";
 
-export const BA_MATCH_TOLERANCE_RUPIAH = 1;
+import { RECONCILIATION_TOLERANCE_RUPIAH, isWithinReconciliationTolerance } from "./reconciliation-tolerance";
+export const BA_MATCH_TOLERANCE_RUPIAH = RECONCILIATION_TOLERANCE_RUPIAH;
 
 /**
  * Cocokkan selisih sistem (olseraRevenue - ayoRevenue, tanda dipertahankan)
@@ -188,9 +189,9 @@ export function matchBeritaAcaraToSystemDifference(
   if (ba.nominal === null || ba.direction === null) return "PERLU_REVIEW";
   if (ba.direction === "PENAMBAHAN") {
     if (systemDifference <= 0) return "TIDAK_COCOK"; // arah salah
-    return Math.abs(ba.nominal - systemDifference) <= BA_MATCH_TOLERANCE_RUPIAH ? "COCOK" : "TIDAK_COCOK";
+    return isWithinReconciliationTolerance(ba.nominal - systemDifference) ? "COCOK" : "TIDAK_COCOK";
   }
   // PENGURANGAN
   if (systemDifference >= 0) return "TIDAK_COCOK"; // arah salah
-  return Math.abs(ba.nominal - -systemDifference) <= BA_MATCH_TOLERANCE_RUPIAH ? "COCOK" : "TIDAK_COCOK";
+  return isWithinReconciliationTolerance(ba.nominal - -systemDifference) ? "COCOK" : "TIDAK_COCOK";
 }

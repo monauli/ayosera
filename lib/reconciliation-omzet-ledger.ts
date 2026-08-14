@@ -50,7 +50,8 @@ export const OMZET_STATUSES = ["COCOK", "SELISIH_TERJELASKAN", "PERLU_DICEK", "B
 export type OmzetStatus = (typeof OMZET_STATUSES)[number];
 
 /** Perbedaan pembulatan antar-sistem hingga satu Rupiah tetap dianggap cocok. */
-export const OMZET_MATCH_TOLERANCE_IDR = 1;
+import { RECONCILIATION_TOLERANCE_RUPIAH, isWithinReconciliationTolerance } from "./reconciliation-tolerance";
+export const OMZET_MATCH_TOLERANCE_IDR = RECONCILIATION_TOLERANCE_RUPIAH;
 
 export const OMZET_STATUS_LABEL: Record<OmzetStatus, string> = {
   COCOK: "Cocok",
@@ -332,7 +333,7 @@ export function computeAyoPaymentEventSide(events: readonly AyoPaymentEvent[]): 
 }
 
 function sportStatus(difference: number): "COCOK" | "PERLU_DICEK" {
-  return Math.abs(difference) <= OMZET_MATCH_TOLERANCE_IDR ? "COCOK" : "PERLU_DICEK";
+  return isWithinReconciliationTolerance(difference) ? "COCOK" : "PERLU_DICEK";
 }
 
 function defaultSportBreakdown(total: OmzetLedgerSide) {
@@ -467,7 +468,7 @@ function classifyStatus(input: {
     return { status: "PERLU_DICEK", statusReason: `Reklasifikasi akun 40004 belum terverifikasi ke akun 21003: ${input.pickleballVerification.reason}` };
   }
 
-  if (Math.abs(input.differenceRevenue) <= OMZET_MATCH_TOLERANCE_IDR) {
+  if (isWithinReconciliationTolerance(input.differenceRevenue)) {
     return {
       status: "COCOK",
       statusReason: input.differenceRevenue === 0

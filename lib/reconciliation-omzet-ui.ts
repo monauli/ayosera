@@ -4,7 +4,7 @@
 // within the existing ±Rp1 tolerance.
 export type ReconciliationOmzetUiStatus = "COCOK" | "SELISIH_TERJELASKAN" | "PERLU_DICEK" | "BULAN_BERJALAN";
 
-const EXISTING_MATCH_TOLERANCE_IDR = 1;
+import { isWithinReconciliationTolerance } from "./reconciliation-tolerance";
 
 // V10: `beritaAcaraVerified` opsional (default false — SEMUA pemanggil lama
 // dengan 2 argumen tetap berperilaku IDENTIK, termasuk perilaku existing
@@ -23,7 +23,7 @@ export function reconciliationOmzetUiStatus(
   beritaAcaraVerified = false,
 ): ReconciliationOmzetUiStatus {
   if (beritaAcaraVerified) return "COCOK";
-  if (Math.abs(differenceRevenue) <= EXISTING_MATCH_TOLERANCE_IDR) return "COCOK";
+  if (isWithinReconciliationTolerance(differenceRevenue)) return "COCOK";
   if (status === "BULAN_BERJALAN") return "BULAN_BERJALAN";
   if (status === "SELISIH_TERJELASKAN") return "SELISIH_TERJELASKAN";
   return "PERLU_DICEK";
