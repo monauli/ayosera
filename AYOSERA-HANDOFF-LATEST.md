@@ -28,6 +28,13 @@ Ambil dari Olsera UI/API export:
 
 Setelah file tersedia, lakukan join item-level terhadap `olsera_order_items`; jangan koreksi aggregate manual sebelum join selesai.
 
+## QUICK FIX — BA APRIL ACTUAL PRODUCTION PATH — 2026-08-14
+
+- Root cause: the actual GET/reload path reused persisted legacy `verifiedMatchStatus = PERLU_REVIEW` instead of recomputing from the current system difference and stored BA nominal.
+- Fix: detail API, period presentation, and React reload restore now use shared absolute matching: `abs(abs(systemDifference) - abs(baAmount)) <= Rp1`.
+- April `-Rp739.999` versus stored BA `Rp740.000` resolves to `COCOK` after reload without re-upload. Preview remains `Cocok berdasarkan BA — belum disimpan` before save; saved/finalized state is `Cocok`.
+- Locked periods remain final `Cocok`; raw AYO/Olsera/source evidence and lock architecture are unchanged.
+
 ## Status audit
 
 Audit bersifat read-only. Tidak ada database, snapshot, alias, source code, commit, atau push yang diubah.

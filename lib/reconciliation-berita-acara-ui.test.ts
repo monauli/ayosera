@@ -377,7 +377,12 @@ test("restoreBeritaAcaraAnalysisFromLock (April): systemDifference dikirim ekspl
   assert.equal(restored.matchStatus, "COCOK");
 });
 
-test("restoreBeritaAcaraAnalysisFromLock: verifiedMatchStatus null (defensif, tidak seharusnya terjadi bila hasSavedBeritaAcaraAnalysis sudah true) -> fallback PERLU_REVIEW, tidak pernah melempar", () => {
+test("restoreBeritaAcaraAnalysisFromLock: legacy status null direcompute dari nominal BA dan selisih saat ini", () => {
   const restored = restoreBeritaAcaraAnalysisFromLock({ verifiedMatchStatus: null, beritaAcaraNominal: 740_000, beritaAcaraDirection: null, adjustmentReason: null }, 740_000);
-  assert.equal(restored.matchStatus, "PERLU_REVIEW");
+  assert.equal(restored.matchStatus, "COCOK");
+});
+
+test("restoreBeritaAcaraAnalysisFromLock: legacy PERLU_REVIEW April direcompute menjadi COCOK", () => {
+  const restored = restoreBeritaAcaraAnalysisFromLock({ verifiedMatchStatus: "PERLU_REVIEW", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN", adjustmentReason: "x" }, -739_999);
+  assert.equal(restored.matchStatus, "COCOK");
 });

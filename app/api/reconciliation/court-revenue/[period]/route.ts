@@ -33,7 +33,7 @@ export async function GET(request: Request, context: { params: Promise<{ period:
       // walau periode sudah Cocok — collapse Rp0 HANYA untuk periode locked,
       // dan itu pun sudah ditangani terpisah lewat blok "PERIODE DIKUNCI" di
       // client (finalization.originalAyoAmount dkk), bukan di sini.
-      beritaAcaraVerified = isBeritaAcaraVerifiedUnlocked(lock);
+      beritaAcaraVerified = isBeritaAcaraVerifiedUnlocked(lock, detail.differenceRevenue, period);
       periodLock = lock ? await attachActorDisplayNames(lock) : null;
     } catch { /* fail closed: detail tetap memakai data asli */ }
     return NextResponse.json({ data: { ...detail, periodLock, beritaAcaraVerified } }, { headers: NO_CACHE_HEADERS });

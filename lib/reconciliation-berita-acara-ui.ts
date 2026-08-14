@@ -11,7 +11,7 @@
 // sungguhan — persis kelas bug V7 ini (hasil analisis OCR yang sukses tidak
 // pernah sampai ke UI, atau nominal final yang salah dihitung). Fungsi murni
 // di modul ini bisa dites dengan input/output nyata, bukan cuma pola teks.
-import type { BeritaAcaraDirection, BeritaAcaraMatchStatus } from "./reconciliation-berita-acara-parser";
+import { matchBeritaAcaraToSystemDifference, type BeritaAcaraDirection, type BeritaAcaraMatchStatus } from "./reconciliation-berita-acara-parser";
 
 // ---------------------------------------------------------------------------
 // Format Rupiah — SATU-SATUNYA sumber format tampilan dipakai baik oleh
@@ -291,13 +291,14 @@ export type RestoredBeritaAcaraAnalysis = {
 
 /** Bentuk ulang BeritaAcaraAnalysis langsung dari lock TERSIMPAN (bukan dari OCR ulang) — dipakai reopen detail supaya nominal/arah/status/alasan yang tampil persis hasil Simpan TERAKHIR. */
 export function restoreBeritaAcaraAnalysisFromLock(lock: SavedBeritaAcaraLockLike, systemDifference: number): RestoredBeritaAcaraAnalysis {
+  const matchStatus = matchBeritaAcaraToSystemDifference(systemDifference, { nominal: lock.beritaAcaraNominal, direction: lock.beritaAcaraDirection });
   return {
     systemDifference,
     nominal: lock.beritaAcaraNominal,
     direction: lock.beritaAcaraDirection,
     reason: lock.adjustmentReason,
     parseStatus: "OK",
-    matchStatus: lock.verifiedMatchStatus ?? "PERLU_REVIEW",
+    matchStatus,
     ocrSource: "restored-from-database",
   };
 }

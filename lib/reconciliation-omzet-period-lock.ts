@@ -195,8 +195,12 @@ export async function unlockOmzetPeriodFinalization(input: { storeId: number; pe
 }
 
 /** true bila Berita Acara SUDAH tervalidasi server (Simpan terakhir COCOK) TAPI periode belum dikunci — status Cocok, TANPA collapse ke Rp0 (beda dari locked). */
-export function isBeritaAcaraVerifiedUnlocked(lock: ReconciliationOmzetPeriodLockDocument | null): boolean {
-  return Boolean(lock && lock.status !== "locked" && lock.verifiedMatchStatus === "COCOK");
+export function isBeritaAcaraVerifiedUnlocked(lock: ReconciliationOmzetPeriodLockDocument | null, currentDifference?: number, expectedPeriod?: string): boolean {
+  if (!lock || lock.status === "locked") return false;
+  if (lock.beritaAcaraNominal !== null && currentDifference !== undefined) {
+    return matchBeritaAcaraToSystemDifference(currentDifference, { nominal: lock.beritaAcaraNominal, direction: lock.beritaAcaraDirection, period: lock.beritaAcaraPeriod }, expectedPeriod) === "COCOK";
+  }
+  return lock.verifiedMatchStatus === "COCOK";
 }
 
 export function applyLockedOmzetPresentation<T extends { ayo: { count: number; revenue: number }; olseraTotal: number; differenceRevenue: number; status: string; statusReason: string }>(result: T, lock: ReconciliationOmzetPeriodLockDocument | null) {
@@ -211,7 +215,7 @@ export function applyLockedOmzetPresentation<T extends { ayo: { count: number; r
   // JANGAN diubah menjadi Rp0". Beda mendasar dari cabang locked: locked =
   // finalisasi penuh (collapse sengaja), ini = konfirmasi awal (angka tetap
   // apa adanya).
-  if (isBeritaAcaraVerifiedUnlocked(lock)) {
+  if (isBeritaAcaraVerifiedUnlocked(lock, result.differenceRevenue)) {
     return { ...result, status: "COCOK", statusReason: `Selisih ${formatRupiah(result.differenceRevenue)} telah diverifikasi dengan Berita Acara.`, periodLock: lock, beritaAcaraVerified: true };
   }
   return { ...result, periodLock: lock, beritaAcaraVerified: false };

@@ -684,7 +684,7 @@ export default function ReconciliationPage() {
   // ini SENGAJA sama persis dengan isBeritaAcaraVerifiedUnlocked di
   // lib/reconciliation-omzet-period-lock.ts (server) — duplikasi kecil yang
   // disengaja demi live-update tanpa refetch.
-  const beritaAcaraVerified = Boolean(finalization && finalization.status !== "locked" && finalization.verifiedMatchStatus === "COCOK");
+  const beritaAcaraVerified = Boolean(finalization && (finalization.status === "locked" || finalization.verifiedMatchStatus === "COCOK"));
   // V11 Goal 1/2: begitu TOTAL periode ter-verifikasi BA, tandai HANYA
   // component (COURT/PICKLEBALL) yang jadi SATU-SATUNYA penyebab PERLU_DICEK
   // — lihat resolveBeritaAcaraVerifiedComponent untuk guard ambiguitas (dua

@@ -422,6 +422,16 @@ test("applyLockedOmzetPresentation: V10 test wajib #4 — April PENGURANGAN tole
   assert.equal(presentation.differenceRevenue, -739_999);
 });
 
+test("legacy stored PERLU_REVIEW + valid BA nominal: current read resolver recomputes April as COCOK", () => {
+  const result = applyLockedOmzetPresentation(
+    { ayo: { count: 1, revenue: 1_000_001 }, olseraTotal: 261_000, differenceRevenue: -739_999, status: "PERLU_DICEK", statusReason: "legacy" },
+    { _id: "1:2026-04", status: "unlocked", version: 1, verifiedMatchStatus: "PERLU_REVIEW", beritaAcaraNominal: 740_000, beritaAcaraDirection: "PENAMBAHAN" } as ReconciliationOmzetPeriodLockDocument,
+  );
+  assert.equal(result.status, "COCOK");
+  assert.equal(result.beritaAcaraVerified, true);
+  assert.equal(result.differenceRevenue, -739_999);
+});
+
 test("applyLockedOmzetPresentation: cabang locked TETAP tidak berubah (collapse Rp0, beritaAcaraVerified true juga) — regresi V10 tidak boleh mengubah perilaku lock lama", async () => {
   const { f, lock } = await upload();
   const preview = await previewForLock(f, lock.version);

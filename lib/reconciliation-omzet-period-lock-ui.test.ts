@@ -216,7 +216,7 @@ test("V9 Goal 6: Simpan (previewFinalization) mengirim adjustmentReason: finalRe
 // detail) supaya update instan tanpa refetch.
 // ---------------------------------------------------------------------------
 test("V10 Goal 1/7: beritaAcaraVerified diturunkan dari finalization.status !== 'locked' && finalization.verifiedMatchStatus === 'COCOK' (live, update instan setelah Simpan)", () => {
-  assert.match(page, /const beritaAcaraVerified = Boolean\(finalization && finalization\.status !== "locked" && finalization\.verifiedMatchStatus === "COCOK"\);/);
+  assert.match(page, /const beritaAcaraVerified = Boolean\(finalization && \(finalization\.status === "locked" \|\| finalization\.verifiedMatchStatus === "COCOK"\)\);/);
 });
 
 test("V10 Goal 2 / V11 Goal 6/7: badge 'Berita Acara' (BeritaAcaraVerifiedBadge, icon FileCheck) dirender di tabel utama TERPISAH dari badge 'Cocok — Terkunci' (locked tidak berubah), klik badge membuka preview (BUKAN Detail) HANYA saat attachment ada", () => {
