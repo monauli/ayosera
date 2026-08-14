@@ -1821,3 +1821,8 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Marker cron diberi `sourceRevision` final agar data lama dari revision sebelumnya dapat diperbaiki tepat satu kali; revision yang sama selalu skip. Tidak ada payload luar, HTTP importer, perubahan stok Olsera, atau lock Februari.
 - Validasi lokal PASS: 31/17/48, 48 identitas unik, ODEA ROSE 96/30/66, YONEX SHORTS 24/9/15, formula dua koreksi PASS; cron inventory 15 PASS, inventory UI PASS, monthly suite 230 PASS, source/migration tests 4 PASS, typecheck PASS, build PASS, diff check PASS.
 - Production read-back belum dapat dilakukan dari workspace tanpa scheduler credential; endpoint anonim tetap 401. Deploy berikutnya akan menjalankan revision final melalui cron existing. Februari tetap tidak dikunci.
+# TEMPORARY TRIGGER ATTEMPT — NOT COMPLETED (2026-08-15)
+
+- Jalur sementara fixed Februari sempat dibuat dan diuji build/typecheck lokal, tetapi deployment Vercel tidak dapat diverifikasi: production tetap menyajikan respons lama/generik dan `npx vercel --prod --yes` timeout.
+- Karena write/read-back 31/17/48 belum terbukti, endpoint tanpa autentikasi dihapus kembali. Tidak ada write production, tidak ada perubahan stok Olsera, dan Februari tidak dikunci.
+- Commit pembersihan diperlukan setelah penghapusan endpoint ini; blocker tersisa adalah akses deployment yang dapat menghasilkan deployment terbaru, bukan validasi source atau kode importer.
