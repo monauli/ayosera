@@ -1832,3 +1832,9 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Error awal teridentifikasi: identitas YONEX SHORTS ambigu tanpa SKU. Resolver diperbaiki memakai SKU bukti embedded; deployment berikutnya berhasil membaca marker final.
 - Endpoint sementara kemudian dihapus kembali. Tidak ada cron, upload, browser, login, perubahan stok Olsera, atau lock Februari.
 - API monthly publik masih memerlukan autentikasi (HTTP 401), sehingga read-back baris per produk/4 tab dan export melalui API tidak dapat dilakukan dari terminal tanpa credential. Marker production tetap menunjukkan 31/17/48.
+# INVENTORY HISTORICAL UI REMOVED — 2026-08-15
+
+- Panel `Proses Inventori Historical` dihapus dari halaman Inventori, termasuk judul, keterangan, tombol, state, request, dan client component.
+- Endpoint supervisor historical sementara yang tidak lagi dipakai juga dihapus. Importer server-side, marker, source Februari, data production, API inventori, rekonsiliasi, export, dan lock period dipertahankan.
+- Tests inventory UI PASS, cron inventory PASS, source/migration tests PASS, typecheck PASS, build PASS, `git diff --check` PASS.
+- Production verification dilakukan setelah deployment pada endpoint inventori existing; data/marker tidak disentuh oleh perubahan UI ini. Februari tetap tidak dikunci.
