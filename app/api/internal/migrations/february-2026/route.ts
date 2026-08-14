@@ -11,7 +11,8 @@ export async function POST(request: Request) {
   try {
     const result = await runFebruaryHistoricalMigration();
     return NextResponse.json({ ok: true, result });
-  } catch {
-    return NextResponse.json({ ok: false, error: "fixed migration failed" }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ ok: false, error: message.replace(/mongodb(?:\+srv)?:\/\/[^\s]+/gi, "mongodb://[redacted]") }, { status: 500 });
   }
 }
