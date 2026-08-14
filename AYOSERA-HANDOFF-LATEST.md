@@ -35,6 +35,15 @@ Setelah file tersedia, lakukan join item-level terhadap `olsera_order_items`; ja
 - April `-Rp739.999` versus stored BA `Rp740.000` resolves to `COCOK` after reload without re-upload. Preview remains `Cocok berdasarkan BA — belum disimpan` before save; saved/finalized state is `Cocok`.
 - Locked periods remain final `Cocok`; raw AYO/Olsera/source evidence and lock architecture are unchanged.
 
+## MASTER FIX — LOCK PERIODE INVENTORI + OMZET — 2026-08-14
+
+- Existing Omzet lock architecture: `reconciliation_omzet_period_locks` stores final amounts, original differences, BA metadata, lock/unlock actors/timestamps, version, and append-only history. Lock eligibility now requires a Cocok/tolerance-Cocok period; zero/tolerance-Cocok periods may lock without BA.
+- Inventory now has `inventory_monthly_period_locks`, storing immutable month snapshot rows plus status, lock/unlock metadata, and audit history. Eligibility requires a non-current month with complete arithmetic-consistent snapshots.
+- The shared monthly snapshot chain returns locked copies before any rebuild; direct backfill ranges also stop with `Periode terkunci. Unlock terlebih dahulu jika ingin melakukan koreksi.` Raw upstream sources remain syncable.
+- Monthly Inventory API/export read locked snapshot copies; UI shows `Terkunci · Buka Kunci`. Unlock is explicit, supervisor-only, reason-required, and preserves snapshot/history. Carry-forward remains one-way from locked closing to the next month.
+- Inventory table presentation now starts `Kategori → Produk → Varian`, with readable wrapping/title tooltip; calculations and raw data are unchanged.
+- Regression coverage includes inventory lock eligibility/immutability/unlock history, Omzet lock eligibility, April BA compatibility, monthly snapshot/export/UI suites, and existing ODEA/YONEX snapshot regressions.
+
 ## Status audit
 
 Audit bersifat read-only. Tidak ada database, snapshot, alias, source code, commit, atau push yang diubah.

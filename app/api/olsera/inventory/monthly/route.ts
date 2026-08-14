@@ -7,6 +7,8 @@ import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/olsera-inventory-core";
 import { isHiddenInventoryCategory } from "@/lib/olsera-inventory-ui";
 import { monthlyPeriodStatus, monthlyStockStatus, summarizeMonthlyInventory, type MonthlyInventoryUiRow } from "@/lib/olsera-inventory-monthly-ui";
 import { getInventorySyncStatus } from "@/lib/olsera-inventory";
+import { getInventoryMonthlyPeriodLock } from "@/lib/inventory-monthly-period-lock";
+import { currentStoreId } from "@/lib/olsera-store-id";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,11 +42,12 @@ export async function GET(request: Request) {
       getInventorySyncStatus(),
       withMongo(async () => {
         const { olseraInventoryMonthlySnapshots, olseraInventoryProducts } = await collections();
-        const [snapshots, products] = await Promise.all([
-          olseraInventoryMonthlySnapshots.find({ year, month }).sort({ productName: 1, _id: 1 }).toArray(),
+        const [lock, products] = await Promise.all([
+          getInventoryMonthlyPeriodLock(currentStoreId(), year, month),
           olseraInventoryProducts.find().toArray(),
         ]);
-        return { snapshots, products };
+        const snapshots = lock?.status === "locked" ? lock.snapshots : await olseraInventoryMonthlySnapshots.find({ year, month }).sort({ productName: 1, _id: 1 }).toArray();
+        return { snapshots, products, lock };
       }),
     ]);
 
@@ -107,7 +110,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       period: params.period,
       hasData: rows.length > 0,
-      status: monthlyPeriodStatus(params.period, currentPeriod, rows),
+      status: raw.lock?.status === "locked" ? "LOCKED" : monthlyPeriodStatus(params.period, currentPeriod, rows),
+      periodLock: raw.lock ? { status: raw.lock.status, lockedAt: raw.lock.lockedAt, lockedBy: raw.lock.lockedBy, unlockedAt: raw.lock.unlockedAt, unlockedBy: raw.lock.unlockedBy, history: raw.lock.history } : null,
       temporaryUntil: params.period === currentPeriod ? status.state.lastSuccessfulSyncAt : null,
       priceSource: "current-master",
       priceNote: "Snapshot bulanan belum menyimpan unit cost historis; harga modal memakai master inventori saat ini.",

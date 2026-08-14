@@ -625,6 +625,22 @@ export type OlseraInventoryMonthlySnapshotDocument = {
   updatedAt: Date;
 };
 
+export type InventoryMonthlyPeriodLockDocument = {
+  _id: string;
+  storeId: number;
+  year: number;
+  month: number;
+  status: "locked" | "unlocked";
+  snapshots: OlseraInventoryMonthlySnapshotDocument[];
+  lockedAt: Date | null;
+  lockedBy: string | null;
+  unlockedAt: Date | null;
+  unlockedBy: string | null;
+  history: Array<{ action: "lock" | "unlock"; actor: string; reason: string | null; at: Date }>;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 /**
  * Fitur "Rekonsiliasi Inventori dengan Berita Acara" — data pembanding stok
  * fisik (hasil stock opname manual) per produk per bulan. Koleksi TERPISAH
@@ -949,6 +965,7 @@ export async function collections() {
     olseraInventoryProducts: db.collection<OlseraInventoryProductDocument>("olsera_inventory_products"),
     olseraInventorySnapshots: db.collection<OlseraInventorySnapshotDocument>("olsera_inventory_snapshots"),
     olseraInventoryMonthlySnapshots: db.collection<OlseraInventoryMonthlySnapshotDocument>("olsera_inventory_monthly_snapshots"),
+    inventoryMonthlyPeriodLocks: db.collection<InventoryMonthlyPeriodLockDocument>("inventory_monthly_period_locks"),
     olseraInventoryMovements: db.collection<OlseraInventoryMovementDocument>("olsera_inventory_movements"),
     olseraInventorySyncRuns: db.collection<OlseraInventorySyncRunDocument>("olsera_inventory_sync_runs"),
     olseraInventoryState: db.collection<OlseraInventoryStateDocument>("olsera_inventory_state"),
@@ -1007,6 +1024,7 @@ async function createIndexes() {
     olseraInventoryProducts,
     olseraInventorySnapshots,
     olseraInventoryMonthlySnapshots,
+    inventoryMonthlyPeriodLocks,
     olseraInventoryMovements,
     olseraFinancialEmptyLedgerConfirmations,
     olseraFinancialStaleCleanupAudits,
@@ -1064,6 +1082,7 @@ async function createIndexes() {
       { unique: true },
     ),
     olseraInventoryMonthlySnapshots.createIndex({ updatedAt: -1 }),
+    inventoryMonthlyPeriodLocks.createIndex({ storeId: 1, year: 1, month: 1 }, { unique: true }),
     olseraInventoryMovements.createIndex({ date: 1 }),
     olseraInventoryMovements.createIndex({ productId: 1, variantId: 1, date: 1 }),
     olseraInventoryMovements.createIndex({ sku: 1 }),

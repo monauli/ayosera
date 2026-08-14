@@ -237,8 +237,8 @@ test("V10 Goal 6: wording detail 'menunggu verifikasi' -> 'telah diverifikasi' H
   assert.match(page, /\{beritaAcaraVerified \? `Selisih \$\{formatRupiah\(detail\.differenceRevenue\)\} telah diverifikasi dengan Berita Acara\.` : detail\.statusReason\}/);
 });
 
-test("V10 Goal 7: banner 'Cocok — Selisih telah diverifikasi' muncul begitu Simpan sukses (beritaAcaraVerified), TIDAK menunggu Kunci Periode (terpisah dari banner locked)", () => {
-  assert.match(page, /\{beritaAcaraVerified && <p className="recon-lock-summary"><FileCheck size=\{14\} \/> Cocok — Selisih telah diverifikasi dengan Berita Acara\.<\/p>\}/);
+test("V10 Goal 7: banner Cocok karena BA muncul begitu Simpan sukses, TIDAK menunggu Kunci Periode", () => {
+  assert.match(page, /\{beritaAcaraVerified \? <p className="recon-lock-summary"><FileCheck size=\{14\} \/> Cocok — selisih telah dijelaskan dengan Berita Acara/);
 });
 
 test("V10 Goal 7: Simpan (previewFinalization) mengirim beritaAcaraNominal/beritaAcaraDirection dari hasil analisis OCR, dan me-refresh tabel utama (await refresh()) supaya status/icon langsung ter-update", () => {

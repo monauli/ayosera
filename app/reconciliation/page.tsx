@@ -596,7 +596,7 @@ export default function ReconciliationPage() {
       // (matchBeritaAcaraToSystemDifference terhadap selisih sistem server,
       // bukan klaim client) — inilah yang membuat status tabel utama bisa
       // langsung "Cocok" begitu Simpan sukses, tanpa menunggu Kunci Periode.
-      const data = await finalizationRequest("preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason, beritaAcaraNominal: analysis?.nominal ?? null, beritaAcaraDirection: analysis?.direction ?? null, beritaAcaraPeriod: analysis?.period ?? null }) });
+      const data = await finalizationRequest("preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: finalization?.version ?? 0, finalAgreedAmount: Number(finalAmount), adjustmentReason: finalReason, beritaAcaraNominal: analysis?.nominal ?? null, beritaAcaraDirection: analysis?.direction ?? null, beritaAcaraPeriod: analysis?.period ?? null }) });
       setFinalPreview(data.data);
       setFinalization(data.lock);
       setFinalSaveMessage("Finalisasi berhasil disimpan.");
@@ -666,7 +666,8 @@ export default function ReconciliationPage() {
   // tidak menyertakan matchStatus (lihat komentar di
   // canSaveBeritaAcaraFinalization) — jangan pernah blokir total user dari
   // menyimpan koreksi manual.
-  const canSaveFinalization = canSaveBeritaAcaraFinalization({ hasAttachment: Boolean(finalization?.attachment), busy: finalBusy, analysisLoading, reason: finalReason, finalAmount });
+  const noBaCocok = Boolean(detail && Math.abs(detail.differenceRevenue) <= 1);
+  const canSaveFinalization = canSaveBeritaAcaraFinalization({ hasAttachment: Boolean(finalization?.attachment), noBaCocok, busy: finalBusy, analysisLoading, reason: finalReason, finalAmount });
   // Gating Kunci Periode (Langkah 8/9, test wajib #15): TIDAK PERNAH otomatis
   // blokir total — hanya mismatch YANG DIKETAHUI (TIDAK_COCOK) yang menahan
   // tombol lock, DAN hanya aktif setelah Simpan sukses (finalPreview ada).
@@ -951,12 +952,12 @@ export default function ReconciliationPage() {
                       </div>
                       {uploadSuccessMessage && <p className="recon-lock-summary">{uploadSuccessMessage}</p>}
                       <label className="recon-upload-label">Nominal final disepakati
-                        <input type="number" step="1" value={finalAmount} disabled={finalBusy || !finalization?.attachment || analysis?.matchStatus === "COCOK"} onChange={(event) => { setFinalAmount(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); setFinalSaveMessage(""); }} />
+                        <input type="number" step="1" value={finalAmount} disabled={finalBusy || (!finalization?.attachment && !noBaCocok) || analysis?.matchStatus === "COCOK"} onChange={(event) => { setFinalAmount(event.target.value); setFinalPreview(null); setShowFinalLockConfirm(false); setFinalSaveMessage(""); }} />
                         {/* Goal 7: tampilan Rupiah HANYA di lapisan UI — input/state tetap integer mentah, tidak ada perhitungan baru di sini. */}
                         {finalAmount.trim() !== "" && Number.isFinite(Number(finalAmount)) && <small className="recon-before">{formatRupiah(Number(finalAmount))}</small>}
                       </label>
                       <label className="recon-upload-label">Alasan penyesuaian
-                        <textarea value={finalReason} disabled={finalBusy || !finalization?.attachment} onChange={(event) => { setFinalReason(event.target.value); reasonEditedByUserRef.current = true; setFinalPreview(null); setShowFinalLockConfirm(false); setFinalSaveMessage(""); }} />
+                        <textarea value={finalReason} disabled={finalBusy || (!finalization?.attachment && !noBaCocok)} onChange={(event) => { setFinalReason(event.target.value); reasonEditedByUserRef.current = true; setFinalPreview(null); setShowFinalLockConfirm(false); setFinalSaveMessage(""); }} />
                       </label>
                       <div className="recon-actions">
                         <button className="recon-button secondary" disabled={!canSaveFinalization} onClick={() => void previewFinalization()}>Simpan</button>

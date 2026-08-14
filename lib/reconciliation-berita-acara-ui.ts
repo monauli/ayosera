@@ -156,12 +156,13 @@ export function nextReasonAfterAnalysis(input: { current: string; userEdited: bo
 // ---------------------------------------------------------------------------
 export function canSaveBeritaAcaraFinalization(input: {
   hasAttachment: boolean;
+  noBaCocok?: boolean;
   busy: boolean;
   analysisLoading: boolean;
   reason: string;
   finalAmount: string;
 }): boolean {
-  if (!input.hasAttachment || input.busy || input.analysisLoading) return false;
+  if ((!input.hasAttachment && !input.noBaCocok) || input.busy || input.analysisLoading) return false;
   if (!input.reason.trim()) return false;
   const trimmedAmount = input.finalAmount.trim();
   if (!trimmedAmount) return false;

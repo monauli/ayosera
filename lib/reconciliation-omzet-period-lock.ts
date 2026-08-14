@@ -2,6 +2,7 @@ import "server-only";
 import { collections, type ReconciliationOmzetPeriodLockDocument } from "./mongodb.ts";
 import { matchBeritaAcaraToSystemDifference, type BeritaAcaraDirection, type BeritaAcaraMatchStatus } from "./reconciliation-berita-acara-parser.ts";
 import { formatRupiah } from "./reconciliation-berita-acara-ui.ts";
+import { isWithinReconciliationTolerance } from "./reconciliation-tolerance.ts";
 
 export class OmzetPeriodLockError extends Error {
   constructor(message: string, readonly code: "VALIDATION" | "NOT_FOUND" | "CONFLICT" | "LOCKED" = "VALIDATION") { super(message); this.name = "OmzetPeriodLockError"; }
@@ -108,7 +109,7 @@ export async function uploadOmzetPeriodLockAttachment(input: { storeId: number; 
 export function previewOmzetPeriodLock(input: { original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown; attachment: PeriodLockAttachment | null; beritaAcaraNominal?: unknown; beritaAcaraDirection?: unknown; beritaAcaraPeriod?: unknown; expectedPeriod?: string }) {
   const finalAgreedAmount = integer(input.finalAgreedAmount, "Nominal final");
   const adjustmentReason = text(input.adjustmentReason, "Alasan penyesuaian");
-  if (!input.attachment) throw new OmzetPeriodLockError("Berita acara wajib diunggah sebelum preview.", "NOT_FOUND");
+  if (!input.attachment && input.original.difference !== 0) throw new OmzetPeriodLockError("Berita acara wajib diunggah untuk menjelaskan selisih.", "NOT_FOUND");
   const beritaAcaraNominal = optionalPositiveInteger(input.beritaAcaraNominal);
   const beritaAcaraDirection = optionalBeritaAcaraDirection(input.beritaAcaraDirection);
   // V10: verifikasi SERVER-SIDE (bukan klaim client) — matchBeritaAcaraToSystemDifference
@@ -130,7 +131,17 @@ export async function recordOmzetPeriodLockPreview(input: { storeId: number; per
   const id = `${input.storeId}:${input.period}`;
   const current = await source.locks.findOne({ _id: id });
   const preview = previewOmzetPeriodLock({ ...input, expectedPeriod: input.beritaAcaraPeriod !== undefined ? input.period : undefined, beritaAcaraPeriod: input.beritaAcaraPeriod ?? current?.beritaAcaraPeriod, attachment: current?.attachment ?? null });
-  if (!current) throw new OmzetPeriodLockError("Berita acara wajib diunggah sebelum preview.", "NOT_FOUND");
+  if (!current) {
+    if (expectedVersion !== 0 || !isWithinReconciliationTolerance(input.original.difference)) throw new OmzetPeriodLockError("Berita acara wajib diunggah sebelum preview.", "NOT_FOUND");
+    const now = new Date();
+    const initial = await source.locks.findOneAndUpdate(
+      { _id: id, version: { $exists: false } },
+      { $set: { storeId: input.storeId, year: periodParts(input.period).year, month: periodParts(input.period).month, periodKey: input.period, status: "draft", attachment: null, originalAyoAmount: input.original.ayo, originalOlseraAmount: input.original.olsera, originalDifference: input.original.difference, finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount, adjustmentReason: preview.adjustmentReason, verifiedMatchStatus: "COCOK", beritaAcaraNominal: null, beritaAcaraDirection: null, beritaAcaraPeriod: null, lockedAt: null, lockedBy: null, unlockedAt: null, unlockedBy: null, updatedAt: now }, $setOnInsert: { createdAt: now, version: 1, history: [{ action: "preview", actor: input.actor, timestamp: now, reason: preview.adjustmentReason, before: {}, after: { finalAgreedAmount: preview.finalAgreedAmount, adjustmentAmount: preview.adjustmentAmount }, hiddenAt: null, hiddenBy: null }] } },
+      { upsert: true, returnDocument: "after" },
+    );
+    if (!initial) throw new OmzetPeriodLockError("Konflik preview; muat ulang lalu coba lagi.", "CONFLICT");
+    return { preview, lock: initial };
+  }
   if (current.status === "locked") throw new OmzetPeriodLockError("Periode sudah terkunci.", "LOCKED");
   const now = new Date();
   const document = await source.locks.findOneAndUpdate(
@@ -177,7 +188,9 @@ export async function recordOmzetPeriodLockPreview(input: { storeId: number; per
 
 export async function lockOmzetPeriodFinalization(input: { storeId: number; period: string; actor: string; expectedVersion: unknown; original: OmzetOriginalAmounts; finalAgreedAmount: unknown; adjustmentReason: unknown }, context?: OmzetPeriodLockContext) {
   const source = await contextOrDefault(context); const expectedVersion = integer(input.expectedVersion, "Versi"); const current = await source.locks.findOne({ _id: `${input.storeId}:${input.period}` }); const preview = previewOmzetPeriodLock({ ...input, expectedPeriod: current?.beritaAcaraPeriod !== undefined ? input.period : undefined, beritaAcaraPeriod: current?.beritaAcaraPeriod, attachment: current?.attachment ?? null }); const now = new Date(); const id = `${input.storeId}:${input.period}`;
-  if (!current?.attachment) throw new OmzetPeriodLockError("Berita acara wajib diunggah sebelum lock.", "NOT_FOUND");
+  if (input.original.difference !== 0 && !current?.attachment) throw new OmzetPeriodLockError("Berita acara wajib diunggah untuk menjelaskan selisih.", "NOT_FOUND");
+  if (!current) throw new OmzetPeriodLockError("Simpan finalisasi terlebih dahulu sebelum lock.");
+  if (preview.verifiedMatchStatus !== "COCOK" && current.verifiedMatchStatus !== "COCOK" && !isWithinReconciliationTolerance(input.original.difference)) throw new OmzetPeriodLockError("Kunci hanya diizinkan saat status rekonsiliasi Cocok.");
   if (current.status === "locked") throw new OmzetPeriodLockError("Periode sudah terkunci.", "LOCKED");
   const lastAudit = current.history.at(-1);
   if (lastAudit?.action !== "preview" || lastAudit.reason !== preview.adjustmentReason || lastAudit.after.finalAgreedAmount !== preview.finalAgreedAmount) throw new OmzetPeriodLockError("Buat preview finalisasi terbaru sebelum lock.");

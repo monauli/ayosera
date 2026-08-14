@@ -36,6 +36,7 @@ import {
 } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchStockMovementRange } from "./olsera-inventory-stockmovement.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
+import { getInventoryMonthlyPeriodLock } from "./inventory-monthly-period-lock.ts";
 
 // ---------------------------------------------------------------------------
 // Repo (bisa diinject — tes memakai fake in-memory, produksi memakai Mongo)
@@ -44,10 +45,12 @@ import { currentStoreId } from "./olsera-store-id.ts";
 export type MonthlySnapshotRepo = {
   upsertMany(docs: OlseraInventoryMonthlySnapshotDocument[]): Promise<void>;
   findMonth(storeId: number, year: number, month: number): Promise<OlseraInventoryMonthlySnapshotDocument[]>;
+  findPeriodLock?(storeId: number, year: number, month: number): Promise<{ status: "locked" | "unlocked" } | null>;
 };
 
 export async function getMongoMonthlySnapshotRepo(): Promise<MonthlySnapshotRepo> {
-  const { olseraInventoryMonthlySnapshots } = await collections();
+  const c = await collections();
+  const { olseraInventoryMonthlySnapshots } = c;
   return {
     async upsertMany(docs) {
       if (!docs.length) return;
@@ -60,6 +63,9 @@ export async function getMongoMonthlySnapshotRepo(): Promise<MonthlySnapshotRepo
     },
     async findMonth(storeId, year, month) {
       return olseraInventoryMonthlySnapshots.find({ storeId, year, month }).toArray();
+    },
+    async findPeriodLock(storeId, year, month) {
+      return (await c.inventoryMonthlyPeriodLocks.findOne({ _id: `${storeId}:${year}-${String(month).padStart(2, "0")}` }, { projection: { status: 1 } })) as { status: "locked" | "unlocked" } | null;
     },
   };
 }
@@ -387,6 +393,10 @@ export async function backfillBackwardRange(input: {
   const summaries: BackfillRangeSummary[] = [];
 
   for (const month of monthsDescending(input.fromInclusive, input.toInclusive)) {
+    if ((await input.repo.findPeriodLock?.(input.storeId, month.year, month.month))?.status === "locked") {
+      summaries.push({ month, ok: false, docsWritten: 0, stopped: [], error: "Periode terkunci. Unlock terlebih dahulu jika ingin melakukan koreksi." });
+      break;
+    }
     const result = await runBackwardBackfillMonth({
       month,
       storeId: input.storeId,
@@ -427,6 +437,10 @@ export async function backfillForwardRange(input: {
   const summaries: BackfillRangeSummary[] = [];
 
   for (const month of monthsAscending(nextMonth(input.fromInclusive), input.toInclusive)) {
+    if ((await input.repo.findPeriodLock?.(input.storeId, month.year, month.month))?.status === "locked") {
+      summaries.push({ month, ok: false, docsWritten: 0, stopped: [], error: "Periode terkunci. Unlock terlebih dahulu jika ingin melakukan koreksi." });
+      break;
+    }
     const result = await runForwardBackfillMonth({
       month,
       storeId: input.storeId,
@@ -503,6 +517,14 @@ export async function ensureMonthlySnapshotChain(input: {
   }
   const storeId = dominantStoreId(matchingContext.catalogProducts);
   const target: MonthKey = { year: input.year, month: input.month };
+
+  // Locked months are served from their immutable snapshot. This check is at
+  // the shared chain entrypoint so sync, rebuild, recovery, UI, and exports
+  // all get the same protection without per-caller guards.
+  if (!input.repo) {
+    const locked = await getInventoryMonthlyPeriodLock(storeId, target.year, target.month);
+    if (locked?.status === "locked") return { ok: true, storeId, docs: locked.snapshots };
+  }
 
   const state = getInventoryPeriodState(target.year, target.month, now);
   if (state === "future") {

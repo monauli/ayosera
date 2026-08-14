@@ -10,6 +10,7 @@ import {
   Boxes,
   CalendarRange,
   ClipboardList,
+  Lock,
   Loader2,
   PackageSearch,
   RefreshCw,
@@ -150,6 +151,7 @@ type ProductRow = {
   snapshotStatus?: "complete" | "boundary-only" | "incomplete";
   diagnostics?: string[];
 };
+type PeriodLock = { status: "locked" | "unlocked"; lockedAt: string | null; lockedBy: string | null; history: unknown[] } | null;
 
 type MovementRow = {
   id: string;
@@ -177,6 +179,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   // tetap bisa membukanya lewat tombol toggle di bawah.
   const [showSummary, setShowSummary] = useState(false);
   const [periodStatus, setPeriodStatus] = useState("Snapshot Tidak Tersedia");
+  const [periodLock, setPeriodLock] = useState<PeriodLock>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -286,7 +289,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
             return null;
           }
           return (await response.json().catch(() => null)) as
-            | { hasData?: boolean; data?: ProductRow[]; total?: number; totalPages?: number; categories?: string[]; summary?: Summary; syncStatus?: SyncStatus; status?: string }
+            | { hasData?: boolean; data?: ProductRow[]; total?: number; totalPages?: number; categories?: string[]; summary?: Summary; syncStatus?: SyncStatus; status?: string; periodLock?: PeriodLock }
             | null;
         })
         .then((payload) => {
@@ -302,6 +305,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
           if (payload.summary) setSummary({ ...payload.summary, hasData: payload.hasData });
           if (payload.syncStatus) setSyncStatus(payload.syncStatus);
           if (payload.status) setPeriodStatus(payload.status);
+          setPeriodLock(payload.periodLock ?? null);
         })
         .catch(() => {
           if (!cancelled) setStockError(true);
@@ -315,6 +319,16 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
       window.clearTimeout(timeout);
     };
   }, [tab, period, stockSearch, stockCategory, stockStatusFilter, stockSort, stockPage, refreshTick, stockReloadTick]);
+
+  const changePeriodLock = async (action: "lock" | "unlock") => {
+    const reason = action === "unlock" ? window.prompt("Alasan buka kunci wajib diisi") : null;
+    if (action === "unlock" && !reason?.trim()) return;
+    const [year, month] = period.split("-").map(Number);
+    const response = await fetch("/api/olsera/inventory/monthly/lock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, year, month, reason }) });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) { window.alert(payload?.error ?? "Gagal mengubah lock periode."); return; }
+    setStockReloadTick((value) => value + 1);
+  };
 
   // Riwayat mutasi
   useEffect(() => {
@@ -661,6 +675,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
             </div>
             <p className="text-xs text-slate-500">Periode aktif: {period} · kartu, tabel, mutasi, dan export mengikuti periode ini.</p>
             <p className="mt-2 text-sm font-medium text-slate-300">Status periode: {periodStatusLabel(periodStatus)}</p>
+            {periodLock?.status === "locked" ? <Button type="button" variant="outline" disabled={!isSupervisor} onClick={() => void changePeriodLock("unlock")}><Lock className="mr-2 h-4 w-4" /> Terkunci · Buka Kunci</Button> : <Button type="button" variant="outline" disabled={!isSupervisor || periodStatus !== "Final" && !periodStatus.includes("Final")} onClick={() => void changePeriodLock("lock")}><Lock className="mr-2 h-4 w-4" /> Kunci Periode</Button>}
             {periodStatus === "Bulan Berjalan / Belum Final" && (
               <p className="mt-1 text-xs text-amber-300">Data sementara sampai tanggal sinkron terakhir: {formatDate(state?.lastSyncedDate)}</p>
             )}
@@ -825,10 +840,10 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                   <table className="rd-table w-full min-w-[980px] text-sm">
                     <thead>
                       <tr>
-                        {showStockSku && <th className={TH}>SKU</th>}
+                        <th className={TH}>Kategori</th>
                         <th className={TH}>Produk</th>
                         <th className={TH}>Varian</th>
-                        <th className={TH}>Kategori</th>
+                        {showStockSku && <th className={TH}>SKU</th>}
                         {showStockUom && <th className={TH}>Satuan</th>}
                         {showStockWarehouse && <th className={TH}>Gudang</th>}
                         <th className={`${TH} text-right`}>Stok Awal</th>
@@ -880,14 +895,12 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
                         visibleStockRows.map((row) => (
                           <tr
                             key={row.id}>
-                            {showStockSku && (
-                              <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.sku)}</td>
-                            )}
-                            <td className="max-w-[240px] truncate px-3 py-2.5 font-medium text-slate-200" title={row.name}>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.category)}</td>
+                            <td className="max-w-[320px] whitespace-normal break-words px-3 py-2.5 font-medium text-slate-200" title={row.name}>
                               {row.name}
                             </td>
-                            <td className="max-w-[120px] truncate px-3 py-2.5 text-slate-500">{displayValue(row.variantName)}</td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.category)}</td>
+                            <td className="max-w-[180px] whitespace-normal break-words px-3 py-2.5 text-slate-500">{displayValue(row.variantName)}</td>
+                            {showStockSku && <td className="whitespace-normal break-words px-3 py-2.5 text-slate-500">{displayValue(row.sku)}</td>}
                             {showStockUom && <td className="px-3 py-2.5 text-slate-500">{displayValue(row.uom)}</td>}
                             {showStockWarehouse && (
                               <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{displayValue(row.warehouseName)}</td>
