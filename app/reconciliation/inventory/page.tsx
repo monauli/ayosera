@@ -507,8 +507,8 @@ export default function InventoryOpnamePage() {
   const baBlocksFinalize = baRows.length > 0 && shouldBlockFinalizeForBaRows(baRows);
   const needsBa = liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0;
   const completeness = data?.completeness;
-  const periodReadyToLock = Boolean(data && data.monthlyLock?.status !== "locked" && completeness?.pass === true && !needsBa && data.rows.length > 0);
   const isFebruaryHistoricalFinal = Number(year) === 2026 && Number(month) === 2;
+  const periodReadyToLock = Boolean(data && data.monthlyLock?.status !== "locked" && (isFebruaryHistoricalFinal || completeness?.pass === true) && !needsBa && data.rows.length > 0);
   const showBaFlow = !isFebruaryHistoricalFinal && (needsBa || Boolean(attachment) || baRows.length > 0);
   const baCutoffOutOfPeriod = Boolean(baPeriod?.periodStart && baPeriod?.cutoffDate && cutoffDate && !isDateWithinPeriod(cutoffDate, baPeriod.periodStart, baPeriod.cutoffDate));
   const baCocokCount = baRows.filter((r) => r.status === "COCOK").length;

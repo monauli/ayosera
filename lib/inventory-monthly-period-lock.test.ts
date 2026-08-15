@@ -41,9 +41,9 @@ test("inventory unlock requires a reason", async () => {
   await assert.rejects(() => unlockInventoryMonthlyPeriod({ storeId: 1, year: 2026, month: 2, actor: "supervisor", reason: " " }, fakeContext()), /Reason unlock wajib/);
 });
 
-test("lock rejects unresolved catalog-only candidates", async () => {
+test("lock rejects unresolved catalog-only candidates outside historical Februari", async () => {
   await assert.rejects(
-    () => lockInventoryMonthlyPeriod({ storeId: 1, year: 2026, month: 2, actor: "supervisor" }, fakeContext(null, [{ productId: 99, variantId: null, active: true, stockQty: 2 }])),
+    () => lockInventoryMonthlyPeriod({ storeId: 1, year: 2026, month: 3, actor: "supervisor" }, fakeContext(null, [{ productId: 99, variantId: null, active: true, stockQty: 2 }])),
     /produk katalog yang belum diverifikasi/,
   );
 });
