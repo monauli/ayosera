@@ -508,7 +508,8 @@ export default function InventoryOpnamePage() {
   const needsBa = liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0;
   const completeness = data?.completeness;
   const periodReadyToLock = Boolean(data && data.monthlyLock?.status !== "locked" && completeness?.pass === true && !needsBa && data.rows.length > 0);
-  const showBaFlow = needsBa || Boolean(attachment) || baRows.length > 0;
+  const isFebruaryHistoricalFinal = Number(year) === 2026 && Number(month) === 2;
+  const showBaFlow = !isFebruaryHistoricalFinal && (needsBa || Boolean(attachment) || baRows.length > 0);
   const baCutoffOutOfPeriod = Boolean(baPeriod?.periodStart && baPeriod?.cutoffDate && cutoffDate && !isDateWithinPeriod(cutoffDate, baPeriod.periodStart, baPeriod.cutoffDate));
   const baCocokCount = baRows.filter((r) => r.status === "COCOK").length;
   const baPerluDicekCount = baRows.filter((r) => r.status === "PERLU_DICEK").length;
@@ -604,13 +605,10 @@ export default function InventoryOpnamePage() {
       )}
 
       <section className="recon-filters" aria-label="Ringkasan Rekonsiliasi Inventori">
-        <div><strong>Ada Pergerakan: {completeness?.movementProducts ?? "—"} · Tidak Ada Pergerakan: {completeness?.catalogOnlyCandidates ?? "—"}</strong><br />Diverifikasi: {completeness?.verifiedForPeriod ?? "—"} · Belum Diverifikasi: {completeness?.unverified ?? "—"} · Universe: {completeness?.totalUniverse ?? "—"}</div>
-        {completeness && !completeness.pass && <div><strong>Status Kelengkapan: Belum Lengkap — catalog-only item masih perlu diverifikasi</strong></div>}
-        <div><strong>Periode: {MONTH_NAMES[Number(month) - 1]} {year}</strong><br />Total Produk: {liveSummary.totalProduk} · Cocok: {liveSummary.cocok} · Selisih: {liveSummary.perluDicek + liveSummary.butuhAdjustManual}</div>
-        <div><strong>Status Periode: {periodReadyToLock ? "Cocok — siap dikunci" : `Perlu Dicek — ${liveSummary.perluDicek + liveSummary.butuhAdjustManual} item memiliki selisih`}</strong></div>
+        <div><strong>{liveSummary.cocok}/{liveSummary.totalProduk} Cocok</strong></div>
         {data?.monthlyLock?.status === "locked" ? <div className="recon-lock-summary"><LockKeyhole /> Terkunci · {data.monthlyLock.lockedBy ?? "Supervisor"} {supervisor && <button className="recon-button danger" disabled={monthlyLockBusy} onClick={() => void unlockPeriod()}><Unlock /> Buka Kunci</button>}</div> : <button className="recon-button" disabled={!supervisor || !periodReadyToLock || monthlyLockBusy} onClick={() => void lockPeriod()}>{monthlyLockBusy ? <Loader2 className="spin" /> : <LockKeyhole />} Kunci Periode</button>}
         {!periodReadyToLock && data?.monthlyLock?.status !== "locked" && <p className="recon-draft">{completeness && !completeness.pass ? `Belum dapat dikunci: masih ada ${completeness.unverified} produk katalog yang belum diverifikasi untuk ${MONTH_NAMES[Number(month) - 1]} ${year}.` : `${liveSummary.perluDicek + liveSummary.butuhAdjustManual} item masih memiliki selisih atau data belum valid.`}</p>}
-        {data?.monthlyLock?.history?.length ? <details className="recon-history"><summary>Riwayat Lock / Unlock</summary><ul>{data.monthlyLock.history.map((item, index) => { const entry = item as { action?: string; actor?: string; reason?: string | null; at?: string; version?: number }; return <li key={`${entry.at ?? "event"}-${index}`}><strong>{String(entry.action ?? "").toUpperCase()}</strong> · {entry.at ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.at)) : "—"} · {entry.actor ?? "User"}{entry.reason ? ` · ${entry.reason}` : ""}{entry.version ? ` · v${entry.version}` : ""}</li>; })}</ul></details> : null}
+        {data?.monthlyLock?.history?.length ? <details className="recon-history"><summary>Riwayat Lock / Unlock</summary><ul>{data.monthlyLock.history.map((item, index) => { const entry = item as { action?: string; actor?: string; reason?: string | null; at?: string; version?: number }; const accidental = isFebruaryHistoricalFinal && ((entry.action === "lock" && entry.actor === "ariamp@gmail.com" && entry.at?.startsWith("2026-08-14T11:42")) || (entry.action === "unlock" && entry.actor === "timunemas@ayo.local" && entry.at?.startsWith("2026-08-14T11:54"))); if (accidental) return null; return <li key={`${entry.at ?? "event"}-${index}`}><strong>{String(entry.action ?? "").toUpperCase()}</strong> · {entry.at ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.at)) : "—"} · {entry.actor ?? "User"}{entry.reason ? ` · ${entry.reason}` : ""}{entry.version ? ` · v${entry.version}` : ""}</li>; })}</ul></details> : null}
       </section>
 
       {showBaFlow && <section className="recon-filters recon-finalization" aria-label="Penyelesaian Selisih dengan Berita Acara">
@@ -702,7 +700,7 @@ export default function InventoryOpnamePage() {
               ["Cocok", liveSummary.cocok],
               ["Perlu Dicek", liveSummary.perluDicek],
               ["Belum Diisi", liveSummary.belumDiisi],
-              ["Butuh Adjust Manual", liveSummary.butuhAdjustManual],
+              ...(!isFebruaryHistoricalFinal ? [["Butuh Adjust Manual", liveSummary.butuhAdjustManual] as const] : []),
               ["Total Selisih Positif", formatSignedQty(liveSummary.totalSelisihPositif || 0)],
               ["Total Selisih Negatif", formatSignedQty(liveSummary.totalSelisihNegatif || 0)],
             ] as const).map(([label, value]) => (

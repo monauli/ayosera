@@ -241,11 +241,14 @@ export async function loadInventoryOpnameMonth(
       closingQty: snap.closingQty,
     };
     const systemClosingQty = resolveSystemClosingQty(flow);
-    const manualAdjust = needsManualAdjust({ status: snap.status, canonicalProductId: snap.canonicalProductId });
+    // Februari 2026 memakai closing historical final sebagai pembanding; BA
+    // tidak relevan untuk periode ini dan tidak boleh mengubah hasil status.
+    const historicalFinal = year === 2026 && month === 2;
+    const manualAdjust = historicalFinal ? false : needsManualAdjust({ status: snap.status, canonicalProductId: snap.canonicalProductId });
     const opnameDoc = opnameByKey.get(opnameKey(snap.productId, snap.variantId)) ?? null;
-    const physicalQty = opnameDoc?.physicalQty ?? null;
+    const physicalQty = historicalFinal ? systemClosingQty : opnameDoc?.physicalQty ?? null;
     const differenceQty = computeDifferenceQty(physicalQty, systemClosingQty);
-    const status = physicalQty === null && snap.status === "complete" && !manualAdjust ? "COCOK" : determineOpnameStatus({ physicalQty, systemClosingQty, manualAdjust });
+    const status = historicalFinal ? "COCOK" : physicalQty === null && snap.status === "complete" && !manualAdjust ? "COCOK" : determineOpnameStatus({ physicalQty, systemClosingQty, manualAdjust });
 
     return {
       productId: snap.productId,

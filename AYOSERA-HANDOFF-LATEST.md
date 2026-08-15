@@ -1888,3 +1888,11 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Fungsi, data, rekonsiliasi, dan aturan BA tidak diubah.
 - Test terkait: audit-sync-menu-ui 31 PASS; private-integration-monitor 45 PASS; typecheck PASS; `git diff --check` PASS.
 - Build tidak lulus karena `MONGODB_URI` lokal berformat invalid saat Next.js mengumpulkan route; environment tidak diubah dan nilainya tidak ditampilkan.
+
+## REKONSILIASI INVENTORI FEBRUARI TANPA BA (2026-08-15)
+
+- Februari 2026 memakai closing historical final tersimpan sebagai pembanding Stok Akhir Sistem. BA tidak menjadi syarat; status per produk diproyeksikan `COCOK` tanpa mengubah snapshot atau stok Olsera.
+- UI Februari menyembunyikan alur upload/finalisasi BA, input Stok Berita Acara, kartu Butuh Adjust Manual, dan ringkasan lama; ringkasan menjadi `Cocok/Total Cocok` serta tombol lock tetap manual.
+- Dua event lock/unlock 14 Agustus 2026 yang teridentifikasi sebagai klik tidak sengaja hanya disembunyikan dari tampilan normal Februari; histori audit permanen tidak dihapus.
+- Tests stock-opname 31 + 24 PASS, UI Februari 3 PASS, type-check PASS, build PASS dengan override `MONGODB_URI` proses-only, dan `git diff --check` PASS. Build masih menampilkan warning BetterAuth akibat URL lokal invalid; tidak ada secret/environment yang diubah.
+- Production verification belum dijalankan pada sesi ini karena koneksi browser/session production tidak tersedia. Tidak ada lock, perubahan inventory, atau perubahan stok Olsera dilakukan.

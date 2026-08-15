@@ -477,6 +477,19 @@ test("rekonsiliasi memakai universe bulanan yang sama dengan Stok Keseluruhan", 
   assert.equal(result.summary.totalProduk, 1);
 });
 
+test("Februari historical final memakai closing snapshot sebagai Cocok tanpa BA", async () => {
+  const ctx = context([
+    snapshotDoc({ productId: 1, year: 2026, month: 2, status: "incomplete", canonicalProductId: null, closingQty: 10 }),
+    snapshotDoc({ productId: 2, year: 2026, month: 2, status: "complete", canonicalProductId: 999, closingQty: 20 }),
+  ], fakeOpnameCollection());
+  const result = await loadInventoryOpnameMonth({ storeId: 324175, year: 2026, month: 2 }, ctx);
+  assert.equal(result.summary.totalProduk, 2);
+  assert.equal(result.summary.cocok, 2);
+  assert.equal(result.summary.perluDicek, 0);
+  assert.equal(result.summary.butuhAdjustManual, 0);
+  assert.ok(result.rows.every((row) => row.physicalQty === row.systemClosingQty && row.status === "COCOK"));
+});
+
 test("end-to-end finalisasi lalu lock event tidak melakukan double adjustment", async () => {
   const opname = fakeOpnameCollection();
   const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
