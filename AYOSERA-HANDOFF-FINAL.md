@@ -84,3 +84,24 @@ Rincian angka, request, timeout, akun, export, test, dan commit ada di `AYOSERA-
 - Build production Vercel terdeteksi melalui HTTP `200` dan header server Vercel setelah push; status dashboard deployment `Ready` dan read-back data Financial belum dapat diverifikasi tanpa sesi login.
 - Production read-back/refresh Februari belum dilakukan. Satu kebutuhan akses: sesi production login atau jalur Financial read-only untuk melanjutkan checkpoint Februari sampai fase `reconcile`.
 - Status akhir: **Deploy berhasil tetapi refresh/read-back belum selesai**.
+
+## Audit Buku Besar Februari–Juli berbasis fixture resmi — 16 Agustus 2026
+
+- Enam workbook detail dan enam workbook ringkasan dibuka penuh. Masing-masing hanya memiliki sheet `ledger`, seluruh ringkasan berisi 85 akun, dan tanggal detail hanya berada pada bulan yang sesuai.
+- Akun 50000 dan 51000 pada ringkasan resmi cocok dengan agregasi detail untuk Februari–Juli dengan toleransi Rp1. Kredit ringkasan memakai konvensi nilai negatif; detail memakai nilai transaksi, sehingga perbandingan menggunakan nilai absolut kredit.
+- Rekap transaksi resmi akun target:
+
+| Bulan | 50000 transaksi | 50000 debit/kredit | 51000 transaksi | 51000 debit/kredit |
+|---|---:|---:|---:|---:|
+| Februari | 8 | Rp21.890.500 / Rp21.890.500 | 896 | Rp20.614.923,86 / Rp20.614.923,86 |
+| Maret | 8 | Rp27.085.081 / Rp27.085.081 | 1.327 | Rp11.724.102,75 / Rp11.724.102,75 |
+| April | 8 | Rp14.472.500 / Rp14.472.500 | 1.860 | Rp18.733.211,98 / Rp18.733.211,98 |
+| Mei | 7 | Rp16.972.000 / Rp16.972.000 | 2.125 | Rp17.790.602,23 / Rp17.790.602,23 |
+| Juni | 12 | Rp16.832.588 / Rp16.832.588 | 2.039 | Rp17.149.646,53 / Rp17.149.646,53 |
+| Juli | 10 | Rp29.175.802 / Rp0 | 1.916 | Rp19.114.065,35 / Rp29.175.802 |
+
+- Audit backup AYOSERA: Februari sync masih berhenti di `ledger-details` akun 16 dan belum reconcile. Maret–Juni berstatus completed pada backup, tetapi snapshot Juni/Juli tidak sama dengan fixture resmi; Juni menunjukkan data target berulang dan Juli memakai data lama. Ini bukti snapshot perlu direfresh, bukan alasan untuk mengubah angka manual.
+- Tidak ditemukan kebutuhan perubahan kode tambahan. Fix umum pada commit `90e9cac` menghitung saldo sebagai `saldo awal + debit - kredit` (atau debit-kredit tanpa saldo awal), mengecualikan opening row dari mutasi, dan dipakai lintas akun/periode.
+- Tidak ada Inventori, stok Olsera, Kategori Penjualan, lock/unlock, atau payload sumber yang diubah.
+- Production refresh/read-back belum tersedia karena sesi production belum login. Status tidak boleh disebut PASS. Kebutuhan akses tersisa tepat satu: sesi production yang sudah login untuk menjalankan fase reconcile/rebuild Financial resmi dan membaca kembali Februari–Juli.
+- Commit perbaikan yang sudah dipush: `90e9cac fix: reconcile financial ledger closing balances`. Tidak ada commit kode tambahan atau audit Maret yang dibuat.
