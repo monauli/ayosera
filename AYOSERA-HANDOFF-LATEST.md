@@ -1896,3 +1896,9 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Dua event lock/unlock 14 Agustus 2026 yang teridentifikasi sebagai klik tidak sengaja hanya disembunyikan dari tampilan normal Februari; histori audit permanen tidak dihapus.
 - Tests stock-opname 31 + 24 PASS, UI Februari 3 PASS, type-check PASS, build PASS dengan override `MONGODB_URI` proses-only, dan `git diff --check` PASS. Build masih menampilkan warning BetterAuth akibat URL lokal invalid; tidak ada secret/environment yang diubah.
 - Production verification belum dijalankan pada sesi ini karena koneksi browser/session production tidak tersedia. Tidak ada lock, perubahan inventory, atau perubahan stok Olsera dilakukan.
+
+### Production read-only verification
+
+- Setelah deployment commit `9562834`, `/reconciliation/inventory` Februari 2026 menampilkan `48/48 Cocok` dan seluruh baris terbaca `Cocok`.
+- Input/alur upload dan finalisasi BA tidak tampil; ringkasan lama tidak tampil; tombol `Kunci Periode` aktif (`isEnabled: true`) dan tidak diklik.
+- Tidak ada write, lock, unlock, perubahan inventori, atau perubahan stok Olsera selama verifikasi.
