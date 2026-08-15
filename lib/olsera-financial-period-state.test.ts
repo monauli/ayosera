@@ -6,6 +6,7 @@
 // bulan tanpa snapshot (tidak boleh diam-diam fallback), dan satu sumber
 // kebenaran period untuk seluruh tab laporan.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { jakartaCurrentPeriod } from "./olsera-financial-core.ts";
 import {
@@ -173,4 +174,54 @@ test("browser lama/ketat (tidak bergantung locale): perpindahan Feb->Jul memakai
     assert.match(value, /^\d{4}-\d{2}$/, "value input type=month wajib 'yyyy-MM', browser ketat menolak format lain");
     assert.doesNotMatch(value, /\//, "value tidak boleh mengandung '/' (format lokal MM/YYYY)");
   }
+});
+
+// ---------------------------------------------------------------------------
+// Regression: bug produksi "angka Laba Rugi/Neraca/Arus Kas/Buku Besar
+// menempel pada periode SEBELUMNYA sesaat setelah ganti bulan" (ditemukan
+// 2026-08-16 lewat sesi browser production sungguhan — request/response API
+// snapshot per periode makan waktu ~3 detik; sebelum perbaikan, loader hanya
+// tampil saat snapshot masih kosong (`!snapshot`), BUKAN setiap kali period
+// berubah, sehingga data periode lama terus dirender di bawah label periode
+// baru selama fetch periode baru masih berjalan). Fix: hanya render
+// snapshot/ledger bila field `period`/`accountCode` yang dikembalikan SERVER
+// cocok dengan pilihan aktif; source-assertion di sini mengunci pola itu
+// supaya regresi ke `!snapshot`/`!ledgerData` sebagai gerbang loading tidak
+// terulang tanpa terdeteksi test.
+test("panel Laporan Keuangan HANYA merender snapshot bila field period dari server cocok dengan period aktif (bukan `!snapshot`)", () => {
+  const source = readFileSync(new URL("../components/olsera-financial-panel.tsx", import.meta.url), "utf8");
+  assert.ok(
+    source.includes('const snapshotMatchesPeriod = snapshot?.period === period;'),
+    "harus ada guard eksplisit yang membandingkan snapshot.period (dari server) dengan period aktif",
+  );
+  assert.ok(
+    source.includes("const activeSnapshot = snapshotMatchesPeriod ? snapshot : null;"),
+    "bs/pl/cf/accounts harus diturunkan dari snapshot yang SUDAH dipastikan cocok periode, bukan snapshot mentah",
+  );
+  assert.ok(
+    !source.includes("snapshotLoading && !snapshot ?"),
+    "regresi: gerbang loading lama `!snapshot` hanya benar untuk mount pertama, salah untuk ganti periode berikutnya",
+  );
+  assert.ok(
+    source.includes("!snapshotMatchesPeriod ? ("),
+    "loader harus tampil setiap kali period aktif belum punya snapshot yang cocok, termasuk saat GANTI periode",
+  );
+});
+
+test("panel Laporan Keuangan HANYA merender buku besar detail bila period DAN accountCode dari server cocok dengan pilihan aktif", () => {
+  const source = readFileSync(new URL("../components/olsera-financial-panel.tsx", import.meta.url), "utf8");
+  assert.ok(
+    source.includes(
+      "const ledgerMatchesSelection = ledgerData?.period === period && ledgerData?.accountCode === selectedAccountCode;",
+    ),
+    "harus ada guard eksplisit period+accountCode untuk buku besar detail (bug class sama dengan ringkasan snapshot)",
+  );
+  assert.ok(
+    source.includes("const activeLedgerData = ledgerMatchesSelection ? ledgerData : null;"),
+    "baris buku besar harus diturunkan dari ledgerData yang sudah dipastikan cocok pilihan aktif",
+  );
+  assert.ok(
+    !source.includes("ledgerLoading && !ledgerData ?"),
+    "regresi: gerbang loading lama `!ledgerData` hanya benar untuk pilihan akun pertama, salah saat ganti akun/periode",
+  );
 });

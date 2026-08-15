@@ -321,6 +321,18 @@ export function OlseraFinancialPanel() {
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [snapshotError, setSnapshotError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
+  // Root cause bug produksi (2026-08-16): fetch snapshot per periode makan
+  // waktu ~3 detik, dan sebelum perbaikan ini panel terus merender
+  // `snapshot` LAMA (periode sebelumnya) di bawah label periode yang BARU
+  // sampai fetch periode baru selesai — karena loader hanya tampil saat
+  // `!snapshot` (pertama kali mount), bukan saat GANTI periode. User yang
+  // membaca angka dalam window ~3 detik itu melihat angka bulan lain dengan
+  // label bulan yang benar. Fix: HANYA anggap snapshot valid untuk
+  // ditampilkan bila `snapshot.period` (dikembalikan server, bukan asumsi
+  // client) sama dengan `period` yang aktif sekarang — selama belum sama,
+  // dianggap masih loading, bukan menampilkan data basi.
+  const snapshotMatchesPeriod = snapshot?.period === period;
+  const activeSnapshot = snapshotMatchesPeriod ? snapshot : null;
 
   const [tab, setTab] = useState<TabKey>("summary");
 
@@ -339,8 +351,11 @@ export function OlseraFinancialPanel() {
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [selectedAccountCode, setSelectedAccountCode] = useState<string | null>(null);
   const [ledgerData, setLedgerData] = useState<LedgerResponse | null>(null);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerPage, setLedgerPage] = useState(1);
+  // Bug class sama dengan snapshot di atas: hanya anggap ledgerData valid
+  // ditampilkan bila period DAN accountCode-nya sama dengan pilihan aktif.
+  const ledgerMatchesSelection = ledgerData?.period === period && ledgerData?.accountCode === selectedAccountCode;
+  const activeLedgerData = ledgerMatchesSelection ? ledgerData : null;
 
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
@@ -395,7 +410,7 @@ export function OlseraFinancialPanel() {
     };
   }, [period, refreshTick]);
 
-  const accounts = snapshot?.accounts ?? [];
+  const accounts = snapshotMatchesPeriod ? (snapshot?.accounts ?? []) : [];
   const filteredAccounts = useMemo(() => {
     const q = ledgerSearch.trim().toLowerCase();
     if (!q) return accounts;
@@ -408,7 +423,6 @@ export function OlseraFinancialPanel() {
     if (tab !== "ledger" || !selectedAccountCode) return;
     const requestedPeriod = period;
     let cancelled = false;
-    setLedgerLoading(true);
     const params = new URLSearchParams({ period: requestedPeriod, accountCode: selectedAccountCode, page: String(ledgerPage), limit: "50", _t: String(Date.now()) });
     fetch(`/api/olsera/financial/snapshot/ledger?${params.toString()}`, { cache: "no-store" })
       .then(readResponse)
@@ -426,10 +440,7 @@ export function OlseraFinancialPanel() {
         }
         setLedgerData(result.payload);
       })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled && shouldApplyPeriodResponse(requestedPeriod, periodRef.current)) setLedgerLoading(false);
-      });
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -605,11 +616,11 @@ export function OlseraFinancialPanel() {
     }
   }, [period]);
 
-  const isSyncRunningRemotely = snapshot?.syncLog?.status === "running";
-  const bs = snapshot?.reports.balanceSheet ?? null;
-  const pl = snapshot?.reports.profitLoss ?? null;
-  const cf = snapshot?.reports.cashFlow ?? null;
-  const summaryWarnings = visibleFinancialSourceDiagnostics(snapshot?.summaryDiagnostics ?? []);
+  const isSyncRunningRemotely = activeSnapshot?.syncLog?.status === "running";
+  const bs = activeSnapshot?.reports.balanceSheet ?? null;
+  const pl = activeSnapshot?.reports.profitLoss ?? null;
+  const cf = activeSnapshot?.reports.cashFlow ?? null;
+  const summaryWarnings = visibleFinancialSourceDiagnostics(activeSnapshot?.summaryDiagnostics ?? []);
   const subtotalWarning = hasSubtotalMismatch(bs) || hasSubtotalMismatch(pl) || hasSubtotalMismatch(cf);
 
   return (
@@ -647,14 +658,20 @@ export function OlseraFinancialPanel() {
                     </span>
                   )}
                 </p>
-                {snapshot?.periodStatus && <span className={`mt-1 inline-flex rd-chip ${snapshot.periodStatus.code === "final" ? "rd-chip-ok" : snapshot.periodStatus.code === "current" ? "border-amber-400/40 bg-amber-400/10 text-amber-300" : "border-sky-400/30 bg-sky-400/10 text-sky-200"}`}>{snapshot.periodStatus.label}</span>}
+                {activeSnapshot?.periodStatus && <span className={`mt-1 inline-flex rd-chip ${activeSnapshot.periodStatus.code === "final" ? "rd-chip-ok" : activeSnapshot.periodStatus.code === "current" ? "border-amber-400/40 bg-amber-400/10 text-amber-300" : "border-sky-400/30 bg-sky-400/10 text-sky-200"}`}>{activeSnapshot.periodStatus.label}</span>}
                 <p className={DESC}>
                   Periode{" "}
                   <span className="font-medium text-slate-200">{formatPeriodLabel(period)}</span>
-                  {snapshot?.syncLog?.completedAt && (
+                  {activeSnapshot?.syncLog?.completedAt && (
                     <>
                       {" · "}
-                      terakhir sync {formatDateTime(snapshot.syncLog.completedAt)}
+                      terakhir sync {formatDateTime(activeSnapshot.syncLog.completedAt)}
+                    </>
+                  )}
+                  {!snapshotMatchesPeriod && snapshotLoading && (
+                    <>
+                      {" · "}
+                      <span className="text-slate-400">memuat…</span>
                     </>
                   )}
                 </p>
@@ -668,11 +685,11 @@ export function OlseraFinancialPanel() {
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Running
               </span>
-            ) : snapshot?.syncLog?.status === "success" ? (
+            ) : activeSnapshot?.syncLog?.status === "success" ? (
               <span className="rd-chip rd-chip-ok">Success</span>
-            ) : snapshot?.syncLog?.status === "partial" ? (
+            ) : activeSnapshot?.syncLog?.status === "partial" ? (
               <span className="rd-chip border-amber-400/40 bg-amber-400/10 text-amber-300">Partial</span>
-            ) : snapshot?.syncLog?.status === "failed" ? (
+            ) : activeSnapshot?.syncLog?.status === "failed" ? (
               <span className="rd-chip rd-chip-danger">Failed</span>
             ) : (
               <span className="rd-chip">Idle</span>
@@ -714,7 +731,7 @@ export function OlseraFinancialPanel() {
                 : syncMessage}
             </p>
           )}
-          {snapshot?.syncLog?.failedAccountCodes?.length ? <p className="mt-2 text-[12.5px] text-rose-300">Akun gagal disinkronkan: {snapshot.syncLog.failedAccountCodes.join(", ")}</p> : null}
+          {activeSnapshot?.syncLog?.failedAccountCodes?.length ? <p className="mt-2 text-[12.5px] text-rose-300">Akun gagal disinkronkan: {activeSnapshot.syncLog.failedAccountCodes.join(", ")}</p> : null}
         </div>
       </section>
 
@@ -741,13 +758,13 @@ export function OlseraFinancialPanel() {
         </section>
       )}
 
-      {snapshotLoading && !snapshot ? (
+      {!snapshotMatchesPeriod ? (
         <section className="rd-enter">
           <div className="rd-card flex items-center justify-center rounded-2xl p-10 text-slate-400">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Memuat data laporan keuangan...
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Memuat data laporan keuangan {formatPeriodLabel(period)}...
           </div>
         </section>
-      ) : snapshot && !snapshot.hasData ? (
+      ) : activeSnapshot && !activeSnapshot.hasData ? (
         <section className="rd-enter">
           <div className="rd-card flex flex-col items-center gap-3 rounded-2xl p-10 text-center">
             <div className={ICON_CHIP}>
@@ -761,7 +778,7 @@ export function OlseraFinancialPanel() {
           </div>
         </section>
       ) : (
-        snapshot && (
+        activeSnapshot && (
           <section className="rd-enter" style={{ animationDelay: "80ms" }}>
             <div className="rd-card relative rounded-2xl p-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -986,11 +1003,11 @@ export function OlseraFinancialPanel() {
                       <div className="flex h-40 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-sm text-slate-500">
                         Pilih akun di daftar sebelah kiri untuk melihat buku besar.
                       </div>
-                    ) : ledgerLoading && !ledgerData ? (
+                    ) : !ledgerMatchesSelection ? (
                       <div className="flex h-40 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-sm text-slate-400">
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Memuat buku besar...
                       </div>
-                    ) : !ledgerData || ledgerData.total === 0 ? (
+                    ) : !activeLedgerData || activeLedgerData.total === 0 ? (
                       <div className="flex h-40 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-center text-sm text-slate-500">
                         Tidak ada data buku besar untuk akun ini pada {formatPeriodLabel(period)}.
                       </div>
@@ -999,7 +1016,7 @@ export function OlseraFinancialPanel() {
                         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="text-[13.5px] font-medium text-slate-200">
-                              {selectedAccountCode} — {ledgerData.accountName ?? "-"}
+                              {selectedAccountCode} — {activeLedgerData.accountName ?? "-"}
                             </p>
                             <div className="relative">
                               <Button
@@ -1046,8 +1063,8 @@ export function OlseraFinancialPanel() {
                           </div>
                           <p className="text-[13px] text-slate-400">
                             Pergerakan Periode:{" "}
-                            <span className={`font-semibold tabular-nums ${ledgerData.totals.movement >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                              {formatRupiah(ledgerData.totals.movement)}
+                            <span className={`font-semibold tabular-nums ${activeLedgerData.totals.movement >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {formatRupiah(activeLedgerData.totals.movement)}
                             </span>
                           </p>
                         </div>
@@ -1064,7 +1081,7 @@ export function OlseraFinancialPanel() {
                               </tr>
                             </thead>
                             <tbody>
-                              {ledgerData.data.map((row, index) => (
+                              {activeLedgerData.data.map((row, index) => (
                                 <tr key={`${row.transactionNo ?? "row"}-${index}`}>
                                   <td className="px-3 py-2.5 text-slate-300">
                                     {row.isOpeningBalance ? "Saldo Awal" : row.formattedTransactionDate || row.transactionDate || "-"}
@@ -1085,7 +1102,7 @@ export function OlseraFinancialPanel() {
                             </tbody>
                           </table>
                         </div>
-                        <Pagination page={ledgerPage} totalPages={ledgerData.totalPages} total={ledgerData.total} unit="baris" onPage={setLedgerPage} />
+                        <Pagination page={ledgerPage} totalPages={activeLedgerData.totalPages} total={activeLedgerData.total} unit="baris" onPage={setLedgerPage} />
                       </>
                     )}
                   </div>
