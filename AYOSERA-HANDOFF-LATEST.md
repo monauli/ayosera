@@ -1909,4 +1909,4 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Endpoint `/api/audit/olsera-validation` beserta route test dihapus karena tidak memiliki caller production setelah panel dihapus.
 - Helper financial/inventory yang masih dipakai recovery backend, monitoring token, kesehatan koneksi API, cron/sync, menu Inventori/Rekonsiliasi, dan laporan keuangan existing dipertahankan.
 - Test removal UI 1 PASS, private integration monitor 45 PASS, audit menu 31 PASS, type-check PASS, build PASS dengan env Mongo proses-only, dan diff check PASS. Warning BetterAuth URL lokal tetap ada tanpa membocorkan atau mengubah environment.
-- Production verification setelah commit `007ac89` masih menunggu deployment terbaru; tidak ada data production yang diubah.
+- Production read-only check setelah push belum menerima deployment terbaru: halaman Audit masih menampilkan panel lama Validasi Data Olsera, sementara Monitoring Integritas Data tetap tampil. Tidak ada data production yang diubah; deployment verification remains pending.
