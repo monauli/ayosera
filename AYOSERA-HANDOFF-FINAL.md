@@ -105,3 +105,10 @@ Rincian angka, request, timeout, akun, export, test, dan commit ada di `AYOSERA-
 - Tidak ada Inventori, stok Olsera, Kategori Penjualan, lock/unlock, atau payload sumber yang diubah.
 - Production refresh/read-back belum tersedia karena sesi production belum login. Status tidak boleh disebut PASS. Kebutuhan akses tersisa tepat satu: sesi production yang sudah login untuk menjalankan fase reconcile/rebuild Financial resmi dan membaca kembali Februari–Juli.
 - Commit perbaikan yang sudah dipush: `90e9cac fix: reconcile financial ledger closing balances`. Tidak ada commit kode tambahan atau audit Maret yang dibuat.
+
+## Finalisasi production Financial — 16 Agustus 2026
+
+- Commit `90e9cac` dan `8fc7e4e` tersedia di `main`. Endpoint production merespons redirect `307` dari Vercel; ini membuktikan deployment reachable, bukan read-back Financial.
+- Sesi browser belum dapat mengontrol tab production yang baru dibuka. Tidak ada kredensial yang diminta atau diproses.
+- Tidak ada refresh, reconcile, export, atau write production yang dijalankan. Status Februari–Juli tetap **Belum Bisa Dicek** untuk production.
+- Kebutuhan akses tunggal: user login manual pada tab `https://ayosera.vercel.app/login` yang dapat dikontrol, lalu proses Financial resmi dan read-back Februari–Juli dapat dilanjutkan.
