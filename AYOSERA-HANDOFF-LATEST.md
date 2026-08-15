@@ -1902,3 +1902,11 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Setelah deployment commit `9562834`, `/reconciliation/inventory` Februari 2026 menampilkan `48/48 Cocok` dan seluruh baris terbaca `Cocok`.
 - Input/alur upload dan finalisasi BA tidak tampil; ringkasan lama tidak tampil; tombol `Kunci Periode` aktif (`isEnabled: true`) dan tidak diklik.
 - Tidak ada write, lock, unlock, perubahan inventori, atau perubahan stok Olsera selama verifikasi.
+
+## VALIDASI DATA OLSERA DIHAPUS (2026-08-15)
+
+- Panel, mount, state, pemilih periode, request client, dan kode UI Validasi Data Olsera dihapus dari Audit & Sinkronisasi.
+- Endpoint `/api/audit/olsera-validation` beserta route test dihapus karena tidak memiliki caller production setelah panel dihapus.
+- Helper financial/inventory yang masih dipakai recovery backend, monitoring token, kesehatan koneksi API, cron/sync, menu Inventori/Rekonsiliasi, dan laporan keuangan existing dipertahankan.
+- Test removal UI 1 PASS, private integration monitor 45 PASS, audit menu 31 PASS, type-check PASS, build PASS dengan env Mongo proses-only, dan diff check PASS. Warning BetterAuth URL lokal tetap ada tanpa membocorkan atau mengubah environment.
+- Production verification setelah commit `007ac89` masih menunggu deployment terbaru; tidak ada data production yang diubah.
