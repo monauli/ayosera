@@ -1918,3 +1918,48 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Agustus Kategori terbaca sebagai 1.598 qty / Rp65.053.000 tetapi merupakan sinkronisasi parsial sampai 15 Agustus dan tidak memiliki dataset AYOSERA independen; status `Belum Dapat Dibuktikan`.
 - Agustus Financial menampilkan diagnostic subtotal-vs-detail bermasalah pada akun 21003, 23000, 40003, 50000, 51000; laporan memberi status `Selisih` untuk diagnostic tersebut, bukan klaim rekonsiliasi penuh.
 - Export nyata tidak menghasilkan download event yang dapat dibuka; tidak dinyatakan PASS. Tidak ada database, kode, lock, sync, atau stok yang diubah.
+
+## MONTH-SELECTOR ROOT-CAUSE INVESTIGATION — LANJUTAN AUDIT KATEGORI/FINANCIAL — 2026-08-16
+
+Melanjutkan `AYOSERA-AUDIT-KATEGORI-FINANCIAL-2026-08-15.md` sesuai instruksi. Read-only investigation dan pemeriksaan lokal saja; tidak ada write/lock/unlock/perubahan stok Olsera.
+
+### 1. Perbaikan pemilih bulan — TIDAK DITEMUKAN ROOT CAUSE DI KODE, TIDAK ADA PERUBAHAN DIBUAT
+
+Menjalankan `superpowers:systematic-debugging` (Iron Law: tidak ada fix tanpa root cause terbukti):
+
+- **Kategori (app/page.tsx)**: `handleOlseraMonthFilter` men-set `olseraFilterMonth`, `olseraStart`, `olseraEnd` secara sinkron pada satu handler yang sama; efek fetch `sales-by-category` (baris ~1170-1212) berdependensi pada `[activeNav, olseraStart, olseraEnd, olseraSyncRefresh]`, dan seluruh export (`handleOlseraCategoryExport`, `handleOlseraItemExport`, `handleOlseraOmsetKategoriExport`, `handleOlseraLabersExport`) membaca `olseraStart`/`olseraEnd`/`olseraFilterMonth` yang sama. State ini hidup di komponen `DashboardPage` yang tidak pernah unmount saat pindah tab, jadi tidak ada reset tersembunyi yang ditemukan.
+- **Laporan Keuangan (components/olsera-financial-panel.tsx)**: `period` sudah memakai query string URL sebagai satu-satunya sumber kebenaran (`resolveInitialPeriod`/`readPeriodFromSearch`/`writePeriodToSearch`, commit `884d2af`, 2026-07-29) dan efek fetch snapshot/ledger membandingkan `respondedPeriod` vs `periodRef.current` lewat `shouldApplyPeriodResponse` — race response lama tidak pernah menimpa bulan aktif. Ini adalah fix untuk bug class yang sama ("bulan tidak menempel") dari sesi sebelumnya, sudah punya regression test (`lib/olsera-financial-period-state.test.ts`).
+- Pattern-compare terhadap fix Inventori yang terbukti bekerja di production (`components/olsera-inventory-panel.tsx`, commit `6c59a6b`) tidak menunjukkan perbedaan struktural yang bisa dituduh sebagai penyebab di kedua halaman ini.
+- Eksperimen isolasi `<input type="month">` via Playwright/headless Chromium (di luar app, tanpa dependency Mongo/login) untuk menguji hipotesis "onClick showPicker() memblokir input" tidak memberi sinyal bersih — bahkan kasus kontrol (tanpa `showPicker()`) juga gagal menerima ketikan keyboard segmen di lingkungan headless ini, sehingga hasilnya inkonklusif dan tidak bisa dipakai sebagai bukti root cause aplikasi.
+- **Reproduksi terhadap sesi production sungguhan diblokir**: `.env.local` di workspace ini berisi nilai placeholder (bukan credential asli) untuk `MONGODB_URI`, `ADMIN_PASSWORD`, `SUPERVISOR_PASSWORD`, `OLSERA_INTERNAL_TOKEN`, dll — sama seperti blocker yang dicatat berulang kali di seluruh file handoff ini sejak 2026-08-12. Tanpa login production yang valid, halaman Kategori/Laporan Keuangan produksi sungguhan tidak bisa dibuka dari workspace ini untuk mengonfirmasi ulang gejala "tetap menampilkan Agustus".
+- **Kesimpulan**: root cause TIDAK terbukti dari kode maupun eksperimen lokal. Sesuai Iron Law debugging dan instruksi "jangan mengubah angka/kode supaya cocok tanpa bukti", **tidak ada perubahan kode dibuat** untuk item ini. Kemungkinan penyebab yang belum bisa dieliminasi: deployment production tertinggal dari `main` (pola yang sama persis terjadi pada penghapusan panel Validasi Data Olsera, lihat entri `VALIDASI DATA OLSERA DIHAPUS` di atas), atau cache browser/CDN pada sesi audit sebelumnya.
+- Test baru TIDAK ditambahkan untuk item ini karena tidak ada perubahan kode yang perlu dikunci — regression test untuk logika period Financial sudah ada (`lib/olsera-financial-period-state.test.ts`), dan Kategori belum punya bug kode yang terbukti untuk ditulis testnya.
+
+### 2–6. Audit Kategori Februari–Juli, Laporan Keuangan, akun Agustus, export nyata, production
+
+**BLOCKED** — sama seperti seluruh entri sebelumnya di file ini sejak 2026-08-12 (`querySrv ECONNREFUSED`, `MONGODB_URI` invalid, endpoint production 401 tanpa sesi). Preflight environment sesi ini mengonfirmasi ulang: seluruh secret di `.env.local` (Mongo, Olsera, admin/supervisor auth) adalah nilai placeholder/redaksi, bukan credential produksi. Tanpa akses production yang valid, item 2 (audit Kategori Feb–Jul vs Olsera), 3 (audit Neraca/Laba Rugi/Arus Kas/Buku Besar Feb–Jul), 4 (akun 21003/23000/40003/50000/51000), 5 (export nyata Feb–Jul), dan 8 (pemeriksaan production) tidak dapat dikerjakan secara jujur pada sesi ini. Tidak ada angka yang ditebak atau dipakai dari data Agustus untuk bulan lain.
+
+### 7. Pemeriksaan akhir — lokal
+
+- `npm run type-check`: **PASS**.
+- `npm run test:unit`: satu kegagalan pre-existing tidak berubah — `lib/reconciliation-operational-readiness.test.ts` ("preview/readiness route tetap read-only dan memerlukan supervisor"), sama seperti yang sudah dicatat di entri `AUTOMATED READ-ONLY AUDIT — 2026-08-15` sebelumnya. Sisa test setelah kegagalan ini (yang terhenti oleh `&&`) dijalankan satu per satu secara manual — `reconciliation-null-audit`, `inventory-snapshot-pipeline-audit`, `court-revenue-reconciliation`, `dashboard-court-performance`, `historical-data-remediation`, `private-integration-monitor`, `audit-sync-menu-ui`, `reconciliation-berita-acara`, `reconciliation-actor-display`, `reconciliation-period-lock-ui` — seluruhnya **PASS**.
+- `npm run lint`: baseline `@typescript-eslint/no-explicit-any` pre-existing tidak berubah (sama seperti dicatat di entri sebelumnya); tidak ada error/warning baru dari sesi ini karena tidak ada kode yang diubah.
+- `npm run build`: gagal terhadap `.env.local` lokal (`MONGODB_URI` bukan `mongodb://`/`mongodb+srv://`) — kondisi pre-existing yang sudah berkali-kali dicatat, bukan regresi. Dengan override proses-only `MONGODB_URI=mongodb://placeholder:27017/placeholder` (tanpa mengubah `.env.local`), build **PASS**.
+- `git diff --check`: **PASS** (tidak ada perubahan tracked pada sesi ini).
+
+### Commit/push
+
+**Tidak ada.** Tidak ada perubahan kode yang dibuat pada sesi ini karena root cause pemilih bulan tidak terbukti, dan audit Feb–Jul/akun Agustus/export/production seluruhnya BLOCKED oleh credential placeholder di workspace ini.
+
+### Yang masih belum selesai
+
+- Root cause pemilih bulan Kategori/Laporan Keuangan (gejala "tetap Agustus") — perlu direproduksi di sesi dengan akses production sungguhan (browser + login valid) sebelum fix apa pun ditulis; jangan menebak fix tanpa reproduksi.
+- Audit Kategori Penjualan Februari–Juli vs Olsera (qty, nominal, per kategori dan total) — perlu koneksi MongoDB production dan/atau API Olsera dengan credential asli.
+- Audit Laporan Keuangan Februari–Juli (Neraca, Laba Rugi, Arus Kas, Buku Besar Ringkasan/Detail) vs Olsera — sama, perlu credential asli.
+- Investigasi akun 21003, 23000, 40003, 50000, 51000 (tanda +/-, debit/kredit tertukar, ringkasan vs detail, belum sinkron, atau kesalahan perhitungan) — perlu data production nyata, bukan tebakan.
+- Verifikasi export nyata (unduh, buka, baca isi file) untuk Kategori dan Laporan Keuangan Februari–Juli.
+- Pemeriksaan production read-only (deployment aktif, pilihan Februari–Juli, konsistensi halaman/export).
+
+### Langkah berikutnya
+
+Jalankan sesi lanjutan dari lingkungan yang punya: (1) `MONGODB_URI` production yang valid untuk read-only query, (2) sesi browser production yang sudah login (admin/supervisor asli, bukan placeholder), dan (3) akses API Olsera resmi. Baru setelah salah satu tersedia, ulangi reproduksi bug pemilih bulan secara langsung di production sebelum menulis fix, lalu lanjutkan audit Kategori/Laporan Keuangan/akun Agustus/export sesuai kerangka pada `AYOSERA-AUDIT-KATEGORI-FINANCIAL-2026-08-15.md`.
