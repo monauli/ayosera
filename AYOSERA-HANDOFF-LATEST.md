@@ -1910,3 +1910,11 @@ Restore read-only Mongo connectivity, re-run the same 17-item join against the 3
 - Helper financial/inventory yang masih dipakai recovery backend, monitoring token, kesehatan koneksi API, cron/sync, menu Inventori/Rekonsiliasi, dan laporan keuangan existing dipertahankan.
 - Test removal UI 1 PASS, private integration monitor 45 PASS, audit menu 31 PASS, type-check PASS, build PASS dengan env Mongo proses-only, dan diff check PASS. Warning BetterAuth URL lokal tetap ada tanpa membocorkan atau mengubah environment.
 - Production read-only check setelah push belum menerima deployment terbaru: halaman Audit masih menampilkan panel lama Validasi Data Olsera, sementara Monitoring Integritas Data tetap tampil. Tidak ada data production yang diubah; deployment verification remains pending.
+
+## READ-ONLY CATEGORY/FINANCIAL AUDIT (2026-08-15)
+
+- Laporan dibuat di `AYOSERA-AUDIT-KATEGORI-FINANCIAL-2026-08-15.md`.
+- Sesi production authenticated berhasil dibaca tanpa write. Namun pemilih periode Kategori dan Laporan Keuangan tidak menerapkan bulan yang dipilih; halaman tetap menampilkan Agustus 2026. Karena itu angka Februari–Juli tidak ditebak dan diberi status `Belum Dapat Dibuktikan`.
+- Agustus Kategori terbaca sebagai 1.598 qty / Rp65.053.000 tetapi merupakan sinkronisasi parsial sampai 15 Agustus dan tidak memiliki dataset AYOSERA independen; status `Belum Dapat Dibuktikan`.
+- Agustus Financial menampilkan diagnostic subtotal-vs-detail bermasalah pada akun 21003, 23000, 40003, 50000, 51000; laporan memberi status `Selisih` untuk diagnostic tersebut, bukan klaim rekonsiliasi penuh.
+- Export nyata tidak menghasilkan download event yang dapat dibuka; tidak dinyatakan PASS. Tidak ada database, kode, lock, sync, atau stok yang diubah.
