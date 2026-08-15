@@ -1963,3 +1963,99 @@ Menjalankan `superpowers:systematic-debugging` (Iron Law: tidak ada fix tanpa ro
 ### Langkah berikutnya
 
 Jalankan sesi lanjutan dari lingkungan yang punya: (1) `MONGODB_URI` production yang valid untuk read-only query, (2) sesi browser production yang sudah login (admin/supervisor asli, bukan placeholder), dan (3) akses API Olsera resmi. Baru setelah salah satu tersedia, ulangi reproduksi bug pemilih bulan secara langsung di production sebelum menulis fix, lalu lanjutkan audit Kategori/Laporan Keuangan/akun Agustus/export sesuai kerangka pada `AYOSERA-AUDIT-KATEGORI-FINANCIAL-2026-08-15.md`.
+
+## AUDIT PRODUCTION VIA BROWSER LOGIN SUNGGUHAN — 2026-08-16
+
+Sesi ini memakai browser production yang benar-benar login (user login manual satu kali atas permintaan, kredensial tidak pernah ditampilkan/dicatat). Semua temuan di bawah adalah hasil request/response production nyata, bukan simulasi.
+
+### 1. Pemilih bulan — ROOT CAUSE TERBUKTI DAN DIPERBAIKI
+
+**Kategori Penjualan**: diuji Februari–Juli lewat input bulan sungguhan (bukan simulasi) sambil memantau request browser. Setiap perpindahan bulan mengirim `GET /api/olsera/sales-by-category?from=YYYY-MM-01&to=YYYY-MM-DD` dengan bulan yang benar, judul/tabel/ringkasan langsung mengikuti. **Tidak ditemukan bug** di halaman ini — root cause: komponen ini sudah menampilkan gerbang loading (`olseraLoading`) di SETIAP pergantian bulan (bukan cuma saat mount pertama), jadi tidak pernah ada window di mana angka bulan lama tertinggal di bawah label bulan baru.
+
+**Laporan Keuangan**: root cause DITEMUKAN dan DIPERBAIKI. Bukti dari request/response nyata (timestamp presisi milidetik): fetch `GET /api/olsera/financial/snapshot?period=YYYY-MM` makan waktu **~3–3.7 detik**. Sebelum perbaikan, `snapshotLoading && !snapshot` hanya menjadi `true` saat mount pertama (snapshot masih kosong) — begitu snapshot pertama terisi, ganti periode berikutnya TIDAK memicu gerbang loading lagi, sehingga panel terus merender angka periode LAMA di bawah label periode BARU selama fetch periode baru berjalan (~3 detik). Reproduksi terkontrol (ganti bulan setiap 3 detik, lebih cepat dari fetch): Pendapatan tetap menampilkan `Rp134.257.000,00` (angka Agustus) walau URL dan label sudah pindah ke Maret/April/Mei — persis gejala yang dilaporkan.
+
+- **Fix**: `components/olsera-financial-panel.tsx` — snapshot/ledger HANYA dirender bila field `period`/`accountCode` yang dikembalikan SERVER (bukan asumsi client) cocok dengan pilihan aktif (`snapshotMatchesPeriod`, `ledgerMatchesSelection`); selama belum cocok, loader tampil dengan label periode yang benar ("Memuat data laporan keuangan {bulan}..."). Berlaku untuk kartu ringkasan, status sync, daftar akun, dan buku besar detail.
+- **Test**: 2 test baru di `lib/olsera-financial-period-state.test.ts` (source-assertion, mengikuti pola `lib/olsera-inventory-ui.test.ts`) mengunci guard ini dan melarang regresi ke gerbang `!snapshot`/`!ledgerData` lama.
+- **Verifikasi production setelah deploy**: reproduksi ulang (ganti bulan setiap 1,5 detik, lebih cepat dari fetch) sekarang menampilkan `"Memuat data laporan keuangan Februari 2026..."` dengan label yang SELALU benar, tidak pernah lagi angka bulan lain; setelah settle, angka sudah benar sesuai bulan yang dipilih.
+- **Commit**: `0b6c310` — `fix: stop rendering stale-period financial snapshot/ledger data`, pushed ke `origin/main`.
+- **Pemeriksaan kode**: `npm run type-check` PASS; test file terkait (`test:olsera-financial-period-state`) 18/18 PASS termasuk 2 baru; seluruh suite financial terkait (`test:olsera-financial`, `-export`, `-sync`, `-test-db`, `-di`, `test:financial-response`, `-reconciliation-integrity`, `-integrity-fix`, `-hardening`, `-route-auth-guard`, `-time-budget`, `test:cron-olsera-financial`) semua PASS; `npm run lint` — tidak ada error/warning baru (satu warning `react-hooks/exhaustive-deps` pada baris `accounts` sudah ada SEBELUM perubahan ini, diverifikasi via `git stash`); `npm run build` PASS dengan `MONGODB_URI` proses-only (tidak disimpan ke `.env.local`); `git diff --check` PASS.
+
+### 2–3. Kategori Penjualan & Laporan Keuangan Februari–Juli — perbandingan Olsera live
+
+Perbandingan dilakukan lewat endpoint production yang SAMA dipakai aplikasi untuk audit sumber (`POST /api/private/integration-monitor`, `lib/olsera-validation-sections.ts`) — endpoint ini memanggil API Olsera **live** (bukan data yang sudah tersinkron ke Mongo) lalu membandingkan dengan salinan tersimpan AYOSERA, sehingga kedua sisi genuinely independen.
+
+**Laporan Keuangan (`source: "olsera-financial"`)** — berhasil penuh untuk Februari–Juli (setiap panggilan ~10–15 detik):
+
+| Bulan | Pendapatan | Laba Kotor | Laba Bersih | Kas Akhir | Total Aset | Total Kewajiban&Modal | Buku Besar (cocok/diperiksa) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Februari | Rp152.862.900 = Rp152.862.900 | Rp120.434.736,14 = Rp120.434.736,14 | -Rp2.670.588,83 = -Rp2.670.588,83 | Rp300.755.160,64 = Rp300.755.160,64 | Rp2.116.925.420,78 = Rp2.116.925.420,78 | sama | 53/85 |
+| Maret | Rp235.417.000 = Rp235.417.000 | Rp212.151.474,25 = sama | Rp68.078.966,92 = sama | Rp238.664.331,31 = sama | Rp2.208.738.217,70 = sama | sama | 48/85 |
+| April | Rp309.363.000 = sama | Rp270.179.093,44 = sama | Rp109.646.619,67 = sama | Rp346.987.623,54 = sama | Rp2.313.209.682,37 = sama | sama | 40/85 |
+| Mei | Rp351.707.500 = sama | Rp309.545.360,49 = sama | Rp129.448.027,24 = sama | Rp594.209.800,29 = sama | Rp2.519.025.675,61 = sama | sama | 36/85 |
+| Juni | Rp307.267.500 = sama | Rp268.059.228,07 = sama | Rp93.507.722,40 = sama | Rp571.006.178,62 = sama | Rp2.444.579.021,01 = sama | sama | 37/85 |
+| Juli | Rp295.345.000 = sama | Rp276.464.934,65 = sama | Rp274.515.553,95 = sama | Rp904.149.685,92 = sama | Rp2.783.647.376,96 = sama | sama | **85/85** |
+
+Kesembilan angka utama yang diminta task (Pendapatan, Laba Kotor, Laba Bersih, Kas Akhir, Total Aset, Total Kewajiban&Modal) **delta = 0 persis** untuk SELURUH Februari–Juli — Neraca, Laba Rugi, dan Arus Kas **Cocok** setiap bulan pada level totals ini. Juli bahkan cocok sampai ke 85/85 akun buku besar.
+
+Untuk akun buku besar yang berbeda (Februari–Juni), setiap baris diperiksa satu per satu (bukan cuma dihitung):
+
+- **Mayoritas** (semua akun kecuali 50000/51000): field `Saldo` akhir SELALU identik persis antara AYOSERA dan Olsera live di setiap bulan; sebagian akun (mis. 21003, 23000, 40003, 33000, 21000) hanya berbeda TANDA pada raw `debit` (Olsera menyimpan negatif, AYOSERA menyimpan absolut) — representasi berbeda, saldo akhir sama, sehingga **bukan selisih akuntansi nyata**. Sebagian kecil lain hanya berbeda di bawah Rp1 (pembulatan desimal), sesuai aturan existing.
+- **50000 (Pembelian) dan 51000 (Harga Pokok Penjualan)** — lihat bagian akun di bawah, pola BERBEDA dari yang lain.
+
+**Kategori Penjualan (`source: "olsera"`)** — **Belum Terbukti secara penuh**. Endpoint yang sama untuk kategori memanggil Olsera per-hari untuk seluruh order sebulan; permintaan rentang penuh (30/31 hari) maupun satu minggu SELALU terputus `ECONNRESET`/timeout pada infrastruktur (~30–40 detik, jauh di bawah `maxDuration=300` route dan di luar kendali kode aplikasi) walau permintaan SATU HARI berhasil (2–3 detik). Sampel 14 dari 28 hari Februari yang berhasil diperiksa (04, 15, 18–28 Feb) menunjukkan:
+  - `sourceOrderCount == localOrderCount` (jumlah order sama persis) dan `missingOrderCount = 0` di semua hari yang berhasil.
+  - `matchedItemCount == sourceItemCount == localItemCount`, `missingItemCount = 0`, `conflictItemCount = 0` di semua hari yang berhasil — **qty dan nominal item cocok**.
+  - Status hari-hari itu tetap `MANUAL_REVIEW_REQUIRED` karena `missingProductIdentityCount` (item tanpa mapping productId/kategori resmi) menyamai jumlah item hari itu — ini persis isu **`unresolvedItemCount`** yang SUDAH diketahui dan ditampilkan sebagai banner terpisah di halaman Kategori; bukan selisih qty/nominal.
+  - 14 hari Februari sisanya, dan seluruh Maret–Juli, **tidak berhasil diperiksa** pada sesi ini karena keterbatasan infrastruktur di atas — statusnya **Belum Terbukti**, bukan diasumsikan cocok.
+
+### 4. Investigasi akun 21003, 23000, 40003, 50000, 51000 — PENYEBAB TERBUKTI SEBAGIAN
+
+Pola di atas berulang identik Februari–Juni (tidak muncul di Juli karena Juli 85/85 cocok total), sehingga bukan isu khusus Agustus — ini karakteristik yang konsisten pada 2 kelas akun:
+
+- **21003, 23000, 40003**: TERBUKTI hanya perbedaan tanda pada representasi `debit` mentah (Olsera live: negatif; AYOSERA tersimpan: absolut/positif). `Saldo` akhir identik persis setiap bulan di kedua sumber. **Bukan kesalahan perhitungan** — representasi berbeda pada field mentah, hasil akhir benar.
+- **50000 (Pembelian) dan 51000 (Harga Pokok Penjualan)**: TERBUKTI pola nyata dan konsisten setiap bulan — baris tersimpan AYOSERA punya `debit == credit` (nilai pergerakan akun diduplikasi ke kedua sisi, netto 0 secara mentah), sedangkan Olsera live menunjukkan entri satu sisi yang benar (mis. Februari: AYOSERA debit=Rp21.890.500 & credit=Rp21.890.500; Olsera live debit=Rp0 & credit=Rp21.890.500). **Saldo akhir akun tetap identik** di kedua sumber setiap bulan (jadi total Laba Rugi/Neraca tidak terpengaruh), tetapi rincian debit/kredit MENTAH akun ini di salinan AYOSERA tidak benar. Contoh nilai lengkap Februari–Juni ada di request/response yang dikumpulkan sesi ini (tidak disalin penuh di sini karena volumenya besar; polanya konsisten identik setiap bulan).
+  - Ini SESUAI dengan temuan diagnostic Agustus sebelumnya (`AYOSERA-AUDIT-KATEGORI-FINANCIAL-2026-08-15.md`): "Untuk akun 51000, summary debit Rp9.731.393 dan detail debit Rp9.761.715,26 serta detail kredit Rp7.041.500" — pola ringkasan-vs-detail berbeda yang sama.
+  - **Penyebab pasti (baris kode) BELUM ditelusuri** pada sesi ini karena keterbatasan waktu — kandidat paling mungkin: normalisasi/penulisan baris buku besar untuk akun HPP/Pembelian di jalur sync financial (`lib/olsera-financial-core.ts`/`lib/olsera-financial-sync.ts`) menuliskan nilai pergerakan yang sama ke kedua kolom debit dan kredit, alih-alih hanya salah satu sisi. **Tidak diperbaiki** pada sesi ini karena baris kode penyebabnya belum ditunjuk secara pasti — sesuai instruksi "perbaiki hanya jika penyebab terbukti", dan Saldo akhir tidak salah sehingga tidak ada urgensi mengubah data.
+- Tidak ada perubahan data, lock, atau stok dilakukan untuk investigasi ini — seluruhnya read-only lewat endpoint `action: "check"`.
+
+### 5. Export nyata — VERIFIKASI PENUH FEBRUARI, DOWNLOAD TERVERIFIKASI MARET–JULI
+
+- **Februari**: file Excel Laporan Keuangan (`laporan-keuangan-2026-02.xlsx`, 181.150 byte) dan Kategori Penjualan (`Kategori Penjualan-2026-02-01__2026-02-28.xlsx`, 152.477 byte) diunduh SUNGGUHAN lewat sesi browser login, lalu **dibuka dan dibaca isinya** dengan `exceljs`:
+  - Laporan Keuangan: 5 sheet (Ringkasan Buku Besar, Arus Kas, Laba Rugi, Neraca, Buku Besar Detail — 5.189 baris), label periode "Februari 2026" benar di semua sheet, **Total Pendapatan = Rp152.862.900 dan Total Aset = Rp2.116.925.420,78 — cocok persis** dengan angka API/perbandingan live di atas.
+  - Kategori Penjualan: 17 sheet (satu per kategori, cocok dengan 17 kategori yang tampil di halaman Februari), baris pertama memuat koreksi retur resmi `DF0226020500000033 / ICED LEMON TEA -1/-Rp21.250` yang sudah didokumentasikan sebelumnya — isi file konsisten dengan data yang sudah diverifikasi.
+- **Maret–Juli**: file Excel Laporan Keuangan dan Kategori Penjualan berhasil diunduh (HTTP 200, signature ZIP/xlsx valid `504B0304`, nama file memuat periode yang benar, ukuran 208KB–371KB) tetapi **tidak dibuka/dibaca isinya secara mendalam** pada sesi ini karena keterbatasan waktu — status **Cocok untuk mekanisme unduh** (bukan tombol saja, file nyata terverifikasi valid), **Belum Terbukti** untuk pembacaan isi/baris/total per bulan.
+
+### 6. Periode terkunci
+
+Tidak ada periode yang dibuka/dikunci pada sesi ini. Seluruh pemeriksaan memakai `action: "check"` (read-only, hanya menulis ke koleksi diagnostic `data_gap_audit_state`/`data_gap_audit_runs`, tidak menyentuh data bisnis/lock/stok Olsera). Februari tidak disentuh statusnya.
+
+### 7. Ringkasan pemeriksaan kode
+
+Lihat bagian 1 di atas — semua PASS untuk perubahan yang dibuat (`components/olsera-financial-panel.tsx`, `lib/olsera-financial-period-state.test.ts`). Tidak ada perubahan kode lain pada sesi ini.
+
+### 8. Production
+
+- Deployment terbaru aktif diverifikasi lewat perilaku halaman sungguhan setelah push (loader baru muncul, bukan versi lama).
+- Pilihan Februari–Juli bekerja pada kedua halaman (Kategori sudah benar sejak awal; Laporan Keuangan benar setelah fix).
+- Tidak ada stok Olsera yang diubah; tidak ada secret/token/`.env` yang ditampilkan (hanya panjang & prefix divalidasi, tidak pernah nilainya).
+
+### Tabel hasil akhir Februari–Juli
+
+| Bulan | Kategori Penjualan | Neraca | Laba Rugi | Arus Kas | Buku Besar | Export Kategori | Export Keuangan |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Februari | Belum Terbukti (sampel parsial 14/28 hari: qty/nominal item cocok, order-level "conflict" = isu identity produk yang sudah diketahui, bukan angka) | Cocok | Cocok | Cocok | Selisih (53/85 exact; sisanya representasi tanda/pembulatan kecuali 50000 & 51000, lihat bagian 4) | Cocok (dibuka & dibaca, isi sesuai) | Cocok (dibuka & dibaca, isi sesuai) |
+| Maret | Belum Terbukti (tidak berhasil diperiksa — timeout infrastruktur) | Cocok | Cocok | Cocok | Selisih (48/85 exact, pola sama dengan Februari) | Cocok (download terverifikasi valid, isi belum dibaca) | Cocok (download terverifikasi valid, isi belum dibaca) |
+| April | Belum Terbukti (sama) | Cocok | Cocok | Cocok | Selisih (40/85 exact, pola sama) | Cocok (download terverifikasi valid, isi belum dibaca) | Cocok (download terverifikasi valid, isi belum dibaca) |
+| Mei | Belum Terbukti (sama) | Cocok | Cocok | Cocok | Selisih (36/85 exact, pola sama) | Cocok (download terverifikasi valid, isi belum dibaca) | Cocok (download terverifikasi valid, isi belum dibaca) |
+| Juni | Belum Terbukti (sama) | Cocok | Cocok | Cocok | Selisih (37/85 exact, pola sama) | Cocok (download terverifikasi valid, isi belum dibaca) | Cocok (download terverifikasi valid, isi belum dibaca) |
+| Juli | Belum Terbukti (sama) | Cocok | Cocok | Cocok | **Cocok (85/85 exact)** | Cocok (download terverifikasi valid, isi belum dibaca) | Cocok (download terverifikasi valid, isi belum dibaca) |
+
+Catatan status "Selisih" pada Buku Besar Februari–Juni: TOTAL/Saldo akhir setiap akun tetap Cocok persis; status Selisih murni berasal dari (a) representasi tanda pada beberapa akun (benign, terbukti) dan (b) pola debit=kredit-terduplikasi pada akun 50000/51000 (nyata, konsisten, tapi penyebab baris kode belum ditelusuri — lihat bagian 4). Tidak ada satu pun angka yang dinyatakan cocok hanya karena berasal dari sumber yang sama; seluruh perbandingan di atas membandingkan AYOSERA tersimpan vs Olsera live yang genuinely independen.
+
+### Yang masih belum selesai
+
+- Kategori Penjualan: perbandingan live penuh untuk seluruh Februari–Juli (Maret–Juli belum sama sekali; Februari baru 14/28 hari) — perlu jalur yang tidak kena batas waktu koneksi ~30–40 detik (mis. jalankan dari server/cron internal, bukan lewat proxy edge Vercel dari luar; atau ubah endpoint agar chunking/streaming per hari built-in).
+- Akun 50000/51000: baris kode penyebab pasti duplikasi debit=kredit belum ditelusuri/diperbaiki (Saldo tidak salah, jadi tidak mendesak, tapi rincian debit/kredit mentah tidak akurat).
+- Export Maret–Juli: isi file belum dibuka/dibaca mendalam (baru download+validitas ZIP/nama file yang diverifikasi).
+
+Commit sesi ini: `0b6c310` (kode+test, PASS semua pemeriksaan wajib). Tidak ada commit laporan tambahan untuk temuan yang murni observasional (item 2–5) karena tidak ada perubahan kode terkait — akan digabung ke commit dokumentasi handoff ini.
