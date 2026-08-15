@@ -6,14 +6,14 @@ Ruang lingkup: read-only; tidak ada perubahan data, stok, lock, unlock, atau syn
 
 ## Hasil
 
-| Bulan | Category | Inventory | Reconciliation | Neraca | Laba Rugi | Arus Kas | Buku Besar | Export Category | Export Inventory | Export Financial |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Februari | Belum Bisa Dicek (sampel parsial 14/28 hari) | Belum Bisa Dicek | Cocok (48/48) | Cocok | Cocok | Cocok | Selisih (53/85; akun 50000/51000) | Cocok (file dibaca) | Belum Bisa Dicek | Cocok (file dibaca) |
-| Maret | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Belum Bisa Dicek | Cocok | Cocok | Cocok | Selisih (48/85) | Belum Bisa Dicek (file valid, isi belum dibaca) | Belum Bisa Dicek | Belum Bisa Dicek (file valid, isi belum dibaca) |
-| April | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Belum Bisa Dicek | Cocok | Cocok | Cocok | Selisih (40/85) | Belum Bisa Dicek (file valid, isi belum dibaca) | Belum Bisa Dicek | Belum Bisa Dicek (file valid, isi belum dibaca) |
-| Mei | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Belum Bisa Dicek | Cocok | Cocok | Cocok | Selisih (36/85) | Belum Bisa Dicek (file valid, isi belum dibaca) | Belum Bisa Dicek | Belum Bisa Dicek (file valid, isi belum dibaca) |
-| Juni | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Belum Bisa Dicek | Cocok | Cocok | Cocok | Selisih (37/85) | Belum Bisa Dicek (file valid, isi belum dibaca) | Belum Bisa Dicek | Belum Bisa Dicek (file valid, isi belum dibaca) |
-| Juli | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Belum Bisa Dicek | Cocok | Cocok | Cocok | Cocok (85/85) | Belum Bisa Dicek (file valid, isi belum dibaca) | Belum Bisa Dicek | Belum Bisa Dicek (file valid, isi belum dibaca) |
+| Bulan | Category | Reconciliation | Neraca | Laba Rugi | Arus Kas | Buku Besar | Export Category | Export Financial | Export Omzet |
+|---|---|---|---|---|---|---|---|---|---|
+| Februari | Belum Bisa Dicek (sampel parsial 14/28 hari) | Cocok | Cocok | Cocok | Cocok | Selisih (53/85; akun 50000/51000) | Cocok (file dibaca) | Cocok (file dibaca) | Belum Bisa Dicek |
+| Maret | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Cocok | Cocok | Cocok | Selisih (48/85) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek |
+| April | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Cocok | Cocok | Cocok | Selisih (40/85) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek |
+| Mei | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Cocok | Cocok | Cocok | Selisih (36/85) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek |
+| Juni | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Cocok | Cocok | Cocok | Selisih (37/85) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek |
+| Juli | Belum Bisa Dicek (timeout) | Belum Bisa Dicek | Cocok | Cocok | Cocok | Cocok (85/85) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek (isi belum dibaca) | Belum Bisa Dicek |
 
 ## Kesimpulan
 
@@ -24,6 +24,14 @@ Ruang lingkup: read-only; tidak ada perubahan data, stok, lock, unlock, atau syn
 - Kategori belum terbukti penuh karena timeout Olsera; sampel Februari yang berhasil tidak menunjukkan selisih qty/nominal.
 - Export Februari dibuka dan dibaca. Export Maret–Juli baru terbukti sebagai file XLSX valid; isi belum dibaca mendalam.
 - Audit production lanjutan pada sesi ini berhenti di halaman login; tidak ada kredensial yang diminta atau diproses.
+
+## Audit lanjutan non-inventori — 16 Agustus 2026
+
+- Tidak ada pemeriksaan Inventori, perubahan stok, sync, lock, atau unlock.
+- Trace lokal `normalizeLedgerDetailPayload` dan `bulkUpsertLedgerEntries` memetakan debit/kredit dari payload Olsera apa adanya; tidak ditemukan kode yang menyalin debit menjadi kredit atau sebaliknya. Karena payload production akun 50000/51000 tidak tersedia pada sesi ini, penyebab akhir tetap **Belum Bisa Dicek** dan tidak ada koreksi angka.
+- Rekonsiliasi Omzet dan aturan toleransi Rp1 tetap dipertahankan. Fixture/test existing mencakup kasus April Rp739.999/Rp740.000; tidak ada perubahan angka.
+- File nyata Maret–Juli tidak tersedia di workspace untuk dibuka dan dibaca. File yang ada hanya fixture/export periode lain; status Maret–Juli tetap **Belum Bisa Dicek**, bukan PASS berdasarkan signature XLSX.
+- Production kembali ke `/login`; pemeriksaan kategori per bulan, export live, dan rekonsiliasi production tidak dapat dilanjutkan tanpa sesi login manual.
 
 ## Bukti dan batasan
 
