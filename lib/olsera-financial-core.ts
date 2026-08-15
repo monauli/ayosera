@@ -165,6 +165,7 @@ export type LedgerMovementInput = {
   accountCode?: string | number | null;
   debit?: number | null;
   credit?: number | null;
+  balance?: number | null;
   isOpeningBalance?: boolean | null;
 };
 
@@ -179,14 +180,19 @@ export function reconcileLedgerSummaryWithDetails(
   entries: LedgerMovementInput[] | null | undefined,
 ): Array<Record<string, unknown>> {
   if (!Array.isArray(summary)) return [];
-  const totals = new Map<string, { debit: number; credit: number }>();
+  const totals = new Map<string, { debit: number; credit: number; openingBalance: number | null }>();
   for (const entry of Array.isArray(entries) ? entries : []) {
-    if (!entry || entry.isOpeningBalance === true) continue;
+    if (!entry) continue;
     const code = String(entry.accountCode ?? "").trim();
     if (!code) continue;
+    const current = totals.get(code) ?? { debit: 0, credit: 0, openingBalance: null };
+    if (entry.isOpeningBalance === true) {
+      if (typeof entry.balance === "number" && Number.isFinite(entry.balance)) current.openingBalance = entry.balance;
+      totals.set(code, current);
+      continue;
+    }
     const debit = typeof entry.debit === "number" && Number.isFinite(entry.debit) ? entry.debit : 0;
     const credit = typeof entry.credit === "number" && Number.isFinite(entry.credit) ? entry.credit : 0;
-    const current = totals.get(code) ?? { debit: 0, credit: 0 };
     current.debit += debit;
     current.credit += credit;
     totals.set(code, current);
@@ -195,12 +201,15 @@ export function reconcileLedgerSummaryWithDetails(
     const code = String(row.accountCode ?? "").trim();
     const movement = totals.get(code);
     if (!movement) return row;
+    const balance = movement.openingBalance == null ? movement.debit - movement.credit : movement.openingBalance + movement.debit - movement.credit;
     return {
       ...row,
       debit: movement.debit,
       credit: movement.credit,
+      balance,
       formattedDebit: String(movement.debit),
       formattedCredit: String(movement.credit),
+      formattedBalance: String(balance),
     };
   });
 }

@@ -131,7 +131,7 @@ test("cash flow production normalizer validates May 2026 fixture", () => {
 
 test("ledger normalizer handles numeric object keys, preserves zero rows and precision", () => {
   const rows = normalizeLedgerSummaryPayload({ "0": { account_id: 11105, account_code: "11105", account_name: "BANK BCA 7195-332266", fdebit: "370.361.513,75", fcredit: "120.030.000,00", famount: "250.331.513,75", int_amount: 1 }, "1": { account_code: "20001", account_name: "Zero", fdebit: "0,00", fcredit: "0,00", famount: "0,00" }, meta: { total: 85 } });
-  assert.equal(rows.length, 2); assert.equal(rows[0].accountCode, "11105"); assert.equal(rows[0].debit, 370361513.75); assert.equal(rows[0].credit, 120030000); assert.equal(rows[0].balance, 250331513.75); assert.equal(rows[1].balance, 0); assert.equal((rows[0] as any).int_amount, undefined);
+  assert.equal(rows.length, 2); assert.equal(rows[0].accountCode, "11105"); assert.equal(rows[0].debit, 370361513.75); assert.equal(rows[0].credit, 120030000); assert.equal(rows[0].balance, 250331513.75); assert.equal(rows[1].balance, 0); assert.equal((rows[0] as { int_amount?: unknown }).int_amount, undefined);
 });
 
 test("ledger summary reconciliation keeps 11105 decimals from detail and does not round", () => {
@@ -145,6 +145,27 @@ test("ledger summary reconciliation keeps 11105 decimals from detail and does no
   assert.equal(reconciled[0].credit, 120030000);
   assert.equal(reconciled[0].balance, 250331513.75);
   assert.equal(reconciled[0].formattedDebit, "370361513.75");
+});
+
+test("ledger summary reconciliation derives closing balance from detail for accounts without opening balance", () => {
+  const summary = normalizeLedgerSummaryPayload({
+    "0": { account_code: "50000", account_name: "Pembelian", fdebit: "0", fcredit: "21.890.500", famount: "(21.890.500)" },
+    "1": { account_code: "51000", account_name: "Harga pokok penjualan", fdebit: "20.614.924", fcredit: "1.275.576", famount: "21.890.500" },
+  });
+  const reconciled = reconcileLedgerSummaryWithDetails(summary, [
+    { accountCode: "50000", debit: 21890500, credit: 21890500, balance: -21890500, isOpeningBalance: false },
+    { accountCode: "51000", debit: 20614923.86, credit: 20614923.86, balance: 1275576.14, isOpeningBalance: false },
+  ]);
+  assert.deepEqual(reconciled.map((row) => [row.debit, row.credit, row.balance]), [[21890500, 21890500, 0], [20614923.86, 20614923.86, 0]]);
+});
+
+test("ledger summary reconciliation preserves opening balance and applies net movement", () => {
+  const summary = normalizeLedgerSummaryPayload({ "0": { account_code: "11105", fdebit: "0", fcredit: "0", famount: "1.000" } });
+  const reconciled = reconcileLedgerSummaryWithDetails(summary, [
+    { accountCode: "11105", debit: 0, credit: 0, balance: 1000, isOpeningBalance: true },
+    { accountCode: "11105", debit: 200, credit: 50, balance: 1150, isOpeningBalance: false },
+  ]);
+  assert.equal(reconciled[0].balance, 1150);
 });
 
 test("ledger detail normalizer detects opening balance and excludes it from movement totals", () => {
