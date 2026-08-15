@@ -112,3 +112,13 @@ Rincian angka, request, timeout, akun, export, test, dan commit ada di `AYOSERA-
 - Sesi browser belum dapat mengontrol tab production yang baru dibuka. Tidak ada kredensial yang diminta atau diproses.
 - Tidak ada refresh, reconcile, export, atau write production yang dijalankan. Status Februari–Juli tetap **Belum Bisa Dicek** untuk production.
 - Kebutuhan akses tunggal: user login manual pada tab `https://ayosera.vercel.app/login` yang dapat dikontrol, lalu proses Financial resmi dan read-back Februari–Juli dapat dilanjutkan.
+
+## Production refresh Financial Februari–Juli — 16 Agustus 2026
+
+- Login production berhasil melalui sesi browser yang diberikan user.
+- Februari selesai: `85/85 akun`, `5.862 baris`, fase rekonsiliasi selesai. Read-back akun 50000 menunjukkan 8 baris, pergerakan Rp0, saldo akhir Rp0. Akun 51000 menunjukkan 896 baris, pergerakan Rp0; saldo akhir ter-render Rp0.
+- Maret selesai: `85 akun diproses` setelah melanjutkan checkpoint yang sempat terputus.
+- April selesai: `85 akun diproses`.
+- Mei masih berjalan pada checkpoint `76/85 akun`, `13.397 baris` saat koneksi kontrol browser terputus. Juni dan Juli belum dijalankan.
+- Saat percobaan awal pemilihan periode, UI mempertahankan periode Agustus dan satu sync Agustus terlanjur berjalan sampai selesai `85 akun`. Tidak ada modul Inventori, Kategori Penjualan, lock/unlock, atau angka manual yang disentuh; kejadian ini dicatat agar tidak dianggap sebagai refresh target Februari–Juli.
+- Karena Mei belum selesai dan Juni–Juli belum diverifikasi, status production akhir: **Belum Bisa Dicek**. Tidak ada klaim export atau laporan keuangan production cocok untuk bulan yang belum dibaca kembali.
