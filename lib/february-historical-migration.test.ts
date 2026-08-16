@@ -7,5 +7,6 @@ test("February historical cron migration claims a marker and never locks the per
     assert.match(source, /februaryHistoricalImport/);
     assert.match(source, /status: "complete"/);
     assert.match(source, /sourceRevision/);
+    assert.match(source, /sourceRevision.*\$ne: sourceRevision/);
     assert.doesNotMatch(source, /lockInventoryMonthlyPeriod/);
 });

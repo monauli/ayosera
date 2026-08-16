@@ -4,7 +4,6 @@ import { monthlySnapshotDocId } from "@/lib/olsera-inventory-monthly-snapshot-co
 import { buildHistoricalImportPlan, historicalDiagnostics, type HistoricalInventoryRow } from "@/lib/olsera-historical-inventory-import";
 import { FEBRUARY_HISTORICAL_SOURCE, type FebruaryHistoricalRow } from "@/lib/february-historical-source";
 
-const period = "2026-02";
 const sourceRevision = "2026-02-final-corrections-v3";
 const normalize = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
 type BuiltInRow = FebruaryHistoricalRow;
@@ -29,7 +28,7 @@ export async function runFebruaryHistoricalMigration() {
   const current = await c.olseraInventoryState.findOne({ _id: "olsera-inventory" });
   if (current?.februaryHistoricalImport?.status === "complete" && current.februaryHistoricalImport.sourceRevision === sourceRevision) return { status: "skipped", counts: current.februaryHistoricalImport.counts };
   const claimed = await c.olseraInventoryState.findOneAndUpdate(
-    { _id: "olsera-inventory", $or: [{ "februaryHistoricalImport.status": { $exists: false } }, { "februaryHistoricalImport.status": "failed" }] },
+    { _id: "olsera-inventory", $or: [{ "februaryHistoricalImport.status": { $exists: false } }, { "februaryHistoricalImport.status": "failed" }, { "februaryHistoricalImport.sourceRevision": { $ne: sourceRevision } }] },
     { $set: { februaryHistoricalImport: { status: "running", sourceRevision, startedAt: new Date() } } },
     { upsert: true, returnDocument: "after" },
   );
