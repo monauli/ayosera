@@ -46,24 +46,30 @@ import { getInventoryMonthlyPeriodLock } from "./inventory-monthly-period-lock.t
 export type MonthlySnapshotRepo = {
   upsertMany(docs: OlseraInventoryMonthlySnapshotDocument[]): Promise<void>;
   findMonth(storeId: number, year: number, month: number): Promise<OlseraInventoryMonthlySnapshotDocument[]>;
+  replaceMonth?(storeId: number, year: number, month: number, docs: OlseraInventoryMonthlySnapshotDocument[]): Promise<void>;
   findPeriodLock?(storeId: number, year: number, month: number): Promise<{ status: "locked" | "unlocked" } | null>;
 };
 
 export async function getMongoMonthlySnapshotRepo(): Promise<MonthlySnapshotRepo> {
   const c = await collections();
   const { olseraInventoryMonthlySnapshots } = c;
+  const upsertMany = async (docs: OlseraInventoryMonthlySnapshotDocument[]) => {
+    if (!docs.length) return;
+    await olseraInventoryMonthlySnapshots.bulkWrite(
+      docs.map((doc) => {
+        const { createdAt, ...rest } = doc;
+        return { updateOne: { filter: { _id: doc._id }, update: { $set: rest, $setOnInsert: { createdAt } }, upsert: true } };
+      }),
+    );
+  };
   return {
-    async upsertMany(docs) {
-      if (!docs.length) return;
-      await olseraInventoryMonthlySnapshots.bulkWrite(
-        docs.map((doc) => {
-          const { createdAt, ...rest } = doc;
-          return { updateOne: { filter: { _id: doc._id }, update: { $set: rest, $setOnInsert: { createdAt } }, upsert: true } };
-        }),
-      );
-    },
+    upsertMany,
     async findMonth(storeId, year, month) {
       return olseraInventoryMonthlySnapshots.find({ storeId, year, month }).toArray();
+    },
+    async replaceMonth(storeId, year, month, docs) {
+      await olseraInventoryMonthlySnapshots.deleteMany({ storeId, year, month });
+      await upsertMany(docs);
     },
     async findPeriodLock(storeId, year, month) {
       return (await c.inventoryMonthlyPeriodLocks.findOne({ _id: `${storeId}:${year}-${String(month).padStart(2, "0")}` }, { projection: { status: 1 } })) as { status: "locked" | "unlocked" } | null;

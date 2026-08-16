@@ -147,6 +147,8 @@ export default function InventoryOpnamePage() {
   const [unlockReason, setUnlockReason] = useState("");
   const [unlocking, setUnlocking] = useState(false);
   const [monthlyLockBusy, setMonthlyLockBusy] = useState(false);
+  const [rebuildBusy, setRebuildBusy] = useState(false);
+  const [rebuildResult, setRebuildResult] = useState<{ safe: boolean; candidateCount: number; existingCount: number; unmatched: number; formulaMismatch: number; duplicates: number; changed: boolean; error?: string } | null>(null);
   const [readingBa, setReadingBa] = useState(false);
   const [baReadSummary, setBaReadSummary] = useState<{ periodStart: string | null; cutoffDate: string | null; found: number; autoCocok: number; perluDicek: number } | null>(null);
   // BUG PRODUKSI (BA Juli 2026, 0 item terbaca): upload berhasil TAPI parser
@@ -209,6 +211,29 @@ export default function InventoryOpnamePage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const inspectRebuild = async () => {
+    setRebuildBusy(true); setRebuildResult(null);
+    try {
+      const response = await fetch("/api/supervisor/olsera/inventory/rebuild-monthly", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: Number(year), month: Number(month), mode: "dryRun" }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok && !result?.data) throw new Error(result?.error || "Periksa ulang inventori gagal.");
+      setRebuildResult(result.data);
+    } catch (e) { setRebuildResult({ safe: false, candidateCount: 0, existingCount: 0, unmatched: 0, formulaMismatch: 0, duplicates: 0, changed: false, error: e instanceof Error ? e.message : "Periksa ulang inventori gagal." }); }
+    finally { setRebuildBusy(false); }
+  };
+
+  const processRebuild = async () => {
+    if (!rebuildResult?.safe || !window.confirm("Proses hanya akan mengganti snapshot periode terpilih dan tidak mengunci periode. Lanjutkan?")) return;
+    setRebuildBusy(true);
+    try {
+      const response = await fetch("/api/supervisor/olsera/inventory/rebuild-monthly", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: Number(year), month: Number(month), mode: "write" }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Proses rebuild gagal.");
+      setRebuildResult(result.data); await load();
+    } catch (e) { setRebuildResult((current) => ({ ...(current ?? { safe: false, candidateCount: 0, existingCount: 0, unmatched: 0, formulaMismatch: 0, duplicates: 0, changed: false }), error: e instanceof Error ? e.message : "Proses rebuild gagal." })); }
+    finally { setRebuildBusy(false); }
   };
 
   const uploadBa = async (file: File) => {
@@ -604,6 +629,13 @@ export default function InventoryOpnamePage() {
           Stok Akhir Sistem dihitung persis pada cutoff <strong>{data.cutoffDate}</strong> (bukan akhir bulan kalender) — jendela query {data.startDate} s/d {data.endDate}.
         </p>
       )}
+
+      {supervisor && <section className="recon-filters" aria-label="Bangun Ulang Inventori Bulanan">
+        <div><strong>Bangun Ulang Inventori Bulanan</strong><p className="recon-readonly">Periksa dulu menghitung dari closing bulan sebelumnya tanpa menulis. Proses hanya berlaku untuk periode terpilih.</p></div>
+        <button className="recon-button secondary" disabled={rebuildBusy || data?.monthlyLock?.status === "locked"} onClick={() => void inspectRebuild()}>{rebuildBusy ? <Loader2 className="spin" /> : <Search />} Periksa Dulu</button>
+        <button className="recon-button" disabled={rebuildBusy || !rebuildResult?.safe || data?.monthlyLock?.status === "locked"} onClick={() => void processRebuild()}>{rebuildBusy ? <Loader2 className="spin" /> : <RefreshCw />} Proses</button>
+        {rebuildResult && <p className={rebuildResult.safe ? "recon-readonly" : "recon-error"}>Kandidat {rebuildResult.candidateCount}, lama {rebuildResult.existingCount}, tidak cocok {rebuildResult.unmatched}, formula salah {rebuildResult.formulaMismatch}, duplikat {rebuildResult.duplicates}{rebuildResult.changed ? " · tersimpan" : " · belum menulis"}{rebuildResult.error ? ` · ${rebuildResult.error}` : ""}</p>}
+      </section>}
 
       <section className="recon-filters" aria-label="Ringkasan Rekonsiliasi Inventori">
         <div><strong>{liveSummary.cocok}/{liveSummary.totalProduk} Cocok</strong></div>
