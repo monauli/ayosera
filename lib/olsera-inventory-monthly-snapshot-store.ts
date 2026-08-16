@@ -545,6 +545,23 @@ export async function ensureMonthlySnapshotChain(input: {
     if (!docs.length) return { ok: false, error: "Migrasi historis Februari tidak menghasilkan snapshot." };
     return { ok: true, storeId, docs };
   }
+  if (target.year === 2026 && target.month === 3 && !input.repo) {
+    const februaryDocs = await repo.findMonth(storeId, 2026, 2);
+    if (!februaryDocs.length) return { ok: false, error: "Snapshot Februari 2026 belum tersedia sebagai anchor Maret 2026." };
+    const result = await runForwardBackfillMonth({
+      month: target,
+      storeId,
+      anchors: docsToForwardAnchors(februaryDocs),
+      matchingContext,
+      repo,
+      rawSalesActivityFetcher: input.rawSalesActivityFetcher,
+      now,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    const docs = await repo.findMonth(storeId, target.year, target.month);
+    if (!docs.length) return { ok: false, error: "Stockmovement Maret 2026 tidak menghasilkan snapshot." };
+    return { ok: true, storeId, docs };
+  }
   if (!(target.year === 2026 && target.month === 1) && isTrustedHistorical(already, state)) return { ok: true, storeId, docs: already };
 
   // Desember 2025 adalah bootstrap historis mandiri. Jangan mencari anchor

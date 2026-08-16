@@ -8,6 +8,7 @@
 // ada anchor -> error, bukan fabrikasi).
 // Jalankan: node --no-warnings --experimental-strip-types --test lib/olsera-inventory-monthly-snapshot-store.test.ts
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test, type TestContext } from "node:test";
 import type { InventoryProductInput } from "./olsera-inventory-monthly-core.ts";
 import { buildMatchingContext, type MatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
@@ -679,6 +680,13 @@ test("ensureMonthlySnapshotChain: bulan target SUDAH ada -> dikembalikan langsun
   assert.equal(result.ok, true);
   if (result.ok) assert.equal(result.docs.length, 1);
   assert.equal(fetchCalled, false);
+});
+
+test("ensureMonthlySnapshotChain: Maret historis refresh dari anchor Februari melalui jalur produksi", () => {
+  const source = readFileSync(new URL("./olsera-inventory-monthly-snapshot-store.ts", import.meta.url), "utf8");
+  assert.match(source, /target\.year === 2026 && target\.month === 3 && !input\.repo/);
+  assert.match(source, /findMonth\(storeId, 2026, 2\)/);
+  assert.match(source, /runForwardBackfillMonth/);
 });
 
 test("ensureMonthlySnapshotChain: Desember 2025 memakai snapshot langsung tanpa anchor Januari/Februari", async (t) => {
