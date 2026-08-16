@@ -2066,3 +2066,4 @@ Commit sesi ini: `0b6c310` (kode+test, PASS semua pemeriksaan wajib). Tidak ada 
 - Tidak ada sync Mei/Juni/Juli, perubahan angka, perubahan Inventori, stok, atau lock/unlock.
 - Verifikasi lokal: `test:olsera-financial` 31/31, `test:cron-olsera-financial` 57/57, typecheck PASS, scoped lint 0 error, diff check PASS. Build sebelumnya compile tetapi collect route gagal karena Mongo URI lokal invalid.
 - Production deployment/read-back, export isi Februari–Juli, audit kategori penuh, telemetry cron production, token refresh, dan backup eksternal tetap **Belum Bisa Dicek** tanpa sesi/akses production terautentikasi. Tidak ada angka yang ditebak.
+- Backup bersih lokal dibuat dari `HEAD` pada `backup/ayosera-final-2026-08-16-r1.zip` (11.287.915 byte), tanpa `.env`, `node_modules`, `.next`, `tmp/fixtures`, file Playwright, atau audit user.

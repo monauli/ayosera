@@ -138,3 +138,4 @@ Rincian angka, request, timeout, akun, export, test, dan commit ada di `AYOSERA-
 - Endpoint historical terpisah yang sempat dibuat pada commit `5164381` dihapus kembali karena aturan final melarang cron historical.
 - Pemeriksaan lokal: Financial core 31/31, cron Financial 57/57, typecheck, scoped lint tanpa error, dan `git diff --check` lulus. Lint hanya menyisakan warning existing.
 - Production read-back, export nyata Februari–Juli, kategori penuh, telemetry cron production, token lifetime, dan backup eksternal belum dapat dibuktikan pada sesi ini tanpa akses production terautentikasi. Tidak ada klaim PASS dan tidak ada data/Inventori/lock yang diubah.
+- Backup bersih lokal dibuat dari `HEAD` pada `backup/ayosera-final-2026-08-16-r1.zip` (11.287.915 byte). Arsip diverifikasi tidak memuat `.env`, `node_modules`, `.next`, `tmp/fixtures`, file Playwright, atau audit user.
