@@ -2086,3 +2086,7 @@ Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubaha
 - Production read-back: seluruh 36 baris cocok dengan workbook. Stock opname = 0 karena **Tidak Ada Stock Opname**, bukan data yang belum terbukti.
 - Status akhir: **Desember 2025 cocok dan siap menjadi opening Januari**. Januari belum diproses.
 - Perbaikan selector periode dipush pada commit `c0cc3f1` dengan minimum `2025-12`; snapshot dan periode lain tidak diubah. Production read-back Desember menunjukkan 36 produk, empat tab, dan export tersedia, tetapi atribut `min` belum terlihat pada deployment yang terbaca sehingga status deploy UI masih perlu verifikasi.
+- Januari 2026 sudah memiliki jalur rebuild aman dari closing Desember, termasuk produk tanpa movement dan produk baru, tanpa menulis Februari. Commit `f2b4551` dan `1c1f935`.
+- Production masih membaca snapshot lama: 3 produk (2 terjual, 1 tidak terjual, 3 keseluruhan) setelah export dipicu. Hasil 36 produk belum ter-deploy/terbaca.
+- 232 tests inventory monthly lulus; typecheck, scoped lint, diff check lulus; build terblokir Mongo URI lokal invalid pada page-data.
+- Status akhir Januari: **Data Januari belum lengkap dan perlu bukti tambahan**.

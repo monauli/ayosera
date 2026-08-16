@@ -165,3 +165,7 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Status final Desember: **Desember 2025 cocok dan siap menjadi opening Januari**. Carry-forward Januari belum dijalankan.
 - Verifikasi pemilih periode 2026-08-16: perubahan lokal menambahkan `min="2025-12"` pada input month Inventori; tidak ada perubahan snapshot, data, lock, atau cron. Tests UI/monthly dan typecheck lulus; scoped lint tanpa error; build compile lulus namun page-data tetap gagal pada Mongo URI lokal invalid.
 - Production read-back: Desember tetap `Final`, 36 produk, 0 terjual/36 tidak terjual, empat tab dan Export Inventori tersedia. Deployment yang terbaca belum memuat atribut minimum baru; deploy propagation masih perlu diverifikasi.
+- Inventori Januari 2026: jalur rebuild khusus kini memakai closing Desember sebagai anchor dan mengabaikan snapshot Januari parsial lama; hanya `2026-01` yang ditulis, tanpa menyentuh Desember/Februari/lock/cron. Commit kode `f2b4551` + guard rebuild parsial `1c1f935`.
+- Production read-back setelah export Januari: masih menampilkan 3 produk (`Stok Terjual 2`, `Stok Tidak Terjual 1`, `Stok Keseluruhan 3`), sehingga deployment production belum memuat hasil rebuild 36 produk. Export sudah dipicu melalui UI tetapi hasil production belum berubah.
+- Tests: 232 inventory monthly lulus, typecheck/scoped lint/diff check lulus; build compile lulus namun page-data gagal karena Mongo URI lokal invalid.
+- Status Januari: **Data Januari belum lengkap dan perlu bukti tambahan**. Jangan jadikan closing Januari sebagai opening Februari.
