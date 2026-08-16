@@ -5,7 +5,7 @@ import { buildHistoricalImportPlan, historicalDiagnostics, type HistoricalInvent
 import { FEBRUARY_HISTORICAL_SOURCE, type FebruaryHistoricalRow } from "@/lib/february-historical-source";
 
 const period = "2026-02";
-const sourceRevision = "2026-02-final-corrections-v2";
+const sourceRevision = "2026-02-final-corrections-v3";
 const normalize = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
 type BuiltInRow = FebruaryHistoricalRow;
 

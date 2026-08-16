@@ -35,6 +35,7 @@ import {
   type RawSalesActivityByKey,
 } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchStockMovementRange } from "./olsera-inventory-stockmovement.ts";
+import { runFebruaryHistoricalMigration } from "./february-historical-migration.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
 import { getInventoryMonthlyPeriodLock } from "./inventory-monthly-period-lock.ts";
 
@@ -535,6 +536,15 @@ export async function ensureMonthlySnapshotChain(input: {
   }
 
   const already = await repo.findMonth(storeId, target.year, target.month);
+  // Februari adalah periode historis yang disetujui user. Jalur export resmi
+  // juga harus menjalankan migrasi built-in terbaru agar snapshot parsial lama
+  // tidak dipercaya sebagai hasil final. Migrasi hanya menulis 2026-02.
+  if (target.year === 2026 && target.month === 2 && !input.repo) {
+    await runFebruaryHistoricalMigration();
+    const docs = await repo.findMonth(storeId, target.year, target.month);
+    if (!docs.length) return { ok: false, error: "Migrasi historis Februari tidak menghasilkan snapshot." };
+    return { ok: true, storeId, docs };
+  }
   if (!(target.year === 2026 && target.month === 1) && isTrustedHistorical(already, state)) return { ok: true, storeId, docs: already };
 
   // Desember 2025 adalah bootstrap historis mandiri. Jangan mencari anchor
