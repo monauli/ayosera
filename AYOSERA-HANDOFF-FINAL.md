@@ -191,3 +191,11 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Export resmi berhasil dibuat. Isi workbook biner tidak dapat dibaca ulang dari sesi browser ini; status export dicatat terpisah dari verifikasi halaman/server.
 - Tests historis, inventory 232, typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal tetap gagal karena Mongo URI invalid.
 - Status akhir: **Februari 2026 cocok dan siap dikunci manual**. Tidak ada perubahan Desember/Januari/periode lain, Olsera, Financial, cron, atau lock.
+
+## Rekonsiliasi Februari memakai pembanding terpisah — 16 Agustus 2026
+
+- Commit `52d7fe8` menambahkan comparator read-only antara snapshot sistem Februari dan source approved `2026-02-final-corrections-v3`; source tidak membaca snapshot production atau Qty katalog saat ini.
+- Perbandingan mencakup identitas productId/variantId/SKU serta opening, masuk, retur, penjualan, keluar, dan closing. Mismatch, identitas hilang, duplikat, atau source kosong tidak boleh berstatus Cocok; kondisi tersebut juga menahan lock.
+- Production setelah deploy: 48 produk, `48/48 Cocok`, 0 Perlu Dicek, 0 Belum Diisi. BA tidak diperlukan. Tombol Kunci Periode tersedia dan tidak diklik.
+- Export resmi berhasil dipicu, tetapi workbook biner belum berhasil ditangkap/dibaca; status export tetap **Belum Terbukti**.
+- Tests comparator, stock-opname/rekonsiliasi, 232 inventory, UI inventory, typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal gagal karena Mongo URI invalid.
