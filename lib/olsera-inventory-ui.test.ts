@@ -273,6 +273,7 @@ test("visibleInventoryTabs: supervisor juga tidak melihat tab teknis Konsistensi
 test("panel: satu periode YYYY-MM menjadi sumber data bulanan dan URL", () => {
   const source = readFileSync(new URL("../components/olsera-inventory-panel.tsx", import.meta.url), "utf8");
   assert.ok(source.includes("inventoryPeriod"));
+  assert.ok(source.includes('min="2025-12"'));
   assert.ok(source.includes("/api/olsera/inventory/monthly?${params.toString()}"));
   assert.ok(source.includes("periodStatus"));
   assert.ok(source.includes("stockEmptyStateMessage({"));

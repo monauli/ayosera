@@ -680,6 +680,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
               <Input
                 type="month"
                 aria-label="Periode Inventori"
+                min="2025-12"
                 value={period}
                 className="h-8 w-[150px] cursor-pointer border-0 bg-transparent px-1 text-slate-200 shadow-none focus-visible:ring-0"
                 onClick={(event) => event.currentTarget.showPicker?.()}
