@@ -13,7 +13,16 @@ mock.module("@/lib/olsera-sync", {
   namedExports: { todayJakarta: () => "2026-07-20" },
 });
 
-function fakeRun(overrides: Partial<Record<string, unknown>> = {}): any {
+type FakeRun = {
+  period: string;
+  status: "running" | "success" | "partial" | "failed";
+  finalized: boolean;
+  updatedAt: Date;
+  completedAt: Date | null;
+  [key: string]: unknown;
+};
+
+function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
   return {
     _id: "financial:1:2026-07",
     status: "running",
@@ -712,6 +721,39 @@ test("anti-starvation: historical unfinished tertua dipilih setelah current sele
   assert.equal(target?.period, "2026-02");
   assert.equal(target?.reason, "historical-unfinished");
   assert.equal(target?.startFresh, false);
+});
+
+test("historical backlog: running Mei cursor 76 dipilih lalu periode kosong Juni dan Juli dipilih berurutan", () => {
+  const now = new Date("2026-08-16T00:00:00Z");
+  const may = fakeRun({ period: "2026-05", status: "running", phase: "ledger-details", accountCursor: 76, updatedAt: now });
+  const june = selectFinancialCronTargetWithHistory({
+    currentPeriod: "2026-08",
+    previousPeriod: "2026-07",
+    currentLog: fakeRun({ period: "2026-08", status: "success", completedAt: now, updatedAt: now }),
+    previousLog: null,
+    historicalLogs: [may],
+    historicalPeriods: ["2026-05", "2026-06", "2026-07"],
+    now,
+  });
+  assert.equal(june?.period, "2026-05");
+  assert.equal(june?.startFresh, false);
+
+  const afterMay = selectFinancialCronTargetWithHistory({
+    currentPeriod: "2026-08",
+    previousPeriod: "2026-07",
+    currentLog: fakeRun({ period: "2026-08", status: "success", completedAt: now, updatedAt: now }),
+    previousLog: null,
+    historicalLogs: [
+      fakeRun({ period: "2026-02", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
+      fakeRun({ period: "2026-03", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
+      fakeRun({ period: "2026-04", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
+      { ...may, status: "success", phase: "completed", completedAt: now, updatedAt: now },
+    ],
+    historicalPeriods: ["2026-05", "2026-06", "2026-07"],
+    now,
+  });
+  assert.equal(afterMay?.period, "2026-06");
+  assert.equal(afterMay?.startFresh, true);
 });
 
 test("telemetry success menyimpan safeErrorCode null tanpa raw error", async () => {

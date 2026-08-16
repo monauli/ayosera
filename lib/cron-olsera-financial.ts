@@ -41,7 +41,7 @@
 // pernah kelaparan hanya karena current kebetulan sudah waktunya
 // di-refresh ulang.
 import { todayJakarta } from "@/lib/olsera-sync";
-import { previousFinancialPeriod, validatePeriod } from "@/lib/olsera-financial-core";
+import { FINANCIAL_BASELINE_PERIOD, previousFinancialPeriod, validatePeriod } from "@/lib/olsera-financial-core";
 import { FinancialClientError } from "@/lib/olsera-financial-client";
 import { startFinancialSync, stepFinancialSync, FINANCIAL_INVOCATION_TIME_BUDGET_MS, FINANCIAL_MIN_REMAINING_MS_TO_START_WORK } from "@/lib/olsera-financial-sync";
 import { getFinancialSyncLogForPeriod, type FinancialSyncRun } from "@/lib/olsera-financial-store";
@@ -133,6 +133,7 @@ export function isFinancialPeriodUnfinished(log: FinancialSyncLogLite, now: Date
 /** true bila periode ini perlu startFinancialSync (run baru) alih-alih resume step dari run existing. */
 export function financialPeriodNeedsFreshStart(log: FinancialSyncLogLite, now: Date): boolean {
   if (!log) return true;
+  if ((log as { status?: string }).status === "missing") return true;
   if (log.status === "partial" && log.finalized === true) {
     return now.getTime() - toTime(log.updatedAt) >= PARTIAL_RESTART_COOLDOWN_MS;
   }
@@ -155,12 +156,25 @@ export type FinancialCronTarget = {
 
 export type HistoricalFinancialLog = FinancialSyncLogLite & Partial<FinancialSyncRun> & { period: string };
 
+function historicalPeriodsBetween(startPeriod: string, endPeriod: string | null): string[] {
+  if (!endPeriod || startPeriod >= endPeriod) return [];
+  const periods: string[] = [];
+  const cursor = new Date(`${startPeriod}-01T00:00:00Z`);
+  const end = new Date(`${endPeriod}-01T00:00:00Z`);
+  while (cursor < end) {
+    periods.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`);
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return periods;
+}
+
 export function selectFinancialCronTargetWithHistory(input: {
   currentPeriod: string;
   previousPeriod: string | null;
   currentLog: FinancialSyncLogLite;
   previousLog: FinancialSyncLogLite;
   historicalLogs: HistoricalFinancialLog[];
+  historicalPeriods?: string[];
   now?: Date;
 }): FinancialCronTarget | null {
   const now = input.now ?? new Date();
@@ -168,8 +182,17 @@ export function selectFinancialCronTargetWithHistory(input: {
     return { period: input.currentPeriod, startFresh: financialPeriodNeedsFreshStart(input.currentLog, now), reason: "current-unfinished" };
   }
   const excluded = new Set([input.currentPeriod].filter(Boolean));
-  const historical = input.historicalLogs
-    .filter((log) => !excluded.has(log.period) && isFinancialPeriodUnfinished(log, now))
+  const logsByPeriod = new Map(input.historicalLogs.map((log) => [log.period, log]));
+  const historicalPeriods = input.historicalLogs.length === 0
+    ? []
+    : input.historicalPeriods ?? input.historicalLogs.map((log) => log.period);
+  const historical = historicalPeriods
+    .filter((period) => !excluded.has(period))
+    .map((period, index) => ({ period, index, log: logsByPeriod.get(period) ?? ({ period, status: "missing" } as unknown as HistoricalFinancialLog) }))
+    .filter(({ index, log }) => (log as { status?: string }).status === "missing"
+      ? historicalPeriods.slice(0, index).every((period) => logsByPeriod.get(period)?.status === "success")
+      : isFinancialPeriodUnfinished(log, now))
+    .map(({ log }) => log)
     .sort((a, b) => a.period.localeCompare(b.period) || toTime(a.updatedAt) - toTime(b.updatedAt))[0];
   if (historical) {
     return { period: historical.period, startFresh: financialPeriodNeedsFreshStart(historical, now), reason: "historical-unfinished" };
@@ -318,11 +341,11 @@ export async function runOlseraFinancialCron(
         previousPeriod ? getFinancialSyncLogForPeriod(previousPeriod) : Promise.resolve(null),
         withMongo(async () => {
           const { olseraFinancialSyncLogs } = await collections();
-          return olseraFinancialSyncLogs.find({ status: { $in: ["running", "partial", "failed"] } }).toArray() as Promise<HistoricalFinancialLog[]>;
+          return olseraFinancialSyncLogs.find({ period: { $gte: FINANCIAL_BASELINE_PERIOD, $lt: currentPeriod } }).toArray() as Promise<HistoricalFinancialLog[]>;
         }),
       ]);
       const now = new Date();
-      const target = selectFinancialCronTargetWithHistory({ currentPeriod, previousPeriod, currentLog, previousLog, historicalLogs, now });
+      const target = selectFinancialCronTargetWithHistory({ currentPeriod, previousPeriod, currentLog, previousLog, historicalLogs, historicalPeriods: historicalPeriodsBetween(FINANCIAL_BASELINE_PERIOD, currentPeriod), now });
       if (!target) {
         console.log(`[cron:olsera:financial] runId=${runId} current=${currentPeriod} previous=${previousPeriod ?? "-"} semua up to date — no-op.`);
         return {

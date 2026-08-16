@@ -1,6 +1,15 @@
 # AYOSERA — Audit Final Februari–Juli 2026
 
 Tanggal: 16 Agustus 2026  
+
+## Otomatisasi Financial Historical tanpa browser — 16 Agustus 2026
+
+- Audit cron menemukan celah: query historical sebelumnya hanya mengambil log berstatus belum selesai, sehingga periode tanpa log (contoh Juni/Juli) tidak pernah menjadi target otomatis.
+- Perbaikan pada `lib/cron-olsera-financial.ts` memperluas kandidat dari `FINANCIAL_BASELINE_PERIOD` sampai sebelum bulan berjalan. Periode kosong hanya dipilih setelah seluruh periode sebelumnya sukses; urutannya Mei checkpoint 76 → Juni → Juli, sementara Februari–April dilewati.
+- Run `running` tetap di-resume; lock, deadline, telemetry, dan fase reconcile existing tetap digunakan. Tidak ada endpoint baru, hardcode akun/nominal, atau proses paralel.
+- Regression baru mencakup pemilihan Mei cursor 76 dan periode kosong Juni/Juli berurutan.
+- Verifikasi: cron Financial 56 lulus, suite Financial terkait lulus, typecheck lulus, scoped lint tanpa error, build lulus, dan `git diff --check` lulus.
+- Belum dideploy atau dipicu ke production pada sesi ini. Status production tetap **Belum Bisa Dicek**.
 Production: `https://ayosera.vercel.app`  
 Ruang lingkup: read-only; tidak ada perubahan data, stok, lock, unlock, atau sync.
 
