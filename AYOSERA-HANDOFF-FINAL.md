@@ -223,3 +223,10 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Kondisi Maret sebelum proses tetap `25 terjual / 11 tidak terjual / 36 keseluruhan`. Dry-run/write production belum dijalankan karena sesi browser yang tersedia tidak terautentikasi sebagai supervisor; tidak ada data production yang diubah.
 - Tests monthly inventory 233 dan test baru service/endpoint/lock-page lulus; typecheck, scoped lint, dan diff check lulus. Lint hanya memiliki warning baseline `ayoPaymentPeriods`. Build compile lulus; page-data lokal gagal karena Mongo URI invalid.
 - Status Maret: **Production belum dapat diverifikasi; belum aman dinyatakan cocok**. Jangan lanjut April dan jangan lock Maret.
+## Dry-run Maret production — 16 Agustus 2026
+
+- Sesi supervisor berhasil membuka panel `Periksa Dulu` dan memilih Maret 2026.
+- Dry-run read-only berhasil: snapshot lama 36, kandidat hasil rebuild 51, unmatched/ambiguous 0, formula mismatch 0, duplikat 0. Dry-run tidak menulis data.
+- Ringkasan rekonsiliasi sebelum write masih 33/33 Cocok karena snapshot lama belum diganti; angka ini bukan hasil rebuild.
+- Konfirmasi `Proses` tidak menghasilkan read-back yang dapat dibuktikan karena sesi browser terputus setelah dialog konfirmasi. Tidak ada klaim write, tidak ada lock, dan April tidak disentuh.
+- Status Maret: **Dry-run aman; proses/write dan production read-back belum terbukti**.
