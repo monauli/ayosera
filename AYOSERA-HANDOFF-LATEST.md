@@ -2085,3 +2085,4 @@ Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubaha
 - Verifikasi workbook 2025-12: seluruh sheet terbaca (1 sheet), 36 produk, 36 key unik, tidak ada duplikat. Total opening 0, incoming 2.294, retur 0, penjualan 0, keluar 0, opname 0, closing 2.294; semua baris balance sesuai rumus.
 - Production read-back: seluruh 36 baris cocok dengan workbook. Stock opname = 0 karena **Tidak Ada Stock Opname**, bukan data yang belum terbukti.
 - Status akhir: **Desember 2025 cocok dan siap menjadi opening Januari**. Januari belum diproses.
+- Perbaikan selector periode dipush pada commit `c0cc3f1` dengan minimum `2025-12`; snapshot dan periode lain tidak diubah. Production read-back Desember menunjukkan 36 produk, empat tab, dan export tersedia, tetapi atribut `min` belum terlihat pada deployment yang terbaca sehingga status deploy UI masih perlu verifikasi.
