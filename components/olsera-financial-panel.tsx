@@ -40,7 +40,6 @@ import {
   shouldApplyPeriodResponse,
   writePeriodToSearch,
 } from "@/lib/olsera-financial-period-state";
-import { visibleFinancialSourceDiagnostics } from "@/lib/olsera-financial-diagnostics-ui";
 
 const TITLE = "text-[16px] font-semibold tracking-tight text-slate-50";
 const DESC = "mt-1 text-[13.5px] leading-relaxed text-slate-400";
@@ -226,13 +225,6 @@ function SummaryLine({ label, value, emphasis = false }: { label: string; value:
       <dd className={`tabular-nums ${emphasis ? "text-[15px] font-semibold text-slate-50" : "text-[13.5px] text-slate-200"}`}>{value}</dd>
     </div>
   );
-}
-
-function hasSubtotalMismatch(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasSubtotalMismatch);
-  if (!value || typeof value !== "object") return false;
-  const row = value as Record<string, unknown>;
-  return row.subtotalMatches === false || Object.values(row).some(hasSubtotalMismatch);
 }
 
 function Pagination({
@@ -620,8 +612,6 @@ export function OlseraFinancialPanel() {
   const bs = activeSnapshot?.reports.balanceSheet ?? null;
   const pl = activeSnapshot?.reports.profitLoss ?? null;
   const cf = activeSnapshot?.reports.cashFlow ?? null;
-  const summaryWarnings = visibleFinancialSourceDiagnostics(activeSnapshot?.summaryDiagnostics ?? []);
-  const subtotalWarning = hasSubtotalMismatch(bs) || hasSubtotalMismatch(pl) || hasSubtotalMismatch(cf);
 
   return (
     <div>
@@ -734,20 +724,6 @@ export function OlseraFinancialPanel() {
           {activeSnapshot?.syncLog?.failedAccountCodes?.length ? <p className="mt-2 text-[12.5px] text-rose-300">Akun gagal disinkronkan: {activeSnapshot.syncLog.failedAccountCodes.join(", ")}</p> : null}
         </div>
       </section>
-
-      {/* P0 fix: text-amber-100 di atas bg-amber-400/10 nyaris tidak
-          terbaca di Light Mode (pucat-di-atas-pucat) — warna ini didesain
-          untuk latar gelap. `fin-diagnostic-warning` menambahkan override
-          khusus Light Mode di globals.css (pola sama seperti
-          [data-mode="light"] .rd-shell .inv-panel .text-amber-300 yang
-          sudah ada), tanpa mengubah wording atau makna status warning. */}
-      {(summaryWarnings.length > 0 || subtotalWarning) && (
-        <section className="fin-diagnostic-warning rd-enter mb-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-[13px] text-amber-100">
-          <p className="font-semibold">Perlu Dicek — diagnostic sumber</p>
-          {subtotalWarning && <p className="mt-1">Subtotal sumber Olsera tidak cocok dengan jumlah detail. Angka sumber tidak diubah otomatis.</p>}
-          {summaryWarnings.slice(0, 5).map((row) => <p key={row.accountCode} className="mt-1">Akun {row.accountCode}: {row.status} (summary {row.summaryDebit}/{row.summaryCredit}, detail {row.detailDebit}/{row.detailCredit}).</p>)}
-        </section>
-      )}
 
       {snapshotError && (
         <section className="rd-enter mb-4">

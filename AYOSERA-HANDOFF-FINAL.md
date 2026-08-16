@@ -131,3 +131,10 @@ Rincian angka, request, timeout, akun, export, test, dan commit ada di `AYOSERA-
 - Mei masih berjalan pada checkpoint `76/85 akun`, `13.397 baris` saat koneksi kontrol browser terputus. Juni dan Juli belum dijalankan.
 - Saat percobaan awal pemilihan periode, UI mempertahankan periode Agustus dan satu sync Agustus terlanjur berjalan sampai selesai `85 akun`. Tidak ada modul Inventori, Kategori Penjualan, lock/unlock, atau angka manual yang disentuh; kejadian ini dicatat agar tidak dianggap sebagai refresh target Februari–Juli.
 - Karena Mei belum selesai dan Juni–Juli belum diverifikasi, status production akhir: **Belum Bisa Dicek**. Tidak ada klaim export atau laporan keuangan production cocok untuk bulan yang belum dibaca kembali.
+## Penutupan task tersisa dan pembatasan cron — 16 Agustus 2026
+
+- Diagnostic subtotal Financial dihapus dari tampilan UI saja. Data diagnostic internal, payload, angka, dan jalur audit tetap dipertahankan.
+- Cron Financial utama tetap diarahkan ke scope bulan berjalan Agustus; Mei, Juni, dan Juli tidak diproses ulang oleh route utama.
+- Endpoint historical terpisah yang sempat dibuat pada commit `5164381` dihapus kembali karena aturan final melarang cron historical.
+- Pemeriksaan lokal: Financial core 31/31, cron Financial 57/57, typecheck, scoped lint tanpa error, dan `git diff --check` lulus. Lint hanya menyisakan warning existing.
+- Production read-back, export nyata Februari–Juli, kategori penuh, telemetry cron production, token lifetime, dan backup eksternal belum dapat dibuktikan pada sesi ini tanpa akses production terautentikasi. Tidak ada klaim PASS dan tidak ada data/Inventori/lock yang diubah.

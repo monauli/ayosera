@@ -2059,3 +2059,10 @@ Catatan status "Selisih" pada Buku Besar Februari–Juni: TOTAL/Saldo akhir seti
 - Export Maret–Juli: isi file belum dibuka/dibaca mendalam (baru download+validitas ZIP/nama file yang diverifikasi).
 
 Commit sesi ini: `0b6c310` (kode+test, PASS semua pemeriksaan wajib). Tidak ada commit laporan tambahan untuk temuan yang murni observasional (item 2–5) karena tidak ada perubahan kode terkait — akan digabung ke commit dokumentasi handoff ini.
+## Penutupan task tersisa — 16 Agustus 2026
+
+- Kotak UI Financial `Perlu Dicek — diagnostic sumber`, pesan subtotal sumber, dan pesan bahwa angka sumber tidak diubah otomatis telah dihapus dari tampilan. Diagnostic internal tetap tersedia untuk audit.
+- Route Financial utama memakai `scope: "current"`, sehingga hanya memproses Agustus 2026 sebagai bulan berjalan. Tidak ada cron historical; endpoint historical yang sempat dibuat di `5164381` telah dihapus.
+- Tidak ada sync Mei/Juni/Juli, perubahan angka, perubahan Inventori, stok, atau lock/unlock.
+- Verifikasi lokal: `test:olsera-financial` 31/31, `test:cron-olsera-financial` 57/57, typecheck PASS, scoped lint 0 error, diff check PASS. Build sebelumnya compile tetapi collect route gagal karena Mongo URI lokal invalid.
+- Production deployment/read-back, export isi Februari–Juli, audit kategori penuh, telemetry cron production, token refresh, dan backup eksternal tetap **Belum Bisa Dicek** tanpa sesi/akses production terautentikasi. Tidak ada angka yang ditebak.
