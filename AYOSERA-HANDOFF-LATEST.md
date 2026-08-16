@@ -2168,3 +2168,11 @@ Status: **Maret belum aman diproses; 9 produk masih Perlu Verifikasi.**
 - Regression test baru memastikan kontrol rebuild tidak kembali ke halaman Rekonsiliasi.
 
 Verifikasi lokal: tests Inventori/BA 31 lulus, tests Rekonsiliasi UI 47 lulus, tests monthly Inventori 233 lulus, typecheck lulus, scoped lint lulus dengan 1 warning baseline `ayoPaymentPeriods`, dan `git diff --check` lulus. Build compile berhasil; page-data lokal masih gagal pada `MongoParseError` karena Mongo URI lokal invalid. Production read-back Maret setelah deployment perubahan ini belum dilakukan; target production tetap 51 produk, unik 51, duplikat 0, dan 9 produk berstatus Menunggu Konfirmasi User. Maret tidak dikunci dan April belum diproses.
+
+## Production read-back setelah 2eb92ea — 16 Agustus 2026
+
+- GET Inventori periode Maret mengembalikan 51 produk; 51 identitas terbaca dan tidak ada duplikat pada tabel.
+- Maret tampil `Stok Terjual 24`, `Stok Tidak Terjual 27`, `Stok Keseluruhan 51`.
+- Kesembilan produk audit tetap tampil, tetapi payload production masih memberi `snapshotStatus: complete` dan belum memiliki label `Menunggu Konfirmasi User`; angka tidak diubah dan status tidak dipaksa.
+- Rekonsiliasi production tidak menampilkan `Bangun Ulang Inventori Bulanan`, `Periksa Dulu`, atau `Proses`.
+- Tidak ada tindakan lock. Label status 9 produk masih merupakan pekerjaan tersisa; Maret tetap tidak dikunci dan April tidak diproses.
