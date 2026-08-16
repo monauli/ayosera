@@ -198,4 +198,12 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Perbandingan mencakup identitas productId/variantId/SKU serta opening, masuk, retur, penjualan, keluar, dan closing. Mismatch, identitas hilang, duplikat, atau source kosong tidak boleh berstatus Cocok; kondisi tersebut juga menahan lock.
 - Production setelah deploy: 48 produk, `48/48 Cocok`, 0 Perlu Dicek, 0 Belum Diisi. BA tidak diperlukan. Tombol Kunci Periode tersedia dan tidak diklik.
 - Export resmi berhasil dipicu, tetapi workbook biner belum berhasil ditangkap/dibaca; status export tetap **Belum Terbukti**.
+
+## Audit fixture export dan katalog Februari — 16 Agustus 2026
+
+- Seluruh `tmp/fixtures` diperiksa berdasarkan isi. File export production AYOSERA `Inventori-Februari-2026-production.xlsx` tidak tersedia. File katalog produk Olsera juga tidak tersedia.
+- `Inventory ilegal.xlsx` memang memiliki sheet `February Terjual` (31 baris, 31 identitas unik, duplikat 0, rumus dasar lulus) dan `February Keseluruhan` (48 baris, 48 identitas unik, duplikat 0), tetapi workbook ini adalah workbook sumber multi-bulan, bukan bukti export production.
+- Pada sheet Keseluruhan, dua nilai tidak cocok dengan approved v3: Sniper Power Light Blue memiliki balance file 2 (target 1) dan GRIP YONEX AC102 memiliki balance file 56 (target 60). Karena itu file tidak dinyatakan sebagai export production yang lulus.
+- Audit katalog 48 produk tidak dapat dilakukan tanpa file katalog Olsera; tidak ada status aktif/terhapus yang ditebak.
+- Tests Inventori, rekonsiliasi, BA/stock-opname, export, typecheck, dan diff check lulus. Tidak ada perubahan kode atau data dan Februari tetap tidak dikunci.
 - Tests comparator, stock-opname/rekonsiliasi, 232 inventory, UI inventory, typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal gagal karena Mongo URI invalid.

@@ -2106,3 +2106,7 @@ Production melalui jalur Export Pergerakan Stok resmi berhasil memperbarui Febru
 ## Perbaikan rekonsiliasi Februari — 16 Agustus 2026
 
 Commit `52d7fe8` mengganti pembanding Februari dari snapshot dirinya sendiri menjadi source approved terpisah revision `2026-02-final-corrections-v3`. Production read-back setelah deploy menunjukkan 48 produk diperiksa, `48 Cocok`, 0 Selisih, 0 Perlu Verifikasi; BA tidak diperlukan dan lock tidak diklik. Export resmi dipicu tetapi file Excel belum berhasil ditangkap/dibaca, sehingga verifikasi export masih tertunda.
+
+## Audit file Februari dan katalog — 16 Agustus 2026
+
+`tmp/fixtures` tidak berisi export production AYOSERA maupun export katalog Olsera. `Inventory ilegal.xlsx` terbaca penuh: `February Terjual` 31 baris/31 unik dan `February Keseluruhan` 48 baris/48 unik, tetapi bukan export production. Dua nilai Keseluruhan berbeda dari approved v3 (Sniper Power Light Blue balance 2 vs target 1; GRIP YONEX AC102 balance 56 vs target 60), sehingga export belum lulus. Katalog 48 produk belum dapat diverifikasi karena file katalog tidak tersedia. Tidak ada perubahan data, sync, atau lock.
