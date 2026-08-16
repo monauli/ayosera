@@ -2093,3 +2093,6 @@ Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubaha
 - Production Januari selesai direbuild dari closing Desember: 36 produk dibawa + 1 produk baru, total 37 unik. Tab: Terjual 2, Tidak Terjual 35, Keseluruhan 37, Riwayat Mutasi tersedia. Total opening 2.294, masuk 60, retur 2, penjualan 2, keluar 0, closing 2.354; seluruh rumus cocok.
 - Export Januari berhasil dipicu dan UI menyatakan selesai; isi workbook biner belum dapat dibaca dari sesi browser.
 - Desember/Februari tidak disentuh, tidak ada lock atau cron historical. Status: **Januari 2026 cocok dan siap menjadi opening Februari**.
+- Februari production read-back masih 29/19/48, sedangkan workbook/built-in approved 31/17/48. Dua baris penyebab terbukti: ODEA ROSE production 66/0/66 vs approved 96/30/66, dan YONEX SHORTS SM-J035 production 15/0/15 vs approved 24/9/15.
+- Migration revision `v3` dipush pada commit `366e2a3` dan export resmi dipicu, tetapi deployment production belum memantulkan rebuild. Tidak ada perubahan Desember/Januari, lock, Olsera, atau cron.
+- Status: **Februari 2026 masih memiliki selisih yang perlu diverifikasi**.

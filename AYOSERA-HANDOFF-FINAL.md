@@ -174,3 +174,7 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Export Inventori Januari berhasil dipicu dan UI melaporkan `Export selesai.`. Isi biner workbook belum dapat dibaca langsung dari sesi browser, sehingga verifikasi file nyata masih terbatas pada status export dan kecocokan halaman.
 - Januari tidak mengubah Desember/Februari, tidak lock, tidak mengubah stok Olsera, dan tidak membuat cron historical.
 - Status Januari: **Januari 2026 cocok dan siap menjadi opening Februari**.
+- Audit Februari lanjutan: workbook approved dan built-in source sama-sama 31 Terjual/48 Keseluruhan. Production saat ini masih 29 Terjual/19 Tidak Terjual/48 Keseluruhan. Dua penyebab terbukti adalah `BOLA PADEL ODEA ROSE` (production 66/0/66; approved 96/30/66) dan `YONEX SHORTS MEN # SM-J035-2906-RW1-S` (production 15/0/15; approved 24/9/15). Keduanya ada di universe 48 tetapi arus penjualan hilang dari snapshot production lama.
+- Perbaikan aman: revision migrasi built-in dinaikkan ke `2026-02-final-corrections-v3`; export Februari memakai jalur migrasi approved terbaru dan tetap hanya menulis 2026-02. Commit `366e2a3`.
+- Production export dipicu dan UI melaporkan selesai, tetapi read-back belum berubah dari 29/19/48; deployment belum menerapkan revision baru. Desember/Januari tetap tidak disentuh, tidak lock, tidak mengubah Olsera atau cron.
+- Status Februari: **Februari 2026 masih memiliki selisih yang perlu diverifikasi**. Penyesuaian Historis yang dibutuhkan hanya pada dua produk di atas; target approved tetap 31/17/48.
