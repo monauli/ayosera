@@ -2096,3 +2096,5 @@ Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubaha
 - Februari production read-back masih 29/19/48, sedangkan workbook/built-in approved 31/17/48. Dua baris penyebab terbukti: ODEA ROSE production 66/0/66 vs approved 96/30/66, dan YONEX SHORTS SM-J035 production 15/0/15 vs approved 24/9/15.
 - Migration revision `v3` dipush pada commit `366e2a3` dan export resmi dipicu, tetapi deployment production belum memantulkan rebuild. Tidak ada perubahan Desember/Januari, lock, Olsera, atau cron.
 - Status: **Februari 2026 masih memiliki selisih yang perlu diverifikasi**.
+- Percobaan migration v3 production: origin/main sudah memuat `366e2a3`, namun export Februari gagal dan angka tetap 29/19/48. Migration pertama belum terbukti sukses; pemanggilan kedua tidak dijalankan sebagai klaim sukses. Tidak ada lock atau perubahan periode lain.
+- Status akhir: **Migration v3 belum berhasil diterapkan ke production**.
