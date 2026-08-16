@@ -537,6 +537,24 @@ export async function ensureMonthlySnapshotChain(input: {
   const already = await repo.findMonth(storeId, target.year, target.month);
   if (isTrustedHistorical(already, state)) return { ok: true, storeId, docs: already };
 
+  // Desember 2025 adalah bootstrap historis mandiri. Jangan mencari anchor
+  // 2026: itu akan menulis bulan perantara dan mengubah rantai yang sudah ada.
+  if (target.year === 2025 && target.month === 12) {
+    const result = await runForwardBackfillMonth({
+      month: target,
+      storeId,
+      anchors: new Map(),
+      matchingContext,
+      repo,
+      rawSalesActivityFetcher: input.rawSalesActivityFetcher,
+      now,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    const docs = await repo.findMonth(storeId, target.year, target.month);
+    if (!docs.length) return { ok: false, error: "Stockmovement Desember 2025 tidak menghasilkan snapshot yang dapat dibuktikan." };
+    return { ok: true, storeId, docs };
+  }
+
   const isBackwardZone = target.year < JUNE_2026.year || (target.year === JUNE_2026.year && target.month <= JUNE_2026.month);
 
   if (isBackwardZone) {

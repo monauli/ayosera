@@ -681,6 +681,23 @@ test("ensureMonthlySnapshotChain: bulan target SUDAH ada -> dikembalikan langsun
   assert.equal(fetchCalled, false);
 });
 
+test("ensureMonthlySnapshotChain: Desember 2025 memakai snapshot langsung tanpa anchor Januari/Februari", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2025-12-01": [
+      { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 7, sum_incoming_qty: 3, sum_return_qty: 1, sum_sales_qty: 2, sum_outgoing_qty: 1, sisa: 8 },
+    ],
+  });
+  const repo = createFakeRepo([]);
+  const result = await ensureMonthlySnapshotChain({ year: 2025, month: 12, repo, matchingContext: matchingContextForOneProduct(), now: new Date("2026-08-16T00:00:00Z") });
+  assert.equal(result.ok, true);
+  assert.equal(repo.all().filter((d) => d.year === 2025 && d.month === 12).length, 1);
+  assert.equal(repo.all().some((d) => d.year === 2026 && (d.month === 1 || d.month === 2)), false);
+  if (result.ok) {
+    assert.equal(result.docs[0].openingQty, 7);
+    assert.equal(result.docs[0].closingQty, 8);
+  }
+});
+
 test("ensureMonthlySnapshotChain: bulan target BELUM ada (zona maju) -> backfill on-demand dari anchor terdekat", async (t) => {
   mockFetchStockmovementByMonth(t, {
     "2026-07-01": [
@@ -1008,7 +1025,7 @@ test("finalisasi bulan sebelumnya terjadi SEBELUM dipakai sebagai opening bulan 
   assert.notEqual(julyAfter[0].finalizedAt, null, "Juli sekarang sudah final");
 });
 
-test("future period ditolak — tidak pernah digenerate seolah sudah berjalan", async (t) => {
+test("future period ditolak — tidak pernah digenerate seolah sudah berjalan", async () => {
   const repo = createFakeRepo([seedJuneDoc()]);
   const matchingContext = matchingContextForOneProduct();
   const result = await ensureMonthlySnapshotChain({ year: 2026, month: 12, repo, matchingContext, now: new Date("2026-08-05T00:00:00Z") });
