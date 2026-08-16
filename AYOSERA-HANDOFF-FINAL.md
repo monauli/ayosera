@@ -214,3 +214,12 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Tests monthly inventory (233), stock-opname (24), rekonsiliasi (84), lock UI (47), typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal gagal karena Mongo URI lokal invalid.
 - Commit sudah dipush ke `origin/main`. Export resmi Maret dipicu dan UI melaporkan selesai, tetapi read-back deployment yang tersedia masih `25/11/36`; deployment baru atau refresh Maret belum terbukti aktif.
 - Tidak ada lock, perubahan Desember/Januari/Februari, perubahan stok Olsera, atau perubahan cron. Status: **Audit lokal selesai tetapi production belum terverifikasi**.
+## Rebuild Inventori Bulanan reusable — 16 Agustus 2026
+
+- Spesifikasi/rencana tersimpan pada commit `858a3b1`.
+- Implementasi commit `25b5601`: service `rebuildMonthlyInventory`, endpoint supervisor `/api/supervisor/olsera/inventory/rebuild-monthly`, dry-run `Periksa Dulu`, guarded `Proses`, lock guard server-side, backup snapshot sebelum replace, replace hanya periode terpilih, dan rerun idempotent.
+- Export tetap read-only; rebuild tidak lagi bergantung pada tombol Export. Tombol lock tidak ada pada halaman Inventori biasa; kontrol backend dan lock di Rekonsiliasi Inventori tetap ada.
+- Google Spreadsheet rekap dibuat di folder `DOWAFIXUPDATE`: https://docs.google.com/spreadsheets/d/1ksZWgHFYR78H3Zlysda6iO56-A3CkJu5Dilo6e2wIf4/edit?usp=drivesdk. Sheet Ringkasan, Maret, April, Mei, Juni, Juli, Agustus tersedia; Maret masih menunggu hasil dry-run production.
+- Kondisi Maret sebelum proses tetap `25 terjual / 11 tidak terjual / 36 keseluruhan`. Dry-run/write production belum dijalankan karena sesi browser yang tersedia tidak terautentikasi sebagai supervisor; tidak ada data production yang diubah.
+- Tests monthly inventory 233 dan test baru service/endpoint/lock-page lulus; typecheck, scoped lint, dan diff check lulus. Lint hanya memiliki warning baseline `ayoPaymentPeriods`. Build compile lulus; page-data lokal gagal karena Mongo URI invalid.
+- Status Maret: **Production belum dapat diverifikasi; belum aman dinyatakan cocok**. Jangan lanjut April dan jangan lock Maret.

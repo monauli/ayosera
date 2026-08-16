@@ -2115,3 +2115,8 @@ Commit `52d7fe8` mengganti pembanding Februari dari snapshot dirinya sendiri men
 Commit `847d5eb` memperbaiki akar masalah snapshot historis: Maret dihitung dari closing Februari melalui `runForwardBackfillMonth` existing, tetap idempotent dan hanya periode Maret. Tests monthly inventory 233, stock-opname 24, rekonsiliasi 84, lock UI 47, typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal terblokir Mongo URI invalid. Commit sudah dipush.
 
 Export resmi Maret dipicu, tetapi read-back masih `25/11/36`; deployment baru/refresh belum terbukti aktif. Maret tidak dikunci dan bulan lain tidak disentuh. Status: **Audit lokal selesai tetapi production belum terverifikasi**.
+## Rebuild Inventori Bulanan reusable — 16 Agustus 2026
+
+Commit `25b5601` menambahkan service rebuild supervisor dengan dry-run, lock guard, backup snapshot, replace target-only, dan idempotence; endpoint resmi berada di `/api/supervisor/olsera/inventory/rebuild-monthly`. Panel Rekonsiliasi Inventori memiliki `Periksa Dulu` dan `Proses`; halaman Inventori biasa tidak memiliki tombol lock. Export tetap read-only.
+
+Google Spreadsheet rekap: https://docs.google.com/spreadsheets/d/1ksZWgHFYR78H3Zlysda6iO56-A3CkJu5Dilo6e2wIf4/edit?usp=drivesdk di folder `DOWAFIXUPDATE`; sheet Ringkasan, Maret, April–Agustus disiapkan. Maret sebelum proses masih `25/11/36`. Production dry-run/write belum dijalankan karena sesi supervisor belum tersedia. Tests, typecheck, scoped lint, dan diff check lulus; build page-data lokal tetap terblokir Mongo URI invalid. Maret belum dikunci dan April belum dikerjakan.
