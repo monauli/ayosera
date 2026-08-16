@@ -482,6 +482,10 @@ test("Februari historical final memakai closing snapshot sebagai Cocok tanpa BA"
     snapshotDoc({ productId: 1, year: 2026, month: 2, status: "incomplete", canonicalProductId: null, closingQty: 10 }),
     snapshotDoc({ productId: 2, year: 2026, month: 2, status: "complete", canonicalProductId: 999, closingQty: 20 }),
   ], fakeOpnameCollection());
+  ctx.approvedRows = [
+    { productId: 1, variantId: null, productSku: "SKU-1", productName: "Produk 1", openingQty: 10, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 10 },
+    { productId: 2, variantId: null, productSku: "SKU-1", productName: "Produk 2", openingQty: 10, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 20 },
+  ];
   const result = await loadInventoryOpnameMonth({ storeId: 324175, year: 2026, month: 2 }, ctx);
   assert.equal(result.summary.totalProduk, 2);
   assert.equal(result.summary.cocok, 2);

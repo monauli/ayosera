@@ -4,11 +4,12 @@ import { monthlySnapshotDocId } from "@/lib/olsera-inventory-monthly-snapshot-co
 import { buildHistoricalImportPlan, historicalDiagnostics, type HistoricalInventoryRow } from "@/lib/olsera-historical-inventory-import";
 import { FEBRUARY_HISTORICAL_SOURCE, type FebruaryHistoricalRow } from "@/lib/february-historical-source";
 
-const sourceRevision = "2026-02-final-corrections-v3";
+export const FEBRUARY_HISTORICAL_SOURCE_REVISION = "2026-02-final-corrections-v3";
+const sourceRevision = FEBRUARY_HISTORICAL_SOURCE_REVISION;
 const normalize = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
 type BuiltInRow = FebruaryHistoricalRow;
 
-function resolve(rows: readonly BuiltInRow[], products: readonly OlseraInventoryProductDocument[]): HistoricalInventoryRow[] {
+export function resolveFebruaryHistoricalRows(rows: readonly BuiltInRow[], products: readonly OlseraInventoryProductDocument[]): HistoricalInventoryRow[] {
   return rows.map((source) => {
     const wanted = normalize(source.product);
     const embeddedSku = source.product.match(/#\s*([A-Z0-9-]+)$/i)?.[1] ?? source.sku;
@@ -45,7 +46,7 @@ export async function runFebruaryHistoricalMigration() {
       if (!product || (item.productSku && product.sku && item.productSku !== product.sku)) throw new Error(`Identitas produk tidak cocok: ${item.productName}`);
       return item;
     });
-    const plan = buildHistoricalImportPlan({ sold: verify(resolve(FEBRUARY_HISTORICAL_SOURCE.sold, products)), overall: verify(resolve(FEBRUARY_HISTORICAL_SOURCE.overall, products)), existing });
+    const plan = buildHistoricalImportPlan({ sold: verify(resolveFebruaryHistoricalRows(FEBRUARY_HISTORICAL_SOURCE.sold, products)), overall: verify(resolveFebruaryHistoricalRows(FEBRUARY_HISTORICAL_SOURCE.overall, products)), existing });
     if (plan.duplicates.length || plan.rejected.length) throw new Error(`Validasi Februari gagal: ${plan.rejected.join(",") || plan.duplicates.join(",")}`);
     const now = new Date();
     const docs: OlseraInventoryMonthlySnapshotDocument[] = plan.rows.map((item) => {

@@ -31,6 +31,9 @@ import type { MatchingContext } from "./olsera-inventory-monthly-snapshot-core.t
 import { fetchMatchingContext } from "./olsera-inventory-monthly-snapshot-store.ts";
 import { fetchStockMovementRange, type FetchStockMovementResult } from "./olsera-inventory-stockmovement.ts";
 import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
+import { compareHistoricalInventoryRows, type HistoricalReconciliationRow } from "./inventory-historical-reconciliation.ts";
+import { FEBRUARY_HISTORICAL_SOURCE_REVISION, resolveFebruaryHistoricalRows } from "./february-historical-migration.ts";
+import { FEBRUARY_HISTORICAL_SOURCE } from "./february-historical-source.ts";
 
 export class InventoryStockOpnameError extends Error {
   code: "VALIDATION" | "FORBIDDEN";
@@ -85,6 +88,7 @@ export type CutoffFetchOverrides = {
 export type InventoryStockOpnameContext = {
   snapshots: MinimalReadCollection<OlseraInventoryMonthlySnapshotDocument>;
   opname: MinimalOpnameCollection;
+  approvedRows?: readonly HistoricalReconciliationRow[];
 } & CutoffFetchOverrides;
 
 export async function resolveInventoryStockOpnameContext(context?: InventoryStockOpnameContext): Promise<InventoryStockOpnameContext> {
@@ -226,6 +230,21 @@ export async function loadInventoryOpnameMonth(
   ]);
 
   const opnameByKey = new Map(opnameRows.map((doc) => [opnameKey(doc.productId, doc.variantId), doc]));
+  let approvedByKey = new Map<string, HistoricalReconciliationRow>();
+  let historicalStatusByKey = new Map<string, OpnameStatus>();
+  if (year === 2026 && month === 2) {
+    const approvedRows = context?.approvedRows ?? await (async () => {
+      const { collections } = await import("./mongodb.ts");
+      const { olseraInventoryProducts } = await collections();
+      const products = await olseraInventoryProducts.find({ storeId: { $in: [storeId, null] } }).toArray();
+      const sourceRows = resolveFebruaryHistoricalRows(FEBRUARY_HISTORICAL_SOURCE.overall, products);
+      return sourceRows.map((row) => ({ ...row }));
+    })();
+    approvedByKey = new Map(approvedRows.map((row) => [opnameKey(row.productId, row.variantId), row]));
+    const systemRows: HistoricalReconciliationRow[] = snapshotRows.map((row) => ({ productId: row.productId, variantId: row.variantId, productSku: row.productSku, productName: row.productName, openingQty: row.openingQty, incomingQty: row.incomingQty, returnQty: row.returnQty, salesQty: row.salesQty, outgoingQty: row.outgoingQty, closingQty: row.closingQty }));
+    const comparison = compareHistoricalInventoryRows(systemRows, approvedRows, { sourceRevision: FEBRUARY_HISTORICAL_SOURCE_REVISION });
+    historicalStatusByKey = new Map(comparison.rows.map((row) => [row.key, row.status === "COCOK" ? "COCOK" : row.status === "SELISIH" ? "PERLU_DICEK" : "BELUM_DIISI"]));
+  }
 
   const visibleSnapshots = visibleMonthlyInventoryRows(
     snapshotRows.map((snap) => ({ ...snap, category: snap.groupName })),
@@ -241,14 +260,15 @@ export async function loadInventoryOpnameMonth(
       closingQty: snap.closingQty,
     };
     const systemClosingQty = resolveSystemClosingQty(flow);
-    // Februari 2026 memakai closing historical final sebagai pembanding; BA
-    // tidak relevan untuk periode ini dan tidak boleh mengubah hasil status.
+    // Februari memakai source approved terpisah; BA tidak relevan.
     const historicalFinal = year === 2026 && month === 2;
+    const approved = approvedByKey.get(opnameKey(snap.productId, snap.variantId));
+    const historicalStatus = historicalFinal ? historicalStatusByKey.get(opnameKey(snap.productId, snap.variantId)) ?? "BELUM_DIISI" : null;
     const manualAdjust = historicalFinal ? false : needsManualAdjust({ status: snap.status, canonicalProductId: snap.canonicalProductId });
     const opnameDoc = opnameByKey.get(opnameKey(snap.productId, snap.variantId)) ?? null;
-    const physicalQty = historicalFinal ? systemClosingQty : opnameDoc?.physicalQty ?? null;
+    const physicalQty = historicalFinal ? approved?.closingQty ?? null : opnameDoc?.physicalQty ?? null;
     const differenceQty = computeDifferenceQty(physicalQty, systemClosingQty);
-    const status = historicalFinal ? "COCOK" : physicalQty === null && snap.status === "complete" && !manualAdjust ? "COCOK" : determineOpnameStatus({ physicalQty, systemClosingQty, manualAdjust });
+    const status = historicalFinal ? historicalStatus! : physicalQty === null && snap.status === "complete" && !manualAdjust ? "COCOK" : determineOpnameStatus({ physicalQty, systemClosingQty, manualAdjust });
 
     return {
       productId: snap.productId,
