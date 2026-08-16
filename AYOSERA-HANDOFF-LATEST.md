@@ -2138,3 +2138,22 @@ Supervisor berhasil menjalankan `Periksa Dulu` untuk Maret. Hasil read-only: sna
   - SOY JOY MULTI VARIANT: expected 60, balance 50.
 - Dry-run production sebelumnya hanya mengembalikan aggregate `51 kandidat, 36 lama, unmatched 0, formula mismatch 0, duplikat 0`; payload 51 baris tidak tersimpan. Karena itu perbandingan identitas dan seluruh angka workbook-versus-dry-run belum dapat dibuktikan baris demi baris.
 - Production tidak ditulis, Maret tidak dikunci, dan April tidak disentuh. Maret **belum aman diproses** karena bukti workbook sendiri memiliki 9 mismatch dan sumber dry-run per-produk tidak tersedia.
+## Audit 9 selisih Maret + BA — 16 Agustus 2026
+
+`ba-maret-scan.pdf` terbaca sebagai **Berita Acara Penyesuaian Pendapatan** periode Maret 2026, nominal penambahan pendapatan Rp740.000. Dokumen tidak memuat produk, SKU, stok fisik, qty, atau penyesuaian inventori; karena itu tidak dapat menjadi bukti Balance untuk 9 produk.
+
+| Produk | Hitungan | Balance Excel | Selisih | Bukti BA | Status |
+|---|---:|---:|---:|---|---|
+| Bullpadel Sniper 2.0 Power Light Blue 2026 | 1 | 2 | +1 | Tidak ada bukti stok | Perlu Verifikasi |
+| BULLPADEL VERTEX 05 COMFORT 2026-360-370 BLACK/BLUE | 2 | 0 | -2 | Tidak ada bukti stok | Perlu Verifikasi |
+| BOLA PADEL HEAD PRO S+ ISI 3 | 16 | 12 | -4 | Tidak ada bukti stok | Perlu Verifikasi |
+| GRIP LI-NING | 43 | 47 | +4 | Tidak ada bukti stok | Perlu Verifikasi |
+| GRIP YONEX AC102 | 47 | 43 | -4 | Tidak ada bukti stok | Perlu Verifikasi |
+| NESTLE PURE LIFE 1500ML | 226 | 220 | -6 | Tidak ada bukti stok | Perlu Verifikasi |
+| NESTLE PURE LIFE 600ML | 504 | 498 | -6 | Tidak ada bukti stok | Perlu Verifikasi |
+| POCARI ION WATER 500ML | 268 | 264 | -4 | Tidak ada bukti stok | Perlu Verifikasi |
+| SOY JOY MULTI VARIANT | 60 | 50 | -10 | Tidak ada bukti stok | Perlu Verifikasi |
+
+Sheet `Maret Keseluruhan` berisi 51 baris, 51 identitas nama/SKU unik yang tersedia, dan 0 duplikat. Workbook tidak menyediakan productId/variantId dan memiliki 9 mismatch di atas. Karena tidak ada bukti adjustment inventori, proses rebuild tidak diubah, production tidak ditulis, Maret tidak dikunci, dan April tidak disentuh.
+
+Status: **Maret belum aman diproses; 9 produk masih Perlu Verifikasi.**
