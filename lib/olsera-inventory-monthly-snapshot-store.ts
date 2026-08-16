@@ -555,6 +555,27 @@ export async function ensureMonthlySnapshotChain(input: {
     return { ok: true, storeId, docs };
   }
 
+  // Januari 2026 memakai closing Desember sebagai satu-satunya anchor.
+  // Jangan memakai rantai historis lain: Februari dan periode sebelumnya
+  // harus tetap tidak tersentuh.
+  if (target.year === 2026 && target.month === 1) {
+    const decemberDocs = await repo.findMonth(storeId, 2025, 12);
+    if (!decemberDocs.length) return { ok: false, error: "Snapshot Desember 2025 belum tersedia sebagai anchor Januari 2026." };
+    const result = await runForwardBackfillMonth({
+      month: target,
+      storeId,
+      anchors: docsToForwardAnchors(decemberDocs),
+      matchingContext,
+      repo,
+      rawSalesActivityFetcher: input.rawSalesActivityFetcher,
+      now,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    const docs = await repo.findMonth(storeId, target.year, target.month);
+    if (!docs.length) return { ok: false, error: "Pergerakan Januari 2026 tidak menghasilkan snapshot yang dapat dibuktikan." };
+    return { ok: true, storeId, docs };
+  }
+
   const isBackwardZone = target.year < JUNE_2026.year || (target.year === JUNE_2026.year && target.month <= JUNE_2026.month);
 
   if (isBackwardZone) {

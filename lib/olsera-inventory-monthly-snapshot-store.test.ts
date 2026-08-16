@@ -698,6 +698,25 @@ test("ensureMonthlySnapshotChain: Desember 2025 memakai snapshot langsung tanpa 
   }
 });
 
+test("ensureMonthlySnapshotChain: Januari 2026 memakai closing Desember, membawa produk tanpa movement, dan tidak menulis Februari", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-01-01": [
+      { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 8, sum_incoming_qty: 2, sum_return_qty: 0, sum_sales_qty: 3, sum_outgoing_qty: 0, sisa: 7 },
+      { product_id: 101, product_name: "PRODUK BARU", product_group_name: "GROUP", beginning_qty: 0, sum_incoming_qty: 1, sum_return_qty: 0, sum_sales_qty: 0, sum_outgoing_qty: 0, sisa: 1 },
+    ],
+  });
+  const dec = seedJuneDoc();
+  const december = { ...dec, _id: "1:2025:12:100:0", year: 2025, month: 12, snapshotDate: "2025-12-31", openingQty: 0, incomingQty: 3, closingQty: 8, source: "stockmovement-forward" as const };
+  const repo = createFakeRepo([december]);
+  const result = await ensureMonthlySnapshotChain({ year: 2026, month: 1, repo, matchingContext: buildMatchingContext([product({ _id: "1:100:0", productId: 100 }), product({ _id: "1:101:0", productId: 101, name: "PRODUK BARU" })], []) });
+  assert.equal(result.ok, true);
+  const january = await repo.findMonth(1, 2026, 1);
+  assert.equal(january.length, 2);
+  assert.equal(january.find((d) => d.productId === 100)?.openingQty, 8);
+  assert.equal(january.find((d) => d.productId === 101)?.openingQty, 0);
+  assert.equal(repo.all().some((d) => d.year === 2026 && d.month === 2), false);
+});
+
 test("ensureMonthlySnapshotChain: bulan target BELUM ada (zona maju) -> backfill on-demand dari anchor terdekat", async (t) => {
   mockFetchStockmovementByMonth(t, {
     "2026-07-01": [
