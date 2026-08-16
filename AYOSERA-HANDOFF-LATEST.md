@@ -2098,3 +2098,7 @@ Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubaha
 - Status: **Februari 2026 masih memiliki selisih yang perlu diverifikasi**.
 - Percobaan migration v3 production: origin/main sudah memuat `366e2a3`, namun export Februari gagal dan angka tetap 29/19/48. Migration pertama belum terbukti sukses; pemanggilan kedua tidak dijalankan sebagai klaim sukses. Tidak ada lock atau perubahan periode lain.
 - Status akhir: **Migration v3 belum berhasil diterapkan ke production**.
+
+## Verifikasi final migration Februari v3 — 16 Agustus 2026
+
+Production melalui jalur Export Pergerakan Stok resmi berhasil memperbarui Februari menjadi `31 terjual / 17 tidak terjual / 48 keseluruhan`. Produk kunci terbaca benar: ODEA ROSE `96/30/66`, YONEX SHORTS `24/9/15`, Sniper Power Light Blue `2/1/1`, GRIP YONEX AC102 `0/60/60`; XPLO COMFORT tetap ada dan ODEA RED terpisah. Pemanggilan kedua selesai tanpa perubahan, tetap `31/17/48` dan duplikat 0. Rekonsiliasi menunjukkan `48/48 Cocok`, Berita Acara tidak diperlukan, dan lock tidak diklik. Export berhasil dibuat tetapi isi biner workbook belum dapat dibaca dari sesi ini. `origin/main` memuat `3997a90`; SHA deployment aktif tidak tersedia dari UI. Tests historis, 232 inventory, typecheck, scoped lint, dan diff check lulus; build compile lulus dengan page-data lokal terblokir Mongo URI invalid. Status: **Februari 2026 cocok dan siap dikunci manual**.

@@ -180,3 +180,14 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Status Februari: **Februari 2026 masih memiliki selisih yang perlu diverifikasi**. Penyesuaian Historis yang dibutuhkan hanya pada dua produk di atas; target approved tetap 31/17/48.
 - Percobaan penerapan Februari v3: `origin/main` memuat `366e2a3`, tetapi deployment/domain production belum dapat dibuktikan memakai revision tersebut. Export Februari melalui jalur existing gagal (`Gagal membuat export inventori.`), dan read-back tetap 29/19/48. Tidak ada migration success yang diklaim, tidak ada write manual, dan lock tetap tidak disentuh.
 - Status: **Migration v3 belum berhasil diterapkan ke production**. Target tetap 31/17/48; dua produk yang menunggu perbaikan tetap ODEA ROSE dan YONEX SHORTS.
+
+## Verifikasi final migration Februari v3 — 16 Agustus 2026
+
+- `origin/main` memuat commit `3997a90`. SHA deployment Vercel aktif tidak tersedia dari UI production, sehingga tidak ditebak; perilaku production membuktikan jalur revision marker baru aktif.
+- Pemanggilan pertama melalui Export Pergerakan Stok resmi berhasil dan memperbarui snapshot Februari: `Stok Terjual 31`, `Stok Tidak Terjual 17`, `Stok Keseluruhan 48`.
+- Read-back produk: ODEA ROSE `96 / 30 / 66`; YONEX SHORTS `24 / 9 / 15`; Sniper Power Light Blue `2 / 1 / 1`; GRIP YONEX AC102 `0 / 60 / 60`; XPLO COMFORT tetap ada; ODEA RED tidak digabung.
+- Pemanggilan kedua melalui jalur export resmi selesai tanpa perubahan angka; hasil tetap `31/17/48`, tanpa duplikat. Status marker `skipped` tidak ditampilkan oleh UI, sehingga hanya keberhasilan no-change yang dapat dibuktikan dari read-back.
+- Rekonsiliasi Februari: `48/48 Cocok`, Berita Acara tidak diperlukan, tidak ada penyesuaian manual. Tombol Kunci Periode tersedia dan tidak diklik.
+- Export resmi berhasil dibuat. Isi workbook biner tidak dapat dibaca ulang dari sesi browser ini; status export dicatat terpisah dari verifikasi halaman/server.
+- Tests historis, inventory 232, typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal tetap gagal karena Mongo URI invalid.
+- Status akhir: **Februari 2026 cocok dan siap dikunci manual**. Tidak ada perubahan Desember/Januari/periode lain, Olsera, Financial, cron, atau lock.
