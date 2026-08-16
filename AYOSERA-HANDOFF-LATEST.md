@@ -2123,3 +2123,18 @@ Google Spreadsheet rekap: https://docs.google.com/spreadsheets/d/1ksZWgHFYR78H3Z
 ## Dry-run Maret production — 16 Agustus 2026
 
 Supervisor berhasil menjalankan `Periksa Dulu` untuk Maret. Hasil read-only: snapshot lama 36, kandidat 51, unmatched 0, formula mismatch 0, duplikat 0. Snapshot belum ditulis; proses dan read-back belum dapat dibuktikan karena sesi browser terputus saat konfirmasi. Maret tidak dikunci dan April tidak disentuh.
+## Audit workbook Maret Keseluruhan — 16 Agustus 2026
+
+- File `tmp/fixtures/Inventory ilegal.xlsx`, sheet `Maret Keseluruhan`, terbaca penuh: 51 baris produk, 51 identitas unik berdasarkan nama/SKU yang tersedia, 0 duplikat.
+- Workbook mencatat opening, incoming, return, sales, outgoing, opname, dan balance. Dengan rumus `opening + incoming + return - sales - outgoing + opname`, terdapat 9 formula mismatch internal:
+  - Bullpadel Sniper 2.0 Power Light Blue 2026: expected 1, balance 2.
+  - BULLPADEL VERTEX 05 COMFORT 2026-360-370 BLACK/BLUE: expected 2, balance 0.
+  - BOLA PADEL HEAD PRO S+ ISI 3: expected 16, balance 12.
+  - GRIP LI-NING: expected 43, balance 47.
+  - GRIP YONEX AC102: expected 47, balance 43.
+  - NESTLE PURE LIFE 1500ML: expected 226, balance 220.
+  - NESTLE PURE LIFE 600ML: expected 504, balance 498.
+  - POCARI ION WATER 500ML: expected 268, balance 264.
+  - SOY JOY MULTI VARIANT: expected 60, balance 50.
+- Dry-run production sebelumnya hanya mengembalikan aggregate `51 kandidat, 36 lama, unmatched 0, formula mismatch 0, duplikat 0`; payload 51 baris tidak tersimpan. Karena itu perbandingan identitas dan seluruh angka workbook-versus-dry-run belum dapat dibuktikan baris demi baris.
+- Production tidak ditulis, Maret tidak dikunci, dan April tidak disentuh. Maret **belum aman diproses** karena bukti workbook sendiri memiliki 9 mismatch dan sumber dry-run per-produk tidak tersedia.
