@@ -535,7 +535,7 @@ export async function ensureMonthlySnapshotChain(input: {
   }
 
   const already = await repo.findMonth(storeId, target.year, target.month);
-  if (isTrustedHistorical(already, state)) return { ok: true, storeId, docs: already };
+  if (!(target.year === 2026 && target.month === 1) && isTrustedHistorical(already, state)) return { ok: true, storeId, docs: already };
 
   // Desember 2025 adalah bootstrap historis mandiri. Jangan mencari anchor
   // 2026: itu akan menulis bulan perantara dan mengubah rantai yang sudah ada.
