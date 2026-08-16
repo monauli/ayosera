@@ -155,6 +155,7 @@ export type FinancialCronTarget = {
 };
 
 export type HistoricalFinancialLog = FinancialSyncLogLite & Partial<FinancialSyncRun> & { period: string };
+export type FinancialCronScope = "auto" | "current" | "historical";
 
 function historicalPeriodsBetween(startPeriod: string, endPeriod: string | null): string[] {
   if (!endPeriod || startPeriod >= endPeriod) return [];
@@ -175,11 +176,19 @@ export function selectFinancialCronTargetWithHistory(input: {
   previousLog: FinancialSyncLogLite;
   historicalLogs: HistoricalFinancialLog[];
   historicalPeriods?: string[];
+  scope?: FinancialCronScope;
   now?: Date;
 }): FinancialCronTarget | null {
   const now = input.now ?? new Date();
-  if (isFinancialPeriodUnfinished(input.currentLog, now)) {
+  const scope = input.scope ?? "auto";
+  if (scope !== "historical" && isFinancialPeriodUnfinished(input.currentLog, now)) {
     return { period: input.currentPeriod, startFresh: financialPeriodNeedsFreshStart(input.currentLog, now), reason: "current-unfinished" };
+  }
+  if (scope === "current") {
+    if (isFinancialPeriodRefreshDue(input.currentLog, now, CURRENT_MONTH_REFRESH_INTERVAL_MS)) {
+      return { period: input.currentPeriod, startFresh: true, reason: "current-refresh-due" };
+    }
+    return null;
   }
   const excluded = new Set([input.currentPeriod].filter(Boolean));
   const logsByPeriod = new Map(input.historicalLogs.map((log) => [log.period, log]));
@@ -197,6 +206,7 @@ export function selectFinancialCronTargetWithHistory(input: {
   if (historical) {
     return { period: historical.period, startFresh: financialPeriodNeedsFreshStart(historical, now), reason: "historical-unfinished" };
   }
+  if (scope === "historical") return null;
   if (isFinancialPeriodRefreshDue(input.currentLog, now, CURRENT_MONTH_REFRESH_INTERVAL_MS)) {
     return { period: input.currentPeriod, startFresh: true, reason: "current-refresh-due" };
   }
@@ -248,12 +258,12 @@ export function selectFinancialCronTarget(input: {
   const now = input.now ?? new Date();
   if (isFinancialPeriodUnfinished(input.currentLog, now)) return { period: input.currentPeriod, startFresh: financialPeriodNeedsFreshStart(input.currentLog, now), reason: "current-unfinished" };
   if (input.previousPeriod && isFinancialPeriodUnfinished(input.previousLog, now)) return { period: input.previousPeriod, startFresh: financialPeriodNeedsFreshStart(input.previousLog, now), reason: "previous-unfinished" };
-  return selectFinancialCronTargetWithHistory({ ...input, historicalLogs: [] });
+  return selectFinancialCronTargetWithHistory({ ...input, historicalLogs: [], scope: "auto" });
 }
 
 export async function runOlseraFinancialCron(
   authHeader: string | null,
-  input?: { year?: unknown; month?: unknown },
+  input?: { year?: unknown; month?: unknown; scope?: FinancialCronScope },
 ): Promise<CronOlseraFinancialResponse> {
   const auth = verifyCronSecret(authHeader);
   if (!auth.ok) {
@@ -265,6 +275,7 @@ export async function runOlseraFinancialCron(
   // periode persis yang diminta, TIDAK PERNAH menyentuh periode lain — logic
   // dan perilaku ini TIDAK berubah dari sebelum Phase 3B.
   const explicitRequest = input?.year != null || input?.month != null;
+  const scope = input?.scope ?? "auto";
 
   let currentPeriod: string;
   try {
@@ -275,7 +286,7 @@ export async function runOlseraFinancialCron(
   } catch {
     return { status: 200, body: { success: false, mode: "cron", module: "financial", status: "payload-invalid", message: "Periode tidak valid." } };
   }
-  const previousPeriod = explicitRequest ? null : previousFinancialPeriod(currentPeriod);
+  const previousPeriod = explicitRequest || scope === "historical" ? null : previousFinancialPeriod(currentPeriod);
 
   let lock;
   try {
@@ -345,7 +356,7 @@ export async function runOlseraFinancialCron(
         }),
       ]);
       const now = new Date();
-      const target = selectFinancialCronTargetWithHistory({ currentPeriod, previousPeriod, currentLog, previousLog, historicalLogs, historicalPeriods: historicalPeriodsBetween(FINANCIAL_BASELINE_PERIOD, currentPeriod), now });
+      const target = selectFinancialCronTargetWithHistory({ currentPeriod, previousPeriod, currentLog, previousLog, historicalLogs, historicalPeriods: historicalPeriodsBetween(FINANCIAL_BASELINE_PERIOD, currentPeriod), scope, now });
       if (!target) {
         console.log(`[cron:olsera:financial] runId=${runId} current=${currentPeriod} previous=${previousPeriod ?? "-"} semua up to date — no-op.`);
         return {

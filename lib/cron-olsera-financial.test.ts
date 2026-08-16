@@ -756,6 +756,20 @@ test("historical backlog: running Mei cursor 76 dipilih lalu periode kosong Juni
   assert.equal(afterMay?.startFresh, true);
 });
 
+test("cron scope current melewati historical, sedangkan scope historical berhenti setelah Juli selesai", () => {
+  const now = new Date("2026-08-16T00:00:00Z");
+  const historicalLogs = [
+    fakeRun({ period: "2026-02", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
+    fakeRun({ period: "2026-03", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
+    fakeRun({ period: "2026-04", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
+    fakeRun({ period: "2026-05", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
+    fakeRun({ period: "2026-06", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
+    fakeRun({ period: "2026-07", status: "running", phase: "ledger-details", accountCursor: 76, updatedAt: now }),
+  ];
+  assert.equal(selectFinancialCronTargetWithHistory({ currentPeriod: "2026-08", previousPeriod: "2026-07", currentLog: fakeRun({ period: "2026-08", status: "success", completedAt: now, updatedAt: now }), previousLog: historicalLogs.at(-1)!, historicalLogs, historicalPeriods: historicalLogs.map((log) => log.period), scope: "current", now }), null);
+  assert.equal(selectFinancialCronTargetWithHistory({ currentPeriod: "2026-08", previousPeriod: "2026-07", currentLog: fakeRun({ period: "2026-08", status: "success", completedAt: now, updatedAt: now }), previousLog: historicalLogs.at(-1)!, historicalLogs, historicalPeriods: historicalLogs.map((log) => log.period), scope: "historical", now })?.period, "2026-07");
+});
+
 test("telemetry success menyimpan safeErrorCode null tanpa raw error", async () => {
   resetAll();
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);

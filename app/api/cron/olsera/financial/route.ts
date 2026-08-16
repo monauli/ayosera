@@ -15,6 +15,6 @@ export const maxDuration = 300;
  */
 export async function POST(request: Request) {
   const input = await request.json().catch(() => undefined);
-  const { status, body } = await runOlseraFinancialCron(request.headers.get("authorization"), input);
+  const { status, body } = await runOlseraFinancialCron(request.headers.get("authorization"), { ...input, scope: "current" });
   return NextResponse.json(body, { status });
 }
