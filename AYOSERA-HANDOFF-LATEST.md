@@ -2090,3 +2090,6 @@ Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubaha
 - Production masih membaca snapshot lama: 3 produk (2 terjual, 1 tidak terjual, 3 keseluruhan) setelah export dipicu. Hasil 36 produk belum ter-deploy/terbaca.
 - 232 tests inventory monthly lulus; typecheck, scoped lint, diff check lulus; build terblokir Mongo URI lokal invalid pada page-data.
 - Status akhir Januari: **Data Januari belum lengkap dan perlu bukti tambahan**.
+- Production Januari selesai direbuild dari closing Desember: 36 produk dibawa + 1 produk baru, total 37 unik. Tab: Terjual 2, Tidak Terjual 35, Keseluruhan 37, Riwayat Mutasi tersedia. Total opening 2.294, masuk 60, retur 2, penjualan 2, keluar 0, closing 2.354; seluruh rumus cocok.
+- Export Januari berhasil dipicu dan UI menyatakan selesai; isi workbook biner belum dapat dibaca dari sesi browser.
+- Desember/Februari tidak disentuh, tidak ada lock atau cron historical. Status: **Januari 2026 cocok dan siap menjadi opening Februari**.

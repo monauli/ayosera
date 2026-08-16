@@ -169,3 +169,8 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Production read-back setelah export Januari: masih menampilkan 3 produk (`Stok Terjual 2`, `Stok Tidak Terjual 1`, `Stok Keseluruhan 3`), sehingga deployment production belum memuat hasil rebuild 36 produk. Export sudah dipicu melalui UI tetapi hasil production belum berubah.
 - Tests: 232 inventory monthly lulus, typecheck/scoped lint/diff check lulus; build compile lulus namun page-data gagal karena Mongo URI lokal invalid.
 - Status Januari: **Data Januari belum lengkap dan perlu bukti tambahan**. Jangan jadikan closing Januari sebagai opening Februari.
+- Finalisasi production Januari 2026: deployment yang memuat `f2b4551` + `1c1f935` berhasil menjalankan rebuild melalui Export Inventori existing. Production read-back: 37 produk keseluruhan = 36 produk dari closing Desember + 1 produk baru Januari; 2 terjual, 35 tidak terjual, 37 keseluruhan, Riwayat Mutasi terbuka.
+- Hasil seluruh baris production: 37 nama unik, opening 2.294, masuk 60, retur 2, penjualan 2, keluar 0, closing 2.354; 0 mismatch rumus `opening + masuk + retur - penjualan - keluar`. Produk Desember tanpa movement tetap terbawa; produk baru opening 0.
+- Export Inventori Januari berhasil dipicu dan UI melaporkan `Export selesai.`. Isi biner workbook belum dapat dibaca langsung dari sesi browser, sehingga verifikasi file nyata masih terbatas pada status export dan kecocokan halaman.
+- Januari tidak mengubah Desember/Februari, tidak lock, tidak mengubah stok Olsera, dan tidak membuat cron historical.
+- Status Januari: **Januari 2026 cocok dan siap menjadi opening Februari**.
