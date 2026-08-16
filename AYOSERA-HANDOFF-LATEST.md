@@ -2082,3 +2082,6 @@ Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubaha
 - Commit `1ee144b` sudah di-push ke `origin/main`; tidak ada lock atau cron historical.
 - Export dipicu melalui UI, namun isi workbook nyata belum dapat dibaca pada sesi browser.
 - Status akhir: **Data API Desember belum lengkap dan perlu bukti tambahan**. Jangan carry-forward ke Januari sebelum bukti opname/export lengkap.
+- Verifikasi workbook 2025-12: seluruh sheet terbaca (1 sheet), 36 produk, 36 key unik, tidak ada duplikat. Total opening 0, incoming 2.294, retur 0, penjualan 0, keluar 0, opname 0, closing 2.294; semua baris balance sesuai rumus.
+- Production read-back: seluruh 36 baris cocok dengan workbook. Stock opname = 0 karena **Tidak Ada Stock Opname**, bukan data yang belum terbukti.
+- Status akhir: **Desember 2025 cocok dan siap menjadi opening Januari**. Januari belum diproses.
