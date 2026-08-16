@@ -2074,3 +2074,11 @@ Production login berhasil. Financial Mei, Juni, dan Juli terbaca `Success`; snap
 Export Financial Februari–Juli belum dapat dibuktikan sebagai file yang sudah dibaca penuh. Kategori Penjualan production sukses tetapi kontrol periode tidak berubah melalui sesi ini, sehingga audit kategori penuh belum boleh dinyatakan cocok. Riwayat telemetry cron-job.org tidak tersedia dari halaman production. Olsera token aktif dengan expiry 20/8/2026 dan sumber JWT expiry; AYO token opaque tanpa expiry resmi. Tidak ada implementasi refresh token baru.
 
 Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubahan jadwal cron, atau perubahan angka. Jumlah task production selesai: 2 parsial/metadata (production read-back dan token); task yang masih tersisa: 3 kelompok (export Financial, kategori penuh, telemetry cron).
+## Inventori Desember 2025 — Bootstrap Snapshot (2026-08-16)
+
+- Jalur snapshot existing diperbaiki khusus `2025-12`: fetch stockmovement langsung, full pagination existing, tanpa anchor/carry-forward Januari dan tanpa menyentuh Februari.
+- Production read-back: `Final`, 36 produk, 36 tidak terjual, 0 terjual. Opening/closing terbaca dari snapshot API; stock opname terpisah belum tersedia pada payload canonical.
+- Tests: 231 inventory monthly tests lulus, typecheck lulus, scoped lint lulus, diff check lulus. Build compile lulus tetapi page-data terblokir Mongo URI lokal invalid.
+- Commit `1ee144b` sudah di-push ke `origin/main`; tidak ada lock atau cron historical.
+- Export dipicu melalui UI, namun isi workbook nyata belum dapat dibaca pada sesi browser.
+- Status akhir: **Data API Desember belum lengkap dan perlu bukti tambahan**. Jangan carry-forward ke Januari sebelum bukti opname/export lengkap.
