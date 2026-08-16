@@ -139,3 +139,16 @@ Rincian angka, request, timeout, akun, export, test, dan commit ada di `AYOSERA-
 - Pemeriksaan lokal: Financial core 31/31, cron Financial 57/57, typecheck, scoped lint tanpa error, dan `git diff --check` lulus. Lint hanya menyisakan warning existing.
 - Production read-back, export nyata Februari–Juli, kategori penuh, telemetry cron production, token lifetime, dan backup eksternal belum dapat dibuktikan pada sesi ini tanpa akses production terautentikasi. Tidak ada klaim PASS dan tidak ada data/Inventori/lock yang diubah.
 - Backup bersih lokal dibuat dari `HEAD` pada `backup/ayosera-final-2026-08-16-r1.zip` (11.287.915 byte). Arsip diverifikasi tidak memuat `.env`, `node_modules`, `.next`, `tmp/fixtures`, file Playwright, atau audit user.
+## Production read-back lima task — 16 Agustus 2026
+
+| Task | Hasil | Status |
+|---|---|---|
+| Production | Dashboard terbuka melalui sesi login. Financial Mei, Juni, Juli tampil `Success`; Mei snapshot terakhir 16 Agu 15:06, Juni 15:24, Juli 15:28. Financial UI tidak lagi menampilkan diagnostic subtotal ambigu. | Sebagian Cocok |
+| Export Financial Feb–Jul | Menu export tersedia dan daftar laporan mencakup 5 sheet; pembacaan file unduhan nyata seluruh Februari–Juli belum dapat diselesaikan dari sesi browser ini. | Belum Bisa Dicek |
+| Kategori Feb–Jul | Halaman production `Success`; kontrol periode kategori tidak menerapkan perubahan melalui sesi ini, sehingga perbandingan penuh tidak boleh disimpulkan. | Belum Bisa Dicek |
+| Cron production | Status checkpoint production terlihat, tetapi riwayat durasi/jumlah sukses-gagal/timeout cron-job.org tidak tersedia dari UI yang login. Tidak ada perubahan jadwal atau kode. | Belum Bisa Dicek |
+| Token | Olsera Bearer Token tampil aktif, expiry 20/8/2026 (4 hari), sumber JWT expiry. AYO Mobile Token tersedia tetapi opaque tanpa metadata expiry resmi. Tidak ada refresh token yang dapat dibuktikan, sehingga tidak ada implementasi baru. | Cocok untuk metadata |
+
+Financial level-total yang terbaca: Mei pendapatan Rp351.707.500, laba kotor Rp309.545.360,49, laba bersih Rp129.448.027,24, kas akhir Rp594.209.800,29, aset Rp2.519.025.675,61; Juni pendapatan Rp307.267.500, laba kotor Rp268.059.228,07, laba bersih Rp93.507.722,40, kas akhir Rp571.006.178,62, aset Rp2.444.579.021,01; Juli pendapatan Rp295.345.000, laba kotor Rp276.464.934,65, laba bersih Rp274.515.553,95, kas akhir Rp904.149.685,92, aset Rp2.783.647.376,96. Neraca seimbang pada ketiganya. Tidak ada sync, lock, unlock, atau perubahan Inventori.
+
+Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, audit kategori penuh Februari–Juli, dan telemetry cron production. Penyebabnya adalah kemampuan download/period control dan telemetry cron tidak tersedia dari sesi/browser yang aktif; tidak ada angka yang ditebak.

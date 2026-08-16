@@ -2067,3 +2067,10 @@ Commit sesi ini: `0b6c310` (kode+test, PASS semua pemeriksaan wajib). Tidak ada 
 - Verifikasi lokal: `test:olsera-financial` 31/31, `test:cron-olsera-financial` 57/57, typecheck PASS, scoped lint 0 error, diff check PASS. Build sebelumnya compile tetapi collect route gagal karena Mongo URI lokal invalid.
 - Production deployment/read-back, export isi Februari–Juli, audit kategori penuh, telemetry cron production, token refresh, dan backup eksternal tetap **Belum Bisa Dicek** tanpa sesi/akses production terautentikasi. Tidak ada angka yang ditebak.
 - Backup bersih lokal dibuat dari `HEAD` pada `backup/ayosera-final-2026-08-16-r1.zip` (11.287.915 byte), tanpa `.env`, `node_modules`, `.next`, `tmp/fixtures`, file Playwright, atau audit user.
+## Production read-back lima task — 16 Agustus 2026
+
+Production login berhasil. Financial Mei, Juni, dan Juli terbaca `Success`; snapshot Mei/Juni/Juli masing-masing 85 akun, dengan level-total dan status berikut: Mei pendapatan Rp351.707.500, kas akhir Rp594.209.800,29; Juni pendapatan Rp307.267.500, kas akhir Rp571.006.178,62; Juli pendapatan Rp295.345.000, kas akhir Rp904.149.685,92. Neraca ketiganya seimbang. Diagnostic subtotal ambigu tidak muncul di Financial UI.
+
+Export Financial Februari–Juli belum dapat dibuktikan sebagai file yang sudah dibaca penuh. Kategori Penjualan production sukses tetapi kontrol periode tidak berubah melalui sesi ini, sehingga audit kategori penuh belum boleh dinyatakan cocok. Riwayat telemetry cron-job.org tidak tersedia dari halaman production. Olsera token aktif dengan expiry 20/8/2026 dan sumber JWT expiry; AYO token opaque tanpa expiry resmi. Tidak ada implementasi refresh token baru.
+
+Tidak ada sync ulang Mei–Juli, perubahan Inventori/stok, lock/unlock, perubahan jadwal cron, atau perubahan angka. Jumlah task production selesai: 2 parsial/metadata (production read-back dan token); task yang masih tersisa: 3 kelompok (export Financial, kategori penuh, telemetry cron).
