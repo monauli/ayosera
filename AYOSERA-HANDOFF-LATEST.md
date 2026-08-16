@@ -2110,3 +2110,8 @@ Commit `52d7fe8` mengganti pembanding Februari dari snapshot dirinya sendiri men
 ## Audit file Februari dan katalog — 16 Agustus 2026
 
 `tmp/fixtures` tidak berisi export production AYOSERA maupun export katalog Olsera. `Inventory ilegal.xlsx` terbaca penuh: `February Terjual` 31 baris/31 unik dan `February Keseluruhan` 48 baris/48 unik, tetapi bukan export production. Dua nilai Keseluruhan berbeda dari approved v3 (Sniper Power Light Blue balance 2 vs target 1; GRIP YONEX AC102 balance 56 vs target 60), sehingga export belum lulus. Katalog 48 produk belum dapat diverifikasi karena file katalog tidak tersedia. Tidak ada perubahan data, sync, atau lock.
+## Inventori Maret 2026 — 16 Agustus 2026
+
+Commit `847d5eb` memperbaiki akar masalah snapshot historis: Maret dihitung dari closing Februari melalui `runForwardBackfillMonth` existing, tetap idempotent dan hanya periode Maret. Tests monthly inventory 233, stock-opname 24, rekonsiliasi 84, lock UI 47, typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal terblokir Mongo URI invalid. Commit sudah dipush.
+
+Export resmi Maret dipicu, tetapi read-back masih `25/11/36`; deployment baru/refresh belum terbukti aktif. Maret tidak dikunci dan bulan lain tidak disentuh. Status: **Audit lokal selesai tetapi production belum terverifikasi**.

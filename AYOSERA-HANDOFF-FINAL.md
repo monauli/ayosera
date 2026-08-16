@@ -207,3 +207,10 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Audit katalog 48 produk tidak dapat dilakukan tanpa file katalog Olsera; tidak ada status aktif/terhapus yang ditebak.
 - Tests Inventori, rekonsiliasi, BA/stock-opname, export, typecheck, dan diff check lulus. Tidak ada perubahan kode atau data dan Februari tetap tidak dikunci.
 - Tests comparator, stock-opname/rekonsiliasi, 232 inventory, UI inventory, typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal gagal karena Mongo URI invalid.
+## Implementasi rebuild Inventori Maret 2026 — 16 Agustus 2026
+
+- Diagnosis: guard `isTrustedHistorical` menghentikan refresh Maret dari closing Februari; production sebelumnya terbaca `25 terjual / 11 tidak terjual / 36 keseluruhan`.
+- Commit `847d5eb` menambahkan jalur produksi khusus `2026-03` yang mengambil snapshot Februari sebagai anchor dan menjalankan `runForwardBackfillMonth` existing dengan pagination, matching, dan idempotence. Tidak ada hardcode angka atau produk.
+- Tests monthly inventory (233), stock-opname (24), rekonsiliasi (84), lock UI (47), typecheck, scoped lint, dan diff check lulus. Build compile lulus; page-data lokal gagal karena Mongo URI lokal invalid.
+- Commit sudah dipush ke `origin/main`. Export resmi Maret dipicu dan UI melaporkan selesai, tetapi read-back deployment yang tersedia masih `25/11/36`; deployment baru atau refresh Maret belum terbukti aktif.
+- Tidak ada lock, perubahan Desember/Januari/Februari, perubahan stok Olsera, atau perubahan cron. Status: **Audit lokal selesai tetapi production belum terverifikasi**.
