@@ -707,14 +707,6 @@ export type OlseraInventoryStateDocument = {
   };
 };
 
-export type OlseraInventoryMonthlySnapshotBackupDocument = {
-  _id: string;
-  storeId: number;
-  year: number;
-  month: number;
-  createdAt: Date;
-  snapshots: OlseraInventoryMonthlySnapshotDocument[];
-};
 
 /**
  * Distributed lock/lease untuk mencegah sync Olsera (kategori/penjualan,
@@ -984,7 +976,6 @@ export async function collections() {
     olseraInventoryProducts: db.collection<OlseraInventoryProductDocument>("olsera_inventory_products"),
     olseraInventorySnapshots: db.collection<OlseraInventorySnapshotDocument>("olsera_inventory_snapshots"),
     olseraInventoryMonthlySnapshots: db.collection<OlseraInventoryMonthlySnapshotDocument>("olsera_inventory_monthly_snapshots"),
-    olseraInventoryMonthlySnapshotBackups: db.collection<OlseraInventoryMonthlySnapshotBackupDocument>("olsera_inventory_monthly_snapshot_backups"),
     inventoryMonthlyPeriodLocks: db.collection<InventoryMonthlyPeriodLockDocument>("inventory_monthly_period_locks"),
     olseraInventoryMovements: db.collection<OlseraInventoryMovementDocument>("olsera_inventory_movements"),
     olseraInventorySyncRuns: db.collection<OlseraInventorySyncRunDocument>("olsera_inventory_sync_runs"),
@@ -1044,7 +1035,6 @@ async function createIndexes() {
     olseraInventoryProducts,
     olseraInventorySnapshots,
     olseraInventoryMonthlySnapshots,
-    olseraInventoryMonthlySnapshotBackups,
     inventoryMonthlyPeriodLocks,
     olseraInventoryMovements,
     olseraFinancialEmptyLedgerConfirmations,
@@ -1103,7 +1093,6 @@ async function createIndexes() {
       { unique: true },
     ),
     olseraInventoryMonthlySnapshots.createIndex({ updatedAt: -1 }),
-    olseraInventoryMonthlySnapshotBackups.createIndex({ storeId: 1, year: 1, month: 1, createdAt: -1 }),
     inventoryMonthlyPeriodLocks.createIndex({ storeId: 1, year: 1, month: 1 }, { unique: true }),
     olseraInventoryMovements.createIndex({ date: 1 }),
     olseraInventoryMovements.createIndex({ productId: 1, variantId: 1, date: 1 }),

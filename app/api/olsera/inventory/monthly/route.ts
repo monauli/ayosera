@@ -9,6 +9,7 @@ import { monthlyPeriodStatus, monthlyStockStatus, summarizeMonthlyInventory, typ
 import { getInventorySyncStatus } from "@/lib/olsera-inventory";
 import { getInventoryMonthlyPeriodLock } from "@/lib/inventory-monthly-period-lock";
 import { currentStoreId } from "@/lib/olsera-store-id";
+import { ensureMonthlySnapshotChain } from "@/lib/olsera-inventory-monthly-snapshot-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +40,8 @@ export async function GET(request: Request) {
     const params = querySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
     const year = Number(params.period.slice(0, 4));
     const month = Number(params.period.slice(5));
+    const ensured = await ensureMonthlySnapshotChain({ year, month });
+    if (!ensured.ok) return NextResponse.json({ error: ensured.error }, { status: 409, headers: NO_CACHE_HEADERS });
     const [status, raw] = await Promise.all([
       getInventorySyncStatus(),
       withMongo(async () => {

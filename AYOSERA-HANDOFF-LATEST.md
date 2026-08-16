@@ -2157,3 +2157,14 @@ Supervisor berhasil menjalankan `Periksa Dulu` untuk Maret. Hasil read-only: sna
 Sheet `Maret Keseluruhan` berisi 51 baris, 51 identitas nama/SKU unik yang tersedia, dan 0 duplikat. Workbook tidak menyediakan productId/variantId dan memiliki 9 mismatch di atas. Karena tidak ada bukti adjustment inventori, proses rebuild tidak diubah, production tidak ditulis, Maret tidak dikunci, dan April tidak disentuh.
 
 Status: **Maret belum aman diproses; 9 produk masih Perlu Verifikasi.**
+
+## Penyederhanaan alur Inventori bulanan — 16 Agustus 2026
+
+- Panel Rekonsiliasi Inventori tidak lagi memuat `Bangun Ulang Inventori Bulanan`, `Periksa Dulu`, `Proses`, konfirmasi proses, atau state/request rebuild.
+- Endpoint supervisor dan service khusus rebuild dihapus karena tidak lagi dipakai. Mesin perhitungan `ensureMonthlySnapshotChain` tetap dipertahankan.
+- GET Inventori bulanan kini memanggil `ensureMonthlySnapshotChain` sebagai jalur otomatis resmi saat periode dipilih; jalur ini idempotent, menghormati lock, memakai closing bulan sebelumnya, pergerakan Olsera, produk baru, dan carry-forward yang terbukti.
+- Export tetap read-only dan bukan pemicu rebuild.
+- Perubahan tidak menyentuh Desember 2025, Januari 2026, Februari 2026, stok Olsera, lock/unlock, cron, Financial, atau Kategori Penjualan.
+- Regression test baru memastikan kontrol rebuild tidak kembali ke halaman Rekonsiliasi.
+
+Verifikasi lokal: tests Inventori/BA 31 lulus, tests Rekonsiliasi UI 47 lulus, tests monthly Inventori 233 lulus, typecheck lulus, scoped lint lulus dengan 1 warning baseline `ayoPaymentPeriods`, dan `git diff --check` lulus. Build compile berhasil; page-data lokal masih gagal pada `MongoParseError` karena Mongo URI lokal invalid. Production read-back Maret setelah deployment perubahan ini belum dilakukan; target production tetap 51 produk, unik 51, duplikat 0, dan 9 produk berstatus Menunggu Konfirmasi User. Maret tidak dikunci dan April belum diproses.
