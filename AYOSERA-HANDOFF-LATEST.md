@@ -2176,3 +2176,40 @@ Verifikasi lokal: tests Inventori/BA 31 lulus, tests Rekonsiliasi UI 47 lulus, t
 - Kesembilan produk audit tetap tampil, tetapi payload production masih memberi `snapshotStatus: complete` dan belum memiliki label `Menunggu Konfirmasi User`; angka tidak diubah dan status tidak dipaksa.
 - Rekonsiliasi production tidak menampilkan `Bangun Ulang Inventori Bulanan`, `Periksa Dulu`, atau `Proses`.
 - Tidak ada tindakan lock. Label status 9 produk masih merupakan pekerjaan tersisa; Maret tetap tidak dikunci dan April tidak diproses.
+
+## Audit target 28/23/51 Maret — 16 Agustus 2026
+
+- Workbook `tmp/fixtures/Inventory ilegal.xlsx` terbaca penuh. Sheet `Maret Terjual` memiliki 30 baris produk, dengan 26 baris `sales > 0`; sheet `Maret Keseluruhan` memiliki 51 baris.
+
+## Operasional akhir non-Inventori — 17 Agustus 2026
+
+| Bagian | Status | Bukti | Perubahan |
+|---|---|---|---|
+| Sync AYO | Cocok | Booking dan Payment Events terakhir berhasil 17 Agu 2026 00.00 WIB | Tidak ada |
+| Olsera Sales | Cocok | Terakhir berhasil 17 Agu 2026 00.10 WIB; checkpoint existing aktif | Tidak ada |
+| Olsera Inventory cron | Cocok | Terakhir berhasil 16 Agu 2026 23.25 WIB | Tidak ada; Inventori dikecualikan |
+| Olsera Financial | Cocok | Terakhir berhasil 16 Agu 2026 15.28 WIB; Financial Februari Success | Tidak ada |
+| Token Olsera | Masih Bermasalah | JWT aktif sampai 20 Agu 2026; refresh-token resmi tidak terbukti di kode | Tidak ada |
+| Token AYO | Belum Bisa Dicek | Token opaque tanpa expiry resmi | Tidak ada tanggal palsu |
+| Kategori Penjualan | Cocok | Periode Februari diterapkan 01–28 Feb; total production Rp62.367.200 | Tidak ada |
+| Laporan Keuangan | Cocok | Februari Pendapatan Rp152.862.900; Neraca seimbang | Tidak ada |
+| Rekonsiliasi Omzet | Cocok | Februari Rp107.593.500 = Rp107.593.500; April -Rp739.999 masih Cocok sesuai toleransi | Tidak ada |
+| Export non-Inventori | Belum Bisa Dicek | File Excel nyata belum berhasil ditangkap/dibaca | Tidak ada |
+
+Riwayat durasi cron-job.org, statistik sukses/gagal/timeout, overlap jadwal, dan penyebab timeout 30 detik tidak tersedia dari aplikasi/repo. Tidak ada perubahan kode, jadwal, timeout, token, data, atau backup Google Drive. Tests cron/token/kategori/Financial/rekonsiliasi/export dan timeout lulus; typecheck/diff-check lulus. Task tersisa: akses telemetry cron-job.org, bukti refresh-token Olsera, dan bukti file export nyata.
+- Read-back production terbaru mengembalikan 51 produk, unik 51, duplikat 0, dengan tabCounts `sold 24`, `unsold 27`, `overall 51`.
+- Kandidat yang tidak konsisten antara bukti workbook dan snapshot production antara lain `Bullpadel Indiga Discover PWR 2025`, `Siux Beat Hybrid 2`, `Siux Beat Hybrid Air 2`, serta nama/identitas `BOLA PADEL ODEA` versus `BOLA PADEL ODEA ROSE`; production menampilkan sebagian sebagai carry-forward dengan sales 0. Ini bukan bukti aman untuk menambah tiga produk tertentu tanpa payload stockmovement/API yang dapat dicocokkan.
+- Target `28/23/51` tidak dapat dibuktikan dari workbook maupun read-back saat ini: angka sumber yang terbaca saling tidak konsisten (30 baris terjual, 26 sales positif, production 24 sold). Tidak ada write, backup, lock, atau perubahan periode lain dilakukan.
+- Status: **Maret belum berhasil — penyebab pasti adalah sumber target 28 tidak konsisten dengan workbook dan snapshot production; identitas/angka produk yang harus ditambahkan belum terbukti.**
+# Operational clarification superseding prior notes — 2026-08-19
+
+User operational confirmation is the newest evidence and supersedes earlier figures: Bullpadel Sniper 2.0 Power Light Blue 2026 February `salesQty=0`; GRIP YONEX AC102 incoming `60` belongs to March; BOLA PADEL ODEA ROSE February `salesQty=36` and remains separate from BOLA PADEL ODEA. Closing must be calculated from the inventory formula, not hardcoded. Product IDs must be audited exactly before any write.
+
+Booking `MN/2428/260809/0002994` must be audited from a live read-only payload using the original `reservation_payment_id`, display payment ID, amount, `created_at`, status, and payment method. The screenshot values Rp500.000 and Rp150.000 supersede neither source payload nor the older Rp150.000/Rp50.000 note until live evidence explains the difference. No manual payment or duplicate event may be created.
+
+This clarification was recorded on 2026-08-19, but no production write was performed in this environment: `.env.local` contains redacted `[SENSITIVE]` placeholders, so the configured `MONGODB_URI` is not a valid live connection string. Inventory and booking remain pending exact live read-only verification; February/March remain unlocked.
+# Targeted inventory correction implementation — 2026-08-19
+
+Implementasi lokal disiapkan untuk koreksi scoped berbasis `storeId + period + productId`, marker `USER_CONFIRMED_2026_08_19`, backup nilai snapshot sebelum write, formula closing, dan guard periode terkunci. Target hanya `106771148`, `111350931`, dan `116138490` pada Februari/Maret 2026; booking/payment/financial/Olsera stock asli tidak disentuh.
+
+Dry-run/production migration belum dijalankan. Environment lokal yang tersedia kembali memakai Mongo URI redaksi/invalid, sehingga production read-back, commit, push, deploy, dan write sengaja ditahan.

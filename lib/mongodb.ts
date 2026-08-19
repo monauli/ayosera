@@ -705,6 +705,17 @@ export type OlseraInventoryStateDocument = {
     incomplete?: number;
     message?: string;
   };
+  targetedInventoryCorrections?: Record<string, {
+    status: "running" | "complete" | "failed";
+    marker: string;
+    reason: string;
+    backup: unknown[];
+    changedProductIds: number[];
+    startedAt?: Date;
+    completedAt?: Date;
+    failedAt?: Date;
+    message?: string;
+  }>;
 };
 
 

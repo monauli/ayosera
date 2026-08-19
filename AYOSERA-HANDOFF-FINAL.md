@@ -230,3 +230,25 @@ Sisa task production: 3 kelompok — pembacaan export nyata Februari–Juli, aud
 - Ringkasan rekonsiliasi sebelum write masih 33/33 Cocok karena snapshot lama belum diganti; angka ini bukan hasil rebuild.
 - Konfirmasi `Proses` tidak menghasilkan read-back yang dapat dibuktikan karena sesi browser terputus setelah dialog konfirmasi. Tidak ada klaim write, tidak ada lock, dan April tidak disentuh.
 - Status Maret: **Dry-run aman; proses/write dan production read-back belum terbukti**.
+
+## Operasional akhir non-Inventori — 17 Agustus 2026
+
+| Bagian | Status | Bukti | Perubahan |
+|---|---|---|---|
+| Sync AYO | Cocok | Booking dan Payment Events terakhir berhasil 17 Agu 2026 00.00 WIB | Tidak ada |
+| Olsera Sales | Cocok | Terakhir berhasil 17 Agu 2026 00.10 WIB; checkpoint existing aktif | Tidak ada |
+| Olsera Inventory cron | Cocok | Terakhir berhasil 16 Agu 2026 23.25 WIB | Tidak ada; Inventori dikecualikan |
+| Olsera Financial | Cocok | Terakhir berhasil 16 Agu 2026 15.28 WIB; Financial Februari Success | Tidak ada |
+| Token Olsera | Masih Bermasalah | JWT aktif sampai 20 Agu 2026; refresh-token resmi tidak terbukti di kode | Tidak ada |
+| Token AYO | Belum Bisa Dicek | Token opaque tanpa expiry resmi | Tidak ada tanggal palsu |
+| Kategori Penjualan | Cocok | Periode Februari diterapkan 01–28 Feb; total production Rp62.367.200 | Tidak ada |
+| Laporan Keuangan | Cocok | Februari Pendapatan Rp152.862.900; Neraca seimbang | Tidak ada |
+| Rekonsiliasi Omzet | Cocok | Februari Rp107.593.500 = Rp107.593.500; April -Rp739.999 masih Cocok sesuai toleransi | Tidak ada |
+| Export non-Inventori | Belum Bisa Dicek | File Excel nyata belum berhasil ditangkap/dibaca | Tidak ada |
+
+Durasi cron-job.org, statistik sukses/gagal/timeout, overlap jadwal, dan penyebab timeout 30 detik tidak tersedia dari aplikasi/repo. Tidak ada perubahan kode, jadwal, timeout, token, data, atau backup Google Drive. Tests cron/token/kategori/Financial/rekonsiliasi/export dan timeout lulus; typecheck/diff-check lulus. Task tersisa: akses telemetry cron-job.org, bukti refresh-token Olsera, dan bukti file export nyata.
+# Targeted inventory correction implementation — 2026-08-19
+
+Planner dan migrasi internal satu kali telah disiapkan untuk tiga productId final (`106771148`, `111350931`, `116138490`) pada periode Februari/Maret 2026. Migrasi memiliki marker `USER_CONFIRMED_2026_08_19`, menyimpan backup before-state, menghitung closing dari formula, menolak periode terkunci, dan hanya mengubah enam snapshot target.
+
+Belum ada production write/read-back, deployment, commit, atau push karena environment lokal tidak menyediakan Mongo URI produksi yang valid.

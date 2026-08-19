@@ -11,6 +11,7 @@ samples/production/list-bookings/*.json
 .env
 .env.local
 .env.*.local
+.env.production.audit.local
 
 npm-debug.log*
 yarn-debug.log*

@@ -240,6 +240,7 @@ export async function requireUser() {
 
 export async function requireSupervisor() {
   const user = await requireUser();
+  if (user.role !== "supervisor") throw jsonError("Supervisor access required", 403);
   return user;
 }
 
