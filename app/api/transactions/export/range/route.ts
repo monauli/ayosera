@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { resolveVenueName } from "@/lib/booking-mapper";
-import { buildOmzetPeriodWorkbook, dateRange, periodLabelRange } from "@/lib/omzet-export";
+import { buildOmzetPeriodWorkbook, dateRange, periodLabelRange, withCanonicalPaymentAmounts } from "@/lib/omzet-export";
 import { validateDateRangeQuery } from "@/lib/date-range-validation";
+import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
+import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
+import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
 
 export const runtime = "nodejs";
 
@@ -20,8 +23,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    const { periodBookings, sportByFieldId, venueName } = await withMongo(async () => {
-      const { bookings, fields } = await collections();
+    const { periodBookings, sportByFieldId, venueName, paymentTypeByBooking } = await withMongo(async () => {
+      const { bookings, fields, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
       const [rows, fieldRows] = await Promise.all([
         bookings
           .find({ date: { $gte: start, $lte: end } })
@@ -31,10 +34,14 @@ export async function GET(request: Request) {
       ]);
       const map = new Map<number, string>();
       for (const f of fieldRows) if (f.id && f.sport_name) map.set(f.id, f.sport_name);
+      const staged = isPaymentEventsReadEnabled()
+        ? await readActiveStagedPaymentEvents(start, end, { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation })
+        : null;
       return {
-        periodBookings: rows as BookingDocument[],
+        periodBookings: staged ? withCanonicalPaymentAmounts(rows as BookingDocument[], dashboardPaymentAmountsByBooking(staged.events)) : rows as BookingDocument[],
         sportByFieldId: map,
         venueName: resolveVenueName(),
+        paymentTypeByBooking: staged ? dashboardPaymentTypeByBooking(staged.events) : undefined,
       };
     });
 
@@ -46,6 +53,7 @@ export async function GET(request: Request) {
       sportByFieldId,
       periodLabel: periodLabelRange(start, end),
       dateList: dateRange(start, end),
+      paymentTypeByBooking,
     });
 
     const filename = start === end ? `Omzet ${start}.xlsx` : `Omzet ${start} sd ${end}.xlsx`;

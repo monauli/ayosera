@@ -287,3 +287,27 @@ test("REGRESSION 27 Feb: MN + Payment Link Rp200.000 muncul di sheet AYO, TIDAK 
   assert.equal(revenueForBooking(all, targetId), 200000);
   assert.equal(revenueForBooking(all, otherAyoId), 500000);
 });
+
+test("REGRESSION 12 Agu: split payment tetap pada booking representative, bukan sibling", async () => {
+  const representative = "MN/2428/260809/0002994";
+  const sibling = "MN/2428/260809/0002993";
+  const bookings = [
+    fakeBooking({ booking_id: representative, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 50000 }),
+    fakeBooking({ booking_id: sibling, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 150000, start_time: "19:00", end_time: "20:00" }),
+  ];
+  const events = [
+    { ...paymentEvent("p-150", representative, 150000, "2026-08-12"), paymentType: "Payment Link" },
+    { ...paymentEvent("p-50", representative, 50000, "2026-08-12"), paymentType: "Payment Link" },
+  ];
+  const canonical = withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(events));
+  assert.deepEqual(canonical.map((b) => [b.booking_id, b.total_price]), [[representative, 200000]]);
+  const bytes = await buildOmzetHarianWorkbook({ date: "2026-08-12", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical, paymentTypeByBooking: dashboardPaymentTypeByBooking(events) });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const ayo = wb.getWorksheet("AYO")!;
+  const all = wb.getWorksheet("ALL")!;
+  assert.equal(revenueForBooking(ayo, representative), 200000);
+  assert.throws(() => revenueForBooking(ayo, sibling), /tidak ditemukan/);
+  assert.equal(revenueForBooking(all, representative), 200000);
+  assert.equal([...canonical].reduce((sum, b) => sum + b.total_price, 0), 200000);
+});
