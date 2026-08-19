@@ -257,3 +257,8 @@ Belum ada production write/read-back, deployment, commit, atau push karena envir
 Commit `7779c9d` telah dipush ke `main`; deployment Vercel Production berstatus Ready. Jalur correction supervisor-only telah dideploy dengan dry-run default dan konfirmasi eksplisit untuk write.
 
 Production dry-run/read-back/write belum dilakukan karena sesi autentikasi production tidak tersedia; request anonim dikonfirmasi menghasilkan `401 Unauthorized`. Tidak ada data production yang berubah dan marker migrasi belum dibuat.
+# Export payment canonicalization — 2026-08-19
+
+Export range kini memakai sumber payment-event canonical yang sama dengan Dashboard, harian, dan bulanan. Regression test split payment `MN/2428/260809/0002994` lulus: total Rp200.000 tetap satu kali dan sibling `...2993` tidak menerima payment milik representative. Commit `abed4a6` telah dideploy dan Vercel Production Ready.
+
+Workbook production 12 Agustus belum dibaca ulang karena sesi login production tidak tersedia. Tidak ada perubahan MongoDB, booking, payment, financial, inventori, atau cron.

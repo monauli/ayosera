@@ -2218,3 +2218,8 @@ Dry-run/production migration belum dijalankan. Environment lokal yang tersedia k
 Commit `7779c9d` dipush ke `main`; deployment Production Vercel `dpl_EUXyJHd6mjMKWQiBEuSMkcSmwQZD` berstatus Ready dan alias production aktif. Endpoint supervisor-only tersedia dengan dry-run default.
 
 Production dry-run belum dapat dipanggil: request tanpa sesi menghasilkan `401 Unauthorized`, dan browser session yang tersedia tidak memiliki sesi login AYOSERA. Tidak ada write, backup marker, perubahan booking/payment/financial, atau lock. Migration marker belum dibuat di production.
+# Export payment canonicalization — 2026-08-19
+
+Commit `abed4a6` menyamakan export range dengan payment-event aggregate canonical yang sudah dipakai Dashboard dan export harian/bulanan. Regression Excel untuk `MN/2428/260809/0002994` membuktikan payment Rp150.000 + Rp50.000 menjadi Rp200.000 pada representative booking, sibling `...2993` tidak menerima payment, dan total tidak double-count. Deployment Vercel Production berstatus Ready.
+
+Download workbook production 12 Agustus dan perbandingan Dashboard-vs-Excel belum dapat dilakukan karena sesi login production tidak tersedia pada browser. Tidak ada data booking/payment yang diubah.
