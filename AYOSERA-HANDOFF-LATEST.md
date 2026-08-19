@@ -2213,3 +2213,8 @@ This clarification was recorded on 2026-08-19, but no production write was perfo
 Implementasi lokal disiapkan untuk koreksi scoped berbasis `storeId + period + productId`, marker `USER_CONFIRMED_2026_08_19`, backup nilai snapshot sebelum write, formula closing, dan guard periode terkunci. Target hanya `106771148`, `111350931`, dan `116138490` pada Februari/Maret 2026; booking/payment/financial/Olsera stock asli tidak disentuh.
 
 Dry-run/production migration belum dijalankan. Environment lokal yang tersedia kembali memakai Mongo URI redaksi/invalid, sehingga production read-back, commit, push, deploy, dan write sengaja ditahan.
+# Targeted correction deployment status — 2026-08-19
+
+Commit `7779c9d` dipush ke `main`; deployment Production Vercel `dpl_EUXyJHd6mjMKWQiBEuSMkcSmwQZD` berstatus Ready dan alias production aktif. Endpoint supervisor-only tersedia dengan dry-run default.
+
+Production dry-run belum dapat dipanggil: request tanpa sesi menghasilkan `401 Unauthorized`, dan browser session yang tersedia tidak memiliki sesi login AYOSERA. Tidak ada write, backup marker, perubahan booking/payment/financial, atau lock. Migration marker belum dibuat di production.

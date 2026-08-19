@@ -252,3 +252,8 @@ Durasi cron-job.org, statistik sukses/gagal/timeout, overlap jadwal, dan penyeba
 Planner dan migrasi internal satu kali telah disiapkan untuk tiga productId final (`106771148`, `111350931`, `116138490`) pada periode Februari/Maret 2026. Migrasi memiliki marker `USER_CONFIRMED_2026_08_19`, menyimpan backup before-state, menghitung closing dari formula, menolak periode terkunci, dan hanya mengubah enam snapshot target.
 
 Belum ada production write/read-back, deployment, commit, atau push karena environment lokal tidak menyediakan Mongo URI produksi yang valid.
+# Targeted correction deployment status — 2026-08-19
+
+Commit `7779c9d` telah dipush ke `main`; deployment Vercel Production berstatus Ready. Jalur correction supervisor-only telah dideploy dengan dry-run default dan konfirmasi eksplisit untuk write.
+
+Production dry-run/read-back/write belum dilakukan karena sesi autentikasi production tidak tersedia; request anonim dikonfirmasi menghasilkan `401 Unauthorized`. Tidak ada data production yang berubah dan marker migrasi belum dibuat.
