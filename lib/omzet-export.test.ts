@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import ExcelJS from "exceljs";
-import { buildOmzetHarianWorkbook, buildOmzetPeriodWorkbook, classifyBookingExportSource, computeBookingGroups, type OmzetExportInput, withCanonicalPaymentAmounts } from "./omzet-export.ts";
+import { buildOmzetHarianWorkbook, buildOmzetPeriodWorkbook, classifyBookingExportSource, type OmzetExportInput, withCanonicalPaymentAmountsKeepUncovered } from "./omzet-export.ts";
 import type { BookingDocument } from "./mongodb.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "./dashboard-payment-metrics.ts";
@@ -96,15 +96,6 @@ function revenueForBooking(ws: ExcelJS.Worksheet, bookingId: string) {
   throw new Error(`Booking ${bookingId} tidak ditemukan`);
 }
 
-function groupCellForBooking(ws: ExcelJS.Worksheet, bookingId: string, header: "Group Booking ID" | "Jumlah Sesi" | "Total Grup") {
-  const bookingColumn = headerColumn(ws, "Booking ID");
-  const targetColumn = headerColumn(ws, header);
-  for (let row = 5; row <= ws.rowCount; row++) {
-    if (ws.getCell(row, bookingColumn).value === bookingId) return ws.getCell(row, targetColumn).value;
-  }
-  throw new Error(`Booking ${bookingId} tidak ditemukan`);
-}
-
 test("buildOmzetHarianWorkbook: nama court berbahaya (field_name diawali karakter formula) disimpan sebagai teks aman di header Summary", async () => {
   const malicious = fakeBooking({ field_name: "=SUM(A1:A2)" });
   const input: OmzetExportInput = {
@@ -185,7 +176,7 @@ test("Export Bulanan memakai total payment Dashboard untuk Juli tanpa mengubah m
     paymentEvent("first", targetId, 150000, "2026-07-30"),
     paymentEvent("second", targetId, 50000, "2026-07-30"),
   ];
-  const canonical = withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(events));
+  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(events));
   assert.equal(canonical.find((booking) => booking.booking_id === targetId)?.total_price, 200000);
   assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0), 237491000);
   assert.equal(canonical.find((booking) => booking.booking_id === targetId)?.field_name, "Court No 4");
@@ -206,7 +197,7 @@ test("Export Bulanan memakai total payment Dashboard untuk Juli tanpa mengubah m
   assert.equal(revenueForBooking(all, baseId), 237291000);
 });
 
-test("Export Bulanan Juni menambah tepat Rp600.000 dan tidak membuat booking tanpa payment", () => {
+test("Export Bulanan Juni menambah tepat Rp600.000 dari multi-payment, dan booking tanpa payment event tetap muncul dengan nilai aslinya (koreksi 20 Agustus)", () => {
   const ids = ["MN/2428/260525/0001581", "MN/2428/260525/0001582", "MN/2428/260606/0001835", "MN/2428/260611/0001951"];
   const bookings = [
     fakeBooking({ booking_id: "JUNE-BASE", date: "2026-06-01", total_price: 241945499 }),
@@ -217,10 +208,14 @@ test("Export Bulanan Juni menambah tepat Rp600.000 dan tidak membuat booking tan
     paymentEvent("june-base", "JUNE-BASE", 241945499, "2026-06-01"),
     ...ids.flatMap((bookingId, index) => [paymentEvent(`${index}-a`, bookingId, 150000, `2026-06-${String(index + 4).padStart(2, "0")}`), paymentEvent(`${index}-b`, bookingId, index < 2 ? 125000 : 50000, `2026-06-${String(index + 4).padStart(2, "0")}`)]),
   ];
-  const canonical = withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(events));
-  assert.equal(canonical.some((booking) => booking.booking_id === "NO-PAYMENT"), false);
-  assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0), 242895499);
-  assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0) - bookings.filter((booking) => booking.booking_id !== "NO-PAYMENT").reduce((sum, booking) => sum + booking.total_price, 0), 600000);
+  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(events));
+  // NO-PAYMENT tidak dihapus: tidak ada payment event untuknya, jadi nilai asli (999999) dipertahankan apa adanya.
+  const noPayment = canonical.find((booking) => booking.booking_id === "NO-PAYMENT");
+  assert.ok(noPayment, "booking tanpa payment event tidak boleh di-drop dari export");
+  assert.equal(noPayment.total_price, 999999);
+  const canonicalized = canonical.filter((booking) => booking.booking_id !== "NO-PAYMENT");
+  assert.equal(canonicalized.reduce((sum, booking) => sum + booking.total_price, 0), 242895499);
+  assert.equal(canonicalized.reduce((sum, booking) => sum + booking.total_price, 0) - bookings.filter((booking) => booking.booking_id !== "NO-PAYMENT").reduce((sum, booking) => sum + booking.total_price, 0), 600000);
 });
 
 // ---------------------------------------------------------------------------
@@ -270,7 +265,7 @@ test("REGRESSION 27 Feb: MN + Payment Link Rp200.000 muncul di sheet AYO, TIDAK 
   ];
   const paymentAmounts = dashboardPaymentAmountsByBooking(events);
   const paymentTypeByBooking = dashboardPaymentTypeByBooking(events);
-  const canonicalBookings = withCanonicalPaymentAmounts(bookings, paymentAmounts);
+  const canonicalBookings = withCanonicalPaymentAmountsKeepUncovered(bookings, paymentAmounts);
   const input: OmzetExportInput = {
     date: "2026-02-27",
     venueName: "BC Padel Club",
@@ -298,121 +293,87 @@ test("REGRESSION 27 Feb: MN + Payment Link Rp200.000 muncul di sheet AYO, TIDAK 
 });
 
 // ---------------------------------------------------------------------------
-// Koreksi 20 Agustus: multi-sesi TIDAK BOLEH digabung/menghapus sibling.
-// Root cause bug produksi (abed4a6, 12 Agustus): AYO melaporkan seluruh
-// payment sebuah reservasi 2-sesi di bawah SATU booking_id representative
-// (0002994) walau secara lokal ada 2 dokumen booking terpisah (0002993 utk
-// 17:00-18:00 Rp150.000, 0002994 utk 18:00-19:00 Rp50.000). withCanonicalPaymentAmounts
-// versi lama menimpa total_price 0002994 jadi Rp200.000 (menggandakan) dan
-// MENGHAPUS 0002993 sepenuhnya (tidak match paymentAmounts). Klarifikasi user
-// final: masing-masing sesi TETAP nominalnya sendiri; total grup Rp200.000
-// hanya jadi kolom tambahan pada baris representative, tidak menggantikan
-// Revenue Venue.
+// Koreksi 20 Agustus: 0002993 dan 0002994 adalah DUA BOOKING TERPISAH DAN
+// TIDAK BERHUBUNGAN (dikonfirmasi langsung dari Dashboard AYOSERA), bukan
+// satu reservasi 2-sesi. Nama pemesan kebetulan sama, jam booking berbeda,
+// urusan berbeda. 0002994 sendiri adalah SATU booking (satu sesi) yang
+// dibayar via 2 payment event (Rp150.000 + Rp50.000 = Rp200.000) — kasus
+// "satu sesi, banyak payment" yang sudah benar sejak commit 08a5ce6.
+//
+// Root cause bug produksi yang sebenarnya: 0002993 tidak punya payment event
+// dengan booking_id miliknya sendiri (sumber payment-events ini tidak
+// mencakupnya), sehingga aturan lama "booking tanpa payment event di-drop
+// dari export" menghapusnya sepenuhnya dari workbook — padahal booking itu
+// nyata dan tidak ada hubungannya dengan payment 0002994. Fix: booking tanpa
+// payment event match TETAP MUNCUL dengan total_price aslinya (bukan
+// di-drop, bukan diganti nilai lain). Percobaan sebelumnya (fe282ca) salah
+// mendiagnosis ini sebagai "grup multi-sesi" berdasarkan heuristik nama
+// pemesan + jam berdekatan, yang false-positive match 0002993 dengan 0002994
+// dan sudah di-revert sepenuhnya.
 // ---------------------------------------------------------------------------
 
-function multiSessionFixture() {
-  const representative = "MN/2428/260809/0002994";
-  const sibling = "MN/2428/260809/0002993";
+test("REGRESSION 12 Agu (final): booking tanpa payment event match TETAP MUNCUL dengan total_price aslinya, tidak di-drop", async () => {
+  const unrelated = "MN/2428/260809/0002993"; // tidak ada payment event sama sekali untuk booking ini
   const bookings = [
-    fakeBooking({ booking_id: sibling, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 150000, start_time: "17:00", end_time: "18:00" }),
-    fakeBooking({ booking_id: representative, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 50000, start_time: "18:00", end_time: "19:00" }),
+    fakeBooking({ booking_id: unrelated, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 150000, start_time: "17:00", end_time: "18:00" }),
   ];
-  // AYO melaporkan KEDUA payment di bawah booking_id representative — quirk sumber data asli.
+  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking([]));
+  assert.equal(canonical.length, 1, "booking tidak boleh di-drop hanya karena tidak ada payment event untuk booking_id-nya");
+  assert.equal(canonical[0].total_price, 150000, "nilai asli yang sudah tersimpan dipertahankan, bukan diganti 0/undefined");
+
+  const bytes = await buildOmzetHarianWorkbook({ date: "2026-08-12", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const walkIn = wb.getWorksheet("Walk In")!;
+  assert.equal(revenueForBooking(walkIn, unrelated), 150000);
+});
+
+test("REGRESSION 12 Agu (final): booking satu sesi dengan 2 payment event TETAP dikanonikalisasi ke jumlah keduanya (perilaku sejak 08a5ce6, tidak berubah)", async () => {
+  const single = "MN/2428/260809/0002994"; // satu sesi, dibayar 2x: 150000 + 50000
+  const bookings = [
+    fakeBooking({ booking_id: single, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 50000, start_time: "18:00", end_time: "19:00" }),
+  ];
   const events = [
-    paymentEvent("p-150", representative, 150000, "2026-08-12"),
-    paymentEvent("p-50", representative, 50000, "2026-08-12"),
+    paymentEvent("p-150", single, 150000, "2026-08-12"),
+    paymentEvent("p-50", single, 50000, "2026-08-12"),
   ];
-  return { representative, sibling, bookings, events };
-}
+  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(events));
+  assert.equal(canonical.length, 1);
+  assert.equal(canonical[0].total_price, 200000, "total_price diganti jumlah kedua payment event (150000+50000), bukan nilai lama 50000");
 
-test("REGRESSION 12 Agu (koreksi): computeBookingGroups mendeteksi grup dari sesi lokal berurutan, bukan booking_id payment event", () => {
-  const { representative, sibling, bookings } = multiSessionFixture();
-  const groups = computeBookingGroups(bookings);
-  assert.equal(groups.get(sibling)?.groupBookingId, representative);
-  assert.equal(groups.get(representative)?.groupBookingId, representative);
-  assert.equal(groups.get(sibling)?.sessionCount, 2);
-  assert.equal(groups.get(representative)?.sessionCount, 2);
-  assert.equal(groups.get(sibling)?.groupTotal, 200000);
-  assert.equal(groups.get(representative)?.groupTotal, 200000);
-  assert.equal(groups.get(sibling)?.isRepresentative, false);
-  assert.equal(groups.get(representative)?.isRepresentative, true);
+  const bytes = await buildOmzetHarianWorkbook({ date: "2026-08-12", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical, paymentTypeByBooking: dashboardPaymentTypeByBooking(events) });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const walkIn = wb.getWorksheet("Walk In")!;
+  assert.equal(revenueForBooking(walkIn, single), 200000);
 });
 
-test("REGRESSION 12 Agu (koreksi): withCanonicalPaymentAmounts tidak memindahkan/menghapus payment sibling", () => {
-  const { representative, sibling, bookings, events } = multiSessionFixture();
-  const canonical = withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(events));
+test("REGRESSION 12 Agu (final): kedua booking berdampingan bersama tidak digabung, tidak ada kolom grup, dan tidak double count", async () => {
+  const unrelated = "MN/2428/260809/0002993"; // tidak ada payment event -> nilai asli dipertahankan
+  const single = "MN/2428/260809/0002994"; // satu sesi, 2 payment event -> dikanonikalisasi
+  const bookings = [
+    fakeBooking({ booking_id: unrelated, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 150000, start_time: "17:00", end_time: "18:00" }),
+    fakeBooking({ booking_id: single, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 50000, start_time: "18:00", end_time: "19:00" }),
+  ];
+  const events = [
+    paymentEvent("p-150", single, 150000, "2026-08-12"),
+    paymentEvent("p-50", single, 50000, "2026-08-12"),
+  ];
+  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(events));
+  assert.equal(canonical.length, 2, "kedua booking tetap ada sebagai baris terpisah, tidak ada yang hilang atau digabung");
   const byId = new Map(canonical.map((b) => [b.booking_id, b.total_price]));
-  assert.equal(byId.get(sibling), 150000, "2993 tetap Rp150.000");
-  assert.equal(byId.get(representative), 50000, "2994 tetap Rp50.000 (bukan digabung 200000)");
-  assert.equal(canonical.length, 2, "kedua sesi tetap ada, tidak ada yang terhapus");
-  assert.equal(canonical.reduce((sum, b) => sum + b.total_price, 0), 200000, "total dua baris = Rp200.000");
-});
+  assert.equal(byId.get(unrelated), 150000);
+  assert.equal(byId.get(single), 200000);
+  assert.equal(canonical.reduce((sum, b) => sum + b.total_price, 0), 350000, "tidak ada double count: 150000 (0002993, tidak berhubungan) + 200000 (0002994, satu sesi 2 payment)");
 
-test("REGRESSION 12 Agu (koreksi): kolom Group Booking ID/Jumlah Sesi/Total Grup pada Walk In & ALL, harian dan periode", async () => {
-  const { representative, sibling, bookings, events } = multiSessionFixture();
-  const canonical = withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(events));
-  const paymentTypeByBooking = dashboardPaymentTypeByBooking(events); // tidak ada Payment Link -> tetap Walk In
-
-  for (const bytes of [
-    await buildOmzetHarianWorkbook({ date: "2026-08-12", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical, paymentTypeByBooking }),
-    await buildOmzetPeriodWorkbook({ date: "2026-08-01", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical, paymentTypeByBooking, periodLabel: "1 - 31 Agustus 2026", dateList: ["2026-08-12"] }),
-  ]) {
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
-    const walkIn = wb.getWorksheet("Walk In")!;
-    const all = wb.getWorksheet("ALL")!;
-
-    for (const ws of [walkIn, all]) {
-      assert.equal(revenueForBooking(ws, sibling), 150000);
-      assert.equal(revenueForBooking(ws, representative), 50000);
-      assert.equal(groupCellForBooking(ws, sibling, "Group Booking ID"), representative);
-      assert.equal(groupCellForBooking(ws, representative, "Group Booking ID"), representative);
-      assert.equal(groupCellForBooking(ws, sibling, "Jumlah Sesi"), 2);
-      assert.equal(groupCellForBooking(ws, representative, "Jumlah Sesi"), 2);
-      // Total Grup hanya di representative, sibling kosong (tidak boleh dijumlahkan dua kali).
-      assert.equal(groupCellForBooking(ws, sibling, "Total Grup"), "");
-      assert.equal(groupCellForBooking(ws, representative, "Total Grup"), 200000);
-    }
-  }
-});
-
-test("REGRESSION 12 Agu (koreksi): Summary Court 3 Walk In tetap Rp200.000 dari Revenue Venue per sesi", async () => {
-  const { bookings, events } = multiSessionFixture();
-  const canonical = withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(events));
   const paymentTypeByBooking = dashboardPaymentTypeByBooking(events);
   const bytes = await buildOmzetHarianWorkbook({ date: "2026-08-12", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical, paymentTypeByBooking });
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
-  const summary = wb.worksheets[0]; // sheet Summary selalu pertama, nama termasuk bulan (mis. "Summary Agustus'26")
-  const court3 = headerColumn(summary, "Court 3");
-  assert.equal(summary.getCell(17, court3 + 1).value, 200000, "Summary Walk In 12 Agustus, Court 3");
-});
-
-test("Single-session tidak berubah: Group Booking ID = booking_id sendiri, Jumlah Sesi 1, Total Grup kosong", async () => {
-  const solo = fakeBooking({ booking_id: "MN/2428/260812/0009999", date: "2026-08-12", field_name: "Court No 5", total_price: 100000 });
-  const bytes = await buildOmzetHarianWorkbook({ date: "2026-08-12", venueName: "BC Padel Club", dayBookings: [solo], monthBookings: [solo] });
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
-  const ws = wb.getWorksheet("Walk In")!; // "MN..." tanpa paymentType Payment Link -> Walk In
-  assert.equal(revenueForBooking(ws, solo.booking_id), 100000);
-  assert.equal(groupCellForBooking(ws, solo.booking_id, "Group Booking ID"), solo.booking_id);
-  assert.equal(groupCellForBooking(ws, solo.booking_id, "Jumlah Sesi"), 1);
-  assert.equal(groupCellForBooking(ws, solo.booking_id, "Total Grup"), "");
-});
-
-test("Multi-payment satu sesi (satu dokumen booking, dua payment event) tetap benar dan tidak dianggap grup multi-sesi", async () => {
-  const targetId = "MN/2428/260729/0002761";
-  const booking = fakeBooking({ booking_id: targetId, date: "2026-07-30", field_name: "Court No 4", booking_source: "reservation", total_price: 50000, start_time: "16:00", end_time: "17:00" });
-  const events = [paymentEvent("first", targetId, 150000, "2026-07-30"), paymentEvent("second", targetId, 50000, "2026-07-30")];
-  const canonical = withCanonicalPaymentAmounts([booking], dashboardPaymentAmountsByBooking(events));
-  assert.equal(canonical.length, 1);
-  assert.equal(canonical[0].total_price, 200000, "satu sesi, dua payment -> total_price diganti canonical seperti sebelumnya");
-  const paymentTypeByBooking = dashboardPaymentTypeByBooking(events);
-  const bytes = await buildOmzetHarianWorkbook({ date: "2026-07-30", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical, paymentTypeByBooking });
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
   const walkIn = wb.getWorksheet("Walk In")!;
-  assert.equal(revenueForBooking(walkIn, targetId), 200000);
-  assert.equal(groupCellForBooking(walkIn, targetId, "Jumlah Sesi"), 1, "bukan grup multi-sesi walau dua payment event");
-  assert.equal(groupCellForBooking(walkIn, targetId, "Total Grup"), "", "tidak ada Total Grup untuk sesi tunggal, hindari double count");
+  assert.equal(revenueForBooking(walkIn, unrelated), 150000);
+  assert.equal(revenueForBooking(walkIn, single), 200000);
+  for (const header of ["Group Booking ID", "Jumlah Sesi", "Total Grup"]) {
+    assert.throws(() => headerColumn(walkIn, header), /tidak ditemukan/, `kolom "${header}" tidak boleh ada di output`);
+  }
 });

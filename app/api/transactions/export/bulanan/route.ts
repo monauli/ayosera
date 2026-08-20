@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { resolveVenueName } from "@/lib/booking-mapper";
-import { buildOmzetPeriodWorkbook, dateRange, periodLabelMonth, withCanonicalPaymentAmounts } from "@/lib/omzet-export";
+import { buildOmzetPeriodWorkbook, dateRange, periodLabelMonth, withCanonicalPaymentAmountsKeepUncovered } from "@/lib/omzet-export";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
 import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
@@ -59,7 +59,7 @@ export async function GET(request: Request) {
         : null;
       return {
         periodBookings: staged
-          ? withCanonicalPaymentAmounts(rows as BookingDocument[], dashboardPaymentAmountsByBooking(staged.events))
+          ? withCanonicalPaymentAmountsKeepUncovered(rows as BookingDocument[], dashboardPaymentAmountsByBooking(staged.events))
           : rows as BookingDocument[],
         sportByFieldId: map,
         venueName: resolveVenueName(),

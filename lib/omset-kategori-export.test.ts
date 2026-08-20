@@ -25,7 +25,7 @@ test("Export Omset Kategori Juli memakai payment tervalidasi untuk Padel/Pickleb
   assert.equal(totals.padel.reduce((sum, amount) => sum + amount, 0) + totals.pickle.reduce((sum, amount) => sum + amount, 0), 225_000);
 });
 
-test("Export Omset Kategori Juni menambahkan empat pembayaran Rp150.000 tanpa duplikasi atau booking tanpa payment", () => {
+test("Export Omset Kategori Juni menambahkan empat pembayaran Rp150.000, dan booking tanpa payment event tetap muncul dengan nilai aslinya (koreksi 20 Agustus)", () => {
   const ids = ["JUNE-1", "JUNE-2", "JUNE-3", "JUNE-4"];
   const bookings = [
     booking({ booking_id: "BASE", date: "2026-06-01", total_price: 241_945_499 }),
@@ -38,9 +38,13 @@ test("Export Omset Kategori Juni menambahkan empat pembayaran Rp150.000 tanpa du
     event("JUNE-1-dp", "JUNE-1", 150_000),
   ];
   const canonical = canonicalOmsetCategoryBookings(bookings, events);
-  assert.equal(canonical.some((row) => row.booking_id === "NO-PAYMENT"), false);
-  assert.equal(canonical.reduce((sum, row) => sum + row.total_price, 0), 242_895_499);
-  assert.equal(courtCategoryAmounts(canonical, 30).padel.reduce((sum, amount) => sum + amount, 0), 242_895_499);
+  // NO-PAYMENT tidak dihapus: tidak ada payment event untuknya, jadi nilai asli (999_999) dipertahankan apa adanya.
+  const noPayment = canonical.find((row) => row.booking_id === "NO-PAYMENT");
+  assert.ok(noPayment, "booking tanpa payment event tidak boleh di-drop dari export");
+  assert.equal(noPayment.total_price, 999_999);
+  const canonicalized = canonical.filter((row) => row.booking_id !== "NO-PAYMENT");
+  assert.equal(canonicalized.reduce((sum, row) => sum + row.total_price, 0), 242_895_499);
+  assert.equal(courtCategoryAmounts(canonicalized, 30).padel.reduce((sum, amount) => sum + amount, 0), 242_895_499);
 });
 
 test("tanpa source payment tervalidasi, fallback booking dan kategori lain tidak berubah", () => {

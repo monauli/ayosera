@@ -39,91 +39,47 @@ export type OmzetExportInput = {
   dateList?: string[];
   /** booking_id -> payment type (lib/ayo-payment-events.ts paymentType) — dipakai classifyBookingExportSource untuk MN yang dibayar via Payment Link. Tanpa map ini, MN tetap fallback ke behavior lama (Walk In). */
   paymentTypeByBooking?: ReadonlyMap<string, string | null>;
-  /** booking_id -> info grup multi-sesi (lihat computeBookingGroups). Diisi otomatis oleh buildOmzet*Workbook, bukan untuk diisi pemanggil. */
-  bookingGroups?: ReadonlyMap<string, BookingGroupInfo>;
-};
-
-export type BookingGroupInfo = {
-  /** booking_id sesi representative (sesi terakhir dalam blok waktu berurutan). */
-  groupBookingId: string;
-  sessionCount: number;
-  /** Jumlah total_price seluruh sesi dalam grup — HANYA dipakai untuk kolom Total Grup, bukan Revenue Venue. */
-  groupTotal: number;
-  isRepresentative: boolean;
 };
 
 /**
  * Retains booking metadata for the workbook while replacing its revenue amount
  * with the canonical Dashboard payment total. A booking absent from the
- * validated payment source is omitted: Dashboard does not add a booking
- * fallback while that source is active.
+ * validated payment source is omitted: Dashboard Court Performance does not
+ * add a booking fallback while that source is active (it must only ever show
+ * validated payment-event totals — see lib/dashboard-court-performance.test.ts
+ * "Booking tanpa payment canonical dihilangkan saat staging aktif").
  *
- * Booking yang termasuk grup multi-sesi (lihat computeBookingGroups) TIDAK
- * disentuh: AYO kadang melaporkan seluruh payment event multi-sesi di bawah
- * SATU booking_id representative (lihat komentar computeBookingGroups), jadi
- * sesi lain dalam grup tidak akan pernah punya entri sendiri di paymentAmounts.
- * Menerapkan replace/drop di sini akan menghapus sesi tsb atau menggandakan
- * nominal representative — root cause bug produksi 12 Agustus (2993/2994).
+ * Used ONLY by app/api/dashboard/route.ts (Court Performance card). Excel
+ * export routes must use withCanonicalPaymentAmountsKeepUncovered() instead —
+ * see that function's doc comment for why the two need different fallback
+ * behavior for the same "booking without a matching payment event" case.
  */
 export function withCanonicalPaymentAmounts(bookings: BookingDocument[], paymentAmounts: ReadonlyMap<string, number>) {
-  const groups = computeBookingGroups(bookings);
   return bookings.flatMap((booking) => {
-    const group = groups.get(booking.booking_id);
-    if (group && group.sessionCount > 1) return [booking];
     const amount = paymentAmounts.get(booking.booking_id);
     return amount === undefined ? [] : [{ ...booking, total_price: amount }];
   });
 }
 
 /**
- * Mendeteksi grup booking multi-sesi HANYA dari data booking lokal (customer,
- * lapangan, tanggal, jam berurutan) — tidak bergantung pada booking_id di
- * payment event AYO, yang bisa melaporkan seluruh pembayaran multi-sesi di
- * bawah satu booking_id representative walau secara lokal setiap sesi adalah
- * dokumen booking terpisah dengan booking_id dan total_price sendiri.
+ * Same canonical-replace behavior as withCanonicalPaymentAmounts(), except a
+ * booking absent from the validated payment source keeps its own stored
+ * total_price instead of being dropped: absence from this payment-events
+ * source means "not covered by this source," not "no revenue."
  *
- * Representative grup = sesi dengan start_time terakhir dalam blok berurutan
- * (mis. 17:00-18:00 lalu 18:00-19:00 -> representative = sesi 18:00-19:00),
- * konsisten dengan booking_id yang dipakai AYO untuk melaporkan payment grup.
+ * Used by the Excel export routes (harian/range/bulanan) and Kategori
+ * Penjualan export. Dropping uncovered bookings there previously deleted
+ * real, unrelated bookings from the export workbook whenever their payment
+ * simply wasn't captured by this source (root cause bug, 12 Agustus: booking
+ * 0002993 dropped even though it has no relationship to any other booking's
+ * payment events — earlier attempts misdiagnosed this as a multi-session
+ * grouping problem; it was not).
  */
-export function computeBookingGroups(bookings: readonly BookingDocument[]): Map<string, BookingGroupInfo> {
-  const result = new Map<string, BookingGroupInfo>();
-  const buckets = new Map<string, BookingDocument[]>();
-  for (const b of bookings) {
-    const bookerKey = (b.booker_phone || b.booker_email || b.booker_name || "").trim().toLowerCase();
-    if (!bookerKey || !b.field_id || !b.date || !b.start_time || !b.end_time) continue;
-    const key = `${b.date}|${b.field_id}|${bookerKey}|${b.booking_source}`;
-    const list = buckets.get(key);
-    if (list) list.push(b);
-    else buckets.set(key, [b]);
-  }
-  for (const bucket of buckets.values()) {
-    if (bucket.length < 2) continue;
-    const sorted = [...bucket].sort((a, b) => a.start_time.localeCompare(b.start_time));
-    let run: BookingDocument[] = [sorted[0]];
-    for (let i = 1; i <= sorted.length; i++) {
-      const prev = sorted[i - 1];
-      const curr: BookingDocument | undefined = sorted[i];
-      if (curr && prev.end_time === curr.start_time) {
-        run.push(curr);
-        continue;
-      }
-      if (run.length > 1) {
-        const representative = run[run.length - 1];
-        const groupTotal = run.reduce((sum, b) => sum + num(b.total_price), 0);
-        for (const b of run) {
-          result.set(b.booking_id, {
-            groupBookingId: representative.booking_id,
-            sessionCount: run.length,
-            groupTotal,
-            isRepresentative: b.booking_id === representative.booking_id,
-          });
-        }
-      }
-      run = curr ? [curr] : [];
-    }
-  }
-  return result;
+export function withCanonicalPaymentAmountsKeepUncovered(bookings: BookingDocument[], paymentAmounts: ReadonlyMap<string, number>) {
+  return bookings.map((booking) => {
+    const amount = paymentAmounts.get(booking.booking_id);
+    return amount === undefined ? booking : { ...booking, total_price: amount };
+  });
 }
 
 /** Subtitle "Laporan Periode ..." — harian pakai 1 tanggal, periode pakai label kustom. */
@@ -279,26 +235,6 @@ const META_COLUMNS: ColumnDef[] = [
   { header: "Alasan Pembatalan", get: () => "-", width: 16 },
 ];
 
-// Kolom grup multi-sesi (lihat computeBookingGroups) — SELALU ditambahkan di
-// AKHIR kolom lain (setelah Note/META_COLUMNS) supaya struktur kolom utama
-// (Price..Revenue Venue..Note) yang sudah dipakai formula SUM tidak bergeser.
-// Total Grup HANYA diisi pada baris representative (sesi terakhir grup) agar
-// tidak bisa dijumlahkan dua kali; Revenue Venue tiap baris tetap nominal
-// sesi masing-masing, tidak pernah diganti oleh Total Grup.
-const GROUP_COLUMNS: ColumnDef[] = [
-  { header: "Group Booking ID", get: (b, c) => c.bookingGroups?.get(b.booking_id)?.groupBookingId ?? (b.booking_id || "-"), width: 24 },
-  { header: "Jumlah Sesi", get: (b, c) => c.bookingGroups?.get(b.booking_id)?.sessionCount ?? 1, width: 10 },
-  {
-    header: "Total Grup",
-    get: (b, c) => {
-      const group = c.bookingGroups?.get(b.booking_id);
-      return group && group.isRepresentative && group.sessionCount > 1 ? group.groupTotal : "";
-    },
-    money: true,
-    width: 13,
-  },
-];
-
 // ---- Styling helpers -----------------------------------------------------
 
 function styleTitle(cell: ExcelJS.Cell) {
@@ -396,7 +332,7 @@ function distinctDates(bookings: BookingDocument[]) {
 
 function buildWalkInSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const ws = wb.addWorksheet("Walk In");
-  const columns: ColumnDef[] = [...BASE_COLUMNS, ...GROUP_COLUMNS];
+  const columns = BASE_COLUMNS;
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (Walk In)", periodText(input), columns);
 
   const rows = input.dayBookings.filter((b) => !isAyoSource(b, input));
@@ -421,7 +357,6 @@ function buildAyoSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     { header: "No", get: () => "", width: 6 },
     ...BASE_COLUMNS,
     ...META_COLUMNS,
-    ...GROUP_COLUMNS,
   ];
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (AYO)", periodText(input), columns, {
     reschedule: "Reschedule",
@@ -438,7 +373,7 @@ function buildAyoSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     const groupStart = r;
     for (const b of group) {
       no++;
-      const values = [no, ...BASE_COLUMNS.map((c) => c.get(b, input)), ...META_COLUMNS.map((c) => c.get(b, input)), ...GROUP_COLUMNS.map((c) => c.get(b, input))];
+      const values = [no, ...BASE_COLUMNS.map((c) => c.get(b, input)), ...META_COLUMNS.map((c) => c.get(b, input))];
       writeDataRow(ws, r, columns, values);
       r++;
     }
@@ -455,7 +390,6 @@ function buildAllSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     { header: "Tanggal", get: (b) => b.date || "-", width: 12 },
     ...baseWithoutDate,
     ...META_COLUMNS,
-    ...GROUP_COLUMNS,
   ];
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (ALL)", periodText(input), columns);
 
@@ -717,8 +651,7 @@ function matchesCourtColumn(court: string, fieldName: string) {
 }
 
 export async function buildOmzetHarianWorkbook(input: OmzetExportInput): Promise<Uint8Array> {
-  const filteredInput = displayEligibleInput(input);
-  const eligibleInput: OmzetExportInput = { ...filteredInput, bookingGroups: computeBookingGroups(filteredInput.dayBookings) };
+  const eligibleInput = displayEligibleInput(input);
   const wb = new ExcelJS.Workbook();
   wb.creator = "AYO Integration";
   wb.created = new Date();
@@ -928,7 +861,6 @@ function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     { header: "Tanggal", get: (b) => b.date || "-", width: 12 },
     ...baseWithoutDate,
     ...META_COLUMNS,
-    ...GROUP_COLUMNS,
   ];
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (ALL)", periodText(input), columns);
 
@@ -1001,8 +933,7 @@ function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
 }
 
 export async function buildOmzetPeriodWorkbook(input: OmzetExportInput): Promise<Uint8Array> {
-  const filteredInput = displayEligibleInput(input);
-  const eligibleInput: OmzetExportInput = { ...filteredInput, bookingGroups: computeBookingGroups(filteredInput.dayBookings) };
+  const eligibleInput = displayEligibleInput(input);
   const wb = new ExcelJS.Workbook();
   wb.creator = "AYO Integration";
   wb.created = new Date();

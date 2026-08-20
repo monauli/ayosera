@@ -22,7 +22,7 @@ import { loadResolverContext, resolveStoredItemCategory } from "./olsera-resolve
 import { readActiveStagedPaymentEvents } from "./ayo-payment-event-staging.ts";
 import { isPaymentEventsReadEnabled } from "./ayo-payment-events-engine.ts";
 import { dashboardPaymentAmountsByBooking } from "./dashboard-payment-metrics.ts";
-import { withCanonicalPaymentAmounts } from "./omzet-export.ts";
+import { withCanonicalPaymentAmountsKeepUncovered } from "./omzet-export.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 const FONT = "Calibri";
@@ -134,7 +134,7 @@ function titleCaseId(value: string) {
 /** Uses the validated Dashboard payment source when it is active, while
  * retaining the booking date and field metadata used by the category report. */
 export function canonicalOmsetCategoryBookings(bookings: BookingDocument[], paymentEvents: readonly AyoPaymentEvent[] | null): BookingDocument[] {
-  return paymentEvents ? withCanonicalPaymentAmounts(bookings, dashboardPaymentAmountsByBooking(paymentEvents)) : bookings;
+  return paymentEvents ? withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(paymentEvents)) : bookings;
 }
 
 export function courtCategoryAmounts(bookings: readonly BookingDocument[], dayCount: number) {
