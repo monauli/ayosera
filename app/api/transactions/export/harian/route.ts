@@ -54,7 +54,18 @@ export async function GET(request: Request) {
           activation: ayoPaymentEventActivation,
         })
         : null;
+      // TEMPORARY DEBUG (remove before merging to main) — tracing 0002994 under-report.
+      console.log("[debug-0002994] isPaymentEventsReadEnabled=", isPaymentEventsReadEnabled(), "monthStart=", monthStart, "monthEnd=", monthEnd);
+      console.log("[debug-0002994] staged=", staged ? "present" : "null", "staged.events.length=", staged?.events.length, "staged.run._id=", staged?.run._id, "staged.run.status=", staged?.run.status);
+      if (staged) {
+        const matching = staged.events.filter((e) => e.bookingId?.includes("0002994"));
+        console.log("[debug-0002994] matching events (bookingId contains 0002994):", JSON.stringify(matching, null, 2));
+      }
       const paymentAggregate = staged ? aggregateBookingPayments(staged.events) : null;
+      if (paymentAggregate) {
+        const entry = paymentAggregate.get("MN/2428/260809/0002994");
+        console.log("[debug-0002994] paymentAggregate.get('MN/2428/260809/0002994')=", entry ? { totalAmount: entry.totalAmount, paymentCount: entry.paymentCount } : "NOT FOUND (undefined)");
+      }
       return {
         dayBookings: (paymentAggregate ? withBookingPaymentTotals(day as BookingDocument[], paymentAggregate) : day) as BookingDocument[],
         monthBookings: (paymentAggregate ? withBookingPaymentTotals(month as BookingDocument[], paymentAggregate) : month) as BookingDocument[],
