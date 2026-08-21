@@ -83,7 +83,16 @@ export function isActivatableRun(run: AyoPaymentEventStagingRun | null): run is 
 
 export async function readActiveStagedPaymentEvents(startDate: string, endDate: string, context?: StagingReadContext) {
   const resolved = resolveStagingRange({ startDate, endDate });
-  if ("error" in resolved || startDate < "2026-06-01") return null;
+  // TEMPORARY DEBUG (remove before merging to main) — tracing 0002994 under-report.
+  if ("error" in resolved) {
+    console.log("[debug-0002994-gate]", "GATE_1_RESOLVE_ERROR", "detail:", { startDate, endDate, error: resolved.error });
+    return null;
+  }
+  if (startDate < "2026-06-01") {
+    console.log("[debug-0002994-gate]", "GATE_1_BEFORE_JUNE", "detail:", { startDate });
+    return null;
+  }
+  console.log("[debug-0002994-gate]", "GATE_1_PASSED", "detail:", { startDate, endDate, resolvedPeriod: resolved.range.period, resolvedStart: resolved.range.start, resolvedEnd: resolved.range.end });
   try {
     const source = context ?? await (async () => {
       const { collections } = await import("./mongodb.ts");
@@ -91,24 +100,44 @@ export async function readActiveStagedPaymentEvents(startDate: string, endDate: 
       return { runs: c.ayoPaymentEventStagingRuns, events: c.ayoPaymentEventStagingEvents, activation: c.ayoPaymentEventActivation };
     })();
     const activation = await source.activation.findOne({ _id: "ayo-payment-events-active" });
-    if (!activation?.activeRunId) return null;
+    console.log("[debug-0002994-gate]", "GATE_2_ACTIVATION", "detail:", { found: Boolean(activation), activeRunId: activation?.activeRunId ?? null, activatedAt: activation?.activatedAt ?? null });
+    if (!activation?.activeRunId) {
+      console.log("[debug-0002994-gate]", "GATE_2_FAILED_NO_ACTIVE_RUN_ID");
+      return null;
+    }
     const run = await source.runs.findOne({ _id: activation.activeRunId });
-    if (!isActivatableRun(run)) return null;
+    const runJuneStatus = run?.periods["2026-06"]?.validationStatus ?? "MISSING";
+    const runJulyStatus = run?.periods["2026-07"]?.validationStatus ?? "MISSING";
+    console.log("[debug-0002994-gate]", "GATE_3_RUN_LOOKUP", "detail:", { found: Boolean(run), runId: run?._id ?? null, runStatus: run?.status ?? null, periodsKeys: run ? Object.keys(run.periods) : null, juneStatus: runJuneStatus, julyStatus: runJulyStatus });
+    if (!isActivatableRun(run)) {
+      console.log("[debug-0002994-gate]", "GATE_3_FAILED_NOT_ACTIVATABLE", "detail:", { runFound: Boolean(run), juneStatus: runJuneStatus, julyStatus: runJulyStatus });
+      return null;
+    }
+    console.log("[debug-0002994-gate]", "GATE_3_PASSED");
     const official = resolved.range.period === "2026-06" || resolved.range.period === "2026-07";
-    if (official && run.periods[resolved.range.period]?.validationStatus !== "validated") return null;
+    console.log("[debug-0002994-gate]", "GATE_4_OFFICIAL_CHECK", "detail:", { period: resolved.range.period, official });
+    if (official && run.periods[resolved.range.period]?.validationStatus !== "validated") {
+      console.log("[debug-0002994-gate]", "GATE_4_FAILED_OFFICIAL_NOT_VALIDATED", "detail:", { period: resolved.range.period, status: run.periods[resolved.range.period]?.validationStatus ?? "MISSING" });
+      return null;
+    }
     const range = { $gte: new Date(`${startDate}T00:00:00.000Z`), $lte: new Date(`${endDate}T23:59:59.999Z`) };
     const historical = await source.events.find({ runId: run._id, eventDate: range }).toArray();
+    console.log("[debug-0002994-gate]", "GATE_5_HISTORICAL_QUERY", "detail:", { runIdQueried: run._id, rangeGte: range.$gte.toISOString(), rangeLte: range.$lte.toISOString(), historicalCount: historical.length });
     if (official) {
       const status = validateStagingPeriod(resolved.range.period, historical, 0, 0);
+      console.log("[debug-0002994-gate]", "GATE_4B_OFFICIAL_STATUS", "detail:", { validationStatus: status.validationStatus, rows: status.rows, total: status.total });
       return status.validationStatus === "validated" ? { run, events: historical } : null;
     }
     // Rolling is intentionally combined only after a fully validated historical run is active.
     // Its eventIdentity is the deterministic business identity, so overlap rows never count twice.
     const rolling = await source.events.find({ runId: "ayo-sync:rolling", eventDate: range }).toArray();
+    console.log("[debug-0002994-gate]", "GATE_5_ROLLING_QUERY", "detail:", { rangeGte: range.$gte.toISOString(), rangeLte: range.$lte.toISOString(), rollingCount: rolling.length });
     const byIdentity = new Map<string, AyoPaymentEvent>();
     for (const staged of [...historical, ...rolling]) byIdentity.set(staged.eventIdentity || staged.identity, staged);
+    console.log("[debug-0002994-gate]", "GATE_5_PASSED_RETURNING", "detail:", { combinedUniqueCount: byIdentity.size });
     return { run, events: [...byIdentity.values()] };
-  } catch {
+  } catch (error) {
+    console.log("[debug-0002994-gate]", "GATE_CAUGHT_EXCEPTION", "detail:", { message: error instanceof Error ? error.message : String(error) });
     return null;
   }
 }
