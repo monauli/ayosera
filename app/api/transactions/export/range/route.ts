@@ -13,6 +13,15 @@ export const runtime = "nodejs";
 
 const MAX_RANGE_DAYS = 366;
 
+function todayJakarta() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 export async function GET(request: Request) {
   try {
     await requireModule("transaksi");
@@ -35,8 +44,13 @@ export async function GET(request: Request) {
       ]);
       const map = new Map<number, string>();
       for (const f of fieldRows) if (f.id && f.sport_name) map.set(f.id, f.sport_name);
-      const staged = isPaymentEventsReadEnabled()
-        ? await readActiveStagedPaymentEvents(start, end, { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation })
+      // readActiveStagedPaymentEvents() menolak endDate > hari ini. Rentang custom
+      // bisa berakhir di tanggal masa depan (tidak divalidasi oleh
+      // validateDateRangeQuery) — pakai hari ini sebagai batas atas KHUSUS untuk
+      // query ini; `end`/workbook tetap rentang asli seperti biasa.
+      const paymentEventsEnd = end < todayJakarta() ? end : todayJakarta();
+      const staged = isPaymentEventsReadEnabled() && start <= paymentEventsEnd
+        ? await readActiveStagedPaymentEvents(start, paymentEventsEnd, { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation })
         : null;
       return {
         periodBookings: staged ? withBookingPaymentTotals(rows as BookingDocument[], aggregateBookingPayments(staged.events)) : rows as BookingDocument[],
