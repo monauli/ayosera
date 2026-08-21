@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { resolveVenueName } from "@/lib/booking-mapper";
-import { buildOmzetHarianWorkbook, withCanonicalPaymentAmountsKeepUncovered } from "@/lib/omzet-export";
+import { buildOmzetHarianWorkbook } from "@/lib/omzet-export";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
-import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
+import { dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
+import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
 
 export const runtime = "nodejs";
 
@@ -41,9 +42,11 @@ export async function GET(request: Request) {
       ]);
       const map = new Map<number, string>();
       for (const f of fieldRows) if (f.id && f.sport_name) map.set(f.id, f.sport_name);
-      // Sama seperti export bulanan: pakai dataset payment-events aktif yang
-      // tervalidasi supaya booking split-payment tidak kehilangan payment
-      // sebelumnya. Bila tidak tersedia, pertahankan fallback booking lama.
+      // Sama seperti Transaksi AYO (app/api/transactions/route.ts): pakai
+      // aggregateBookingPayments()/withBookingPaymentTotals() dari
+      // lib/booking-payment-aggregate.ts, bukan resolver terpisah — booking
+      // split-payment (mis. MN/2428/260809/0002994, 2 pembayaran) tidak lagi
+      // bisa dapat total yang divergen antara Transaksi AYO dan Export.
       const staged = isPaymentEventsReadEnabled()
         ? await readActiveStagedPaymentEvents(monthStart, monthEnd, {
           runs: ayoPaymentEventStagingRuns,
@@ -51,10 +54,10 @@ export async function GET(request: Request) {
           activation: ayoPaymentEventActivation,
         })
         : null;
-      const paymentAmounts = staged ? dashboardPaymentAmountsByBooking(staged.events) : null;
+      const paymentAggregate = staged ? aggregateBookingPayments(staged.events) : null;
       return {
-        dayBookings: (paymentAmounts ? withCanonicalPaymentAmountsKeepUncovered(day as BookingDocument[], paymentAmounts) : day) as BookingDocument[],
-        monthBookings: (paymentAmounts ? withCanonicalPaymentAmountsKeepUncovered(month as BookingDocument[], paymentAmounts) : month) as BookingDocument[],
+        dayBookings: (paymentAggregate ? withBookingPaymentTotals(day as BookingDocument[], paymentAggregate) : day) as BookingDocument[],
+        monthBookings: (paymentAggregate ? withBookingPaymentTotals(month as BookingDocument[], paymentAggregate) : month) as BookingDocument[],
         sportByFieldId: map,
         venueName: resolveVenueName(),
         paymentTypeByBooking: staged ? dashboardPaymentTypeByBooking(staged.events) : undefined,

@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { resolveVenueName } from "@/lib/booking-mapper";
-import { buildOmzetPeriodWorkbook, dateRange, periodLabelMonth, withCanonicalPaymentAmountsKeepUncovered } from "@/lib/omzet-export";
+import { buildOmzetPeriodWorkbook, dateRange, periodLabelMonth } from "@/lib/omzet-export";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
-import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
+import { dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
+import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
 
 export const runtime = "nodejs";
 
@@ -47,9 +48,11 @@ export async function GET(request: Request) {
       ]);
       const map = new Map<number, string>();
       for (const f of fieldRows) if (f.id && f.sport_name) map.set(f.id, f.sport_name);
-      // Use exactly the active, validated payment dataset and identity rule that
-      // Dashboard uses for an explicit month range. If it is unavailable, keep
-      // the existing booking fallback behavior.
+      // Sama seperti Transaksi AYO (app/api/transactions/route.ts): pakai
+      // aggregateBookingPayments()/withBookingPaymentTotals() dari
+      // lib/booking-payment-aggregate.ts, bukan resolver terpisah — booking
+      // split-payment tidak lagi bisa dapat total yang divergen antara
+      // Transaksi AYO dan Export.
       const staged = isPaymentEventsReadEnabled()
         ? await readActiveStagedPaymentEvents(start, end, {
           runs: ayoPaymentEventStagingRuns,
@@ -59,7 +62,7 @@ export async function GET(request: Request) {
         : null;
       return {
         periodBookings: staged
-          ? withCanonicalPaymentAmountsKeepUncovered(rows as BookingDocument[], dashboardPaymentAmountsByBooking(staged.events))
+          ? withBookingPaymentTotals(rows as BookingDocument[], aggregateBookingPayments(staged.events))
           : rows as BookingDocument[],
         sportByFieldId: map,
         venueName: resolveVenueName(),

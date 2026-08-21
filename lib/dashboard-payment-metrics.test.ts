@@ -48,8 +48,13 @@ test("route dan donut memakai kontrak payment-versus-booking yang terpisah", asy
   assert.doesNotMatch(route, /paymentEventAsBooking/);
   assert.match(route, /bookingTotal: paymentMetrics\.bookingTotal/);
   assert.match(exportRoute, /readActiveStagedPaymentEvents/);
-  assert.match(exportRoute, /dashboardPaymentAmountsByBooking/);
-  assert.match(exportRoute, /withCanonicalPaymentAmounts/);
+  // Koreksi 20 Agustus: export bulanan sekarang pakai aggregateBookingPayments
+  // + withBookingPaymentTotals (lib/booking-payment-aggregate.ts) — resolver
+  // yang sama dengan Transaksi AYO — bukan lagi dashboardPaymentAmountsByBooking
+  // + withCanonicalPaymentAmounts, yang terbukti bisa divergen dari Transaksi
+  // AYO untuk booking split-payment.
+  assert.match(exportRoute, /aggregateBookingPayments/);
+  assert.match(exportRoute, /withBookingPaymentTotals/);
   assert.match(page, /const totalBookings = metrics\?\.bookingTotal \?\? 0/);
 });
 

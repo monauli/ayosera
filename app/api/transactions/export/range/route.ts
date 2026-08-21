@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type BookingDocument, type FieldDocument } from "@/lib/mongodb";
 import { resolveVenueName } from "@/lib/booking-mapper";
-import { buildOmzetPeriodWorkbook, dateRange, periodLabelRange, withCanonicalPaymentAmountsKeepUncovered } from "@/lib/omzet-export";
+import { buildOmzetPeriodWorkbook, dateRange, periodLabelRange } from "@/lib/omzet-export";
 import { validateDateRangeQuery } from "@/lib/date-range-validation";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
-import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
+import { dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
+import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
 
 export const runtime = "nodejs";
 
@@ -38,7 +39,7 @@ export async function GET(request: Request) {
         ? await readActiveStagedPaymentEvents(start, end, { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation })
         : null;
       return {
-        periodBookings: staged ? withCanonicalPaymentAmountsKeepUncovered(rows as BookingDocument[], dashboardPaymentAmountsByBooking(staged.events)) : rows as BookingDocument[],
+        periodBookings: staged ? withBookingPaymentTotals(rows as BookingDocument[], aggregateBookingPayments(staged.events)) : rows as BookingDocument[],
         sportByFieldId: map,
         venueName: resolveVenueName(),
         paymentTypeByBooking: staged ? dashboardPaymentTypeByBooking(staged.events) : undefined,

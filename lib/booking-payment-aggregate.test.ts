@@ -201,13 +201,19 @@ test("Transaksi, Dashboard, Rekonsiliasi, dan Export memakai helper agregasi pay
   assert.match(transactionsRoute, /withBookingPaymentTotals/);
   assert.match(dashboardRoute, /aggregateBookingPayments/);
   assert.match(dashboardRoute, /withBookingPaymentTotals/);
-  // Export tetap memakai jalur canonical payment amounts yang sudah tervalidasi
-  // (withCanonicalPaymentAmounts + dashboardPaymentAmountsByBooking), yang
-  // sama-sama dedup lewat event.identity seperti aggregateBookingPayments —
-  // sengaja TIDAK diubah supaya perilaku export yang sudah benar tidak berubah.
-  assert.match(exportBulananRoute, /withCanonicalPaymentAmounts/);
-  assert.match(exportBulananRoute, /dashboardPaymentAmountsByBooking/);
-  assert.match(exportHarianRoute, /withCanonicalPaymentAmounts|dashboardPaymentAmountsByBooking/);
+  // Koreksi 20 Agustus: Export SEKARANG memakai jalur PERSIS sama dengan
+  // Transaksi/Dashboard (aggregateBookingPayments + withBookingPaymentTotals),
+  // bukan lagi resolver terpisah (dashboardPaymentAmountsByBooking +
+  // withCanonicalPaymentAmountsKeepUncovered) — dua implementasi paralel
+  // dengan algoritma sum identik itu terbukti bisa drift (booking split-payment
+  // MN/2428/260809/0002994 sempat menampilkan total berbeda antara Transaksi
+  // AYO dan Export). Satu jalur kode menghilangkan kemungkinan drift itu sama sekali.
+  assert.match(exportBulananRoute, /aggregateBookingPayments/);
+  assert.match(exportBulananRoute, /withBookingPaymentTotals/);
+  assert.match(exportHarianRoute, /aggregateBookingPayments/);
+  assert.match(exportHarianRoute, /withBookingPaymentTotals/);
+  assert.doesNotMatch(exportBulananRoute, /withCanonicalPaymentAmounts/);
+  assert.doesNotMatch(exportHarianRoute, /withCanonicalPaymentAmounts/);
   // Semua jalur pada akhirnya membaca payment events lewat readActiveStagedPaymentEvents.
   assert.match(transactionsRoute, /readActiveStagedPaymentEvents/);
   assert.match(dashboardRoute, /readActiveStagedPaymentEvents/);

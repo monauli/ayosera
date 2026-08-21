@@ -9,10 +9,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import ExcelJS from "exceljs";
-import { buildOmzetHarianWorkbook, buildOmzetPeriodWorkbook, classifyBookingExportSource, type OmzetExportInput, withCanonicalPaymentAmountsKeepUncovered } from "./omzet-export.ts";
+import { buildOmzetHarianWorkbook, buildOmzetPeriodWorkbook, classifyBookingExportSource, type OmzetExportInput } from "./omzet-export.ts";
 import type { BookingDocument } from "./mongodb.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
-import { dashboardPaymentAmountsByBooking, dashboardPaymentTypeByBooking } from "./dashboard-payment-metrics.ts";
+import { dashboardPaymentTypeByBooking } from "./dashboard-payment-metrics.ts";
+import { aggregateBookingPayments, withBookingPaymentTotals } from "./booking-payment-aggregate.ts";
 
 function fakeBooking(overrides: Partial<BookingDocument>): BookingDocument {
   return {
@@ -176,7 +177,7 @@ test("Export Bulanan memakai total payment Dashboard untuk Juli tanpa mengubah m
     paymentEvent("first", targetId, 150000, "2026-07-30"),
     paymentEvent("second", targetId, 50000, "2026-07-30"),
   ];
-  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(events));
+  const canonical = withBookingPaymentTotals(bookings, aggregateBookingPayments(events));
   assert.equal(canonical.find((booking) => booking.booking_id === targetId)?.total_price, 200000);
   assert.equal(canonical.reduce((sum, booking) => sum + booking.total_price, 0), 237491000);
   assert.equal(canonical.find((booking) => booking.booking_id === targetId)?.field_name, "Court No 4");
@@ -208,7 +209,7 @@ test("Export Bulanan Juni menambah tepat Rp600.000 dari multi-payment, dan booki
     paymentEvent("june-base", "JUNE-BASE", 241945499, "2026-06-01"),
     ...ids.flatMap((bookingId, index) => [paymentEvent(`${index}-a`, bookingId, 150000, `2026-06-${String(index + 4).padStart(2, "0")}`), paymentEvent(`${index}-b`, bookingId, index < 2 ? 125000 : 50000, `2026-06-${String(index + 4).padStart(2, "0")}`)]),
   ];
-  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(events));
+  const canonical = withBookingPaymentTotals(bookings, aggregateBookingPayments(events));
   // NO-PAYMENT tidak dihapus: tidak ada payment event untuknya, jadi nilai asli (999999) dipertahankan apa adanya.
   const noPayment = canonical.find((booking) => booking.booking_id === "NO-PAYMENT");
   assert.ok(noPayment, "booking tanpa payment event tidak boleh di-drop dari export");
@@ -263,9 +264,8 @@ test("REGRESSION 27 Feb: MN + Payment Link Rp200.000 muncul di sheet AYO, TIDAK 
     { ...paymentEvent("feb27-a", targetId, 200000, "2026-02-27"), paymentType: "Payment Link" },
     paymentEvent("feb27-b", otherAyoId, 500000, "2026-02-27"),
   ];
-  const paymentAmounts = dashboardPaymentAmountsByBooking(events);
   const paymentTypeByBooking = dashboardPaymentTypeByBooking(events);
-  const canonicalBookings = withCanonicalPaymentAmountsKeepUncovered(bookings, paymentAmounts);
+  const canonicalBookings = withBookingPaymentTotals(bookings, aggregateBookingPayments(events));
   const input: OmzetExportInput = {
     date: "2026-02-27",
     venueName: "BC Padel Club",
@@ -310,6 +310,17 @@ test("REGRESSION 27 Feb: MN + Payment Link Rp200.000 muncul di sheet AYO, TIDAK 
 // mendiagnosis ini sebagai "grup multi-sesi" berdasarkan heuristik nama
 // pemesan + jam berdekatan, yang false-positive match 0002993 dengan 0002994
 // dan sudah di-revert sepenuhnya.
+//
+// Koreksi kedua (20 Agustus): export sempat pakai resolver terpisah
+// (dashboardPaymentAmountsByBooking + withCanonicalPaymentAmountsKeepUncovered,
+// lib/dashboard-payment-metrics.ts/lib/omzet-export.ts) dari yang dipakai
+// Transaksi AYO (aggregateBookingPayments + withBookingPaymentTotals,
+// lib/booking-payment-aggregate.ts) — dua implementasi terpisah dengan
+// algoritma sum yang identik tapi tetap dua jalur kode berbeda, rawan drift.
+// Terbukti drift: 0002994 (2 payment event) sempat menampilkan total berbeda
+// antara Transaksi AYO (benar, Rp200.000) dan Export (Rp50.000, hanya
+// installment terakhir). Fix final: export sekarang memakai PERSIS fungsi
+// yang sama dengan Transaksi AYO, bukan implementasi paralel.
 // ---------------------------------------------------------------------------
 
 test("REGRESSION 12 Agu (final): booking tanpa payment event match TETAP MUNCUL dengan total_price aslinya, tidak di-drop", async () => {
@@ -317,7 +328,7 @@ test("REGRESSION 12 Agu (final): booking tanpa payment event match TETAP MUNCUL 
   const bookings = [
     fakeBooking({ booking_id: unrelated, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 150000, start_time: "17:00", end_time: "18:00" }),
   ];
-  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking([]));
+  const canonical = withBookingPaymentTotals(bookings, aggregateBookingPayments([]));
   assert.equal(canonical.length, 1, "booking tidak boleh di-drop hanya karena tidak ada payment event untuk booking_id-nya");
   assert.equal(canonical[0].total_price, 150000, "nilai asli yang sudah tersimpan dipertahankan, bukan diganti 0/undefined");
 
@@ -337,7 +348,7 @@ test("REGRESSION 12 Agu (final): booking satu sesi dengan 2 payment event TETAP 
     paymentEvent("p-150", single, 150000, "2026-08-12"),
     paymentEvent("p-50", single, 50000, "2026-08-12"),
   ];
-  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(events));
+  const canonical = withBookingPaymentTotals(bookings, aggregateBookingPayments(events));
   assert.equal(canonical.length, 1);
   assert.equal(canonical[0].total_price, 200000, "total_price diganti jumlah kedua payment event (150000+50000), bukan nilai lama 50000");
 
@@ -359,7 +370,7 @@ test("REGRESSION 12 Agu (final): kedua booking berdampingan bersama tidak digabu
     paymentEvent("p-150", single, 150000, "2026-08-12"),
     paymentEvent("p-50", single, 50000, "2026-08-12"),
   ];
-  const canonical = withCanonicalPaymentAmountsKeepUncovered(bookings, dashboardPaymentAmountsByBooking(events));
+  const canonical = withBookingPaymentTotals(bookings, aggregateBookingPayments(events));
   assert.equal(canonical.length, 2, "kedua booking tetap ada sebagai baris terpisah, tidak ada yang hilang atau digabung");
   const byId = new Map(canonical.map((b) => [b.booking_id, b.total_price]));
   assert.equal(byId.get(unrelated), 150000);
@@ -376,4 +387,68 @@ test("REGRESSION 12 Agu (final): kedua booking berdampingan bersama tidak digabu
   for (const header of ["Group Booking ID", "Jumlah Sesi", "Total Grup"]) {
     assert.throws(() => headerColumn(walkIn, header), /tidak ditemukan/, `kolom "${header}" tidak boleh ada di output`);
   }
+});
+
+test("REGRESSION 20 Agustus (unifikasi resolver): export harian untuk MN/2428/260809/0002994 memakai fixture PERSIS lib/booking-payment-aggregate.test.ts (2742703 + 2760168) dan hasilnya Rp200.000, sama dengan Transaksi AYO", async () => {
+  // Fixture identik dengan SPLIT_PAYMENT_BOOKING_ID di
+  // lib/booking-payment-aggregate.test.ts — data produksi nyata yang sudah
+  // terbukti benar di Transaksi AYO (lihat test "paymentDetailsFor: booking
+  // real MN/2428/260809/0002994"). Dibangun manual di sini (bukan import
+  // konstanta) supaya test ini tetap berdiri sendiri kalau file lain berubah,
+  // tapi nilai bookingId/reservationPaymentId/amount HARUS tetap sama persis.
+  const bookingId = "MN/2428/260809/0002994";
+  const now = new Date("2026-08-12T00:00:00.000Z");
+  function internalReservationEvent(reservationPaymentId: string, amount: number): AyoPaymentEvent {
+    return {
+      _id: `internal_reservation:${bookingId}:${reservationPaymentId}`,
+      identity: `internal_reservation:${bookingId}:${reservationPaymentId}`,
+      bookingId,
+      sourceTable: "internal_reservation",
+      reservationPaymentId,
+      nativeId: reservationPaymentId,
+      sourceId: reservationPaymentId,
+      eventDate: now,
+      eventDateSource: "payment_date",
+      amount,
+      amountSource: "total",
+      bookingPrefix: "MN",
+      paymentStatus: "SUCCESS",
+      bookingStatus: null,
+      source: "ayo-report-transactions",
+      rawPayload: {},
+      normalizedPayload: {},
+      createdAt: now,
+      updatedAt: now,
+      paymentType: "MANUAL",
+      paymentNote: null,
+      detailStatus: "SUCCESS",
+      finalStatus: "SUCCESS",
+      fieldName: "Court No 3",
+      date: "2026-08-12",
+      startTime: "18:00:00",
+      endTime: "19:00:00",
+      total: amount,
+      finalFeeAyo: 0,
+      isCredit: false,
+      raw: {},
+      syncedAt: now,
+    };
+  }
+  const events = [internalReservationEvent("2742703", 150000), internalReservationEvent("2760168", 50000)];
+  const bookings = [
+    fakeBooking({ booking_id: bookingId, date: "2026-08-12", field_name: "Court No 3", booking_source: "reservation", total_price: 50000, start_time: "18:00", end_time: "19:00" }),
+  ];
+
+  // Resolver yang SEKARANG dipakai export (sama persis dengan
+  // app/api/transactions/route.ts, Transaksi AYO) — bukan lagi
+  // dashboardPaymentAmountsByBooking + withCanonicalPaymentAmountsKeepUncovered.
+  const canonical = withBookingPaymentTotals(bookings, aggregateBookingPayments(events));
+  assert.equal(canonical.length, 1);
+  assert.equal(canonical[0].total_price, 200000, "resolver export harus menjumlahkan KEDUA payment event (150000+50000), bukan hanya nilai lama 50000");
+
+  const bytes = await buildOmzetHarianWorkbook({ date: "2026-08-12", venueName: "BC Padel Club", dayBookings: canonical, monthBookings: canonical, paymentTypeByBooking: dashboardPaymentTypeByBooking(events) });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const walkIn = wb.getWorksheet("Walk In")!;
+  assert.equal(revenueForBooking(walkIn, bookingId), 200000, "Revenue Venue di workbook export harus Rp200.000, sama dengan Transaksi AYO");
 });

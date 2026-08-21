@@ -49,10 +49,17 @@ export type OmzetExportInput = {
  * validated payment-event totals — see lib/dashboard-court-performance.test.ts
  * "Booking tanpa payment canonical dihilangkan saat staging aktif").
  *
- * Used ONLY by app/api/dashboard/route.ts (Court Performance card). Excel
- * export routes must use withCanonicalPaymentAmountsKeepUncovered() instead —
- * see that function's doc comment for why the two need different fallback
- * behavior for the same "booking without a matching payment event" case.
+ * Used ONLY by app/api/dashboard/route.ts (Court Performance card).
+ *
+ * Excel export routes (harian/range/bulanan) do NOT use this function or
+ * withCanonicalPaymentAmountsKeepUncovered() below — they use
+ * aggregateBookingPayments()/withBookingPaymentTotals() from
+ * lib/booking-payment-aggregate.ts instead, the same helper already proven
+ * correct on the Transaksi AYO page. A split-payment booking (e.g.
+ * MN/2428/260809/0002994, 2 payments) got a different total on Export than
+ * on Transaksi AYO while both used their own separate resolver — routing
+ * export through the same helper as Transaksi removes that divergence by
+ * construction, not just for this one booking.
  */
 export function withCanonicalPaymentAmounts(bookings: BookingDocument[], paymentAmounts: ReadonlyMap<string, number>) {
   return bookings.flatMap((booking) => {
@@ -67,13 +74,13 @@ export function withCanonicalPaymentAmounts(bookings: BookingDocument[], payment
  * total_price instead of being dropped: absence from this payment-events
  * source means "not covered by this source," not "no revenue."
  *
- * Used by the Excel export routes (harian/range/bulanan) and Kategori
- * Penjualan export. Dropping uncovered bookings there previously deleted
- * real, unrelated bookings from the export workbook whenever their payment
- * simply wasn't captured by this source (root cause bug, 12 Agustus: booking
- * 0002993 dropped even though it has no relationship to any other booking's
- * payment events — earlier attempts misdiagnosed this as a multi-session
- * grouping problem; it was not).
+ * Used ONLY by lib/omset-kategori-export.ts (Kategori Penjualan export) —
+ * NOT by the harian/range/bulanan Excel export routes, which use
+ * withBookingPaymentTotals() (lib/booking-payment-aggregate.ts) instead. This
+ * function has the same known limitation the Excel routes moved away from: a
+ * partially-covered split-payment booking (only some of its payment events
+ * inside the queried date window) silently gets an incomplete total instead
+ * of falling back — not yet fixed here, out of scope for this change.
  */
 export function withCanonicalPaymentAmountsKeepUncovered(bookings: BookingDocument[], paymentAmounts: ReadonlyMap<string, number>) {
   return bookings.map((booking) => {
