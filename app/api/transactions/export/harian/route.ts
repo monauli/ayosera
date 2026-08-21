@@ -31,7 +31,11 @@ export async function GET(request: Request) {
     }
     const monthPrefix = date.slice(0, 7);
     const monthStart = `${monthPrefix}-01`;
-    const monthEnd = `${monthPrefix}-${String(new Date(Number(monthPrefix.slice(0, 4)), Number(monthPrefix.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
+    const monthCalendarEnd = `${monthPrefix}-${String(new Date(Number(monthPrefix.slice(0, 4)), Number(monthPrefix.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
+    // readActiveStagedPaymentEvents() menolak endDate > hari ini (resolveStagingRange).
+    // Untuk bulan berjalan, akhir bulan kalender adalah tanggal masa depan — pakai hari
+    // ini sebagai batas atas supaya query tidak ditolak untuk SELURUH bulan.
+    const monthEnd = monthCalendarEnd < todayJakarta() ? monthCalendarEnd : todayJakarta();
 
     const { dayBookings, monthBookings, sportByFieldId, venueName, paymentTypeByBooking } = await withMongo(async () => {
       const { bookings, fields, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
@@ -47,7 +51,7 @@ export async function GET(request: Request) {
       // lib/booking-payment-aggregate.ts, bukan resolver terpisah — booking
       // split-payment (mis. MN/2428/260809/0002994, 2 pembayaran) tidak lagi
       // bisa dapat total yang divergen antara Transaksi AYO dan Export.
-      const staged = isPaymentEventsReadEnabled()
+      const staged = isPaymentEventsReadEnabled() && monthStart <= monthEnd
         ? await readActiveStagedPaymentEvents(monthStart, monthEnd, {
           runs: ayoPaymentEventStagingRuns,
           events: ayoPaymentEventStagingEvents,

@@ -113,3 +113,57 @@ test("aktivasi memakai satu pointer atomik, rollback tidak menghapus, dan Olsera
   assert.match(courtSource, /readActiveStagedPaymentEvents/);
   assert.match(ledger, /readActiveStagedPaymentEvents/);
 });
+
+// ---------------------------------------------------------------------------
+// 21 Agustus: root cause export harian/range/bulanan salah nominal (0002994
+// menampilkan Rp50.000 alih-alih Rp200.000) bukan payment-events yang hilang
+// atau flag mati — ketiga route SELALU mengirim akhir bulan KALENDER
+// (mis. "2026-08-31") ke readActiveStagedPaymentEvents() untuk bulan
+// BERJALAN, padahal resolveStagingRange() menolak endDate > hari ini
+// ("tanggal masa depan tidak diizinkan"). Untuk hari ini 2026-08-21, itu
+// membuat SELURUH rentang Agustus ditolak (bukan cuma booking 0002994) —
+// readActiveStagedPaymentEvents() return null, export fallback ke
+// bookings.total_price mentah untuk SEMUA booking bulan berjalan.
+// ---------------------------------------------------------------------------
+
+test("REGRESSION 21 Agustus: endDate akhir bulan kalender untuk bulan BERJALAN ditolak resolveStagingRange (bukti root cause)", () => {
+  const today = new Date("2026-08-21T12:00:00Z");
+  const rejected = resolveStagingRange({ startDate: "2026-08-01", endDate: "2026-08-31" }, today);
+  assert.deepEqual(rejected, { error: "tanggal masa depan tidak diizinkan" });
+});
+
+test("REGRESSION 21 Agustus: fix (cap endDate ke hari ini untuk bulan berjalan) membuat rentang diterima", () => {
+  const today = new Date("2026-08-21T12:00:00Z");
+  // Formula fix yang dipakai ketiga route export: min(akhir bulan kalender, hari ini).
+  const monthCalendarEnd = "2026-08-31";
+  const cappedEnd = monthCalendarEnd < "2026-08-21" ? monthCalendarEnd : "2026-08-21";
+  assert.equal(cappedEnd, "2026-08-21");
+  const accepted = resolveStagingRange({ startDate: "2026-08-01", endDate: cappedEnd }, today);
+  // endDate == hari ini -> rangePeriod() mengenali ini sebagai bulan berjalan penuh ("2026-08"),
+  // bukan rentang custom "start:end" — lihat rangePeriod() di lib/ayo-payment-event-staging.ts.
+  assert.deepEqual(accepted, { range: { period: "2026-08", start: "2026-08-01", end: "2026-08-21" } });
+});
+
+test("REGRESSION 21 Agustus: bulan yang SUDAH LEWAT SEPENUHNYA tidak terpengaruh fix (cap = no-op, perilaku sama seperti sebelumnya)", () => {
+  const today = new Date("2026-09-15T12:00:00Z");
+  const monthCalendarEnd = "2026-08-31";
+  // Bulan Agustus sudah lewat total per hari ini (September) — cap tidak mengubah apa pun.
+  const cappedEnd = monthCalendarEnd < "2026-09-15" ? monthCalendarEnd : "2026-09-15";
+  assert.equal(cappedEnd, monthCalendarEnd, "endDate untuk bulan yang sudah lewat tidak boleh berubah oleh fix ini");
+  const result = resolveStagingRange({ startDate: "2026-08-01", endDate: cappedEnd }, today);
+  assert.deepEqual(result, { range: { period: "2026-08", start: "2026-08-01", end: "2026-08-31" } });
+});
+
+test("REGRESSION 21 Agustus: ketiga route export harian/range/bulanan meng-cap endDate payment-events ke hari ini, tidak pernah kirim tanggal masa depan", async () => {
+  const [harian, range, bulanan] = await Promise.all([
+    readFile(new URL("../app/api/transactions/export/harian/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/transactions/export/range/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/transactions/export/bulanan/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(harian, /monthCalendarEnd < todayJakarta\(\) \? monthCalendarEnd : todayJakarta\(\)/);
+  assert.match(harian, /readActiveStagedPaymentEvents\(monthStart, monthEnd,/);
+  assert.match(range, /end < todayJakarta\(\) \? end : todayJakarta\(\)/);
+  assert.match(range, /readActiveStagedPaymentEvents\(start, paymentEventsEnd,/);
+  assert.match(bulanan, /end < todayJakarta\(\) \? end : todayJakarta\(\)/);
+  assert.match(bulanan, /readActiveStagedPaymentEvents\(start, paymentEventsEnd,/);
+});

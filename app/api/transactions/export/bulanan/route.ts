@@ -24,6 +24,15 @@ function monthJakarta() {
   }).format(new Date());
 }
 
+function todayJakarta() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 export async function GET(request: Request) {
   try {
     await requireModule("transaksi");
@@ -53,8 +62,13 @@ export async function GET(request: Request) {
       // lib/booking-payment-aggregate.ts, bukan resolver terpisah — booking
       // split-payment tidak lagi bisa dapat total yang divergen antara
       // Transaksi AYO dan Export.
-      const staged = isPaymentEventsReadEnabled()
-        ? await readActiveStagedPaymentEvents(start, end, {
+      // readActiveStagedPaymentEvents() menolak endDate > hari ini. Untuk bulan
+      // berjalan, akhir bulan kalender (`end`) adalah tanggal masa depan — pakai
+      // hari ini sebagai batas atas KHUSUS untuk query ini; `end`/workbook tetap
+      // akhir bulan kalender seperti biasa (tidak berubah).
+      const paymentEventsEnd = end < todayJakarta() ? end : todayJakarta();
+      const staged = isPaymentEventsReadEnabled() && start <= paymentEventsEnd
+        ? await readActiveStagedPaymentEvents(start, paymentEventsEnd, {
           runs: ayoPaymentEventStagingRuns,
           events: ayoPaymentEventStagingEvents,
           activation: ayoPaymentEventActivation,
