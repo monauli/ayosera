@@ -59,7 +59,25 @@ export async function GET(request: Request) {
       console.log("[debug-0002994] staged=", staged ? "present" : "null", "staged.events.length=", staged?.events.length, "staged.run._id=", staged?.run._id, "staged.run.status=", staged?.run.status);
       if (staged) {
         const matching = staged.events.filter((e) => e.bookingId?.includes("0002994"));
-        console.log("[debug-0002994] matching events (bookingId contains 0002994):", JSON.stringify(matching, null, 2));
+        // Hanya field diagnostik yang dilog — TIDAK termasuk rawPayload/normalizedPayload/raw
+        // (payload mentah AYO, berisi data pemesan/PII) supaya tidak masuk log Vercel.
+        const safeFields = matching.map((e) => ({
+          identity: e.identity,
+          bookingId: e.bookingId,
+          amount: e.amount,
+          amountSource: e.amountSource,
+          eventDate: e.eventDate,
+          eventDateSource: e.eventDateSource,
+          sourceTable: e.sourceTable,
+          reservationPaymentId: e.reservationPaymentId,
+          nativeId: e.nativeId,
+          sourceId: e.sourceId,
+          paymentStatus: e.paymentStatus,
+          paymentType: e.paymentType,
+          runId: (e as unknown as { runId?: string }).runId,
+          eventIdentity: (e as unknown as { eventIdentity?: string }).eventIdentity,
+        }));
+        console.log("[debug-0002994] matching events (bookingId contains 0002994), diagnostic fields only:", JSON.stringify(safeFields, null, 2));
       }
       const paymentAggregate = staged ? aggregateBookingPayments(staged.events) : null;
       if (paymentAggregate) {
