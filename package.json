@@ -31,6 +31,7 @@
     "test:olsera-inventory-ui": "node --no-warnings --experimental-strip-types --test lib/olsera-inventory-ui.test.ts",
     "test:theme-mode": "node --no-warnings --experimental-strip-types --test lib/theme-mode.test.ts",
     "test:auth-base-url": "node --no-warnings --experimental-strip-types --test lib/auth-base-url.test.ts",
+    "test:app-modules": "node --no-warnings --experimental-strip-types --test lib/auth.test.ts",
     "test:logout-flow": "node --no-warnings --experimental-strip-types --test lib/logout-flow.test.ts",
     "test:login-form-guard": "node --no-warnings --experimental-strip-types --test lib/login-form-guard.test.ts",
     "test:login-identifier": "node --no-warnings --experimental-strip-types --test lib/login-identifier.test.ts",

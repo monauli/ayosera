@@ -5,6 +5,7 @@ import test from "node:test";
 
 const here = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const authLib = here("./auth.ts");
+const appModulesLib = here("./app-modules.ts");
 const page = here("../app/page.tsx");
 const usersPanel = here("../components/users-panel.tsx");
 const panel = here("../components/private-integration-monitor.tsx");
@@ -15,15 +16,15 @@ const usersCreateRoute = here("../app/api/users/route.ts");
 const usersUpdateRoute = here("../app/api/users/[id]/route.ts");
 
 test("modul 'audit' terdaftar di APP_MODULES (satu sistem permission, bukan permission kedua)", () => {
-  assert.match(authLib, /export const APP_MODULES = \["dasbor", "transaksi", "olsera", "webhook", "rekonsiliasi", "audit"\] as const;/);
+  assert.match(appModulesLib, /"dasbor",\s*\n\s*"transaksi",\s*\n\s*"olsera",\s*\n\s*"webhook",\s*\n\s*"rekonsiliasi",\s*\n\s*"audit",\s*\n\s*"kunci-rekonsiliasi-omset",\s*\n\s*\] as const;/);
 });
 
 test("supervisor tetap otomatis mendapat SEMUA modul (termasuk 'audit') lewat normalizeModules yang sama, tanpa kode baru", () => {
-  assert.match(authLib, /function normalizeModules\(role: AppRole, modules: unknown\): AppModule\[\] \{\s*\n\s*if \(role === "supervisor"\) return \[\.\.\.APP_MODULES\];/);
+  assert.match(appModulesLib, /function normalizeModules\(role: AppRole, modules: unknown\): AppModule\[\] \{\s*\n\s*if \(role === "supervisor"\) return \[\.\.\.APP_MODULES\];/);
 });
 
 test("user tanpa field allowedModules (data lama) tetap default TIDAK punya modul apapun, tidak crash", () => {
-  assert.match(authLib, /if \(!Array\.isArray\(modules\)\) return \[\];/);
+  assert.match(appModulesLib, /if \(!Array\.isArray\(modules\)\) return \[\];/);
 });
 
 test("menu Audit & Sinkronisasi menjadi item navItems biasa (module: \"audit\"), bukan lagi tail khusus supervisor", () => {
