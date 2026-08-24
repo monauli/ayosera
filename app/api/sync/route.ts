@@ -4,6 +4,8 @@ import { requireAnyModule } from "@/lib/auth";
 import { logSyncFailure } from "@/lib/booking-sync";
 import { syncProductionListBookings } from "@/lib/production-sync";
 import { maybeSyncAyoPaymentEvents } from "@/lib/ayo-payment-events-auto-sync";
+import { currentStoreId } from "@/lib/olsera-store-id";
+import { assertOmzetRangeNotLocked, OmzetPeriodLockError } from "@/lib/reconciliation-omzet-period-lock";
 
 export const runtime = "nodejs";
 
@@ -56,6 +58,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "start_date must be before or equal to end_date" }, { status: 400 });
     }
 
+    // Tolak tulis ke periode omzet yang sudah dikunci — rentang eksplisit
+    // (start_date/end_date) diprioritaskan, fallback ke `date` tunggal bila
+    // itu satu-satunya sinyal tanggal yang dikirim. Query tanpa tanggal sama
+    // sekali (mis. booking_id saja) tidak bisa dipetakan ke periode, jadi
+    // tidak dicek di sini.
+    if (filters.start_date && filters.end_date) {
+      await assertOmzetRangeNotLocked(currentStoreId(), filters.start_date, filters.end_date);
+    } else if (filters.date) {
+      await assertOmzetRangeNotLocked(currentStoreId(), filters.date, filters.date);
+    }
+
     const result = await syncProductionListBookings({
       ...filters,
       type: "manual",
@@ -71,6 +84,9 @@ export async function POST(request: Request) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Invalid sync filter payload" }, { status: 400 });
+    }
+    if (error instanceof OmzetPeriodLockError) {
+      return NextResponse.json({ error: error.message }, { status: 423 });
     }
     console.error(error);
     return NextResponse.json({ error: "Sync failed" }, { status: 500 });

@@ -65,6 +65,42 @@ export async function getOmzetPeriodLock(storeId: number, period: string, contex
   return source.locks.findOne({ _id: `${storeId}:${period}` });
 }
 
+function periodsBetweenDates(startDate: string, endDate: string): string[] {
+  const start = `${startDate.slice(0, 7)}-01`;
+  const end = `${endDate.slice(0, 7)}-01`;
+  if (start > end) return [];
+  const periods: string[] = [];
+  const cursor = new Date(`${start}T00:00:00.000Z`);
+  const endCursor = new Date(`${end}T00:00:00.000Z`);
+  while (cursor <= endCursor) {
+    periods.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`);
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return periods;
+}
+
+/**
+ * Tolak (throw OmzetPeriodLockError code "LOCKED") bila periode "YYYY-MM"
+ * ini berstatus locked — dipakai jalur TULIS data omzet/revenue/booking
+ * (sync Olsera/AYO/financial) SEBELUM menulis, supaya angka periode yang
+ * sudah dikunci tidak diam-diam berubah lewat resync (sebelumnya lock hanya
+ * melindungi tampilan/presentasi, bukan data sumber). Reuse getOmzetPeriodLock
+ * — TIDAK ada koleksi/schema baru.
+ */
+export async function assertOmzetPeriodNotLocked(storeId: number, period: string, context?: OmzetPeriodLockContext): Promise<void> {
+  const lock = await getOmzetPeriodLock(storeId, period, context);
+  if (lock?.status === "locked") {
+    throw new OmzetPeriodLockError(`Periode ${period} sudah dikunci (Kunci Periode Rekonsiliasi Omzet) — sync/tulis data untuk periode ini ditolak. Buka kunci periode tersebut dulu di halaman Rekonsiliasi Omzet bila memang perlu menulis ulang.`, "LOCKED");
+  }
+}
+
+/** Sama seperti assertOmzetPeriodNotLocked, tapi untuk rentang tanggal [startDate, endDate] (YYYY-MM-DD) — mengecek SETIAP periode kalender yang disentuh rentang itu. */
+export async function assertOmzetRangeNotLocked(storeId: number, startDate: string, endDate: string, context?: OmzetPeriodLockContext): Promise<void> {
+  for (const period of periodsBetweenDates(startDate, endDate)) {
+    await assertOmzetPeriodNotLocked(storeId, period, context);
+  }
+}
+
 export async function uploadOmzetPeriodLockAttachment(input: { storeId: number; period: string; actor: string; attachment: PeriodLockAttachment; expectedVersion?: number | null }, context?: OmzetPeriodLockContext) {
   const source = await contextOrDefault(context); const { year, month } = periodParts(input.period); const now = new Date(); const id = `${input.storeId}:${input.period}`;
   const current = await source.locks.findOne({ _id: id });

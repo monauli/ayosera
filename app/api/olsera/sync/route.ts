@@ -11,6 +11,8 @@ import {
   todayJakarta,
 } from "@/lib/olsera-sync";
 import { withOlseraSyncLock } from "@/lib/olsera-cron-lock";
+import { currentStoreId } from "@/lib/olsera-store-id";
+import { assertOmzetRangeNotLocked, OmzetPeriodLockError } from "@/lib/reconciliation-omzet-period-lock";
 
 const MANUAL_SALES_LEASE_MS = 5 * 60 * 1000;
 
@@ -73,6 +75,7 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
+      await assertOmzetRangeNotLocked(currentStoreId(), body.date, body.date);
       const outcome = await withOlseraSyncLock("sales", "manual", MANUAL_SALES_LEASE_MS, () =>
         auditAndSyncOlseraDay(body.date as string),
       );
@@ -128,6 +131,7 @@ export async function POST(request: Request) {
       );
     }
 
+    await assertOmzetRangeNotLocked(currentStoreId(), startDate as string, endDate);
     const outcome = await withOlseraSyncLock("sales", "manual", MANUAL_SALES_LEASE_MS, () =>
       syncOlseraSalesByCategory(startDate as string, endDate, { force: body.force }),
     );
@@ -142,6 +146,9 @@ export async function POST(request: Request) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Payload sync Olsera tidak valid" }, { status: 400 });
+    }
+    if (error instanceof OmzetPeriodLockError) {
+      return NextResponse.json({ error: error.message }, { status: 423, headers: NO_CACHE_HEADERS });
     }
     console.error(error);
     return NextResponse.json({ error: "Sync Olsera gagal" }, { status: 500 });

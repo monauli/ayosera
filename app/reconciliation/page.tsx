@@ -478,6 +478,35 @@ export default function ReconciliationPage() {
           void analyzeAttachment(period, data.data.olseraTotal);
         }
       }
+      // Hidrasi finalPreview dari dokumen preview TERSIMPAN di server (bukan
+      // klik "Simpan" ulang di sesi ini) — supaya canLockAfterSave() (yang
+      // butuh hasPreview truthy) bisa true untuk periode yang sebenarnya
+      // sudah punya preview valid, tanpa mengubah canLockAfterSave() itu
+      // sendiri. Dijalankan TERAKHIR (setelah applyAnalysisResult di atas,
+      // yang me-null-kan finalPreview) supaya tidak tertimpa. Semua field
+      // numerik ini SELALU ditulis bersamaan oleh recordOmzetPeriodLockPreview
+      // (lib/reconciliation-omzet-period-lock.ts) — non-null berarti preview
+      // valid sungguhan pernah tersimpan, bukan tebakan. lockedDisplay dibentuk
+      // persis sama seperti previewOmzetPeriodLock di server.
+      const lock = data.data.periodLock;
+      if (
+        lock &&
+        lock.status !== "locked" &&
+        lock.originalAyoAmount !== null &&
+        lock.originalOlseraAmount !== null &&
+        lock.originalDifference !== null &&
+        lock.finalAgreedAmount !== null &&
+        lock.adjustmentAmount !== null
+      ) {
+        setFinalPreview({
+          ayo: lock.originalAyoAmount,
+          olsera: lock.originalOlseraAmount,
+          difference: lock.originalDifference,
+          finalAgreedAmount: lock.finalAgreedAmount,
+          adjustmentAmount: lock.adjustmentAmount,
+          lockedDisplay: { ayo: lock.finalAgreedAmount, olsera: lock.finalAgreedAmount, difference: 0, status: "COCOK_TERKUNCI" },
+        });
+      }
     } catch (e) {
       setDetailError(e instanceof Error ? e.message : "Gagal memuat detail bulan ini.");
     } finally {
