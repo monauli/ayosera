@@ -349,13 +349,13 @@ export function buildMonthlyRowsFromMonthlySnapshots(input: {
     const key = `${doc.storeId}:${doc.productId}:${doc.variantId ?? 0}`;
     const agg = input.dailySalesByProductKey.get(key);
     const dailySales = agg?.daily ?? new Array(input.days).fill(0);
-    const totalPenjualan = agg?.total ?? 0;
+    const totalPenjualan = doc.salesQty ?? 0;
 
     const name = stripDuplicateSuffix(doc.productName);
     const product = priceByKey.get(key);
 
     const stokAwal = doc.openingQty;
-    const barangMasuk = doc.incomingQty ?? 0;
+    const barangMasuk = (doc.incomingQty ?? 0) + (doc.returnQty ?? 0);
     const keluar = doc.outgoingQty ?? 0;
     const stockAkhirSistem = stokAwal !== null ? computeStockAkhirSistem({ stokAwal, barangMasuk, totalPenjualan, keluar }) : null;
     const balanceOlsera = doc.closingQty;

@@ -118,7 +118,7 @@ export function buildTwoSheetInventoryRows(input: {
   for (const doc of input.snapshotDocs) {
     const key = `${doc.storeId}:${doc.productId}:${doc.variantId ?? 0}`;
     const product = productByKey.get(key);
-    const category = product?.category || doc.groupName || "";
+    const category = doc.groupName ?? "";
     if (isExcludedTwoSheetCategory(category)) continue;
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
@@ -144,7 +144,7 @@ export function buildTwoSheetInventoryRows(input: {
       key,
       name: doc ? stripDuplicateSuffix(doc.productName) : (catalogName ?? ""),
       sku: product?.sku ?? doc?.productSku ?? null,
-      category: product?.category || doc?.groupName || "",
+      category: doc?.groupName ?? "",
       uom: product?.uom ?? null,
       openingQty: doc ? doc.openingQty : (isCurrentMonth ? product?.stockQty ?? 0 : 0),
       incomingQty: doc ? doc.incomingQty : 0,

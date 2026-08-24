@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     const productByKey = new Map(raw.products.map((product) => [rowKey(product.storeId ?? 0, product.productId, product.variantId), product]));
     const rows = raw.snapshots.map((snapshot: OlseraInventoryMonthlySnapshotDocument) => {
       const product = productByKey.get(rowKey(snapshot.storeId, snapshot.productId, snapshot.variantId));
-      const category = product?.category ?? snapshot.groupName;
+      const category = snapshot.groupName ?? "";
       const minimumStock = product?.lowStockAlert ?? DEFAULT_LOW_STOCK_THRESHOLD;
       const unitCost = product?.buyPrice ?? null;
       const base: MonthlyInventoryUiRow = {
