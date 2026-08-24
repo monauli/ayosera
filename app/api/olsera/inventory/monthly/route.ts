@@ -116,7 +116,11 @@ export async function GET(request: Request) {
       return true;
     });
     const direction = params.dir === "asc" ? 1 : -1;
-    filtered.sort((a, b) => (params.sort === "stock" ? ((a.closingQty ?? 0) - (b.closingQty ?? 0)) : params.sort === "value" ? ((a.value ?? 0) - (b.value ?? 0)) : a.name.localeCompare(b.name, "id")) * direction);
+    filtered.sort((a, b) => {
+      if (params.sort === "stock") return ((a.closingQty ?? 0) - (b.closingQty ?? 0)) * direction;
+      if (params.sort === "value") return ((a.value ?? 0) - (b.value ?? 0)) * direction;
+      return (a.category.localeCompare(b.category, "id") || a.name.localeCompare(b.name, "id")) * direction;
+    });
     const categories = [...new Set(rows.map((row) => row.category))].sort((a, b) => a.localeCompare(b, "id"));
     const start = (params.page - 1) * params.limit;
     const currentPeriod = jakartaPeriod();
