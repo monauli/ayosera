@@ -261,6 +261,53 @@ test("computeMonthlyStepBackward: anchor closingQty > 0 DAN ada movement -> paka
   assert.deepEqual(result.stopped, []);
 });
 
+// ---- ODEA ROSE Mei 2026: ikut angka API Olsera, BUKAN warisan ledger ----
+// Olsera memutus identitas ~26 Mei 2026 (106817649 "BOLA PADEL ODEA" ->
+// 116138490 "BOLA PADEL ODEA ROSE", mulai begin=0). Setelah
+// LEDGER_HISTORY_CUTOFF_BY_PRODUCT_ID menyaring baris pra-putus, ledger Mei
+// tinggal 12 — sama dengan salesQty API — sehingga fallback alias TIDAK
+// override dan rantai menutup persis di angka Olsera (0 / 57 / 12 / 45).
+// BA Stock Opname Mei 2026: sistem Olsera 45, fisik aktual 44.
+
+test("computeMonthlyStepBackward: ODEA ROSE Mei -> ikut API Olsera (begin 0, in 57, sales 12, close 45), ledger pasca-cutoff TIDAK override", () => {
+  const key = "1:116138490:0";
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 45, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const row = movementRow({ productId: 116138490, productName: "BOLA PADEL ODEA ROSE", incomingQty: 57, returnQty: 0, salesQty: 12, outgoingQty: 0, sisa: 45 });
+  const result = computeMonthlyStepBackward({
+    anchors,
+    matched: new Map([[key, matched(row)]]),
+    catalogById: new Map(),
+    hasEvidenceBeforeOrDuring: () => true,
+    rawSalesActivityByKey: new Map([[key, 12]]), // pasca-cutoff: 12, bukan 55
+    verifiedAliasCanonicalKeys: new Set([key]),
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.openingQty, 0);
+  assert.equal(entry.incomingQty, 57);
+  assert.equal(entry.salesQty, 12);
+  assert.equal(entry.closingQty, 45);
+  assert.equal(entry.status, "complete");
+  assert.ok(!entry.diagnostics.some((d) => d.includes("Alias TERVERIFIKASI")), "fallback alias TIDAK boleh aktif saat ledger tidak lebih besar dari API");
+});
+
+test("computeMonthlyStepBackward: ODEA ROSE Mei TANPA cutoff (ledger bocor 55) -> fallback override, opening meleset dari 0 (rantai tidak menutup di angka Olsera)", () => {
+  const key = "1:116138490:0";
+  const anchors = new Map<string, BackwardAnchor>([[key, { closingQty: 45, productName: "BOLA PADEL ODEA ROSE", productSku: null, groupName: "BOLA PADEL" }]]);
+  const row = movementRow({ productId: 116138490, productName: "BOLA PADEL ODEA ROSE", incomingQty: 57, returnQty: 0, salesQty: 12, outgoingQty: 0, sisa: 45 });
+  const result = computeMonthlyStepBackward({
+    anchors,
+    matched: new Map([[key, matched(row)]]),
+    catalogById: new Map(),
+    hasEvidenceBeforeOrDuring: () => true,
+    rawSalesActivityByKey: new Map([[key, 55]]), // pra-cutoff ikut terbawa
+    verifiedAliasCanonicalKeys: new Set([key]),
+  });
+  const entry = result.entries.get(key)!;
+  assert.equal(entry.salesQty, 55); // ledger menimpa API
+  assert.equal(entry.openingQty, 43); // 45 - 57 + 55 = 43, bukan 0 -> saldo awal salah, inilah yang merambat jadi negatif di rantai nyata
+  assert.ok(entry.diagnostics.some((d) => d.includes("Alias TERVERIFIKASI")));
+});
+
 // ---- computeMonthlyStepBackward: produk BARU tanpa anchor bulan berikutnya (kasus RAKET PADEL ADIDAS 2026 MATCH / BULLPADEL Feb-Mar 2026) ----
 
 test("computeMonthlyStepBackward: produk BARU (di 'matched' tapi TIDAK ada anchor) -> HANYA masuk karena ada baris API nyata bulan ini (bukti eksistensi, order-item TIDAK diperlukan)", () => {

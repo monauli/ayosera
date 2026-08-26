@@ -20,6 +20,7 @@ import {
   computeMonthlyStepForward,
   dominantStoreId,
   getInventoryPeriodState,
+  isPreCutoffLedgerRow,
   lastDayOfMonth,
   monthlySnapshotDocId,
   monthsAscending,
@@ -158,11 +159,14 @@ export async function fetchRawSalesActivityByMonth(
   const olseraInventoryMovements = collectionOverride ?? (await collections()).olseraInventoryMovements;
   const rows = await olseraInventoryMovements
     .find({ storeId: { $in: [storeId, null] }, date: { $gte: start, $lte: end } })
-    .project({ productId: 1, variantId: 1, qtyChange: 1 })
+    .project({ productId: 1, variantId: 1, qtyChange: 1, date: 1 })
     .toArray();
   const map: RawSalesActivityByKey = new Map();
-  for (const row of rows as unknown as { productId: number | null; variantId: number | null; qtyChange: number }[]) {
+  for (const row of rows as unknown as { productId: number | null; variantId: number | null; qtyChange: number; date: string }[]) {
     if (row.productId === null) continue;
+    // Baris milik identitas Olsera LAMA (sebelum putus bersih) TIDAK dihitung
+    // sebagai aktivitas produk kanonik — lihat LEDGER_HISTORY_CUTOFF_BY_PRODUCT_ID.
+    if (isPreCutoffLedgerRow(row.productId, row.date)) continue;
     const key = `${storeId}:${row.productId}:${row.variantId ?? 0}`;
     map.set(key, (map.get(key) ?? 0) + Math.abs(row.qtyChange));
   }

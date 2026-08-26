@@ -365,22 +365,22 @@ export function computeKeluarFromStockMovement(row: Pick<StockMovementApiRow, "o
 }
 
 /**
- * Alias nama eksplisit untuk jalur OTOMATIS — diinstruksikan pengguna sebagai
- * "sudah diverifikasi manual" (2026-07-20). CATATAN PENTING: sesi implementasi
- * ini TIDAK punya akses ke MongoDB Atlas produksi (katalog live tidak
- * terjangkau — lihat lib/olsera-inventory-monthly-export.ts), sehingga alias
- * ini TIDAK BISA diverifikasi ulang secara independen terhadap katalog nyata.
- * MONTHLY_NAME_ALIASES (jalur upload manual di atas) SENGAJA dibiarkan kosong
- * untuk pasangan ODEA/ODEA ROSE karena API pernah menemukan "BOLA PADEL ODEA
- * RED" sebagai produk katalog terpisah (varian warna dijual sendiri-sendiri) —
- * risiko menggabungkan stok dua produk berbeda. Alias di bawah HANYA dipakai
- * jalur otomatis (tidak memengaruhi jalur upload manual/test Juni yang sudah
- * ada) — wajib dikonfirmasi ulang terhadap katalog Mongo live sebelum
- * dipercaya penuh di produksi.
+ * Alias nama eksplisit untuk jalur OTOMATIS — dipakai HANYA sebagai langkah 4
+ * (setelah identity, SKU, dan nama exact gagal), dan HANYA bila nama target
+ * menghasilkan kandidat TUNGGAL di katalog.
+ *
+ * SENGAJA KOSONG. Entri ODEA ("BOLA PADEL ODEA ROSE" -> "BOLA PADEL ODEA")
+ * dihapus 2026-08-26 setelah diverifikasi terhadap katalog Mongo produksi:
+ * entri itu TIDAK PERNAH bisa aktif, dua sebab independen —
+ *   1. baris API bernama "BOLA PADEL ODEA ROSE" sudah cocok di langkah 1 lewat
+ *      productId 116138490 yang ada di katalog, jadi tidak pernah sampai ke
+ *      langkah alias; dan
+ *   2. katalog tidak punya produk bernama "BOLA PADEL ODEA" (hanya "... ODEA
+ *      ROSE" dan "... ODEA RED"), sehingga lookup target selalu nol kandidat.
+ * Pemetaan identitas lama→baru untuk pasangan ini ditangani di tempat yang
+ * benar: olsera_product_aliases (106817649 -> 116138490, confidence "verified").
  */
-export const STOCKMOVEMENT_NAME_ALIASES: Record<string, string> = {
-  [normalizeItemName("BOLA PADEL ODEA ROSE")]: normalizeItemName("BOLA PADEL ODEA"),
-};
+export const STOCKMOVEMENT_NAME_ALIASES: Record<string, string> = {};
 
 export type StockMovementMatchMethod = "identity" | "sku" | "name" | "alias" | "name-prefix-stripped" | "ambiguous-sku" | "ambiguous-name" | "unmatched";
 

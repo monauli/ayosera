@@ -813,6 +813,41 @@ function createFakeMovementCollection(docs: FakeMovementDoc[]): MinimalMovementR
   };
 }
 
+// ---- Putus bersih identitas Olsera (LEDGER_HISTORY_CUTOFF_BY_PRODUCT_ID) ----
+// Kasus ODEA ROSE 116138490: Olsera mengganti identitas ~26 Mei 2026 dan
+// memulai ledger dari nol. Baris ledger AYOSERA sebelum tanggal itu milik
+// identitas LAMA (106817649 "BOLA PADEL ODEA") dan tidak boleh diwariskan.
+
+test("fetchRawSalesActivityByMonth: baris ledger SEBELUM tanggal putus TIDAK dihitung utk productId ber-cutoff (ODEA ROSE 116138490)", async () => {
+  const collection = createFakeMovementCollection([
+    // 1-25 Mei = identitas LAMA, total 43 unit -> harus DIABAIKAN
+    { _id: "old:1", storeId: 1, productId: 116138490, variantId: null, date: "2026-05-10", qtyChange: -40 },
+    { _id: "old:2", storeId: 1, productId: 116138490, variantId: null, date: "2026-05-25", qtyChange: -3 },
+    // 26-31 Mei = identitas BARU, total 12 unit -> harus DIHITUNG
+    { _id: "new:1", storeId: 1, productId: 116138490, variantId: null, date: "2026-05-26", qtyChange: -4 },
+    { _id: "new:2", storeId: 1, productId: 116138490, variantId: null, date: "2026-05-31", qtyChange: -8 },
+  ]);
+  const map = await fetchRawSalesActivityByMonth(1, "2026-05-01", "2026-05-31", collection);
+  assert.equal(map.get("1:116138490:0"), 12); // 12, BUKAN 55
+});
+
+test("fetchRawSalesActivityByMonth: bulan yang SELURUHNYA sebelum tanggal putus -> key tidak muncul sama sekali (April ODEA ROSE)", async () => {
+  const collection = createFakeMovementCollection([
+    { _id: "old:3", storeId: 1, productId: 116138490, variantId: null, date: "2026-04-15", qtyChange: -51 },
+  ]);
+  const map = await fetchRawSalesActivityByMonth(1, "2026-04-01", "2026-04-30", collection);
+  assert.equal(map.has("1:116138490:0"), false);
+});
+
+test("fetchRawSalesActivityByMonth: productId TANPA cutoff tidak terpengaruh sama sekali (mis. YONEX 118420650, alias verified juga)", async () => {
+  const collection = createFakeMovementCollection([
+    { _id: "y:1", storeId: 1, productId: 118420650, variantId: null, date: "2026-04-15", qtyChange: -7 },
+    { _id: "y:2", storeId: 1, productId: 118420650, variantId: null, date: "2026-04-16", qtyChange: -2 },
+  ]);
+  const map = await fetchRawSalesActivityByMonth(1, "2026-04-01", "2026-04-30", collection);
+  assert.equal(map.get("1:118420650:0"), 9);
+});
+
 test("fetchRawSalesActivityByMonth: storeId toko sendiri DAN storeId:null (legacy) ikut terhitung, storeId toko lain TIDAK (Known Case 37)", async () => {
   const collection = createFakeMovementCollection([
     { _id: "sale:1", storeId: 1, productId: 100, variantId: null, date: "2026-02-10", qtyChange: -3 },

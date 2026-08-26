@@ -300,6 +300,40 @@ function carryForwardStatusAndDiagnostic(key: string, rawSalesActivityByKey: Raw
 }
 
 // ---------------------------------------------------------------------------
+// PUTUS BERSIH identitas Olsera — batas tanggal per productId kanonik.
+//
+// Olsera kadang mengganti identitas produk dan MEMULAI ulang ledger stoknya
+// dari nol, TANPA pernah mengekspos riwayat identitas lama lewat stockmovement
+// API. Bila alias `verified` menjembatani identitas lama→baru, ledger AYOSERA
+// (olsera_inventory_movements) MASIH memuat penjualan identitas lama — dan
+// applyVerifiedAliasLedgerFallback akan mewariskannya ke produk kanonik,
+// menghasilkan saldo yang tidak pernah bisa cocok dengan Olsera.
+//
+// Peta ini menandai tanggal putus: baris ledger SEBELUM tanggal tsb milik
+// identitas LAMA dan TIDAK BOLEH dihitung sebagai aktivitas produk kanonik
+// (lihat fetchRawSalesActivityByMonth di lib/olsera-inventory-monthly-snapshot-store.ts).
+// Sengaja per-productId & eksplisit, BUKAN aturan umum: setiap entri harus
+// punya bukti terverifikasi sendiri, bukan heuristik.
+//
+// 116138490 "BOLA PADEL ODEA ROSE" — terverifikasi live 2026-08-26:
+//   - stockmovement API Olsera TIDAK punya baris ODEA sama sekali Feb/Mar/Apr;
+//     baris pertama muncul Mei dengan begin=0, in=57, sales=12, sisa=45.
+//   - olsera_order_items menunjukkan penjualan terus-menerus 1-25 Mei di bawah
+//     identitas LAMA 106817649 "BOLA PADEL ODEA" (43 unit), lalu 12 unit pada
+//     26-31 Mei — 12 itu PERSIS salesQty Mei versi Olsera.
+//   - BA Stock Opname Mei 2026: stok sistem Olsera 45, fisik aktual 44 —
+//     hitung fisik mendukung angka Olsera, bukan warisan ledger.
+export const LEDGER_HISTORY_CUTOFF_BY_PRODUCT_ID: Record<number, string> = {
+  116138490: "2026-05-26",
+};
+
+/** true bila baris ledger tanggal `date` milik identitas LAMA productId ini (sebelum putus bersih) — lihat LEDGER_HISTORY_CUTOFF_BY_PRODUCT_ID. */
+export function isPreCutoffLedgerRow(productId: number, date: string): boolean {
+  const cutoff = LEDGER_HISTORY_CUTOFF_BY_PRODUCT_ID[productId];
+  return cutoff !== undefined && date < cutoff;
+}
+
+// ---------------------------------------------------------------------------
 // Fallback ledger historis untuk identity-change TERVERIFIKASI (Fitur ODEA,
 // generik — TIDAK hardcode nama produk apa pun). Diterapkan sebagai langkah
 // TERAKHIR (post-processing) atas entries yang SUDAH dihitung oleh sumber

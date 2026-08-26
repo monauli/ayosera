@@ -218,15 +218,18 @@ test("matchStockMovementRowToProduct: name-prefix-stripped — 'GRIP YONEX AC102
   assert.equal(result.product?._id, "1:9:0");
 });
 
-test("matchStockMovementRowToProduct: alias — 'BOLA PADEL ODEA ROSE' (API) -> 'BOLA PADEL ODEA' (katalog)", () => {
+// Entri alias nama ODEA dihapus 2026-08-26 (terverifikasi terhadap katalog
+// produksi: tidak pernah bisa aktif — lihat STOCKMOVEMENT_NAME_ALIASES).
+// Pemetaan identitas lama->baru ditangani olsera_product_aliases.
+test("matchStockMovementRowToProduct: 'BOLA PADEL ODEA ROSE' (API) TIDAK lagi dipetakan ke 'BOLA PADEL ODEA' lewat alias nama", () => {
   const catalog = [product({ _id: "1:7:0", productId: 7, name: "BOLA PADEL ODEA" })];
   const identityIndex = buildProductIdentityIndex(catalog);
   const skuIndex = buildSkuIndex(catalog);
   const nameIndex = buildMovementNameIndex(catalog);
   const row = movementRow({ storeId: 9, productId: 999, productName: "BOLA PADEL ODEA ROSE" });
   const result = matchStockMovementRowToProduct(row, identityIndex, skuIndex, nameIndex);
-  assert.equal(result.method, "alias");
-  assert.equal(result.product?._id, "1:7:0");
+  assert.equal(result.method, "unmatched");
+  assert.equal(result.product, null);
 });
 
 test("matchStockMovementRowToProduct: ODEA ROSE TIDAK digabung dengan ODEA RED bila keduanya ada di katalog sebagai produk terpisah", () => {
