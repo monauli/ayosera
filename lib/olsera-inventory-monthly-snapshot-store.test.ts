@@ -185,6 +185,24 @@ test("backfillForwardRange: bulan tanpa movement -> carry-forward, closing = ope
   assert.equal(july[0].closingQty, 21);
 });
 
+// ---- Guard closingQty negatif (entryToDocument) ----
+
+test("backfillForwardRange: closingQty negatif -> status 'incomplete' + diagnostik eksplisit, nilai asli TIDAK di-clamp & dokumen TETAP ditulis", async (t) => {
+  mockFetchStockmovementByMonth(t, {
+    "2026-07-01": [
+      { product_id: 100, product_name: "PRODUK A", product_group_name: "GROUP", beginning_qty: 21, sum_incoming_qty: 0, sum_return_qty: 0, sum_sales_qty: 42, sum_outgoing_qty: 0, sisa: -21 },
+    ],
+  });
+  const repo = createFakeRepo([seedJuneDoc()]);
+  const matchingContext = matchingContextForOneProduct();
+  await backfillForwardRange({ fromInclusive: { year: 2026, month: 6 }, toInclusive: { year: 2026, month: 7 }, storeId: 1, matchingContext, repo });
+  const july = await repo.findMonth(1, 2026, 7);
+  assert.equal(july.length, 1); // dokumen TETAP ditulis, bukan ditolak
+  assert.equal(july[0].closingQty, -21); // nilai asli dipertahankan, TIDAK di-clamp ke 0
+  assert.equal(july[0].status, "incomplete");
+  assert.ok(july[0].diagnostics.some((d) => d.includes("closingQty negatif (-21)")), july[0].diagnostics.join(" | "));
+});
+
 test("backfillForwardRange: idempotent — dijalankan dua kali menghasilkan dokumen identik (bukan akumulasi)", async (t) => {
   mockFetchStockmovementByMonth(t, {
     "2026-07-01": [
@@ -276,9 +294,9 @@ test("backfillBackwardRange: tanpa movement TAPI ada bukti eksistensi (order_ite
   assert.equal(april[0].closingQty, 45);
 });
 
-test("backfillBackwardRange: TANPA bukti eksistensi apa pun -> produk DIHENTIKAN, tidak ada dokumen ditulis utk bulan itu (tidak dipaksa)", async (t) => {
-  mockFetchStockmovementByMonth(t, {}); // ODEA RED tidak pernah muncul di jendela manapun
-  const repo = createFakeRepo([seedMayDoc()]);
+test("backfillBackwardRange: anchor closing = 0 DAN tanpa bukti eksistensi apa pun -> produk DIHENTIKAN, tidak ada dokumen ditulis utk bulan itu (tidak dipaksa)", async (t) => {
+  mockFetchStockmovementByMonth(t, {}); // produk tidak pernah muncul di jendela manapun
+  const repo = createFakeRepo([{ ...seedMayDoc(), closingQty: 0 }]);
   const matchingContext = matchingContextForOneProduct();
   await backfillBackwardRange({
     fromInclusive: { year: 2026, month: 5 },
@@ -290,6 +308,25 @@ test("backfillBackwardRange: TANPA bukti eksistensi apa pun -> produk DIHENTIKAN
   });
   const april = await repo.findMonth(1, 2026, 4);
   assert.equal(april.length, 0);
+});
+
+test("backfillBackwardRange: anchor closing > 0 tanpa movement & tanpa bukti order-item -> dokumen TETAP ditulis sebagai carry-forward (kasus CUP 22OZ / HOT CUP KRAFT 12OZ, barang tidak pernah terjual)", async (t) => {
+  mockFetchStockmovementByMonth(t, {}); // tidak pernah ada baris stockmovement
+  const repo = createFakeRepo([seedMayDoc()]); // closing Mei = 45
+  const matchingContext = matchingContextForOneProduct();
+  await backfillBackwardRange({
+    fromInclusive: { year: 2026, month: 5 },
+    toInclusive: { year: 2026, month: 4 },
+    storeId: 1,
+    matchingContext,
+    repo,
+    earliestByProductId: new Map(), // TIDAK ada olsera_order_items sama sekali
+  });
+  const april = await repo.findMonth(1, 2026, 4);
+  assert.equal(april.length, 1);
+  assert.equal(april[0].source, "carry-forward");
+  assert.equal(april[0].openingQty, 45);
+  assert.equal(april[0].closingQty, 45);
 });
 
 test("backfillBackwardRange: produk BARU tanpa anchor bulan berikutnya TAPI ada baris stockmovement bulan ini -> direcover TANPA butuh order-item evidence (kasus nyata RAKET PADEL ADIDAS 2026 MATCH Februari 2026)", async (t) => {

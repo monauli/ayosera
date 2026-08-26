@@ -208,12 +208,57 @@ test("computeMonthlyStepBackward: tanpa movement TAPI ada bukti eksistensi -> ca
   assert.deepEqual(result.stopped, []);
 });
 
-test("computeMonthlyStepBackward: tanpa movement DAN tanpa bukti eksistensi -> DIHENTIKAN (produk belum eksis bulan ini, tidak dipaksa)", () => {
-  const anchors = new Map<string, BackwardAnchor>([["1:119043265:0", { closingQty: 47, productName: "BOLA PADEL ODEA RED", productSku: null, groupName: "BOLA PADEL" }]]);
+test("computeMonthlyStepBackward: anchor closingQty = 0, tanpa movement DAN tanpa bukti eksistensi -> DIHENTIKAN (produk belum eksis bulan ini, tidak dipaksa)", () => {
+  const anchors = new Map<string, BackwardAnchor>([["1:119043265:0", { closingQty: 0, productName: "BOLA PADEL ODEA RED", productSku: null, groupName: "BOLA PADEL" }]]);
   const result = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => false });
   assert.equal(result.entries.size, 0);
   assert.deepEqual(result.stopped, ["1:119043265:0"]);
   assert.equal(result.nextAnchors.size, 0);
+});
+
+test("computeMonthlyStepBackward: anchor closingQty = 0 TAPI ada bukti eksistensi -> tetap carry-forward (perilaku lama utk saldo kosong dipertahankan)", () => {
+  const anchors = new Map<string, BackwardAnchor>([["1:119043265:0", { closingQty: 0, productName: "BOLA PADEL ODEA RED", productSku: null, groupName: "BOLA PADEL" }]]);
+  const result = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => true });
+  const entry = result.entries.get("1:119043265:0")!;
+  assert.equal(entry.source, "carry-forward");
+  assert.equal(entry.openingQty, 0);
+  assert.equal(entry.closingQty, 0);
+  assert.deepEqual(result.stopped, []);
+});
+
+// ---- computeMonthlyStepBackward: carry-over tanpa jejak order-item (kasus CUP 22OZ / HOT CUP KRAFT 12OZ) ----
+// Barang yang TIDAK PERNAH terjual tidak punya baris olsera_order_items sama
+// sekali, sehingga hasEvidenceBeforeOrDuring() selalu false — dulu item begini
+// di-stop & dokumennya tidak pernah ditulis (hilang total dari snapshot),
+// padahal anchor closing dari bulan berikutnya membuktikan saldonya ada.
+
+test("computeMonthlyStepBackward: anchor closingQty > 0, tanpa movement, TANPA bukti order-item -> TETAP carry-forward (anchor positif = bukti eksistensi)", () => {
+  const anchors = new Map<string, BackwardAnchor>([["1:106817283:0", { closingQty: 1000, productName: "CUP 22OZ", productSku: null, groupName: "GELAS/CUP" }]]);
+  const result = computeMonthlyStepBackward({ anchors, matched: new Map(), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => false });
+  const entry = result.entries.get("1:106817283:0")!;
+  assert.equal(entry.source, "carry-forward");
+  assert.equal(entry.status, "complete");
+  assert.equal(entry.openingQty, 1000);
+  assert.equal(entry.closingQty, 1000);
+  assert.equal(entry.salesQty, 0);
+  assert.match(entry.diagnostics[0], /anchor closing bulan berikutnya = 1000/);
+  assert.equal(result.nextAnchors.get("1:106817283:0")?.closingQty, 1000);
+  assert.deepEqual(result.stopped, []);
+});
+
+test("computeMonthlyStepBackward: anchor closingQty > 0 DAN ada movement -> pakai data movement (jalur normal tidak berubah oleh anchor positif)", () => {
+  const anchors = new Map<string, BackwardAnchor>([["1:106817305:0", { closingQty: 1000, productName: "HOT CUP KRAFT 12OZ", productSku: null, groupName: "GELAS/CUP" }]]);
+  const row = movementRow({ productId: 106817305, productName: "HOT CUP KRAFT 12OZ", incomingQty: 200, returnQty: 0, salesQty: 150, outgoingQty: 50 });
+  const result = computeMonthlyStepBackward({ anchors, matched: new Map([["1:106817305:0", matched(row)]]), catalogById: new Map(), hasEvidenceBeforeOrDuring: () => false });
+  const entry = result.entries.get("1:106817305:0")!;
+  assert.equal(entry.source, "stockmovement-backward");
+  assert.equal(entry.incomingQty, 200);
+  assert.equal(entry.salesQty, 150);
+  assert.equal(entry.outgoingQty, 50);
+  assert.equal(entry.openingQty, 1000); // 1000 = opening + 200 + 0 - 150 - 50
+  assert.equal(entry.closingQty, 1000);
+  assert.equal(result.nextAnchors.get("1:106817305:0")?.closingQty, 1000);
+  assert.deepEqual(result.stopped, []);
 });
 
 // ---- computeMonthlyStepBackward: produk BARU tanpa anchor bulan berikutnya (kasus RAKET PADEL ADIDAS 2026 MATCH / BULLPADEL Feb-Mar 2026) ----

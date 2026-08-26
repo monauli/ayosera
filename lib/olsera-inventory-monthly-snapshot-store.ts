@@ -181,8 +181,16 @@ function entryToDocument(entry: MonthlyLedgerEntry, storeId: number, month: Mont
   const valuesKnown = [entry.openingQty, entry.incomingQty, entry.returnQty, entry.salesQty, entry.outgoingQty, entry.closingQty].every((value) => value !== null && Number.isFinite(value));
   const expectedClosing = valuesKnown ? (entry.openingQty as number) + (entry.incomingQty as number) + (entry.returnQty as number) - (entry.salesQty as number) - (entry.outgoingQty as number) : null;
   const arithmeticMismatch = expectedClosing !== null && expectedClosing !== entry.closingQty;
-  const status = arithmeticMismatch ? "incomplete" : entry.status;
-  const diagnostics = arithmeticMismatch ? [...entry.diagnostics, `Formula histori tidak konsisten: closing ${entry.closingQty} berbeda dari hasil opening + incoming + return - sales - outgoing = ${expectedClosing}. Closing tidak dianggap final.`] : entry.diagnostics;
+  // closingQty negatif = mustahil secara fisik -> ditandai "incomplete" + diagnostik
+  // eksplisit. Nilai asli SENGAJA TIDAK di-clamp ke 0 dan penulisan TIDAK ditolak:
+  // angka negatifnya harus tetap terlihat supaya bisa diinvestigasi.
+  const negativeClosing = entry.closingQty !== null && entry.closingQty < 0;
+  const status = arithmeticMismatch || negativeClosing ? "incomplete" : entry.status;
+  const diagnostics = [
+    ...entry.diagnostics,
+    ...(arithmeticMismatch ? [`Formula histori tidak konsisten: closing ${entry.closingQty} berbeda dari hasil opening + incoming + return - sales - outgoing = ${expectedClosing}. Closing tidak dianggap final.`] : []),
+    ...(negativeClosing ? [`closingQty negatif (${entry.closingQty}) — data tidak valid, perlu dicek. Nilai asli TIDAK di-clamp ke 0 dan TIDAK ditolak supaya bisa diinvestigasi.`] : []),
+  ];
   return {
     _id: monthlySnapshotDocId(storeId, month.year, month.month, entry.productId, entry.variantId),
     storeId,

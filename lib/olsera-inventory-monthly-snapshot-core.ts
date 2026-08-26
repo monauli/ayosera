@@ -255,7 +255,7 @@ export type ForwardAnchor = {
 export type MonthlyStepBackwardResult = {
   entries: Map<string, MonthlyLedgerEntry>;
   nextAnchors: Map<string, BackwardAnchor>;
-  /** product._id yang DIHENTIKAN di bulan ini (tidak ada movement & tidak ada bukti eksistensi) — tidak ditulis dokumen utk bulan ini/lebih awal. */
+  /** product._id yang DIHENTIKAN di bulan ini (tidak ada movement, anchor closing = 0, & tidak ada bukti eksistensi) — tidak ditulis dokumen utk bulan ini/lebih awal. */
   stopped: string[];
 };
 
@@ -281,7 +281,8 @@ export type MonthlyStepBackwardResult = {
 /** key sama seperti `anchors`/`matched` (`${storeId}:${productId}:${variantId ?? 0}`) -> total abs(qtyChange) olsera_inventory_movements bulan ini (evidence independen, BUKAN dari stockmovement API). */
 export type RawSalesActivityByKey = Map<string, number>;
 
-function carryForwardStatusAndDiagnostic(key: string, rawSalesActivityByKey: RawSalesActivityByKey | undefined): { status: MonthlyLedgerStatus; diagnostic: string } {
+/** `anchorClosingQty` HANYA diisi jalur mundur (computeMonthlyStepBackward) — dipakai untuk menulis alasan carry-forward yang jujur bila bukti order-item tidak ada. Jalur maju tidak mengisinya (perilaku/diagnostiknya TIDAK berubah). */
+function carryForwardStatusAndDiagnostic(key: string, rawSalesActivityByKey: RawSalesActivityByKey | undefined, anchorClosingQty = 0): { status: MonthlyLedgerStatus; diagnostic: string } {
   const rawSales = rawSalesActivityByKey?.get(key);
   if (rawSales !== undefined && rawSales > 0) {
     return {
@@ -291,7 +292,10 @@ function carryForwardStatusAndDiagnostic(key: string, rawSalesActivityByKey: Raw
   }
   return {
     status: "complete",
-    diagnostic: "Tidak ada baris stockmovement API pada bulan ini — saldo dibawa sama (carry-forward), didukung bukti riwayat pada/sebelum bulan ini.",
+    diagnostic:
+      anchorClosingQty > 0
+        ? `Tidak ada baris stockmovement API pada bulan ini — saldo dibawa sama (carry-forward), didukung anchor closing bulan berikutnya = ${anchorClosingQty} (>0): saldo itu SENDIRI bukti produk sudah eksis pada bulan ini, olsera_order_items TIDAK diperlukan (produk yang tidak pernah terjual tidak pernah punya baris order-item).`
+        : "Tidak ada baris stockmovement API pada bulan ini — saldo dibawa sama (carry-forward), didukung bukti riwayat pada/sebelum bulan ini.",
   };
 }
 
@@ -369,10 +373,17 @@ function applyVerifiedAliasLedgerFallback(
  * bulan N-1. `productId`/`variantId` pada entry SELALU identitas katalog
  * STABIL (dari kunci Map, bukan productId mentah baris API — bisa beda bila
  * Olsera pernah mengganti ID, lihat canonicalProductId). Produk tanpa baris
- * movement bulan ini: dibawa rata (carry-forward) HANYA bila
- * `hasEvidenceBeforeOrDuring` membuktikan produk itu sudah eksis pada/​
- * sebelum bulan ini (mis. ada olsera_order_items) — bila tidak, dihentikan
- * (TIDAK dipaksa masuk laporan bulan yang belum eksis). `rawSalesActivityByKey`
+ * movement bulan ini: dibawa rata (carry-forward) bila anchor closing bulan
+ * berikutnya > 0 — saldo positif itu SENDIRI sudah bukti eksistensi, jadi
+ * `hasEvidenceBeforeOrDuring` TIDAK diperlukan di jalur ini (terbukti live
+ * 2026-08: "CUP 22OZ" & "HOT CUP KRAFT 12OZ" punya anchor closing 1000 tapi
+ * tidak pernah terjual, sehingga tidak pernah punya olsera_order_items dan
+ * DULU hilang total dari snapshot bulan-bulan sebelumnya). Bila anchor
+ * closing = 0 (produk yang memang belum eksis / saldo kosong): perilaku LAMA
+ * dipertahankan — carry-forward HANYA bila `hasEvidenceBeforeOrDuring`
+ * membuktikan produk sudah eksis pada/sebelum bulan ini (mis. ada
+ * olsera_order_items), bila tidak dihentikan (TIDAK dipaksa masuk laporan
+ * bulan yang belum eksis). `rawSalesActivityByKey`
  * (opsional, additive — default tanpa perubahan bila tidak diisi) menandai
  * carry-forward yang KONTRADIKTIF dengan bukti penjualan independen sebagai
  * status "incomplete" (lihat carryForwardStatusAndDiagnostic) — TIDAK PERNAH
@@ -435,8 +446,8 @@ export function computeMonthlyStepBackward(input: {
         diagnostics: [`Opening dihitung mundur dari closing bulan berikutnya via stockmovement API (metode match: ${movement.method}).`],
       });
       nextAnchors.set(key, { closingQty: opening, productName: anchor.productName, productSku: anchor.productSku, groupName: anchor.groupName });
-    } else if (input.hasEvidenceBeforeOrDuring(key)) {
-      const { status, diagnostic } = carryForwardStatusAndDiagnostic(key, input.rawSalesActivityByKey);
+    } else if (anchor.closingQty > 0 || input.hasEvidenceBeforeOrDuring(key)) {
+      const { status, diagnostic } = carryForwardStatusAndDiagnostic(key, input.rawSalesActivityByKey, anchor.closingQty);
       entries.set(key, {
         productId: stable.productId,
         variantId: stable.variantId,
