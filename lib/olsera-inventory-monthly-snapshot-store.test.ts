@@ -719,11 +719,16 @@ test("ensureMonthlySnapshotChain: bulan target SUDAH ada -> dikembalikan langsun
   assert.equal(fetchCalled, false);
 });
 
-test("ensureMonthlySnapshotChain: Maret historis refresh dari anchor Februari melalui jalur produksi", () => {
+// Cabang khusus Maret (commit 847d5eb) DIHAPUS: bypass permanen itu membuat
+// Maret dihitung ulang tiap page load dan menimpa rebuild eksplisit. Dijaga
+// lewat source-check karena cabang lama dikunci `!input.repo`, sehingga tidak
+// terjangkau test yang meng-inject repo — sama seperti test aslinya, hanya
+// dibalik arahnya.
+test("ensureMonthlySnapshotChain: TIDAK ada lagi cabang khusus per-bulan untuk Maret 2026 (ikut isTrustedHistorical seperti bulan lain)", () => {
   const source = readFileSync(new URL("./olsera-inventory-monthly-snapshot-store.ts", import.meta.url), "utf8");
-  assert.match(source, /target\.year === 2026 && target\.month === 3 && !input\.repo/);
-  assert.match(source, /findMonth\(storeId, 2026, 2\)/);
-  assert.match(source, /runForwardBackfillMonth/);
+  assert.doesNotMatch(source, /target\.month === 3 && !input\.repo/);
+  // Agustus/bulan berjalan TIDAK boleh ikut terkunci: jalur "current" harus tetap ada.
+  assert.match(source, /isTrustedHistorical\(already, state\)/);
 });
 
 test("ensureMonthlySnapshotChain: Desember 2025 memakai snapshot langsung tanpa anchor Januari/Februari", async (t) => {

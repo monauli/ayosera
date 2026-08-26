@@ -558,23 +558,17 @@ export async function ensureMonthlySnapshotChain(input: {
     if (!docs.length) return { ok: false, error: "Migrasi historis Februari tidak menghasilkan snapshot." };
     return { ok: true, storeId, docs };
   }
-  if (target.year === 2026 && target.month === 3 && !input.repo) {
-    const februaryDocs = await repo.findMonth(storeId, 2026, 2);
-    if (!februaryDocs.length) return { ok: false, error: "Snapshot Februari 2026 belum tersedia sebagai anchor Maret 2026." };
-    const result = await runForwardBackfillMonth({
-      month: target,
-      storeId,
-      anchors: docsToForwardAnchors(februaryDocs),
-      matchingContext,
-      repo,
-      rawSalesActivityFetcher: input.rawSalesActivityFetcher,
-      now,
-    });
-    if (!result.ok) return { ok: false, error: result.error };
-    const docs = await repo.findMonth(storeId, target.year, target.month);
-    if (!docs.length) return { ok: false, error: "Stockmovement Maret 2026 tidak menghasilkan snapshot." };
-    return { ok: true, storeId, docs };
-  }
+  // TIDAK ADA cabang khusus Maret 2026. Commit 847d5eb pernah menambahkannya
+  // untuk memaksa refresh Maret dari anchor Februari, karena saat itu snapshot
+  // Maret di produksi basi (36 dokumen) dan isTrustedHistorical memblokir
+  // perbaikannya. Itu masalah data sekali-jalan yang diselesaikan dengan bypass
+  // PERMANEN: akibatnya Maret dihitung ulang setiap kali halaman Inventori
+  // dibuka, menimpa hasil rebuild eksplisit apa pun (terbukti 2026-08-26:
+  // rebuild Maret jam 04:28 tertimpa page-load jam 05:07). Kondisi pemicunya
+  // sudah lama hilang, jadi Maret kembali mengikuti aturan yang sama dengan
+  // bulan lain di bawah ini — dihitung ulang HANYA bila ada dokumen yang
+  // finalizedAt === null. Bila dokumen Maret tidak ada sama sekali, zona mundur
+  // di bawah tetap membangunnya dari anchor terdekat (April s/d Juni).
   if (!(target.year === 2026 && target.month === 1) && isTrustedHistorical(already, state)) return { ok: true, storeId, docs: already };
 
   // Desember 2025 adalah bootstrap historis mandiri. Jangan mencari anchor
