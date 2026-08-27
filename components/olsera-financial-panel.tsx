@@ -554,7 +554,10 @@ export function OlseraFinancialPanel() {
         { key: "laba-rugi", label: "PDF Laba Rugi", desc: "Pendapatan hingga Laba Bersih", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=laba-rugi` },
         { key: "arus-kas", label: "PDF Arus Kas", desc: "Operasional, Investasi, Pendanaan", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=arus-kas` },
         { key: "ringkasan-buku-besar", label: "PDF Ringkasan Buku Besar", desc: "Debit/Kredit/Saldo per akun", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=ringkasan-buku-besar` },
-        { key: "buku-besar-detail", label: "PDF Buku Besar Detail", desc: "Seluruh jurnal periode (multi-halaman)", icon: "pdf" as const, url: `/api/olsera/financial/export/pdf?period=${period}&report=buku-besar-detail` },
+        // "PDF Buku Besar Detail" (report=buku-besar-detail seluruh periode) dihapus
+        // dari menu — tidak dipakai. Route & pembangun PDF-nya SENGAJA dibiarkan:
+        // masih dipakai ACCOUNT_DOWNLOAD_OPTIONS di bawah (report kind yang sama
+        // + accountCode) untuk "Download Akun Ini".
       ] as const,
     [period],
   );
