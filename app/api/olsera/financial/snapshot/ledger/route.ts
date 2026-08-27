@@ -1,5 +1,5 @@
 import { validatePeriod } from "@/lib/olsera-financial-core";
-import { computeRunningLedgerBalances } from "@/lib/olsera-financial-export-core";
+import { computeRunningLedgerBalances, ledgerMovementForDisplay } from "@/lib/olsera-financial-export-core";
 import { getFinancialLedgerMovementTotals, listAllFinancialLedgerEntriesForAccount, listFinancialAccounts } from "@/lib/olsera-financial-store";
 import { guard, json, isDatabaseTimeoutError, withDatabaseRetry } from "../../_shared";
 import { withTimeout } from "@/lib/with-timeout";
@@ -77,7 +77,7 @@ export async function GET(req: Request) {
       totals: {
         debit: movementTotals.debit,
         credit: movementTotals.credit,
-        movement: movementTotals.debit - movementTotals.credit,
+        movement: ledgerMovementForDisplay(accountCode, movementTotals.debit, movementTotals.credit),
       },
     });
   } catch (error) {

@@ -545,7 +545,8 @@ export interface LedgerDetailEntry {
   description: string;
   debit: number;
   credit: number;
-  /** Saldo berjalan DIHITUNG (Saldo Awal + kumulatif debit-kredit) — lihat computeRunningLedgerBalances. */
+  /** Masuk: famount baris (pergerakan bertanda dari Olsera). Keluar dari
+   * computeRunningLedgerBalances: saldo berjalan (Saldo Awal + kumulatif famount). */
   balance: number | null;
   isOpeningBalance: boolean;
 }
@@ -558,26 +559,57 @@ export interface RunningLedgerRow {
 }
 
 /**
- * Phase 5B P0 fix: Olsera `famount` TIDAK reliable sebagai saldo berjalan per
- * baris transaksi (terbukti dari produksi — famount baris transaksi ternyata
- * hanya mencerminkan nominal movement baris itu sendiri, bukan posisi
- * kumulatif akun). Hanya baris saldo awal yang bisa dipercaya membawa posisi
- * akun sungguhan dari Olsera. Fungsi ini SATU-SATUNYA titik hitung saldo
- * berjalan — dipakai buildLedgerDetailGroups, buildLedgerAccountDetail, DAN
- * route snapshot/ledger (UI) — supaya UI/Excel/PDF/"Download Akun Ini" selalu
- * memakai formula yang sama: saldo[i] = saldo awal + Σ(debit-kredit) baris
- * 0..i, TIDAK ADA rule khusus per akun. `rows` HARUS sudah terurut saldo awal
- * dulu lalu tanggal transaksi menaik (urutan sumber existing, tidak diubah).
+ * Saldo berjalan = saldo awal + Σ famount baris 0..i.
+ *
+ * Phase 5B P0 menemukan famount BUKAN posisi kumulatif akun (benar — famount
+ * adalah pergerakan bertanda baris itu sendiri) lalu menyimpulkan famount tak
+ * terpakai dan menggantinya dengan Σ(debit-kredit). Kesimpulan itu terlalu
+ * jauh: famount memang bukan saldo kumulatif, tapi MENJUMLAHKANNYA benar, dan
+ * itulah satu-satunya cara mendapat tanda yang sama dengan Olsera.
+ *
+ * Σ(debit-kredit) hanya benar untuk akun debit-normal. Untuk akun
+ * kredit-normal (2xxxx/3xxxx/4xxxx/7xxxx) tandanya terbalik, dan bila akun itu
+ * punya saldo awal hasilnya rusak total — seed memakai konvensi Olsera
+ * sedangkan akumulasinya konvensi debit-normal, dua konvensi dijumlahkan dalam
+ * satu akumulator (33000 Feb 2026: 2.049.459,44 padahal seharusnya
+ * -3.291.718,22). Memakai famount menghilangkan pencampuran itu sekaligus
+ * membuat kolom Saldo sama persis dengan Olsera, TANPA tabel klasifikasi akun.
+ *
+ * Terverifikasi atas 77.449 baris transaksi tersimpan: famount tiap baris sama
+ * dengan debit-kredit (akun debit-normal) atau kredit-debit (kredit-normal),
+ * nol pengecualian, nol baris tanpa famount. Akun debit-normal karena itu
+ * menghasilkan angka yang IDENTIK dengan formula lama.
+ *
+ * Fungsi ini SATU-SATUNYA titik hitung saldo berjalan — dipakai
+ * buildLedgerDetailGroups, buildLedgerAccountDetail, DAN route snapshot/ledger
+ * (UI) — supaya UI/Excel/PDF/"Download Akun Ini" tidak pernah berbeda. `rows`
+ * HARUS sudah terurut saldo awal dulu lalu tanggal transaksi menaik.
+ *
+ * Baris tanpa famount valid menyumbang 0 (BUKAN fallback ke debit-kredit —
+ * fallback itu akan memasukkan kembali pencampuran konvensi yang jadi bug).
  */
 export function computeRunningLedgerBalances<T extends RunningLedgerRow>(rows: readonly T[]): (T & { balance: number })[] {
   let running = 0;
   return rows.map((row) => {
-    running = row.isOpeningBalance
-      ? (typeof row.balance === "number" && Number.isFinite(row.balance) ? row.balance : 0)
-      : running + row.debit - row.credit;
+    const famount = typeof row.balance === "number" && Number.isFinite(row.balance) ? row.balance : 0;
+    running = row.isOpeningBalance ? famount : running + famount;
     return { ...row, balance: running };
   });
 }
+/**
+ * Tanda "Pergerakan Periode" mengikuti konvensi Olsera: akun kredit-normal
+ * (kewajiban 2xxxx, ekuitas 3xxxx, pendapatan 4xxxx & 7xxxx) ditampilkan
+ * kredit-dikurangi-debit sehingga saldo kredit tampil POSITIF; akun
+ * debit-normal (1xxxx, 5xxxx, 6xxxx, 8xxxx) tetap debit-dikurangi-kredit.
+ * Diverifikasi terhadap export resmi Olsera Feb & Mei 2026 dan terhadap
+ * 77.449 baris ledger tersimpan (famount tiap baris mengikuti sisi normal
+ * akun, nol pengecualian).
+ * HANYA untuk tampilan — jangan dipakai sebagai input perhitungan saldo.
+ */
+export function ledgerMovementForDisplay(accountCode: string, debit: number, credit: number): number {
+  return /^[2347]/.test((accountCode ?? "").toString().trim()) ? credit - debit : debit - credit;
+}
+
 export interface LedgerDetailGroup {
   code: string;
   name: string;
@@ -683,7 +715,7 @@ export interface LedgerAccountDetailReport {
   entries: LedgerDetailEntry[];
   totalDebit: number;
   totalCredit: number;
-  /** = totalDebit - totalCredit, sama seperti "Pergerakan Periode" di UI. */
+  /** = Σ famount (tanda konvensi Olsera), sama seperti "Pergerakan Periode" di UI. */
   movement: number;
   /** = openingBalance + movement (dihitung deterministik, lihat computeRunningLedgerBalances). */
   endingBalance: number;
@@ -709,6 +741,7 @@ export function buildLedgerAccountDetail(
   let openingBalance = 0;
   let totalDebit = 0;
   let totalCredit = 0;
+  let totalFamount = 0;
   const rawEntries: LedgerDetailEntry[] = [];
 
   for (const entry of rows) {
@@ -725,6 +758,7 @@ export function buildLedgerAccountDetail(
 
     totalDebit += debit;
     totalCredit += credit;
+    totalFamount += balanceValue ?? 0;
 
     if (isHiddenZeroLedgerRow(debit, credit, false)) continue; // Fitur 2
 
@@ -735,13 +769,19 @@ export function buildLedgerAccountDetail(
       description: display.description,
       debit,
       credit,
-      balance: null,
+      // famount DIPERTAHANKAN (dulu dibuang jadi null) — computeRunningLedgerBalances
+      // menjumlahkannya jadi saldo berjalan, sama seperti buildLedgerDetailGroups.
+      balance: balanceValue,
       isOpeningBalance: false,
     });
   }
 
   if (!name) name = decodeFinancialHtmlEntities(accountNameByCode.get(code) ?? "");
-  const movement = totalDebit - totalCredit;
+  // Σ famount = pergerakan periode dengan tanda konvensi Olsera; untuk akun
+  // debit-normal identik dengan totalDebit - totalCredit (lihat
+  // computeRunningLedgerBalances). endingBalance memakainya supaya baris
+  // "Saldo Akhir" selalu sama dengan saldo baris terakhir kolom Saldo.
+  const movement = totalFamount;
   const endingBalance = openingBalance + movement;
   // Saldo awal disuntikkan sebagai baris semu untuk menyamai saldo (dibuang setelahnya) — computeRunningLedgerBalances SATU-SATUNYA titik hitung, sama dengan buildLedgerDetailGroups.
   const seeded = computeRunningLedgerBalances<LedgerDetailEntry>([

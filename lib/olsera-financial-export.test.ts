@@ -27,6 +27,7 @@ import {
   formatPeriodDateRangeEN,
   formatPeriodLabelID,
   isFinancialReportKind,
+  ledgerMovementForDisplay,
   sanitizeForFileName,
   splitPeriod,
   type BalanceSheetPayload,
@@ -172,7 +173,12 @@ function makeLedgerEntries(): LedgerEntryInput[] {
         description: "Transaksi harian penjualan lapangan padel",
         debit: i % 2 === 0 ? 500000 : 0,
         credit: i % 2 === 0 ? 0 : 300000,
-        balance: 1000000 + i * 1000,
+        // famount = pergerakan BERTANDA baris itu, seperti yang benar-benar
+        // dikirim Olsera (dulu fixture ini memakai angka karangan
+        // 1000000 + i*1000 untuk membuktikan famount diabaikan). Ketiga akun
+        // di fixture ini dimodelkan debit-normal; cakupan tanda kredit-normal
+        // ada di test regresi data nyata Feb 2026 di bawah.
+        balance: i % 2 === 0 ? 500000 : -300000,
         isOpeningBalance: false,
       });
     }
@@ -370,35 +376,61 @@ test("Buku Besar Detail: seluruh baris dikelompokkan per akun, tidak ada yang hi
 // TIDAK mengandung rule khusus akun apa pun (diverifikasi juga oleh test kode
 // akun generik lain di file ini).
 
-test("computeRunningLedgerBalances: saldo awal menjadi seed, debit menambah, kredit mengurangi (convention existing: movement = debit - kredit)", () => {
+// Test "Phase 5B P0 fix" di bawah ini DIPERBARUI (bukan dihapus): akumulasi
+// pindah dari Σ(debit-kredit) ke Σ famount. Alasannya, famount memang BUKAN
+// saldo kumulatif — kesimpulan Phase 5B itu benar — tapi MENJUMLAHKANNYA benar,
+// dan hanya itu yang memberi tanda sama dengan Olsera untuk akun kredit-normal.
+// Σ(debit-kredit) membalik tanda akun 2xxxx/3xxxx/4xxxx/7xxxx, dan bila akun
+// tsb punya saldo awal hasilnya rusak (seed konvensi Olsera + akumulasi
+// konvensi debit-normal). Terverifikasi 77.449 baris tersimpan: famount tiap
+// baris = debit-kredit (debit-normal) atau kredit-debit (kredit-normal), nol
+// pengecualian — sehingga akun debit-normal tetap menghasilkan angka IDENTIK.
+
+test("computeRunningLedgerBalances: saldo awal menjadi seed, famount diakumulasi (akun debit-normal identik dengan formula lama debit - kredit)", () => {
+  // famount diisi sesuai konvensi Olsera untuk akun debit-normal: debit - kredit.
   const rows = computeRunningLedgerBalances<RunningLedgerRow>([
     { isOpeningBalance: true, debit: 0, credit: 0, balance: 556986758.71 },
-    { isOpeningBalance: false, debit: 2011818.0, credit: 0 },
-    { isOpeningBalance: false, debit: 0, credit: 500000 },
-    { isOpeningBalance: false, debit: 1000, credit: 0 },
+    { isOpeningBalance: false, debit: 2011818.0, credit: 0, balance: 2011818.0 },
+    { isOpeningBalance: false, debit: 0, credit: 500000, balance: -500000 },
+    { isOpeningBalance: false, debit: 1000, credit: 0, balance: 1000 },
   ]);
   assert.equal(rows[0].balance, 556986758.71); // Saldo Awal tidak berubah
-  assert.equal(rows[1].balance, 558998576.71); // 556986758.71 + 2011818.00 — angka regresi PRD persis
-  assert.equal(rows[2].balance, 558498576.71); // kredit MENGURANGI saldo (convention existing: movement = debit - kredit)
-  assert.equal(rows[3].balance, 558499576.71); // baris berurutan berikutnya tetap kumulatif dari baris sebelumnya
+  assert.equal(rows[1].balance, 558998576.71); // angka regresi PRD persis — TIDAK berubah oleh perubahan ini
+  assert.equal(rows[2].balance, 558498576.71); // famount negatif MENGURANGI saldo
+  assert.equal(rows[3].balance, 558499576.71); // tetap kumulatif dari baris sebelumnya
+});
+
+test("computeRunningLedgerBalances: akun kredit-normal memakai tanda Olsera (famount kredit POSITIF) — inilah yang dulu terbalik", () => {
+  // Akun 2xxxx: kredit menaikkan saldo hutang. Formula LAMA Σ(debit-kredit)
+  // menghasilkan -900000 untuk baris terakhir; Olsera menampilkan +900000.
+  const rows = computeRunningLedgerBalances<RunningLedgerRow>([
+    { isOpeningBalance: false, debit: 0, credit: 1000000, balance: 1000000 },
+    { isOpeningBalance: false, debit: 100000, credit: 0, balance: -100000 },
+  ]);
+  assert.equal(rows[0].balance, 1000000);
+  assert.equal(rows[1].balance, 900000);
 });
 
 test("computeRunningLedgerBalances: tanpa baris saldo awal, seed dimulai dari 0 (tidak menebak opening)", () => {
   const rows = computeRunningLedgerBalances<RunningLedgerRow>([
-    { isOpeningBalance: false, debit: 100, credit: 0 },
-    { isOpeningBalance: false, debit: 0, credit: 40 },
+    { isOpeningBalance: false, debit: 100, credit: 0, balance: 100 },
+    { isOpeningBalance: false, debit: 0, credit: 40, balance: -40 },
   ]);
   assert.equal(rows[0].balance, 100);
   assert.equal(rows[1].balance, 60);
 });
 
-test("computeRunningLedgerBalances: baris saldo awal tanpa famount valid (null/NaN) tidak meracuni akumulasi (seed 0, bukan NaN)", () => {
+test("computeRunningLedgerBalances: baris tanpa famount valid (null/NaN) menyumbang 0, tidak meracuni akumulasi (bukan NaN, bukan fallback debit-kredit)", () => {
   const rows = computeRunningLedgerBalances<RunningLedgerRow>([
     { isOpeningBalance: true, debit: 0, credit: 0, balance: null },
-    { isOpeningBalance: false, debit: 500, credit: 0 },
+    { isOpeningBalance: false, debit: 500, credit: 0, balance: 500 },
+    // Tanpa famount: menyumbang 0. Fallback ke debit-kredit sengaja TIDAK
+    // dilakukan — itu akan memasukkan kembali pencampuran konvensi yang jadi bug.
+    { isOpeningBalance: false, debit: 999, credit: 0, balance: null },
   ]);
   assert.equal(rows[0].balance, 0);
   assert.equal(rows[1].balance, 500);
+  assert.equal(rows[2].balance, 500);
 });
 
 test("buildLedgerDetailGroups: regresi produksi BANK BCA — Saldo per baris adalah running balance, urutan transaksi tidak berubah, TIDAK ada rule khusus akun (kode akun generik diuji sama)", () => {
@@ -406,13 +438,13 @@ test("buildLedgerDetailGroups: regresi produksi BANK BCA — Saldo per baris ada
     const entries: LedgerEntryInput[] = [
       { accountCode, accountName: "Akun Uji", isOpeningBalance: true, description: "Saldo awal", debit: 0, credit: 0, balance: 556986758.71 },
       { accountCode, accountName: "Akun Uji", transactionDate: "2026-07-01", transactionNo: "JU-1", description: "Transaksi 1", debit: 2011818.0, credit: 0, balance: 2011818.0 },
-      { accountCode, accountName: "Akun Uji", transactionDate: "2026-07-02", transactionNo: "JU-2", description: "Transaksi 2 (kredit)", debit: 0, credit: 500000, balance: 500000 },
+      { accountCode, accountName: "Akun Uji", transactionDate: "2026-07-02", transactionNo: "JU-2", description: "Transaksi 2 (kredit)", debit: 0, credit: 500000, balance: -500000 },
     ];
     const [group] = buildLedgerDetailGroups(entries);
     assert.equal(group.entries.length, 3);
     assert.equal(group.entries[0].balance, 556986758.71); // Saldo Awal
-    assert.equal(group.entries[1].balance, 558998576.71); // running, BUKAN famount mentah (2011818.00 — nilai bug lama)
-    assert.equal(group.entries[2].balance, 558498576.71); // kredit mengurangi running balance sebelumnya
+    assert.equal(group.entries[1].balance, 558998576.71); // running (saldo awal + famount), BUKAN famount baris itu saja (2011818.00)
+    assert.equal(group.entries[2].balance, 558498576.71); // famount negatif (akun debit-normal) mengurangi running sebelumnya
     // Urutan transaksi (transactionNo) tidak berubah oleh perbaikan saldo.
     assert.deepEqual(group.entries.map((e) => e.transactionNo), ["-", "JU-1", "JU-2"]);
   }
@@ -422,7 +454,7 @@ test("buildLedgerAccountDetail: regresi produksi BANK BCA — saldo per baris + 
   const entries: LedgerEntryInput[] = [
     { accountCode: "11105", accountName: "BANK BCA 7195-332266", isOpeningBalance: true, description: "Saldo awal", debit: 0, credit: 0, balance: 556986758.71 },
     { accountCode: "11105", accountName: "BANK BCA 7195-332266", transactionDate: "2026-07-01", transactionNo: "JU-1", description: "Transaksi 1", debit: 2011818.0, credit: 0, balance: 2011818.0 },
-    { accountCode: "11105", accountName: "BANK BCA 7195-332266", transactionDate: "2026-07-02", transactionNo: "JU-2", description: "Transaksi 2 (kredit)", debit: 0, credit: 500000, balance: 500000 },
+    { accountCode: "11105", accountName: "BANK BCA 7195-332266", transactionDate: "2026-07-02", transactionNo: "JU-2", description: "Transaksi 2 (kredit)", debit: 0, credit: 500000, balance: -500000 },
   ];
   const detail = buildLedgerAccountDetail(entries, "11105");
   assert.equal(detail.openingBalance, 556986758.71);
@@ -444,7 +476,10 @@ test("buildLedgerDetailGroups: Total Debit dan Total Kredit independen (regresi 
   const entries: LedgerEntryInput[] = [
     { accountCode: "51000", accountName: "Beban Operasional", isOpeningBalance: true, debit: 0, credit: 0, balance: 0 },
     { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-01", debit: 20614923.86, credit: 0, balance: 20614923.86 },
-    { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-05", debit: 0, credit: 1275576.14, balance: 19339347.72 },
+    // famount baris kedua adalah pergerakan baris itu (-1.275.576,14), BUKAN
+    // saldo kumulatif 19.339.347,72 — saldo kumulatif itu yang dihitung
+    // computeRunningLedgerBalances dari penjumlahan famount.
+    { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-05", debit: 0, credit: 1275576.14, balance: -1275576.14 },
   ];
   const [group] = buildLedgerDetailGroups(entries);
   assert.equal(group.totalDebit, 20614923.86);
@@ -456,7 +491,10 @@ test("buildLedgerAccountDetail: Total Debit dan Total Kredit independen (regresi
   const entries: LedgerEntryInput[] = [
     { accountCode: "51000", accountName: "Beban Operasional", isOpeningBalance: true, debit: 0, credit: 0, balance: 0 },
     { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-01", debit: 20614923.86, credit: 0, balance: 20614923.86 },
-    { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-05", debit: 0, credit: 1275576.14, balance: 19339347.72 },
+    // famount baris kedua adalah pergerakan baris itu (-1.275.576,14), BUKAN
+    // saldo kumulatif 19.339.347,72 — saldo kumulatif itu yang dihitung
+    // computeRunningLedgerBalances dari penjumlahan famount.
+    { accountCode: "51000", accountName: "Beban Operasional", transactionDate: "2026-08-05", debit: 0, credit: 1275576.14, balance: -1275576.14 },
   ];
   const detail = buildLedgerAccountDetail(entries, "51000");
   assert.equal(detail.totalDebit, 20614923.86);
@@ -537,7 +575,7 @@ test("Excel ledger mempertahankan dua desimal, pengaturan cetak, kolom Saldo ter
   // Baris 7 = Saldo Awal akun 11105 (famount sumber, dipakai sebagai seed saldo berjalan).
   assert.equal(detail.getRow(7).getCell(6).value, 1000000);
   assert.equal(detail.getRow(7).getCell(3).alignment?.wrapText, true);
-  // Phase 5B P0 fix: baris transaksi pertama (debit 500000) = saldo berjalan DIHITUNG (opening + debit), bukan famount fixture mentah (1000000, bug lama).
+  // Baris transaksi pertama = saldo berjalan DIHITUNG (opening + famount baris), bukan famount mentah begitu saja.
   assert.equal(detail.getRow(8).getCell(6).value, 1000000 + 500000);
   assert.equal(detail.pageSetup.printTitlesRow, "5:5");
 });
@@ -738,7 +776,8 @@ test("buildLedgerAccountDetail: hanya akun terpilih, seluruh transaksinya ikut, 
   assert.equal(detail.totalDebit, 37500000); // = 75 * 500000, BUKAN gabungan 3 akun (yang akan 3x lipat)
   assert.equal(detail.totalCredit, 22500000);
   assert.equal(detail.movement, 15000000);
-  // Phase 5B P0 fix: endingBalance = openingBalance + movement (dihitung), BUKAN famount baris terakhir fixture (1149000 — nilai itu adalah bug lama).
+  // endingBalance = openingBalance + Σ famount. Bukan famount baris terakhir
+  // begitu saja — famount adalah pergerakan per baris, bukan posisi kumulatif.
   assert.equal(detail.endingBalance, 1000000 + 15000000);
   // Saldo berjalan per baris juga harus akumulatif, bukan famount mentah: baris pertama (debit 500000) = opening + 500000.
   assert.equal(detail.entries[0].balance, 1000000 + 500000);
@@ -843,4 +882,82 @@ test("route export baca snapshot (guard auth: modul olsera saja) & petakan timeo
     assert.ok(/isDatabaseTimeoutError/.test(source) && /504/.test(source), `${file} harus memetakan timeout DB ke 504`);
     assert.ok(!/olsera-financial-client/.test(source), `${file} tidak boleh menyentuh Olsera live`);
   }
+});
+
+test("ledgerMovementForDisplay mengikuti konvensi tanda Olsera (kredit-normal 2xxxx/3xxxx/4xxxx/7xxxx positif)", () => {
+  // Fixture Februari 2026 — nilai absolut sama, tanda mengikuti Olsera.
+  assert.equal(ledgerMovementForDisplay("21000", 0, 17188500), 17188500);
+  assert.equal(ledgerMovementForDisplay("23500", 0, 2000), 2000);
+  assert.equal(ledgerMovementForDisplay("33000", 2670588.83, 0), -2670588.83);
+  // Pendapatan 4xxxx juga kredit-normal di Olsera (fixture Mei 2026: kredit 500.000 -> Total +500.000).
+  assert.equal(ledgerMovementForDisplay("40001", 0, 500000), 500000);
+  assert.equal(ledgerMovementForDisplay("46100", 3750, 0), -3750);
+  // 7xxxx (pendapatan lain-lain) juga kredit-normal: 59 baris Februari, nol pengecualian.
+  assert.equal(ledgerMovementForDisplay("70000", 0, 77522.77), 77522.77);
+  // Aset/HPP/beban tidak berubah: tetap debit - kredit (8xxxx biaya lain-lain ikut debit-normal).
+  assert.equal(ledgerMovementForDisplay("11105", 20614923.86, 1275576.14), 20614923.86 - 1275576.14);
+  assert.equal(ledgerMovementForDisplay("51000", 58472.73, 0), 58472.73);
+  assert.equal(ledgerMovementForDisplay("60100", 22689000, 0), 22689000);
+  assert.equal(ledgerMovementForDisplay("80000", 1322013.02, 0), 1322013.02);
+  assert.equal(ledgerMovementForDisplay("", 1000, 400), 600);
+});
+
+// ---- Regresi data nyata: baris persis dari backup produksi Februari 2026 ----
+// Sumber: tmp/financial-backup-2026-08-01.../olsera_financial_ledger_entries.json
+// Angka target diverifikasi silang dengan export resmi Olsera Feb 2026
+// (Ringkasan Buku Besar: 21000 = 17.188.500, 33000 = -2.670.588,83 pergerakan).
+
+test("regresi data nyata Feb 2026: akun kredit-normal memakai tanda Olsera, akun debit-normal tidak berubah", () => {
+  // 33000 Laba rugi ditahan — punya saldo awal, jadi kasus paling rusak di formula lama.
+  const equity = computeRunningLedgerBalances<RunningLedgerRow>([
+    { isOpeningBalance: true, debit: 0, credit: 0, balance: -621129.39 },
+    { isOpeningBalance: false, debit: 155573542.31, credit: 0, balance: -155573542.31 },
+    { isOpeningBalance: false, debit: 0, credit: 152902953.48, balance: 152902953.48 },
+  ]);
+  // Formula lama menghasilkan 2.049.459,44 — angka yang tidak ada di Olsera mana pun.
+  assert.equal(equity[equity.length - 1].balance.toFixed(2), "-3291718.22");
+
+  // 21000 Hutang dagang — tanpa saldo awal, 8 baris transaksi Februari.
+  const liability = computeRunningLedgerBalances<RunningLedgerRow>([
+    { isOpeningBalance: false, debit: 0, credit: 5764500, balance: 5764500 },
+    { isOpeningBalance: false, debit: 0, credit: 1632000, balance: 1632000 },
+    { isOpeningBalance: false, debit: 0, credit: 900000, balance: 900000 },
+    { isOpeningBalance: false, debit: 0, credit: 4560000, balance: 4560000 },
+    { isOpeningBalance: false, debit: 4560000, credit: 0, balance: -4560000 },
+    { isOpeningBalance: false, debit: 0, credit: 1800000, balance: 1800000 },
+    { isOpeningBalance: false, debit: 0, credit: 1692000, balance: 1692000 },
+    { isOpeningBalance: false, debit: 0, credit: 5400000, balance: 5400000 },
+  ]);
+  // Formula lama: -17.188.500 (terbalik). Olsera: +17.188.500.
+  assert.equal(liability[liability.length - 1].balance, 17188500);
+
+  // 11105 BANK BCA — akun debit-normal, HARUS identik dengan formula lama.
+  const assetRows: RunningLedgerRow[] = [
+    { isOpeningBalance: true, debit: 0, credit: 0, balance: 410179573.61 },
+    { isOpeningBalance: false, debit: 6.99, credit: 0, balance: 6.99 },
+    { isOpeningBalance: false, debit: 0, credit: 210000000, balance: -210000000 },
+    { isOpeningBalance: false, debit: 103272, credit: 0, balance: 103272 },
+    { isOpeningBalance: false, debit: 6007650, credit: 0, balance: 6007650 },
+  ];
+  const asset = computeRunningLedgerBalances<RunningLedgerRow>(assetRows);
+  // Dihitung ulang dengan formula LAMA (Σ debit-kredit) — harus sama persis.
+  let legacy = 0;
+  for (const row of assetRows) legacy = row.isOpeningBalance ? (row.balance ?? 0) : legacy + row.debit - row.credit;
+  assert.equal(asset[asset.length - 1].balance.toFixed(2), legacy.toFixed(2));
+  assert.equal(asset[asset.length - 1].balance.toFixed(2), "206290502.60");
+});
+
+test("buildLedgerAccountDetail: Saldo Akhir sama dengan saldo baris terakhir, dan memakai tanda Olsera untuk akun kredit-normal", () => {
+  // 21000 Februari 2026 — subset baris nyata.
+  const detail = buildLedgerAccountDetail(
+    [
+      { accountCode: "21000", accountName: "Hutang dagang", transaction_date: "2026-02-03", description: "purchase from PT LIM SIANG HUAT", debit: 0, credit: 5764500, balance: 5764500, isOpeningBalance: false },
+      { accountCode: "21000", transaction_date: "2026-02-12", description: "pembayaran ke FAFA SPORT", debit: 4560000, credit: 0, balance: -4560000, isOpeningBalance: false },
+    ] as unknown as LedgerEntryInput[],
+    "21000",
+  );
+  assert.equal(detail.movement, 1204500); // 5.764.500 - 4.560.000, tanda Olsera
+  assert.equal(detail.endingBalance, 1204500);
+  // Invarian yang dijaga Phase 5B P0 tetap berlaku: baris terakhir == Saldo Akhir.
+  assert.equal(detail.entries[detail.entries.length - 1].balance, detail.endingBalance);
 });
