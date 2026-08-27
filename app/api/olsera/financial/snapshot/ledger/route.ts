@@ -42,10 +42,11 @@ export async function GET(req: Request) {
       ]),
     );
 
-    // Phase 5B P0 fix: saldo berjalan HARUS dihitung dari seluruh baris akun
-    // (saldo awal + kumulatif debit-kredit berurutan), BUKAN row.balance
-    // (famount) mentah per halaman — computeRunningLedgerBalances SATU-SATUNYA
-    // titik hitung, sama dipakai Excel & PDF (lib/olsera-financial-export-core.ts)
+    // Saldo berjalan = saldo awal + KUMULATIF famount (row.balance) seluruh
+    // baris akun, bukan kumulatif debit-kredit: famount sudah mengikuti sisi
+    // normal akun, jadi memakai debit-kredit membalik tanda akun kredit-normal
+    // (lihat commit 4e0809b). computeRunningLedgerBalances SATU-SATUNYA titik
+    // hitung, sama dipakai Excel & PDF (lib/olsera-financial-export-core.ts)
     // supaya UI/Excel/PDF tidak pernah berbeda formula. Diambil TANPA
     // pagination lalu dipotong di memori supaya saldo baris N tidak pernah
     // hilang konteks baris 1..N-1 dari halaman sebelumnya.

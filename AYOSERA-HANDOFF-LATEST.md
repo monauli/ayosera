@@ -2253,3 +2253,94 @@ Tidak ada perubahan pada MongoDB, booking, payment events, Financial, Inventori,
 Verifikasi lokal: `lib/omzet-export.test.ts` 15/15, `lib/omset-kategori-export.test.ts` 3/3, `test:olsera-export-formula-safety` 35/35, `test:booking-payment-aggregate` 12/12, `test:dashboard-court-performance` 18/18 (kembali PASS penuh tanpa test itu diubah), `test:unit` 68/69 (1 kegagalan pre-existing di `test:reconciliation-phase5e`, dikonfirmasi gagal identik di `HEAD` sebelum perubahan ini, file yang tidak pernah disentuh — bukan regresi), `tsc --noEmit` lulus, scoped `eslint` 0 error, `git diff --check` lulus. `next build` compile sukses; "Collecting page data" tetap gagal pada `MongoParseError` yang sama (limitasi lokal, bukan regresi).
 
 Tidak ada perubahan pada MongoDB, booking, payment events, Financial, Inventori, token, cron, atau lock periode. File yang berubah: `lib/omzet-export.ts`, `lib/omzet-export.test.ts`, `lib/omset-kategori-export.ts`, `lib/omset-kategori-export.test.ts`, `app/api/transactions/export/harian/route.ts`, `app/api/transactions/export/range/route.ts`, `app/api/transactions/export/bulanan/route.ts`, dokumen ini. Belum di-commit/push/deploy — menunggu review dan approval user.
+
+# Buku Besar: saldo berjalan memakai famount, bukan debit-kredit — 2026-08-27
+
+**Root cause.** Olsera mengirim pergerakan bertanda tiap baris di `famount`, mengikuti sisi normal akun: akun debit-normal `debit - credit`, akun kredit-normal `credit - debit`. AYOSERA menyimpan `famount` (ke field `balance` dokumen ledger) lalu **membuangnya** dan menghitung ulang saldo berjalan dengan `debit - credit` untuk SEMUA akun. Untuk akun kredit-normal (kewajiban `2xxxx`, ekuitas `3xxxx`, pendapatan `4xxxx` & `7xxxx`) ini membalik tanda. Ketika akun semacam itu punya baris saldo awal, hasilnya salah total — bukan sekadar terbalik — karena seed saldo awal memakai konvensi Olsera sedangkan akumulator memakai konvensi debit-normal, jadi dua konvensi tercampur dalam satu running total.
+
+**Bukti.** Akun `33000` periode Februari 2026: saldo awal -621.129,39, Σ `famount` -2.670.588,83 → saldo akhir **-3.291.718,22**. Formula lama (`opening + Σ(debit - credit)`, debit 155.573.542,31 / kredit 152.902.953,48) menghasilkan **+2.049.459,44**.
+
+**Fix (`4e0809b`).**
+- `computeRunningLedgerBalances` (`lib/olsera-financial-export-core.ts`) — akumulasi `famount` (`row.balance`), bukan `debit - credit`. Seed baris saldo awal dan guard `Number.isFinite` tidak berubah. Ini SATU-SATUNYA titik hitung saldo berjalan, dipakai bersama oleh route snapshot/ledger (UI), Excel, dan PDF, sehingga ketiganya tidak bisa berbeda formula.
+- `buildLedgerAccountDetail` — `famount` DIPERTAHANKAN (sebelumnya di-null-kan), sehingga `endingBalance` sama persis dengan saldo baris terakhir.
+- `ledgerMovementForDisplay(accountCode, debit, credit)` — kolom "Pergerakan Periode" memakai `/^[2347]/` untuk memilih `credit - debit` pada akun kredit-normal. HANYA untuk tampilan; tidak pernah jadi input perhitungan saldo.
+- `app/api/olsera/financial/snapshot/ledger/route.ts` — `totals.movement` memakai `ledgerMovementForDisplay`, tidak lagi `debit - credit` mentah.
+
+**Temuan Phase 5B P0 tidak dibatalkan, hanya dipersempit.** Temuan lama benar bahwa `famount` BUKAN saldo kumulatif per baris (jadi tidak boleh dipakai apa adanya sebagai kolom Saldo per halaman); yang berlebihan adalah kesimpulan bahwa `famount` tidak boleh dijumlahkan sama sekali. Menjumlahkannya secara berurutan justru benar. Fixture sintetis yang mengkodekan asumsi lama dikoreksi agar sesuai cara Olsera mengirim `famount`; seluruh expected value asli tetap lulus tanpa diubah, membuktikan akun debit-normal tidak terpengaruh.
+
+**`1d388b6` — hapus entri menu "PDF Buku Besar Detail".** User tidak memakai PDF buku besar detail satu periode penuh. Yang dihapus HANYA entri menu; route dan builder PDF tetap ada karena tombol "Download Akun Ini" memakai report kind `buku-besar-detail` yang sama, hanya ditambah filter `accountCode`.
+
+**Koreksi komentar (2026-08-27, belum di-commit).** Komentar di `app/api/olsera/financial/snapshot/ledger/route.ts:44-50` masih berbunyi "saldo awal + kumulatif debit-kredit berurutan, BUKAN row.balance (famount)" — persis kebalikan dari implementasi setelah `4e0809b`. Komentar diperbarui agar menyebut kumulatif `famount` dan alasannya; tidak ada perubahan perilaku.
+
+**Production read-back (read-only, MongoDB production).** Seluruh ledger tersimpan dipindai: **7 periode** (`2026-02` s/d `2026-08`), **300 kombinasi akun-periode**. Hasil: **0 selisih** antara saldo baris terakhir dan `saldo awal + Σ famount`; **0 selisih** antara "Pergerakan Periode" hasil `ledgerMovementForDisplay` dan `Σ famount` baris non-saldo-awal. Artinya konvensi tanda `famount` konsisten di seluruh data production dan invarian "Saldo Akhir = saldo baris terakhir" berlaku universal, bukan hanya pada akun yang diuji. Script verifikasi dijalankan dari scratchpad sementara dan sudah dihapus; tidak ada file audit yang ditinggalkan di repo.
+
+**Verifikasi lokal.** `npm run test:olsera-financial-export` **53/53 PASS** (termasuk regresi data nyata Feb 2026 akun kredit-normal, invarian Saldo Akhir = saldo baris terakhir, dan Download Akun Ini PDF+Excel). `npx tsc --noEmit` PASS. `git diff --check` PASS. Scoped ESLint pada empat file financial: 1 error `@typescript-eslint/no-explicit-any` di `route.ts:57` dan 1 warning `react-hooks/exhaustive-deps` di `components/olsera-financial-panel.tsx:405` — **keduanya pre-existing**, tidak berada dalam baris yang diubah `4e0809b`/`1d388b6`, dan tidak diperbaiki di sini agar diff tetap sempit.
+
+**Tidak ada perubahan** pada MongoDB, data booking/payment, Inventori, Rekonsiliasi, token, cron, atau lock periode. `4e0809b` dan `1d388b6` sudah di-commit dan di-push ke `main` (origin/main sejajar dengan HEAD).
+
+**Browser UI read-back production — SUDAH DILAKUKAN (Claude in Chrome, 2026-08-27).** Status "Belum Bisa Dicek" pada draf awal entri ini DICORET; UI production sudah dibuka langsung dengan sesi login AYOSERA dan hasilnya cocok dengan read-back database di atas:
+
+| Yang dicek | Hasil |
+| --- | --- |
+| Menu Download Laporan Keuangan | "PDF Buku Besar Detail" sudah HILANG; 5 opsi lain tetap ada |
+| Buku Besar Feb 2026 — akun `33000` (ekuitas, kredit-normal) | **-3.291.718,22** — sama persis dengan read-back database |
+| Buku Besar Feb 2026 — akun `21000` (kewajiban, kredit-normal) | **+17.188.500** — POSITIF, tanda sudah benar |
+| Buku Besar Feb 2026 — akun `11105` (aset, debit-normal) | **255.454.187,17** — TIDAK BERUBAH, kontrol akun debit-normal |
+| Buku Besar Juli 2026 — akun `40001` Pendapatan Court Fees | sekarang **POSITIF** (sebelumnya negatif karena tanda terbalik) |
+| Neraca Feb 2026 | Total Aset **2.116.925.420,78** — tidak berubah |
+| Laba Rugi Feb 2026 | Laba Bersih **-2.670.588,83** — tidak berubah |
+| Arus Kas Feb 2026 | Kas Akhir **300.755.160,64** — tidak berubah |
+
+Tiga laporan turunan (Neraca, Laba Rugi, Arus Kas) sengaja diperiksa sebagai kontrol negatif: perubahan ini hanya menyentuh saldo berjalan dan kolom pergerakan Buku Besar, jadi ketiganya HARUS tetap sama — dan memang tetap sama. Akun `11105` berfungsi sama sebagai kontrol untuk sisi debit-normal. Dengan itu jalur UI, Excel, PDF, dan database semuanya terbukti konsisten pada data production yang sama.
+
+# Celah dokumentasi 24–26 Agustus 2026: enam commit yang belum tercatat — dicatat 2026-08-28
+
+Entri handoff sebelumnya melompat dari 20 Agustus langsung ke 27 Agustus. Enam commit di antaranya tidak pernah masuk handoff; berikut isinya, dicatat dari commit message dan diff masing-masing. Tidak ada perubahan kode baru pada pass ini — murni pengisian dokumentasi.
+
+## `b02a62a` — urutan default Inventori: Kategori A→Z lalu Nama Produk A→Z (24 Agu 13.29)
+
+`app/api/olsera/inventory/monthly/route.ts` (+5/-1). Hanya urutan tampilan default; tidak ada perubahan perhitungan, snapshot, atau data.
+
+## `21869dc` — finalPreview dihidrasi dari server + sync manual ditolak pada periode terkunci (24 Agu 16.55)
+
+- Tombol **Kunci Periode** kini aktif untuk periode yang sudah punya finalisasi tersimpan (contoh: Maret 2026 yang terverifikasi lewat Berita Acara). Sebelumnya `finalPreview` hanya ada di state client, sehingga setelah reload tombol tampak tidak memenuhi syarat padahal datanya ada di server.
+- Route sync manual (`app/api/sync`, `app/api/olsera/sync`, `app/api/olsera/financial/sync/start`) menolak write ke periode omzet terkunci dengan **HTTP 423**.
+- **Route cron TIDAK disentuh** — sudah diverifikasi tidak mengakses bulan historis, jadi penguncian tidak bisa mematikan sinkronisasi berjalan.
+- File: 5 berubah (+92/-1), termasuk `lib/reconciliation-omzet-period-lock.ts`.
+
+## `80e53bd` — BUG OTORISASI: role "user" diam-diam mendapat SEMUA modul (24 Agu 18.14)
+
+**Ini yang paling penting dari tiga commit 24 Agustus.** `normalizeModules()` di `lib/auth.ts` melewati pengecekan `allowedModules` bila `role === "user"`, sehingga setiap akun berrole `user` memperoleh akses ke seluruh modul **tanpa memandang state checkbox di panel Users**. Konfigurasi hak akses per-user praktis tidak berlaku untuk role tersebut.
+
+- Bypass dihapus; `allowedModules` sekarang dipatuhi untuk semua role.
+- `lib/app-modules.ts` — file baru, `APP_MODULES`/`normalizeModules` diekstrak agar bisa diuji langsung. Permukaan publik `@/lib/auth` tidak berubah.
+- Modul baru **`kunci-rekonsiliasi-omset`** menggerbangi endpoint lock/unlock finalisasi lewat `requireModule()`, menggantikan `requireSupervisor()` — hak kunci periode kini bisa diberikan per-user, tidak lagi menempel pada role supervisor.
+- Response 423 sync financial mengirim kunci `error` DAN `message` sekaligus (klien lama membaca salah satu di antaranya).
+- File: 9 berubah (+100/-48), termasuk test baru di `lib/auth.test.ts`.
+
+## `9b403cc` — item tanpa riwayat penjualan hilang dari snapshot bulanan (26 Agu 10.11)
+
+`computeMonthlyStepBackward` sebelumnya menuntut bukti dari `olsera_order_items` sebelum membawa sebuah item ke bulan berikutnya. Barang yang memang tidak pernah terjual pada periode itu — raket, gelas — **dijatuhkan diam-diam** dari snapshot. Sekarang `closingQty > 0` pada anchor sudah cukup sebagai bukti keberadaan.
+
+- `entryToDocument`: `closingQty` negatif ditandai eksplisit di diagnostics — **tidak di-clamp, tidak ditolak**; nilai asli dipertahankan supaya bisa diselidiki, bukan disembunyikan.
+- `computeMonthlyStepForward` tidak berubah. 5 test baru.
+- **Sisa yang belum ditangani:** snapshot Februari dibangun dari `FEBRUARY_HISTORICAL_SOURCE`, bukan dari backward pass, sehingga **CUP 22OZ dan HOT CUP KRAFT masih hilang di Februari** dan butuh penanganan terpisah.
+
+## `f334594` — ODEA ROSE: berhenti mewarisi riwayat ledger sebelum rename (26 Agu 16.10)
+
+Olsera mengganti identitas produk sekitar 2026-05-26: `106817649` "BOLA PADEL ODEA" → `116138490` "BOLA PADEL ODEA ROSE", memulai ulang dengan `begin=0` dan `incoming=57`. AYOSERA tetap mewariskan penjualan produk lama lewat verified alias, menghasilkan **stok negatif -64 yang konstan dari Mei sampai Agustus**. Hitung fisik pada BA Stock Opname Mei 2026 (44 unit aktual vs 45 menurut Olsera) membuktikan angka Olsera yang benar, bukan hasil warisan alias.
+
+- `LEDGER_HISTORY_CUTOFF_BY_PRODUCT_ID` — cutoff eksplisit per produk, diterapkan HANYA di `fetchRawSalesActivityByMonth`.
+- Mekanisme alias, `extendIdentityIndexWithAliases`, dan `applyVerifiedAliasLedgerFallback` tidak berubah. Alias YONEX (`106743815` → `118420650`) tidak terpengaruh — fallback-nya tidak pernah aktif di bulan mana pun.
+- Entri mati `STOCKMOVEMENT_NAME_ALIASES` untuk ODEA dihapus.
+- **Catatan operasional penting:** perbaikan ini baru berlaku bila script backfill dijalankan dengan `rawSalesActivityFetcher`. Page load memanggil `ensureMonthlySnapshotChain` tanpa itu, jadi **tidak ada recompute otomatis**.
+
+## `d386987` — special-case Maret di `ensureMonthlySnapshotChain` dihapus (26 Agu 16.39)
+
+Maret punya cabang hardcoded yang SELALU menghitung ulang maju dari Februari, dijalankan **sebelum** pengecekan `isTrustedHistorical`. Akibatnya page load biasa diam-diam menimpa snapshot production. Terbukti di production: rebuild eksplisit pukul 04.28 ditimpa oleh page load pukul 05.07, mengembalikan ODEA ROSE Maret dari 66/36/30 menjadi 60/0/60 dan memutus rantai Maret→April.
+
+Maret sekarang mengikuti `isTrustedHistorical` seperti bulan historis lainnya. Agustus tidak terpengaruh karena `state="current"` memang selalu recompute, dan itu perilaku yang benar untuk bulan berjalan. Test source-check yang ada dibalik menjadi penjaga agar bypass per-bulan tidak diperkenalkan lagi.
+
+## Status setelah enam commit ini
+
+Seluruhnya sudah di-commit dan di-push ke `main`. Yang masih terbuka dan diturunkan ke penerus: (a) CUP 22OZ dan HOT CUP KRAFT hilang di snapshot Februari karena jalur `FEBRUARY_HISTORICAL_SOURCE`; (b) koreksi ODEA ROSE butuh backfill manual dengan `rawSalesActivityFetcher` agar tersimpan, tidak terjadi sendiri dari page load.

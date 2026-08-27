@@ -262,3 +262,19 @@ Production dry-run/read-back/write belum dilakukan karena sesi autentikasi produ
 Export range kini memakai sumber payment-event canonical yang sama dengan Dashboard, harian, dan bulanan. Regression test split payment `MN/2428/260809/0002994` lulus: total Rp200.000 tetap satu kali dan sibling `...2993` tidak menerima payment milik representative. Commit `abed4a6` telah dideploy dan Vercel Production Ready.
 
 Workbook production 12 Agustus belum dibaca ulang karena sesi login production tidak tersedia. Tidak ada perubahan MongoDB, booking, payment, financial, inventori, atau cron.
+# Saldo berjalan Buku Besar memakai famount — 2026-08-27
+
+Commit `4e0809b` memperbaiki saldo berjalan Buku Besar: akumulator memakai `famount` (tanda mengikuti sisi normal akun seperti dikirim Olsera), bukan `debit - credit`. Untuk akun kredit-normal (`2xxxx`/`3xxxx`/`4xxxx`/`7xxxx`) formula lama membalik tanda, dan bila akun punya saldo awal hasilnya salah total karena seed memakai konvensi Olsera sementara akumulator memakai konvensi debit-normal. `ledgerMovementForDisplay` dipakai untuk kolom "Pergerakan Periode" di UI, Excel, dan PDF supaya ketiganya identik. Commit `1d388b6` menghapus entri menu "PDF Buku Besar Detail"; route dan builder PDF tetap ada karena "Download Akun Ini" memakai report kind yang sama.
+
+Production read-back read-only atas MongoDB production: **300 kombinasi akun-periode** pada 7 periode (`2026-02` s/d `2026-08`), **0 selisih** saldo akhir vs `saldo awal + Σ famount` dan **0 selisih** "Pergerakan Periode" vs `Σ famount`. Akun `33000` Februari 2026: saldo awal -621.129,39, Σ famount -2.670.588,83, saldo akhir **-3.291.718,22** — formula lama akan menghasilkan +2.049.459,44.
+
+`npm run test:olsera-financial-export` 53/53 lulus, `tsc --noEmit` lulus, `git diff --check` lulus. Scoped ESLint: 1 error `no-explicit-any` pre-existing di `app/api/olsera/financial/snapshot/ledger/route.ts:57` (bukan dari perubahan ini) dan 1 warning `react-hooks/exhaustive-deps` pre-existing di `components/olsera-financial-panel.tsx:405`.
+
+Browser UI read-back production sudah dilakukan lewat Claude in Chrome (2026-08-27) dan **cocok dengan read-back database** — status "Belum Bisa Dicek" dicoret. Menu Download: "PDF Buku Besar Detail" hilang, 5 opsi lain ada. Buku Besar Februari 2026: `33000` = **-3.291.718,22**, `21000` = **+17.188.500** (positif), `11105` = **255.454.187,17** (tidak berubah, kontrol akun debit-normal). Buku Besar Juli 2026: `40001` Pendapatan Court Fees kini POSITIF. Kontrol negatif Februari tidak berubah seperti seharusnya: Total Aset **2.116.925.420,78**, Laba Bersih **-2.670.588,83**, Kas Akhir **300.755.160,64**. Jalur UI, Excel, PDF, dan database terbukti konsisten.
+
+Tidak ada write, sync, cron, lock, atau perubahan data production.
+# Celah dokumentasi 24–26 Agustus 2026 diisi — 2026-08-28
+
+Enam commit antara 20 dan 27 Agustus tidak pernah masuk handoff dan kini didokumentasikan lengkap di `AYOSERA-HANDOFF-LATEST.md`: `b02a62a` (urutan default Inventori), `21869dc` (finalPreview dari server + sync manual ditolak 423 pada periode terkunci, cron tidak disentuh), `80e53bd` (**bug otorisasi: role "user" diam-diam mendapat semua modul terlepas dari `allowedModules`** — diperbaiki; modul baru `kunci-rekonsiliasi-omset`), `9b403cc` (item tanpa riwayat penjualan tidak lagi dijatuhkan dari snapshot; `closingQty` negatif ditandai, bukan di-clamp), `f334594` (ODEA ROSE berhenti mewarisi ledger sebelum rename — sumber stok -64 konstan Mei–Agustus), `d386987` (special-case Maret dihapus; page load tidak lagi menimpa snapshot production).
+
+Pass ini hanya menulis dokumentasi; tidak ada kode yang diubah. Yang masih terbuka: CUP 22OZ dan HOT CUP KRAFT hilang di snapshot Februari (jalur `FEBRUARY_HISTORICAL_SOURCE`, di luar backward pass), dan koreksi ODEA ROSE baru tersimpan bila backfill dijalankan dengan `rawSalesActivityFetcher` — page load tidak memicunya.
