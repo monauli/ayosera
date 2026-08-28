@@ -284,11 +284,17 @@ test("C) worst-case matematis: akun terakhir yang diizinkan memakai FULL request
   // serialisasi response + overhead jaringan punya ruang nyata untuk selesai.
   const marginAfterWorstCase = EXTERNAL_CLIENT_TIMEOUT_MS - worstCaseAccountFinishMs;
 
-  assert.equal(latestSafeAccountStartMs, 8_000, "akun terakhir yang aman dimulai pada t=8 detik dari awal invocation");
-  assert.equal(worstCaseAccountFinishMs, 18_000, "worst-case akun tersebut selesai pada t=18 detik (masih di bawah 30 detik)");
+  // Angka di bawah mengikuti BUDGET 25_000 (dinaikkan dari 21_000 pada 2026-08-28
+  // supaya cron sanggup 4-6 akun per invocation, bukan 1 — lihat komentar
+  // FINANCIAL_INVOCATION_TIME_BUDGET_MS di lib/olsera-financial-sync.ts).
+  // Dua assert.ok di bawah adalah INVARIAN sesungguhnya: worst case harus tetap
+  // selesai sebelum batas eksternal, dan margin sisa harus tetap >= margin
+  // finalisasi. Keduanya masih lolos setelah kenaikan ini.
+  assert.equal(latestSafeAccountStartMs, 12_000, "akun terakhir yang aman dimulai pada t=12 detik dari awal invocation");
+  assert.equal(worstCaseAccountFinishMs, 22_000, "worst-case akun tersebut selesai pada t=22 detik (masih di bawah 30 detik)");
   assert.ok(worstCaseAccountFinishMs < EXTERNAL_CLIENT_TIMEOUT_MS, "worst-case selesai SEBELUM batas eksternal 30 detik");
   assert.ok(marginAfterWorstCase >= SAFETY_MARGIN_MS, `margin sisa (${marginAfterWorstCase}ms) harus >= margin finalisasi yang dijanjikan (${SAFETY_MARGIN_MS}ms)`);
-  assert.equal(marginAfterWorstCase, 12_000, "margin akhir seharusnya 12 detik — jauh di atas margin finalisasi minimum 3 detik (double safety)");
+  assert.equal(marginAfterWorstCase, 8_000, "margin akhir 8 detik — turun dari 12 detik, tapi masih ~2,7x margin finalisasi minimum 3 detik");
 });
 
 test("H) monthly-reports behavior tidak regress (deadline tidak diterapkan pada fase ini, tetap Promise.all seperti semula)", async () => {

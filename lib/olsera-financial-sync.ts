@@ -18,12 +18,37 @@ const MAX_ATTEMPTS_PER_ACCOUNT = 3;
  * step) dan stepFinancialSync di sini (cek di antara akun, di dalam loop
  * ledger-details). Jauh lebih kecil dari maxDuration route (300s) atau lock
  * lease (6 menit) — cron-job.org hanya menunggu response ~30 detik sebelum
- * menganggap invocation timeout (Phase 3C.4). 21 detik menyisakan margin ~9
- * detik untuk update MongoDB, release lock, serialisasi response, dan
- * overhead jaringan SETELAH deadline ini terlampaui — sengaja tidak dipepetkan
- * ke 29 detik.
+ * menganggap invocation timeout (Phase 3C.4).
+ *
+ * 25 detik, BUKAN 21 (dinaikkan 2026-08-28). Nilai 21 lama membuat cron hanya
+ * sanggup 1 akun per invocation, sehingga periode berjalan TIDAK PERNAH
+ * mencapai "success" dan tiap invocation membakar budget penuh selamanya
+ * (terbukti di production: 2026-08 mandek di accountCursor 2/85 setelah 26 jam,
+ * sementara periode lain yang dijalankan lewat tombol manual — jalur TANPA
+ * deadlineAt — tuntas 85 akun dalam ~3 menit).
+ *
+ * Rumus jumlah akun per invocation, dengan guard start-safety di bawah
+ * (FINANCIAL_MIN_REMAINING_MS_TO_START_WORK) dan `t` = durasi rata-rata satu
+ * akun: akun ke-N boleh mulai selama (N-1)*t < BUDGET - MIN_REMAINING.
+ *   BUDGET 21_000 -> (N-1)*t <  8_000  -> t=2,2s: 4 akun; t=3s: 3 akun
+ *   BUDGET 25_000 -> (N-1)*t < 12_000  -> t=2,2s: 6 akun; t=3s: 5 akun
+ * `t` diukur dari run production yang benar-benar tuntas (olsera_financial_sync_logs):
+ * 2026-07 3m11s/85 akun, 2026-06 3m06s/85, 2026-05 3m24s/85 -> ~2,2-2,4 detik
+ * per akun. FINANCIAL_REQUEST_TIMEOUT_MS (10s) adalah PLAFON request, bukan
+ * waktu tipikal — jangan memakainya sebagai `t` saat menghitung ulang.
+ *
+ * Kenapa berhenti di 25 dan tidak lebih: worst case wall-clock satu invocation
+ * = akun terakhir boleh mulai tepat sebelum sisa 13 detik (jadi paling lambat
+ * pada detik ke-12), lalu request-nya sendiri boleh memakan
+ * FINANCIAL_REQUEST_TIMEOUT_MS penuh (10 detik) = detik ke-22, ditambah
+ * checkpoint Mongo + release lock + serialisasi response (~3 detik) = ~25
+ * detik. Masih di dalam jendela ~30 detik cron-job.org yang jadi dasar
+ * konstanta ini sejak awal — menaikkan lebih jauh (mis. 45_000, yang akan
+ * menuntaskan 85 akun dalam ~5 invocation) MEMBUTUHKAN konfirmasi bahwa
+ * timeout cron-job.org memang >= 60 detik; itu belum pernah diverifikasi dan
+ * TIDAK diasumsikan di sini.
  */
-export const FINANCIAL_INVOCATION_TIME_BUDGET_MS = 21_000;
+export const FINANCIAL_INVOCATION_TIME_BUDGET_MS = 25_000;
 
 /**
  * Phase 3C.5.1 — HARDENING: `now() >= deadlineAt` saja TIDAK CUKUP. Sebuah

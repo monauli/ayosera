@@ -66,7 +66,7 @@ const stepFinancialSyncMock = mock.fn(async (_runId: string) => fakeRun({ accoun
 // — modul ini di-mock UTUH, jadi tanpa entri ini import-nya di
 // lib/cron-olsera-financial.ts akan `undefined` dan deadlineAt/guard jadi NaN
 // (Phase 3C.5 / 3C.5.1).
-const FINANCIAL_INVOCATION_TIME_BUDGET_MS = 21_000;
+const FINANCIAL_INVOCATION_TIME_BUDGET_MS = 25_000;
 const FINANCIAL_MIN_REMAINING_MS_TO_START_WORK = 13_000; // FINANCIAL_REQUEST_TIMEOUT_MS(10_000) + FINANCIAL_ACCOUNT_START_SAFETY_MARGIN_MS(3_000)
 mock.module("@/lib/olsera-financial-sync", {
   namedExports: {
@@ -639,7 +639,7 @@ test("F) deadline internal tercapai -> response partial-progress normal (bukan e
   // Step pertama "memakan waktu" >= TIME_BUDGET_MS (21 detik) — mensimulasikan
   // satu step ledger-details lambat yang melewati deadline (Phase 3C.4).
   stepFinancialSyncMock.mock.mockImplementation(async () => {
-    t.mock.timers.tick(21_000);
+    t.mock.timers.tick(FINANCIAL_INVOCATION_TIME_BUDGET_MS);
     return fakeRun({ status: "running", phase: "ledger-details", accountCursor: 6 });
   });
 
@@ -661,7 +661,7 @@ test("G) lock tetap dilepas setelah invocation berhenti karena deadline internal
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   stepFinancialSyncMock.mock.mockImplementation(async () => {
-    t.mock.timers.tick(21_000);
+    t.mock.timers.tick(FINANCIAL_INVOCATION_TIME_BUDGET_MS);
     return fakeRun({ status: "running", phase: "ledger-details" });
   });
 
@@ -677,7 +677,7 @@ test("deadline BELUM tercapai -> beberapa step tetap berjalan sequential seperti
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   let cursor = 0;
   stepFinancialSyncMock.mock.mockImplementation(async () => {
-    t.mock.timers.tick(500); // jauh di bawah deadline 21 detik
+    t.mock.timers.tick(500); // jauh di bawah deadline (FINANCIAL_INVOCATION_TIME_BUDGET_MS)
     cursor += 4;
     return fakeRun({ status: cursor >= 16 ? "success" : "running", phase: cursor >= 16 ? "completed" : "ledger-details", accountCursor: cursor });
   });
@@ -804,7 +804,7 @@ test("telemetry timeout/deadline memakai kode pendek yang aman", async (t) => {
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   stepFinancialSyncMock.mock.mockImplementation(async () => {
-    t.mock.timers.tick(21_000);
+    t.mock.timers.tick(FINANCIAL_INVOCATION_TIME_BUDGET_MS);
     return fakeRun({ status: "running", phase: "ledger-details" });
   });
   await runOlseraFinancialCron("Bearer test-secret");
