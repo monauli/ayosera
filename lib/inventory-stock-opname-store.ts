@@ -131,10 +131,17 @@ export type FetchCutoffSystemRowsResult =
  * API Olsera sendiri, lihat lib/olsera-inventory-stockmovement.ts). Pencocokan
  * baris API -> produk katalog REUSE attachMovementsToProducts (SAMA persis
  * dengan pipeline snapshot bulanan existing) — TIDAK diimplementasi ulang.
+ *
+ * `startDate` OPSIONAL (Tahap 1 rentang bebas): awal periode Berita Acara yang
+ * TIDAK selalu tanggal 1 (mis. BA Februari 2026 = 04 Feb s/d 04 Mar). Bila
+ * DIISI, diteruskan apa adanya ke resolveCutoffQueryRange sebagai
+ * `desiredStartDate`. Bila KOSONG, perilaku LAMA dipertahankan PERSIS:
+ * resolveCutoffQueryRange jatuh ke default awal bulan cutoff. Klem
+ * CUTOFF_MAX_LOOKBACK_DAYS tetap berlaku di sana, tidak diduplikasi di sini.
  */
-export async function fetchCutoffSystemRows(cutoffDate: string, deps: { fetchStockMovementRangeImpl: (startDate: string, endDate: string) => Promise<FetchStockMovementResult>; matchingContext: MatchingContext }): Promise<FetchCutoffSystemRowsResult> {
-  const { startDate, endDate } = resolveCutoffQueryRange(cutoffDate);
-  const fetched = await deps.fetchStockMovementRangeImpl(startDate, endDate);
+export async function fetchCutoffSystemRows(cutoffDate: string, deps: { fetchStockMovementRangeImpl: (startDate: string, endDate: string) => Promise<FetchStockMovementResult>; matchingContext: MatchingContext }, startDate?: string): Promise<FetchCutoffSystemRowsResult> {
+  const { startDate: queryStartDate, endDate } = resolveCutoffQueryRange(cutoffDate, startDate);
+  const fetched = await deps.fetchStockMovementRangeImpl(queryStartDate, endDate);
   if (!fetched.ok) return { ok: false, error: fetched.error };
 
   const unmatchedOrAmbiguous: UnmatchedMovementEntry[] = [];
@@ -159,7 +166,7 @@ export async function fetchCutoffSystemRows(cutoffDate: string, deps: { fetchSto
       closingQty: row.sisa,
     });
   }
-  return { ok: true, rows, startDate, endDate, unmatchedOrAmbiguous };
+  return { ok: true, rows, startDate: queryStartDate, endDate, unmatchedOrAmbiguous };
 }
 
 // ---------------------------------------------------------------------------
@@ -322,19 +329,29 @@ export type InventoryOpnameCutoffResult = InventoryOpnameMonthResult & {
 };
 
 export async function loadInventoryOpnameCutoff(
-  input: { storeId: number; year: number; month: number; cutoffDate: string },
+  input: { storeId: number; year: number; month: number; cutoffDate: string; startDate?: string | null },
   context?: InventoryStockOpnameContext,
 ): Promise<InventoryOpnameCutoffResult> {
   const storeId = input.storeId;
   const year = validateYear(input.year);
   const month = validateMonth(input.month);
   if (!isValidIsoDate(input.cutoffDate)) throw new InventoryStockOpnameError("cutoffDate tidak valid — format wajib YYYY-MM-DD.");
+  // startDate OPSIONAL (Tahap 1). Divalidasi DI SINI, bukan hanya di route,
+  // supaya pemanggil lib mana pun ikut terlindungi. Rentang terbalik DITOLAK
+  // eksplisit — resolveCutoffQueryRange akan diam-diam melebarkannya ke
+  // CUTOFF_MAX_LOOKBACK_DAYS, dan pelebaran diam-diam pada rekonsiliasi BA
+  // jauh lebih berbahaya daripada error yang terbaca.
+  const startDate = input.startDate ?? undefined;
+  if (startDate !== undefined) {
+    if (!isValidIsoDate(startDate)) throw new InventoryStockOpnameError("startDate tidak valid — format wajib YYYY-MM-DD.");
+    if (startDate > input.cutoffDate) throw new InventoryStockOpnameError(`startDate (${startDate}) tidak boleh melewati cutoffDate (${input.cutoffDate}).`);
+  }
 
   const { opname } = await resolveInventoryStockOpnameContext(context);
   const deps = await resolveCutoffDeps(context);
 
   const [fetched, opnameRows] = await Promise.all([
-    fetchCutoffSystemRows(input.cutoffDate, deps),
+    fetchCutoffSystemRows(input.cutoffDate, deps, startDate),
     opname.find({ storeId, year, month }).toArray(),
   ]);
   if (!fetched.ok) throw new InventoryStockOpnameError(`Gagal menarik stok sistem Olsera pada cutoff ${input.cutoffDate}: ${fetched.error}`);

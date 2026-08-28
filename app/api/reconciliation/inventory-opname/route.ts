@@ -30,13 +30,19 @@ function errorResponse(error: unknown) {
 }
 
 /**
- * GET /api/reconciliation/inventory-opname?year=&month=[&cutoffDate=YYYY-MM-DD]
+ * GET /api/reconciliation/inventory-opname?year=&month=[&cutoffDate=YYYY-MM-DD][&startDate=YYYY-MM-DD]
  * — year/month TETAP dipakai sebagai kunci berita acara tersimpan (dan
  * sebagai filter UI), tapi BILA `cutoffDate` diisi, Stok Akhir Sistem
  * dihitung PERSIS pada tanggal itu (GET .../inventory/stockmovement
  * end_date=cutoffDate — lihat lib/inventory-stock-opname-store.ts:loadInventoryOpnameCutoff),
  * BUKAN akhir bulan kalender. Tanpa `cutoffDate`, perilaku LAMA (snapshot
  * bulanan) dipertahankan penuh — backward compatible.
+ *
+ * `startDate` OPSIONAL (Tahap 1 rentang bebas) dan HANYA berlaku bersama
+ * `cutoffDate`: awal periode Berita Acara yang tidak selalu tanggal 1 (mis.
+ * BA Februari 2026 = 04 Feb s/d 04 Mar). Tanpa `startDate`, rentang query
+ * tetap default awal bulan cutoff — perilaku existing TIDAK berubah sama
+ * sekali. Validasi format + rentang terbalik ada di loadInventoryOpnameCutoff.
  */
 export async function GET(request: Request) {
   try {
@@ -45,9 +51,10 @@ export async function GET(request: Request) {
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
     const cutoffDateParam = params.get("cutoffDate");
+    const startDateParam = params.get("startDate");
     if (cutoffDateParam) {
       if (!isValidIsoDate(cutoffDateParam)) throw new InventoryStockOpnameError("cutoffDate tidak valid — format wajib YYYY-MM-DD.");
-      const result = await loadInventoryOpnameCutoff({ storeId: currentStoreId(), year, month, cutoffDate: cutoffDateParam });
+      const result = await loadInventoryOpnameCutoff({ storeId: currentStoreId(), year, month, cutoffDate: cutoffDateParam, startDate: startDateParam });
       return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
     }
     const [result, monthlyLock, completeness] = await Promise.all([loadInventoryOpnameMonth({ storeId: currentStoreId(), year, month }), getInventoryMonthlyPeriodLock(currentStoreId(), year, month), getInventoryPeriodCompleteness({ storeId: currentStoreId(), year, month })]);

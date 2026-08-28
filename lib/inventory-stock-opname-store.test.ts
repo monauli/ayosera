@@ -202,6 +202,79 @@ test("cutoff: loadInventoryOpnameCutoff memanggil fetchStockMovementRange dengan
   assert.equal(result.cutoffDate, "2026-07-16");
 });
 
+// --- Tahap 1: startDate rentang bebas (periode BA tidak selalu bulan kalender) ---
+
+test("startDate: TANPA startDate rentang PERSIS seperti sebelumnya (awal bulan cutoff) — backward compatible", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-03-04": 12 });
+  await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 3, cutoffDate: "2026-03-04" }, ctx);
+  assert.equal(ctx.calls[0].startDate, "2026-03-01", "tanpa startDate WAJIB tetap default awal bulan cutoff");
+  assert.equal(ctx.calls[0].endDate, "2026-03-04");
+});
+
+test("startDate: startDate null diperlakukan sama dengan tidak diisi (route meneruskan null dari searchParams)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-03-04": 12 });
+  await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 3, cutoffDate: "2026-03-04", startDate: null }, ctx);
+  assert.equal(ctx.calls[0].startDate, "2026-03-01");
+});
+
+test("startDate: BA Februari 2026 (04 Feb s/d 04 Mar) — startDate diteruskan apa adanya, rentang melintasi batas bulan", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-03-04": 12 });
+  const result = await loadInventoryOpnameCutoff(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" },
+    ctx,
+  );
+  assert.equal(ctx.calls[0].startDate, "2026-02-04", "start_date API harus persis awal periode BA, BUKAN 2026-03-01");
+  assert.equal(ctx.calls[0].endDate, "2026-03-04");
+  assert.equal(result.startDate, "2026-02-04", "rentang efektif ikut dilaporkan balik ke pemanggil");
+  assert.equal(result.endDate, "2026-03-04");
+});
+
+test("startDate: BA Juni paruh kedua (17-30 Juni) — sebagian bulan, bukan dari tanggal 1", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-06-30": 8 });
+  await loadInventoryOpnameCutoff(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 6, cutoffDate: "2026-06-30", startDate: "2026-06-17" },
+    ctx,
+  );
+  assert.equal(ctx.calls[0].startDate, "2026-06-17");
+  assert.equal(ctx.calls[0].endDate, "2026-06-30");
+});
+
+test("startDate: LEBIH LAMBAT dari cutoffDate DITOLAK eksplisit, bukan diam-diam dilebarkan ke batas lookback", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-07-16": 36 });
+  await assert.rejects(
+    () => loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 7, cutoffDate: "2026-07-16", startDate: "2026-07-20" }, ctx),
+    (error: unknown) => error instanceof InventoryStockOpnameError && /startDate .* tidak boleh melewati cutoffDate/.test((error as Error).message),
+  );
+  assert.equal(ctx.calls.length, 0, "ditolak SEBELUM memanggil API Olsera");
+});
+
+test("startDate: format tidak valid DITOLAK, tidak diam-diam jatuh ke default awal bulan", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-07-16": 36 });
+  await assert.rejects(
+    () => loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 7, cutoffDate: "2026-07-16", startDate: "16 Juli 2026" }, ctx),
+    (error: unknown) => error instanceof InventoryStockOpnameError && /startDate tidak valid/.test((error as Error).message),
+  );
+  assert.equal(ctx.calls.length, 0);
+});
+
+test("startDate: rentang lebih lebar dari CUTOFF_MAX_LOOKBACK_DAYS tetap DIKLEM (klem existing tidak dilewati jalur baru)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-07-16": 36 });
+  await loadInventoryOpnameCutoff(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 7, cutoffDate: "2026-07-16", startDate: "2025-01-01" },
+    ctx,
+  );
+  assert.notEqual(ctx.calls[0].startDate, "2025-01-01", "rentang >75 hari WAJIB diklem supaya Olsera tidak menolak 406");
+  const spanDays = Math.round((Date.parse("2026-07-16T00:00:00Z") - Date.parse(`${ctx.calls[0].startDate}T00:00:00Z`)) / 86_400_000);
+  assert.equal(spanDays, 75, "diklem tepat ke CUTOFF_MAX_LOOKBACK_DAYS");
+});
+
 test("cutoff: movement TANGGAL SETELAH cutoff (17 Juli) tidak pernah ikut dalam Stok Akhir Sistem pada cutoff 16 Juli", async () => {
   const opname = fakeOpnameCollection();
   // Tiruan Olsera: end_date=16 Juli -> sisa 36 (BELUM termasuk penjualan 17 Juli);
