@@ -667,6 +667,12 @@ export type InventoryStockOpnameDocument = {
   /** "Belum Diisi" tidak pernah tersimpan — direpresentasikan lewat ketiadaan dokumen. */
   status: "COCOK" | "PERLU_DICEK" | "BUTUH_ADJUST_MANUAL";
   note: string | null;
+  /**
+   * Awal periode BA (ISO). null/absen = BA bulan penuh (lihat
+   * effectiveBaStartDate di lib/inventory-stock-opname.ts). Disimpan sebagai
+   * FIELD — `_id` SENGAJA tidak diubah, lihat guard checkBaPeriodConflict.
+   */
+  startDate?: string | null;
   updatedBy: string;
   createdAt: Date;
   updatedAt: Date;

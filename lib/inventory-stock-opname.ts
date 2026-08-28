@@ -217,6 +217,57 @@ export function resolveCutoffQueryRange(cutoffDate: string, desiredStartDate?: s
   return { startDate: new Date(clampedMs).toISOString().slice(0, 10), endDate: cutoffDate };
 }
 
+/**
+ * Awal periode BA EFEKTIF untuk satu dokumen. Dokumen lama (disimpan sebelum
+ * rentang bebas ada) tidak punya `startDate` sama sekali — dokumen seperti itu
+ * diperlakukan sebagai **BA bulan penuh**, yaitu tanggal 1 bulan periodenya.
+ * Aturan ini yang membuat 48 dokumen Februari 2026 existing tidak memblokir
+ * penyimpanan secara tidak sengaja: menyimpan ulang BA bulan penuh yang sama
+ * (atau menyimpan tanpa startDate seperti jalur lama) menghasilkan awal periode
+ * efektif yang SAMA, jadi tidak dianggap konflik.
+ */
+export function effectiveBaStartDate(input: { startDate?: string | null; year: number; month: number }): string {
+  if (input.startDate && isValidIsoDate(input.startDate)) return input.startDate;
+  return `${input.year}-${String(input.month).padStart(2, "0")}-01`;
+}
+
+/** Label rentang BA untuk pesan error — ISO penuh supaya tidak ambigu antar bulan. */
+function baRangeLabel(doc: { startDate?: string | null; cutoffDate?: string | null; year: number; month: number }): string {
+  const start = effectiveBaStartDate(doc);
+  return doc.cutoffDate && isValidIsoDate(doc.cutoffDate) ? `${start} s/d ${doc.cutoffDate}` : `mulai ${start}`;
+}
+
+export type BaPeriodConflict = { ok: boolean; reason: string | null };
+
+/**
+ * Tahap 3a — cegah BA kedua dengan periode BERBEDA menimpa BA yang sudah ada
+ * dalam bulan yang sama secara diam-diam. `_id` dokumen SENGAJA tidak diubah
+ * (lihat audit Tahap 3): pemisahan dilakukan lewat field `startDate`, dan
+ * konflik DITOLAK, bukan diakomodasi. Dukungan penuh BA terpecah (dua BA hidup
+ * berdampingan dalam satu bulan) butuh perubahan `_id` dan keputusan produk
+ * tersendiri — di luar cakupan fungsi ini.
+ *
+ * Dokumen tanpa `startDate` dianggap BA bulan penuh (lihat effectiveBaStartDate),
+ * jadi data lama hanya memblokir bila BA baru memang periodenya berbeda.
+ */
+export function checkBaPeriodConflict(input: {
+  existing: ReadonlyArray<{ startDate?: string | null; cutoffDate?: string | null }>;
+  year: number;
+  month: number;
+  incomingStartDate?: string | null;
+}): BaPeriodConflict {
+  const incoming = effectiveBaStartDate({ startDate: input.incomingStartDate, year: input.year, month: input.month });
+  for (const doc of input.existing) {
+    const docStart = effectiveBaStartDate({ startDate: doc.startDate, year: input.year, month: input.month });
+    if (docStart === incoming) continue;
+    return {
+      ok: false,
+      reason: `Periode ${input.year}-${String(input.month).padStart(2, "0")} sudah memuat BA ${baRangeLabel({ ...doc, year: input.year, month: input.month })}. Hapus BA lama itu dulu sebelum menyimpan BA periode berbeda (${incoming}).`,
+    };
+  }
+  return { ok: true, reason: null };
+}
+
 export type CutoffValidationResult = { ok: boolean; reason: string | null };
 
 /**

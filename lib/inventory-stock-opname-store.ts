@@ -10,6 +10,7 @@
 import "server-only";
 import {
   buildOpnameId,
+  checkBaPeriodConflict,
   computeDifferenceQty,
   computeFormulaClosingQty,
   determineOpnameStatus,
@@ -522,6 +523,18 @@ export async function saveInventoryOpnameBatch(
   }
   const systemByKey = new Map(systemRows.map((row) => [opnameKey(row.productId, row.variantId), row]));
 
+  // Tahap 3a — guard tulis. Menyimpan BA dengan periode BERBEDA ke bulan yang
+  // sudah memuat BA lain dulu menimpa dokumen lama diam-diam (satu _id per
+  // produk per bulan). Sekarang DITOLAK. Batch yang isinya hanya penghapusan
+  // (semua physicalQty null) TIDAK dijaga — kalau tidak, BA lama jadi mustahil
+  // dibersihkan lewat UI.
+  const hasWrites = entries.some((entry) => entry.physicalQty !== null);
+  if (hasWrites) {
+    const existingDocs = await opname.find({ storeId, year, month }).toArray();
+    const conflict = checkBaPeriodConflict({ existing: existingDocs, year, month, incomingStartDate: startDate ?? null });
+    if (!conflict.ok) throw new InventoryStockOpnameError(conflict.reason ?? "Periode ini sudah memuat BA dengan rentang berbeda.");
+  }
+
   if (input.baOnlyDifferencesConfirmed !== undefined) {
     const cutoff = input.cutoff ?? `${year}-${String(month).padStart(2, "0")}`;
     const verification = verifyStockOpnameBa({
@@ -568,6 +581,10 @@ export async function saveInventoryOpnameBatch(
           differenceQty,
           status,
           note: entry.note,
+          // Identitas periode BA disimpan sebagai FIELD (bukan bagian _id) —
+          // dipakai checkBaPeriodConflict. null = BA bulan penuh.
+          startDate: startDate ?? null,
+          cutoffDate,
           updatedBy: input.actor.email,
           updatedAt: now,
         },
@@ -650,6 +667,17 @@ export async function finalizeInventoryStockOpname(
     result = await loadInventoryOpnameMonth({ storeId: input.storeId, year: input.year, month: input.month }, context);
   }
 
+  // Tahap 3a — guard tulis untuk finalisasi. Dokumen event finalisasi juga
+  // satu per bulan (storeId:year:month:event), jadi BA kedua dengan periode
+  // berbeda akan menimpa lampiran/cutoff BA pertama — kehilangan bukti audit,
+  // bukan sekadar angka. Ditolak sebelum ada dokumen apa pun yang ditulis.
+  {
+    const { opname: opnameForGuard } = await resolveInventoryStockOpnameContext(context);
+    const existingDocs = await opnameForGuard.find({ storeId: input.storeId, year: input.year, month: input.month }).toArray();
+    const conflict = checkBaPeriodConflict({ existing: existingDocs, year: input.year, month: input.month, incomingStartDate: input.startDate ?? null });
+    if (!conflict.ok) throw new InventoryStockOpnameError(conflict.reason ?? "Periode ini sudah memuat BA dengan rentang berbeda.");
+  }
+
   const submitted = result.rows.filter((row) => row.physicalQty !== null || input.baOnlyDifferencesConfirmed);
   if (!submitted.length || submitted.some((row) => row.manualAdjust || row.systemClosingQty === null || (!input.baOnlyDifferencesConfirmed && (row.differenceQty === null || row.differenceQty === 0)))) throw new InventoryStockOpnameError("Finalisasi diblokir: masih ada mismatch, mapping tidak pasti, atau item tanpa selisih.");
   const { opname } = await resolveInventoryStockOpnameContext(context);
@@ -659,7 +687,7 @@ export async function finalizeInventoryStockOpname(
     if (omitted && !input.baOnlyDifferencesConfirmed) continue;
     const physicalQty = omitted ? row.systemClosingQty : row.physicalQty;
     const id = buildOpnameId({ storeId: input.storeId, year: input.year, month: input.month, productId: row.productId, variantId: row.variantId });
-    await opname.updateOne({ _id: id }, { $set: { _id: id, storeId: input.storeId, year: input.year, month: input.month, productId: row.productId, variantId: row.variantId, physicalQty, systemClosingQty: row.systemClosingQty, differenceQty: omitted ? 0 : row.differenceQty, status: "COCOK", note: omitted ? "Tidak tercantum di BA; dianggap Cocok sesuai konfirmasi BA-only-differences." : row.note, evidenceSource: omitted ? "BA_OMITTED_ASSUMED_MATCH" : "BA_INPUT", updatedBy: input.actor, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
+    await opname.updateOne({ _id: id }, { $set: { _id: id, storeId: input.storeId, year: input.year, month: input.month, productId: row.productId, variantId: row.variantId, physicalQty, systemClosingQty: row.systemClosingQty, differenceQty: omitted ? 0 : row.differenceQty, status: "COCOK", note: omitted ? "Tidak tercantum di BA; dianggap Cocok sesuai konfirmasi BA-only-differences." : row.note, evidenceSource: omitted ? "BA_OMITTED_ASSUMED_MATCH" : "BA_INPUT", startDate: input.startDate ?? null, cutoffDate, updatedBy: input.actor, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
   }
   const eventId = `${input.storeId}:${input.year}:${String(input.month).padStart(2, "0")}:event`;
   // NOTE (Rule 5 — lock TIDAK memfreeze inventory): dokumen event ini HANYA
@@ -669,7 +697,7 @@ export async function finalizeInventoryStockOpname(
   // + regresi di lib/inventory-stock-opname-store.test.ts "lock tidak
   // memfreeze cron/sync inventory"). Lock ini murni snapshot hasil
   // rekonsiliasi + status, bukan gate operasional.
-  await opname.updateOne({ _id: eventId }, { $set: { _id: eventId, storeId: input.storeId, year: input.year, month: input.month, productId: 0, variantId: null, physicalQty: 0, systemClosingQty: null, differenceQty: null, status: "COCOK", note: null, updatedBy: input.actor, cutoff: input.cutoff, cutoffDate, baOnlyDifferencesConfirmed: true, attachment: input.attachment, verificationResult: "PASS", lockedAt: now, lockedBy: input.actor, unlockedAt: null, unlockedBy: null, updatedAt: now }, $setOnInsert: { createdAt: now }, $push: { history: { action: "lock", actor: input.actor, reason: null, at: now } } }, { upsert: true });
+  await opname.updateOne({ _id: eventId }, { $set: { _id: eventId, storeId: input.storeId, year: input.year, month: input.month, productId: 0, variantId: null, physicalQty: 0, systemClosingQty: null, differenceQty: null, status: "COCOK", note: null, updatedBy: input.actor, cutoff: input.cutoff, cutoffDate, startDate: input.startDate ?? null, baOnlyDifferencesConfirmed: true, attachment: input.attachment, verificationResult: "PASS", lockedAt: now, lockedBy: input.actor, unlockedAt: null, unlockedBy: null, updatedAt: now }, $setOnInsert: { createdAt: now }, $push: { history: { action: "lock", actor: input.actor, reason: null, at: now } } }, { upsert: true });
   return { status: "LOCKED" as const, cutoff: input.cutoff, cutoffDate, verificationResult: "PASS" as const, lockedAt: now, lockedBy: input.actor, adjustmentApplied: false };
 }
 

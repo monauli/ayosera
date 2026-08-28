@@ -400,6 +400,67 @@ test("save TANPA cutoffDate: tetap memakai snapshot bulanan, tidak pernah memang
   assert.equal(stored.differenceQty, -1);
 });
 
+test("guard 3a: BA Juni paruh kedua DITOLAK bila bulan itu sudah memuat paruh pertama — tidak menimpa diam-diam", async () => {
+  const opname = fakeOpnameCollection([
+    { _id: `${CUTOFF_STORE_ID}:2026:06:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 6, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 9, systemClosingQty: 10, differenceQty: -1, status: "PERLU_DICEK", note: null, startDate: "2026-06-01", cutoffDate: "2026-06-16", updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
+  ]);
+  const ctx = cutoffContext(opname, { "2026-06-30": 8 });
+  await assert.rejects(
+    () =>
+      saveInventoryOpnameBatch(
+        { storeId: CUTOFF_STORE_ID, year: 2026, month: 6, actor: SUPERVISOR, entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 7, note: null }], cutoffDate: "2026-06-30", startDate: "2026-06-17" },
+        ctx,
+      ),
+    (error: unknown) => error instanceof InventoryStockOpnameError && /sudah memuat BA 2026-06-01 s\/d 2026-06-16/.test((error as Error).message),
+  );
+  const untouched = opname.store.get(`${CUTOFF_STORE_ID}:2026:06:${CUTOFF_PRODUCT_ID}:0`) as Record<string, unknown>;
+  assert.equal(untouched.physicalQty, 9, "dokumen BA paruh pertama WAJIB utuh, tidak tertimpa");
+  assert.equal(untouched.startDate, "2026-06-01");
+});
+
+test("guard 3a: BA yang SAMA boleh di-update (startDate sama) dan field periode ikut tersimpan", async () => {
+  const opname = fakeOpnameCollection([
+    { _id: `${CUTOFF_STORE_ID}:2026:06:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 6, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 9, systemClosingQty: 8, differenceQty: 1, status: "PERLU_DICEK", note: null, startDate: "2026-06-17", cutoffDate: "2026-06-30", updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
+  ]);
+  const ctx = cutoffContext(opname, { "2026-06-30": 8 });
+  await saveInventoryOpnameBatch(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 6, actor: SUPERVISOR, entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 7, note: "koreksi" }], cutoffDate: "2026-06-30", startDate: "2026-06-17" },
+    ctx,
+  );
+  const updated = opname.store.get(`${CUTOFF_STORE_ID}:2026:06:${CUTOFF_PRODUCT_ID}:0`) as Record<string, unknown>;
+  assert.equal(updated.physicalQty, 7, "update BA yang sama TIDAK boleh diblok");
+  assert.equal(updated.startDate, "2026-06-17");
+  assert.equal(updated.cutoffDate, "2026-06-30");
+});
+
+test("guard 3a: batch berisi HANYA penghapusan tidak dijaga — BA lama tetap bisa dibersihkan", async () => {
+  const opname = fakeOpnameCollection([
+    { _id: `${CUTOFF_STORE_ID}:2026:06:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 6, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 9, systemClosingQty: 10, differenceQty: -1, status: "PERLU_DICEK", note: null, startDate: "2026-06-01", cutoffDate: "2026-06-16", updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
+  ]);
+  const ctx = cutoffContext(opname, { "2026-06-30": 8 });
+  await saveInventoryOpnameBatch(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 6, actor: SUPERVISOR, entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: null, note: null }], cutoffDate: "2026-06-30", startDate: "2026-06-17" },
+    ctx,
+  );
+  assert.equal(opname.store.has(`${CUTOFF_STORE_ID}:2026:06:${CUTOFF_PRODUCT_ID}:0`), false, "penghapusan WAJIB tetap jalan supaya BA lama bisa dibuang");
+});
+
+test("guard 3a: finalisasi BA periode berbeda DITOLAK — lampiran/event BA lama tidak tertimpa", async () => {
+  const opname = fakeOpnameCollection([
+    { _id: `${CUTOFF_STORE_ID}:2026:06:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 6, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 9, systemClosingQty: 10, differenceQty: -1, status: "PERLU_DICEK", note: null, startDate: "2026-06-01", cutoffDate: "2026-06-16", updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
+  ]);
+  const ctx = cutoffContext(opname, { "2026-06-30": 8 });
+  await assert.rejects(
+    () =>
+      finalizeInventoryStockOpname(
+        { storeId: CUTOFF_STORE_ID, year: 2026, month: 6, actor: SUPERVISOR.email, cutoff: "2026-06-30", cutoffDate: "2026-06-30", startDate: "2026-06-17", cutoffConfirmed: true, baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba2.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba2.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email }, now: new Date("2026-08-28T00:00:00Z") },
+        ctx,
+      ),
+    (error: unknown) => error instanceof InventoryStockOpnameError && /sudah memuat BA 2026-06-01/.test((error as Error).message),
+  );
+  assert.equal(opname.store.has(`${CUTOFF_STORE_ID}:2026:06:event`), false, "dokumen event BA baru tidak boleh dibuat");
+});
+
 test("save rentang bebas: rentang terbalik ditolak sebelum menyentuh API maupun menulis dokumen", async () => {
   const opname = fakeOpnameCollection();
   const ctx = cutoffContext(opname, { "2026-03-04": 12 });
@@ -417,7 +478,8 @@ test("save rentang bebas: rentang terbalik ditolak sebelum menyentuh API maupun 
 
 test("finalize rentang bebas: BA Februari 2026 (04 Feb s/d 04 Mar) BISA difinalisasi — end-to-end, bukan cuma lolos validator", async () => {
   const opname = fakeOpnameCollection([
-    { _id: `${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, systemClosingQty: 12, differenceQty: -1, status: "PERLU_DICEK", note: "1 rusak", updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
+    // Dokumen hasil jalur simpan sudah membawa identitas periode BA (Tahap 3a).
+    { _id: `${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, systemClosingQty: 12, differenceQty: -1, status: "PERLU_DICEK", note: "1 rusak", startDate: "2026-02-04", cutoffDate: "2026-03-04", updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
   ]);
   const ctx = cutoffContext(opname, { "2026-03-04": 12 });
   const locked = await finalizeInventoryStockOpname(

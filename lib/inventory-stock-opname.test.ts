@@ -13,6 +13,8 @@ import {
   resolveSystemClosingQty,
   summarizeOpname,
   validateCutoffPlausibility,
+  checkBaPeriodConflict,
+  effectiveBaStartDate,
   verifyStockOpnameBa,
   CUTOFF_MAX_LOOKBACK_DAYS,
 } from "./inventory-stock-opname.ts";
@@ -201,6 +203,61 @@ test("validateCutoffPlausibility: cutoff di masa depan -> diblok", () => {
   const result = validateCutoffPlausibility({ cutoffDate: "2026-08-20", year: 2026, month: 8, today: "2026-08-13" });
   assert.equal(result.ok, false);
   assert.match(result.reason ?? "", /masa depan/i);
+});
+
+// --- Tahap 3a: guard konflik periode BA ---
+
+test("effectiveBaStartDate: dokumen tanpa startDate dianggap BA bulan penuh (tanggal 1)", () => {
+  assert.equal(effectiveBaStartDate({ year: 2026, month: 2 }), "2026-02-01");
+  assert.equal(effectiveBaStartDate({ startDate: null, year: 2026, month: 2 }), "2026-02-01");
+  assert.equal(effectiveBaStartDate({ startDate: "2026-02-04", year: 2026, month: 2 }), "2026-02-04");
+});
+
+test("checkBaPeriodConflict: periode kosong -> tidak ada konflik", () => {
+  assert.equal(checkBaPeriodConflict({ existing: [], year: 2026, month: 6, incomingStartDate: "2026-06-17" }).ok, true);
+});
+
+test("checkBaPeriodConflict: BA Juni paruh kedua ke bulan yang sudah memuat paruh pertama -> DITOLAK dengan menyebut BA yang ada", () => {
+  const result = checkBaPeriodConflict({
+    existing: [{ startDate: "2026-06-01", cutoffDate: "2026-06-16" }],
+    year: 2026,
+    month: 6,
+    incomingStartDate: "2026-06-17",
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /sudah memuat BA 2026-06-01 s\/d 2026-06-16/);
+  assert.match(result.reason ?? "", /2026-06-17/, "pesan menyebut BA baru yang ditolak juga");
+});
+
+test("checkBaPeriodConflict: BA yang SAMA (startDate sama) tetap boleh disimpan ulang / di-update", () => {
+  const result = checkBaPeriodConflict({
+    existing: [{ startDate: "2026-06-01", cutoffDate: "2026-06-16" }, { startDate: "2026-06-01", cutoffDate: "2026-06-16" }],
+    year: 2026,
+    month: 6,
+    incomingStartDate: "2026-06-01",
+  });
+  assert.equal(result.ok, true, "update BA yang sama TIDAK boleh diblok");
+});
+
+test("checkBaPeriodConflict: dokumen LAMA tanpa startDate + simpan tanpa startDate -> lolos (jalur bulanan existing tidak terhalang)", () => {
+  const result = checkBaPeriodConflict({
+    existing: [{}, { startDate: null }],
+    year: 2026,
+    month: 2,
+    incomingStartDate: null,
+  });
+  assert.equal(result.ok, true, "48 dokumen Februari existing tidak boleh memblokir jalur lama");
+});
+
+test("checkBaPeriodConflict: dokumen LAMA tanpa startDate + simpan BA bulan penuh eksplisit (tanggal 1) -> lolos", () => {
+  const result = checkBaPeriodConflict({ existing: [{}], year: 2026, month: 2, incomingStartDate: "2026-02-01" });
+  assert.equal(result.ok, true, "startDate tanggal 1 setara dengan dokumen lama tanpa startDate");
+});
+
+test("checkBaPeriodConflict: dokumen LAMA tanpa startDate + simpan BA Februari 4 Feb -> DITOLAK, konflik dimunculkan bukan ditimpa", () => {
+  const result = checkBaPeriodConflict({ existing: [{}], year: 2026, month: 2, incomingStartDate: "2026-02-04" });
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /sudah memuat BA mulai 2026-02-01/);
 });
 
 // --- Tahap 2: mode rentang bebas (startDate diisi) ---
