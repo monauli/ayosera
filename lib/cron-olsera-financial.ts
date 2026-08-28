@@ -347,13 +347,25 @@ export async function runOlseraFinancialCron(
     } else {
       // Mode auto (cron terjadwal): pelihara current + previous, pilih SATU
       // periode yang butuh kerja saat ini (lihat selectFinancialCronTarget).
+      // scope "current" TIDAK PERNAH membaca historicalLogs:
+      // selectFinancialCronTargetWithHistory keluar lebih dulu di cabang
+      // `if (scope === "current")`, dan target.period di sana selalu
+      // currentPeriod sehingga pemilihan `existing` di bawah juga tidak
+      // menyentuhnya. Query historis karena itu DILEWATI untuk scope ini —
+      // ia men-scan seluruh olsera_financial_sync_logs sejak
+      // FINANCIAL_BASELINE_PERIOD dan ikut jalan pada invocation no-op,
+      // justru saat invocation seharusnya semurah mungkin.
+      // Jalur historis DIPERTAHANKAN UTUH untuk scope "auto"/"historical".
+      const skipHistoricalLogs = scope === "current";
       const [currentLog, previousLog, historicalLogs] = await Promise.all([
         getFinancialSyncLogForPeriod(currentPeriod),
         previousPeriod ? getFinancialSyncLogForPeriod(previousPeriod) : Promise.resolve(null),
-        withMongo(async () => {
-          const { olseraFinancialSyncLogs } = await collections();
-          return olseraFinancialSyncLogs.find({ period: { $gte: FINANCIAL_BASELINE_PERIOD, $lt: currentPeriod } }).toArray() as Promise<HistoricalFinancialLog[]>;
-        }),
+        skipHistoricalLogs
+          ? Promise.resolve([] as HistoricalFinancialLog[])
+          : withMongo(async () => {
+              const { olseraFinancialSyncLogs } = await collections();
+              return olseraFinancialSyncLogs.find({ period: { $gte: FINANCIAL_BASELINE_PERIOD, $lt: currentPeriod } }).toArray() as Promise<HistoricalFinancialLog[]>;
+            }),
       ]);
       const now = new Date();
       const target = selectFinancialCronTargetWithHistory({ currentPeriod, previousPeriod, currentLog, previousLog, historicalLogs, historicalPeriods: historicalPeriodsBetween(FINANCIAL_BASELINE_PERIOD, currentPeriod), scope, now });
