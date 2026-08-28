@@ -6,13 +6,10 @@ import { nextCookies } from "better-auth/next-js";
 import { getDb, getMongoDb, mongoClient } from "@/lib/mongodb";
 import { describeAuthBaseURLIssue } from "@/lib/auth-base-url";
 import { resolveAuthSecret } from "@/lib/auth-secret";
-import { APP_MODULES, normalizeModules, type AppModule, type AppRole } from "@/lib/app-modules";
+import { APP_MODULES, normalizeModules, resolveAppRole, SUPERVISOR_EMAILS, SUPERVISOR_SEED_EMAIL, type AppModule, type AppRole } from "@/lib/app-modules";
 
-export { APP_MODULES, normalizeModules };
+export { APP_MODULES, normalizeModules, SUPERVISOR_EMAILS, SUPERVISOR_SEED_EMAIL };
 export type { AppModule, AppRole };
-
-// Hanya akun ini yang boleh memiliki hak supervisor.
-export const SUPERVISOR_EMAIL = "timunemas@ayo.local";
 
 type AuthUserDocument = {
   id: string;
@@ -87,12 +84,6 @@ export const auth = betterAuth({
   plugins: [nextCookies()],
 });
 
-function normalizeRole(email: string, role: unknown): AppRole {
-  return email.toLowerCase() === SUPERVISOR_EMAIL && (role === "admin" || role === "supervisor")
-    ? "supervisor"
-    : "user";
-}
-
 function toSessionUser(user: {
   id: string;
   email: string;
@@ -101,7 +92,7 @@ function toSessionUser(user: {
   role?: unknown;
   allowedModules?: unknown;
 }): SessionUser {
-  const role = normalizeRole(user.email, user.role);
+  const role = resolveAppRole(user.email, user.role);
   return {
     id: user.id,
     email: user.email,
@@ -142,29 +133,32 @@ export async function ensureDefaultAdmin() {
   );
 }
 
-// Seed akun supervisor dari env — idempotent, mengikuti pola ensureDefaultAdmin.
-// Tanpa env SUPERVISOR_EMAIL/SUPERVISOR_PASSWORD, seeding dilewati.
+// Idempotent, mengikuti pola ensureDefaultAdmin. Dua tugas terpisah:
+//
+// 1. SEEDING akun bootstrap dari SUPERVISOR_PASSWORD — hanya SUPERVISOR_SEED_EMAIL.
+//    Tanpa env itu, seeding dilewati.
+// 2. MENYAMAKAN field `role` untuk seluruh SUPERVISOR_EMAILS yang akunnya MEMANG
+//    sudah ada. Tanpa upsert: akun supervisor selain bootstrap dibuat lewat
+//    Manajemen Pengguna dengan password sendiri, jadi tidak boleh dibuat di sini
+//    tanpa kredensial. Ini juga membuat state DB memulihkan diri — role yang
+//    terlanjur berubah kembali disamakan pada login berikutnya.
 export async function ensureSupervisorAccount() {
-  const email = SUPERVISOR_EMAIL;
-  const password = process.env.SUPERVISOR_PASSWORD || "";
-  if (!email || !password) return;
-
   const db = await getDb();
   const users = db.collection<AuthUserDocument>("user");
-  const existing = await users.findOne({ email });
+  const password = process.env.SUPERVISOR_PASSWORD || "";
 
-  if (!existing) {
+  if (password && !(await users.findOne({ email: SUPERVISOR_SEED_EMAIL }))) {
     await auth.api.signUpEmail({
       body: {
-        email,
+        email: SUPERVISOR_SEED_EMAIL,
         password,
         name: "Supervisor",
       },
     });
   }
 
-  await users.updateOne(
-    { email },
+  await users.updateMany(
+    { email: { $in: [...SUPERVISOR_EMAILS] } },
     {
       $set: {
         role: "supervisor",

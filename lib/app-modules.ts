@@ -4,6 +4,38 @@
 
 export type AppRole = "supervisor" | "user";
 
+/**
+ * Akun yang BOLEH memiliki hak supervisor. Sengaja hardcode di source, bukan
+ * env: hak ini membuka manajemen pengguna dan reset password akun lain, jadi
+ * penambahannya harus lewat code review dan tercatat di git history — bukan
+ * lewat variabel env yang bisa berubah diam-diam dan salah ketik satu koma.
+ *
+ * Bertindak sebagai allowlist, BUKAN pemberi hak: field `role` di database
+ * tetap harus "admin"/"supervisor" (lihat resolveAppRole). Dua syarat AND —
+ * ada di daftar ini SAJA tidak cukup.
+ */
+export const SUPERVISOR_EMAILS: ReadonlySet<string> = new Set([
+  "timunemas@ayo.local",
+  "manageramp@gmail.com",
+  "direksi@gmail.com",
+  "admampbatam222@gmail.com",
+]);
+
+/**
+ * Akun bootstrap yang di-seed dari SUPERVISOR_PASSWORD bila belum ada.
+ * Supervisor lain dibuat lewat Manajemen Pengguna seperti user biasa, lalu
+ * role-nya disamakan oleh ensureSupervisorAccount — mereka tidak punya (dan
+ * tidak boleh punya) password dari env.
+ */
+export const SUPERVISOR_SEED_EMAIL = "timunemas@ayo.local";
+
+/** Sumber kebenaran tunggal penentuan role sesi. Dipakai toSessionUser. */
+export function resolveAppRole(email: string, role: unknown): AppRole {
+  return SUPERVISOR_EMAILS.has(email.trim().toLowerCase()) && (role === "admin" || role === "supervisor")
+    ? "supervisor"
+    : "user";
+}
+
 // "rekonsiliasi" (Modul Rekonsiliasi, Phase 5A) ditambahkan paling akhir agar
 // TIDAK mengubah urutan/nilai module yang sudah dipakai user existing —
 // hanya supervisor yang otomatis mendapatkannya (lihat normalizeModules di
