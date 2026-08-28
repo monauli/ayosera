@@ -144,7 +144,6 @@ export default function InventoryOpnamePage() {
   const [edits, setEdits] = useState<Record<string, Edit>>({});
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | OpnameStatus>("ALL");
-  const [showHidden, setShowHidden] = useState(false);
   const [selected, setSelected] = useState<Row | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
@@ -497,8 +496,10 @@ export default function InventoryOpnamePage() {
     });
   }, [data, edits, baOnlyDifferencesConfirmed, baItemsFound]);
 
-  const visibleRows = useMemo(() => visibleInventoryRows(rowsWithEdits, showHidden), [rowsWithEdits, showHidden]);
-  const hiddenCount = rowsWithEdits.length - visibleRows.length;
+  // Checkbox "Tampilkan item tersembunyi" dihapus dari UI — perilaku
+  // di-default-kan ke "tampilkan semua" supaya tidak ada baris yang diam-diam
+  // hilang tanpa kontrol untuk memunculkannya kembali.
+  const visibleRows = useMemo(() => visibleInventoryRows(rowsWithEdits, true), [rowsWithEdits]);
 
   const filteredRows = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -607,7 +608,12 @@ export default function InventoryOpnamePage() {
             ))}
           </select>
         </label>
-        {showBaFlow && <>
+        {/* Pemilihan periode adalah filter DASAR halaman ini, bukan bagian alur
+            Berita Acara — sebelumnya kedua field ini ikut digate showBaFlow,
+            sehingga hilang total begitu semua stok cocok (needsBa false) DAN
+            selalu hilang untuk Februari 2026 (isFebruaryHistoricalFinal), yaitu
+            justru periode yang paling butuh rentang bebas. */}
+        <>
           <label>
             Tanggal mulai BA (opsional)
             <input
@@ -640,7 +646,7 @@ export default function InventoryOpnamePage() {
           <label className="recon-check" style={{ alignSelf: "end" }}>
             <input type="checkbox" checked={cutoffConfirmed} disabled={!cutoffDate.trim()} onChange={(e) => setCutoffConfirmed(e.target.checked)} /> Konfirmasi cutoff — Stok Akhir Sistem dihitung persis pada tanggal ini
           </label>
-        </>}
+        </>
         <label className="recon-check" style={{ alignSelf: "end" }}>
           <button className="recon-button secondary" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 className="spin" /> : <RefreshCw />} Tampilkan Data
@@ -781,9 +787,6 @@ export default function InventoryOpnamePage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="recon-check">
-              <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> Tampilkan item tersembunyi{hiddenCount ? ` (${hiddenCount})` : ""}
             </label>
           </section>
 
@@ -933,37 +936,11 @@ export default function InventoryOpnamePage() {
               </p>
             )}
 
-            {selected.snapshotDiagnostics.length > 0 && (
-              <>
-                <h3>Diagnostik Snapshot</h3>
-                <ul>
-                  {selected.snapshotDiagnostics.map((line, index) => (
-                    <li key={index} style={{ fontSize: ".8125rem", color: "rgb(var(--rd-text-tertiary))" }}>
-                      {line}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            <h3>Catatan Berita Acara</h3>
-            <textarea
-              className="recon-opname-note"
-              disabled={!supervisor}
-              value={selected.note ?? ""}
-              onChange={(e) => {
-                setEdit(selected, { note: e.target.value || null });
-                setSelected({ ...selected, note: e.target.value || null });
-              }}
-              placeholder={supervisor ? "Catatan opsional untuk produk ini" : "Belum ada catatan"}
-            />
+            {/* Diagnostik Snapshot, Catatan Berita Acara, dan baris "Terakhir
+                diperbarui oleh" dihilangkan dari TAMPILAN atas permintaan.
+                Datanya TIDAK dihapus: `note`/`updatedBy`/`updatedAt` tetap
+                tersimpan di dokumen BA dan tetap ditulis jalur simpan. */}
             {!supervisor && <p className="recon-readonly">Anda memiliki akses baca. Hanya supervisor dapat mengubah stok berita acara.</p>}
-            {selected.updatedBy && (
-              <p className="recon-before">
-                Terakhir diperbarui oleh {selected.updatedBy}
-                {selected.updatedAt ? ` · ${new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(selected.updatedAt))}` : ""}
-              </p>
-            )}
           </div>
         </aside>
       )}
