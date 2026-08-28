@@ -91,6 +91,13 @@ const STATUS_FILTERS: Array<{ value: "ALL" | OpnameStatus; label: string }> = [
 
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
+/** "2026-03-04" -> "04 Mar 2026". Nilai kosong/tidak terbaca dikembalikan apa adanya supaya tidak pernah menampilkan tanggal tebakan. */
+function formatIsoDateID(value: string | null | undefined): string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return value ?? "-";
+  const [year, month, day] = value.split("-");
+  return `${day} ${MONTH_NAMES[Number(month) - 1]?.slice(0, 3) ?? month} ${year}`;
+}
+
 function currentJakartaYearMonth(): { year: number; month: number } {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit" }).format(new Date());
   const [year, month] = parts.split("-").map(Number);
@@ -126,6 +133,9 @@ export default function InventoryOpnamePage() {
   // Tahun/Bulan di atas TETAP dipakai sebagai filter pencarian BA, BUKAN lagi
   // sumber boundary Stok Akhir Sistem begitu cutoffDate dikonfirmasi & dipakai.
   const [cutoffDate, setCutoffDate] = useState("");
+  // Awal periode BA — periode BA TIDAK selalu bulan kalender (BA Februari 2026
+  // = 04 Feb s/d 04 Mar). Kosong = mode bulanan lama.
+  const [startDate, setStartDate] = useState("");
   const [cutoffConfirmed, setCutoffConfirmed] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<LoadResult | null>(null);
@@ -195,7 +205,8 @@ export default function InventoryOpnamePage() {
       // user, bukan otomatis tanpa konfirmasi". Tanpa konfirmasi, query tetap
       // basis snapshot bulanan lama (backward compatible).
       const useCutoff = cutoffConfirmed && cutoffDate.trim() !== "";
-      const url = `/api/reconciliation/inventory-opname?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}${useCutoff ? `&cutoffDate=${encodeURIComponent(cutoffDate.trim())}` : ""}`;
+      const useStart = useCutoff && startDate.trim() !== "";
+      const url = `/api/reconciliation/inventory-opname?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}${useCutoff ? `&cutoffDate=${encodeURIComponent(cutoffDate.trim())}` : ""}${useStart ? `&startDate=${encodeURIComponent(startDate.trim())}` : ""}`;
       const response = await fetch(url, { cache: "no-store" });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || "Gagal memuat data rekonsiliasi inventori.");
@@ -347,13 +358,16 @@ export default function InventoryOpnamePage() {
         const edit = edits[rowKey(row.productId, row.variantId)] ?? { physicalQty: row.physicalQty, note: row.note };
         return { productId: row.productId, variantId: row.variantId, physicalQty: edit.physicalQty, note: edit.note };
       });
-      const saveResponse = await fetch("/api/reconciliation/inventory-opname", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: Number(year), month: Number(month), entries }) });
+      // Rentang BA dikirim juga saat SIMPAN supaya angka yang tersimpan berasal
+      // dari sumber yang SAMA dengan yang tampil di layar. Syaratnya identik
+      // dengan pemuatan: hanya setelah cutoff dikonfirmasi user.
+      const saveResponse = await fetch("/api/reconciliation/inventory-opname", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: Number(year), month: Number(month), entries, ...baRangePayload() }) });
       const saveResult = await saveResponse.json().catch(() => null);
       if (!saveResponse.ok) throw new Error(saveResult?.error || "Gagal menyimpan input Berita Acara sebelum finalisasi.");
       const response = await fetch("/api/reconciliation/inventory-opname", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "finalize", year: Number(year), month: Number(month), cutoff: cutoffDate, cutoffDate, cutoffConfirmed, baOnlyDifferencesConfirmed, attachment }),
+        body: JSON.stringify({ action: "finalize", year: Number(year), month: Number(month), cutoff: cutoffDate, cutoffDate, ...(startDate.trim() !== "" ? { startDate: startDate.trim() } : {}), cutoffConfirmed, baOnlyDifferencesConfirmed, attachment }),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || "Finalisasi gagal. Periksa kembali data checker.");
@@ -434,9 +448,14 @@ export default function InventoryOpnamePage() {
       const response = await fetch("/api/reconciliation/inventory-opname", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year: Number(year), month: Number(month), entries }),
+        // Rentang BA ikut dikirim: tombol "Simpan Semua" (simpan tanpa
+        // finalisasi) adalah justru kasus yang dulu menyimpan angka akhir bulan
+        // padahal layar menampilkan rentang BA.
+        body: JSON.stringify({ year: Number(year), month: Number(month), entries, ...baRangePayload() }),
       });
       const result = await response.json().catch(() => null);
+      // Pesan guard periode BA (Tahap 3a) diteruskan APA ADANYA ke user —
+      // ia menyebut BA mana yang menghalangi, jangan diganti pesan generik.
       if (!response.ok) throw new Error(result?.error || "Gagal menyimpan berita acara.");
       setData(result);
       seedEdits(result.rows);
@@ -512,6 +531,15 @@ export default function InventoryOpnamePage() {
   const februaryComparisonPass = !isFebruaryHistoricalFinal || Boolean(data && liveSummary.perluDicek === 0 && liveSummary.butuhAdjustManual === 0 && liveSummary.cocok === liveSummary.totalProduk);
   const periodReadyToLock = Boolean(data && data.monthlyLock?.status !== "locked" && (februaryComparisonPass && (isFebruaryHistoricalFinal || completeness?.pass === true)) && !needsBa && data.rows.length > 0);
   const showBaFlow = !isFebruaryHistoricalFinal && (needsBa || Boolean(attachment) || baRows.length > 0);
+  // Rentang BA aktif hanya bila cutoff sudah dikonfirmasi user — syarat yang
+  // sama dipakai pemuatan, penyimpanan, dan finalisasi.
+  const rangeMode = cutoffConfirmed && cutoffDate.trim() !== "" && startDate.trim() !== "";
+  // SATU tempat penentu apakah rentang BA ikut dikirim — dipakai muat, simpan,
+  // dan finalisasi supaya ketiganya tidak pernah memakai basis berbeda.
+  const baRangePayload = (): { cutoffDate?: string; startDate?: string } =>
+    cutoffConfirmed && cutoffDate.trim() !== ""
+      ? { cutoffDate: cutoffDate.trim(), ...(startDate.trim() !== "" ? { startDate: startDate.trim() } : {}) }
+      : {};
   const baCutoffOutOfPeriod = Boolean(baPeriod?.periodStart && baPeriod?.cutoffDate && cutoffDate && !isDateWithinPeriod(cutoffDate, baPeriod.periodStart, baPeriod.cutoffDate));
   const baCocokCount = baRows.filter((r) => r.status === "COCOK").length;
   const baPerluDicekCount = baRows.filter((r) => r.status === "PERLU_DICEK").length;
@@ -565,11 +593,13 @@ export default function InventoryOpnamePage() {
       <section className="recon-filters" aria-label="Pilih periode">
         <label>
           Tahun
-          <input type="number" min={2000} max={2100} value={year} onChange={(e) => setYear(e.target.value)} />
+          {/* Saat rentang BA dipakai, Tahun/Bulan DITURUNKAN dari tanggal mulai —
+              keduanya tetap ada karena merekalah kunci periode lock & dokumen BA. */}
+          <input type="number" min={2000} max={2100} value={year} disabled={rangeMode} onChange={(e) => setYear(e.target.value)} />
         </label>
         <label>
           Bulan
-          <select value={month} onChange={(e) => setMonth(e.target.value)}>
+          <select value={month} disabled={rangeMode} onChange={(e) => setMonth(e.target.value)}>
             {MONTH_NAMES.map((name, index) => (
               <option key={name} value={index + 1}>
                 {name}
@@ -579,10 +609,28 @@ export default function InventoryOpnamePage() {
         </label>
         {showBaFlow && <>
           <label>
+            Tanggal mulai BA (opsional)
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                const value = e.target.value;
+                setStartDate(value);
+                setCutoffConfirmed(false);
+                // Periode dokumen BA & lock mengikuti bulan tanggal MULAI.
+                if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                  setYear(value.slice(0, 4));
+                  setMonth(String(Number(value.slice(5, 7))));
+                }
+              }}
+            />
+          </label>
+          <label>
             Cutoff tanggal BA (opsional)
             <input
               type="date"
               value={cutoffDate}
+              min={startDate || undefined}
               onChange={(e) => {
                 setCutoffDate(e.target.value);
                 setCutoffConfirmed(false);
@@ -602,7 +650,13 @@ export default function InventoryOpnamePage() {
 
       {data?.cutoffDate && (
         <p className="recon-readonly">
-          Stok Akhir Sistem dihitung persis pada cutoff <strong>{data.cutoffDate}</strong> (bukan akhir bulan kalender) — jendela query {data.startDate} s/d {data.endDate}.
+          <strong>Periode BA: {formatIsoDateID(data.startDate)} — {formatIsoDateID(data.cutoffDate)}</strong>
+          {" · "}Stok Akhir Sistem dihitung persis pada cutoff {data.cutoffDate} (bukan akhir bulan kalender) — jendela query {data.startDate} s/d {data.endDate}.
+        </p>
+      )}
+      {!data?.cutoffDate && data && (
+        <p className="recon-readonly">
+          Periode: <strong>{MONTH_NAMES[Number(month) - 1]} {year}</strong> (bulan penuh) — isi Tanggal mulai + Cutoff lalu centang konfirmasi bila periode Berita Acara bukan bulan kalender.
         </p>
       )}
 
