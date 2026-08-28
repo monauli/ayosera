@@ -4,7 +4,7 @@
 // jadwal cron-job.org existing yang mungkin masih mengarah ke sana tidak
 // rusak). Endpoint baru ini menambahkan distributed lock (lib/olsera-cron-lock.ts)
 // yang endpoint lama tidak punya.
-import { syncOlseraSalesByCategory, todayJakarta } from "@/lib/olsera-sync";
+import { auditAndSyncOlseraDay, todayJakarta } from "@/lib/olsera-sync";
 import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-cron-lock";
 import { isDatabaseTimeoutError, withDatabaseRetry } from "@/lib/mongodb-errors";
@@ -46,22 +46,38 @@ export async function runOlseraSalesCron(authHeader: string | null): Promise<Cro
   try {
     const start_date = todayJakarta();
     const end_date = start_date;
-    const result = await syncOlseraSalesByCategory(start_date, end_date, { force: true });
+    // auditAndSyncOlseraDay, BUKAN syncOlseraSalesByCategory({force:true}):
+    // ia membandingkan jumlah order + total dari Order List Olsera (2 request,
+    // TANPA order detail) dengan olsera_synced_days lebih dulu, lalu HANYA
+    // menarik ulang penuh bila memang berbeda. Verifikasi lapangan 2026-08-28:
+    // baris Order List memuat `total_amount` ("42000.00"), extractOrderTotal
+    // membacanya 51/51 baris, jadi perbandingan total benar-benar aktif —
+    // bukan sekadar perbandingan jumlah order.
+    //
+    // Skip tetap di level HARI lewat perbandingan count+total ke sumber, BUKAN
+    // lewat keberadaan dokumen olsera_synced_days (itulah yang `force: true`
+    // dulu matikan, dan memang harus tetap mati): order sore yang masuk
+    // mengubah count/total, sehingga tetap memicu tarik ulang penuh.
+    const result = await auditAndSyncOlseraDay(start_date);
 
-    const safeErrorCode = result.status === "failed" && result.errorMessage ? classifySalesError(result.errorMessage) : null;
+    const failed = result.action === "failed";
+    const safeErrorCode = failed && result.errorMessage ? classifySalesError(result.errorMessage) : null;
     console.log(
-      `[cron:olsera:sales] runId=${runId} finishedAt=${new Date().toISOString()} status=${result.status} processedCount=${result.processedOrderCount}`,
+      `[cron:olsera:sales] runId=${runId} finishedAt=${new Date().toISOString()} action=${result.action} expected=${result.expectedOrderCount} processedCount=${result.processedOrderCount} reason=${result.reason ?? "-"}`,
     );
     return {
       status: 200,
       body: {
-        success: result.status !== "failed",
+        success: !failed,
         mode: "cron",
         module: "sales",
         runId,
-        status: result.status,
+        status: failed ? "failed" : "success",
+        action: result.action,
         period: { start_date, end_date },
+        expectedCount: result.expectedOrderCount,
         processedCount: result.processedOrderCount,
+        reason: result.reason,
         ...(safeErrorCode ? { safeErrorCode } : {}),
       },
     };

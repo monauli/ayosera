@@ -7,18 +7,22 @@ import { MongoServerSelectionError } from "mongodb";
 
 process.env.CRON_SECRET = "test-secret";
 
-const syncOlseraSalesByCategoryMock = mock.fn(async (start_date: string, end_date: string) => ({
-  status: "success" as string,
-  startDate: start_date,
-  endDate: end_date,
+// Cron memakai auditAndSyncOlseraDay (cek Order List dulu, tarik ulang penuh
+// hanya bila count/total berbeda) — BUKAN syncOlseraSalesByCategory({force:true})
+// yang selalu menarik detail seluruh order.
+const auditAndSyncOlseraDayMock = mock.fn(async (date: string) => ({
+  date,
+  action: "resynced" as string,
+  expectedOrderCount: 3,
   processedOrderCount: 3,
+  reason: null as string | null,
   errorMessage: null as string | null,
 }));
 
 mock.module("@/lib/olsera-sync", {
   namedExports: {
     todayJakarta: () => "2026-07-20",
-    syncOlseraSalesByCategory: syncOlseraSalesByCategoryMock,
+    auditAndSyncOlseraDay: auditAndSyncOlseraDayMock,
   },
 });
 
@@ -70,21 +74,40 @@ test("200 sukses: memanggil sync hari ini, melepas lock, runId disertakan", asyn
 });
 
 test("idempotent: dua panggilan berturut-turut sama-sama sukses tanpa efek ganda berbahaya", async () => {
-  syncOlseraSalesByCategoryMock.mock.resetCalls();
+  auditAndSyncOlseraDayMock.mock.resetCalls();
   await runOlseraSalesCron("Bearer test-secret");
   await runOlseraSalesCron("Bearer test-secret");
-  assert.equal(syncOlseraSalesByCategoryMock.mock.callCount(), 2);
-  for (const call of syncOlseraSalesByCategoryMock.mock.calls) {
-    assert.deepEqual(call.arguments, ["2026-07-20", "2026-07-20", { force: true }]);
+  assert.equal(auditAndSyncOlseraDayMock.mock.callCount(), 2);
+  for (const call of auditAndSyncOlseraDayMock.mock.calls) {
+    assert.deepEqual(call.arguments, ["2026-07-20"]);
   }
 });
 
-test("connection-expired: pesan error mengandung 401 dipetakan ke status aman, bukan pesan mentah", async () => {
-  syncOlseraSalesByCategoryMock.mock.mockImplementationOnce(async () => ({
-    status: "failed",
-    startDate: "2026-07-20",
-    endDate: "2026-07-20",
+test("action match (data sudah cocok) -> sukses tanpa tarik ulang, alasan diteruskan ke response", async () => {
+  auditAndSyncOlseraDayMock.mock.mockImplementationOnce(async (date: string) => ({
+    date,
+    action: "match",
+    expectedOrderCount: 42,
     processedOrderCount: 0,
+    reason: "Jumlah dan total cocok",
+    errorMessage: null,
+  }));
+  const res = await runOlseraSalesCron("Bearer test-secret");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.action, "match");
+  assert.equal(res.body.expectedCount, 42);
+  assert.equal(res.body.processedCount, 0, "match berarti TIDAK ada order detail yang ditarik ulang");
+  assert.equal(res.body.reason, "Jumlah dan total cocok");
+});
+
+test("connection-expired: pesan error mengandung 401 dipetakan ke status aman, bukan pesan mentah", async () => {
+  auditAndSyncOlseraDayMock.mock.mockImplementationOnce(async (date: string) => ({
+    date,
+    action: "failed",
+    expectedOrderCount: 0,
+    processedOrderCount: 0,
+    reason: null,
     errorMessage: "HTTP 401 token expired",
   }));
   const res = await runOlseraSalesCron("Bearer test-secret");
@@ -95,7 +118,7 @@ test("connection-expired: pesan error mengandung 401 dipetakan ke status aman, b
 
 test("MongoDB timeout saat sync -> HTTP 504 terstruktur, lock tetap dilepas", async () => {
   releaseOlseraSyncLockMock.mock.resetCalls();
-  syncOlseraSalesByCategoryMock.mock.mockImplementationOnce(async () => {
+  auditAndSyncOlseraDayMock.mock.mockImplementationOnce(async () => {
     throw new MongoServerSelectionError("Server selection timed out after 5000 ms", {} as never);
   });
   const res = await runOlseraSalesCron("Bearer test-secret");
