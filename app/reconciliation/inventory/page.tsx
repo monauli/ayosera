@@ -531,7 +531,15 @@ export default function InventoryOpnamePage() {
   const isFebruaryHistoricalFinal = Number(year) === 2026 && Number(month) === 2;
   const februaryComparisonPass = !isFebruaryHistoricalFinal || Boolean(data && liveSummary.perluDicek === 0 && liveSummary.butuhAdjustManual === 0 && liveSummary.cocok === liveSummary.totalProduk);
   const periodReadyToLock = Boolean(data && data.monthlyLock?.status !== "locked" && (februaryComparisonPass && (isFebruaryHistoricalFinal || completeness?.pass === true)) && !needsBa && data.rows.length > 0);
-  const showBaFlow = !isFebruaryHistoricalFinal && (needsBa || Boolean(attachment) || baRows.length > 0);
+  // Alur BA relevan bila masih ada selisih, atau sudah ada file/baris BA yang
+  // dibaca. Februari 2026 TIDAK lagi dikecualikan: dulu isFebruaryHistoricalFinal
+  // ikut mematikan alur ini karena periode itu dianggap final dari
+  // FEBRUARY_HISTORICAL_SOURCE, padahal justru di sanalah BA fisik dibutuhkan
+  // untuk memutuskan produk yang berbeda antara file sumber dan database.
+  // Aman: jalur BA hanya menulis inventoryStockOpnameReconciliations, tidak
+  // pernah menyentuh olsera_inventory_monthly_snapshots tempat data historis
+  // Februari berada.
+  const baFlowRelevant = needsBa || Boolean(attachment) || baRows.length > 0;
   // Rentang BA aktif hanya bila cutoff sudah dikonfirmasi user — syarat yang
   // sama dipakai pemuatan, penyimpanan, dan finalisasi.
   const rangeMode = cutoffConfirmed && cutoffDate.trim() !== "" && startDate.trim() !== "";
@@ -673,7 +681,7 @@ export default function InventoryOpnamePage() {
         {data?.monthlyLock?.history?.length ? <details className="recon-history"><summary>Riwayat Lock / Unlock</summary><ul>{data.monthlyLock.history.map((item, index) => { const entry = item as { action?: string; actor?: string; reason?: string | null; at?: string; version?: number }; const accidental = isFebruaryHistoricalFinal && ((entry.action === "lock" && entry.actor === "ariamp@gmail.com" && entry.at?.startsWith("2026-08-14T11:42")) || (entry.action === "unlock" && entry.actor === "timunemas@ayo.local" && entry.at?.startsWith("2026-08-14T11:54"))); if (accidental) return null; return <li key={`${entry.at ?? "event"}-${index}`}><strong>{String(entry.action ?? "").toUpperCase()}</strong> · {entry.at ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.at)) : "—"} · {entry.actor ?? "User"}{entry.reason ? ` · ${entry.reason}` : ""}{entry.version ? ` · v${entry.version}` : ""}</li>; })}</ul></details> : null}
       </section>
 
-      {showBaFlow && <section className="recon-filters recon-finalization" aria-label="Penyelesaian Selisih dengan Berita Acara">
+      {baFlowRelevant && <section className="recon-filters recon-finalization" aria-label="Penyelesaian Selisih dengan Berita Acara">
         <label>
           Berita Acara Stock Opname
           <input type="file" accept="application/pdf,image/jpeg,image/png" disabled={!supervisor || uploading || data?.lock?.status === "LOCKED"} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} />
@@ -697,7 +705,7 @@ export default function InventoryOpnamePage() {
           </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
         </div>
       </section>}
-      {!showBaFlow && data && <p className="recon-readonly">Berita Acara tidak diperlukan karena seluruh stok sudah cocok.</p>}
+      {!baFlowRelevant && data && <p className="recon-readonly">Berita Acara tidak diperlukan karena seluruh stok sudah cocok.</p>}
       {baUnread && <p className="recon-draft"><AlertTriangle /> {BA_UNREAD_MESSAGE}</p>}
       {baBlocksFinalize && <p className="recon-draft"><AlertTriangle /> Ada item Berita Acara berstatus Perlu Dicek atau Tidak Ditemukan — selesaikan review sebelum finalisasi.</p>}
       {baCutoffOutOfPeriod && <p className="recon-draft"><AlertTriangle /> Cutoff yang dipilih berada di luar periode Berita Acara ({baPeriod?.periodStart} s/d {baPeriod?.cutoffDate}).</p>}
@@ -809,7 +817,11 @@ export default function InventoryOpnamePage() {
                     <th>Penjualan</th>
                     <th>Barang Keluar</th>
                     <th>Stok Akhir Sistem</th>
-                    {showBaFlow && <><th>Stok Berita Acara</th><th>Selisih</th></>}
+                    {/* Kolom inti halaman ini: tempat mengisi angka fisik dari BA.
+                        Sebelumnya ikut digate showBaFlow, sehingga hilang untuk
+                        seluruh Februari 2026 (isFebruaryHistoricalFinal) dan
+                        setiap kali semua stok sudah cocok. */}
+                    <th>Stok Berita Acara</th><th>Selisih</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -830,7 +842,7 @@ export default function InventoryOpnamePage() {
                       <td>{formatQty(row.salesQty)}</td>
                       <td>{formatQty(row.outgoingQty)}</td>
                       <td>{formatQty(row.systemClosingQty)}</td>
-                      {showBaFlow && <><td>
+                      <td>
                         <div className="recon-opname-cell">
                           <input
                             className="recon-opname-input"
@@ -846,7 +858,7 @@ export default function InventoryOpnamePage() {
                           )}
                         </div>
                       </td>
-                      <td>{formatSignedQty(row.differenceQty)}</td></>}
+                      <td>{formatSignedQty(row.differenceQty)}</td>
                       <td>
                         <StatusBadge status={row.status} />
                       </td>
