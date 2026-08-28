@@ -558,6 +558,15 @@ export async function finalizeInventoryStockOpname(
      * migrasi paksa/backfill otomatis.
      */
     cutoffDate?: string | null;
+    /**
+     * Awal periode BA (ISO) — OPSIONAL, hanya bermakna bersama `cutoffDate`.
+     * BILA DIISI, validasi plausibilitas beralih ke mode rentang bebas
+     * (lihat validateCutoffPlausibility): periode BA boleh melintasi batas
+     * bulan (BA Februari 2026 = 04 Feb s/d 04 Mar) asalkan startDate sendiri
+     * berada di periode yang dipilih. BILA KOSONG, gate LAMA dipertahankan
+     * penuh — cutoff wajib sebulan dengan periode.
+     */
+    startDate?: string | null;
     /** WAJIB true bila cutoffDate diisi (pola sama baOnlyDifferencesConfirmed) — user harus mengonfirmasi cutoff tanggal spesifik, bukan otomatis tanpa konfirmasi. */
     cutoffConfirmed?: boolean;
     baOnlyDifferencesConfirmed: boolean;
@@ -578,9 +587,10 @@ export async function finalizeInventoryStockOpname(
     // dikonfirmasi eksplisit & WAJIB lolos validasi plausibilitas ("BA salah
     // periode diblok") sebelum dipakai untuk finalisasi.
     if (!input.cutoffConfirmed) throw new InventoryStockOpnameError("Konfirmasi cutoff tanggal BA wajib dicentang sebelum finalisasi.");
-    const validation = validateCutoffPlausibility({ cutoffDate, year: input.year, month: input.month, today: todayJakartaIso(now) });
+    const startDate = input.startDate ?? null;
+    const validation = validateCutoffPlausibility({ cutoffDate, year: input.year, month: input.month, today: todayJakartaIso(now), startDate });
     if (!validation.ok) throw new InventoryStockOpnameError(validation.reason ?? "Cutoff BA tidak valid — perlu ditinjau manual.");
-    result = await loadInventoryOpnameCutoff({ storeId: input.storeId, year: input.year, month: input.month, cutoffDate }, context);
+    result = await loadInventoryOpnameCutoff({ storeId: input.storeId, year: input.year, month: input.month, cutoffDate, startDate }, context);
   } else {
     // Perilaku LAMA dipertahankan (backward compatible) — BA tanpa cutoff tanggal eksplisit.
     result = await loadInventoryOpnameMonth({ storeId: input.storeId, year: input.year, month: input.month }, context);

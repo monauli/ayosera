@@ -328,6 +328,65 @@ test("finalize cutoff: sukses saat cutoffDate cocok periode, dikonfirmasi, dan a
   assert.equal(eventDoc.cutoffDate, "2026-07-16");
 });
 
+test("finalize rentang bebas: BA Februari 2026 (04 Feb s/d 04 Mar) BISA difinalisasi — end-to-end, bukan cuma lolos validator", async () => {
+  const opname = fakeOpnameCollection([
+    { _id: `${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, systemClosingQty: 12, differenceQty: -1, status: "PERLU_DICEK", note: "1 rusak", updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
+  ]);
+  const ctx = cutoffContext(opname, { "2026-03-04": 12 });
+  const locked = await finalizeInventoryStockOpname(
+    {
+      storeId: CUTOFF_STORE_ID,
+      year: 2026,
+      month: 2,
+      actor: SUPERVISOR.email,
+      cutoff: "2026-03-04",
+      cutoffDate: "2026-03-04",
+      startDate: "2026-02-04",
+      cutoffConfirmed: true,
+      baOnlyDifferencesConfirmed: true,
+      attachment: { fileName: "ba-feb.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba-feb.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email },
+      now: new Date("2026-08-28T00:00:00Z"),
+    },
+    ctx,
+  );
+  assert.equal(locked.status, "LOCKED");
+  assert.equal(locked.cutoffDate, "2026-03-04");
+  assert.equal(ctx.calls[0].startDate, "2026-02-04", "finalisasi WAJIB menarik rentang BA, bukan 2026-03-01");
+  assert.equal(ctx.calls[0].endDate, "2026-03-04");
+});
+
+test("finalize rentang bebas: BA jauh dari periode (Desember ke periode Februari) tetap DIBLOK, tidak tersimpan", async () => {
+  const opname = fakeOpnameCollection([
+    { _id: `${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, systemClosingQty: 12, differenceQty: -1, status: "PERLU_DICEK", note: null, updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
+  ]);
+  const ctx = cutoffContext(opname, { "2025-12-31": 12 });
+  await assert.rejects(
+    () =>
+      finalizeInventoryStockOpname(
+        { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR.email, cutoff: "2025-12-31", cutoffDate: "2025-12-31", startDate: "2025-12-01", cutoffConfirmed: true, baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email }, now: new Date("2026-08-28T00:00:00Z") },
+        ctx,
+      ),
+    (error: unknown) => error instanceof InventoryStockOpnameError && /salah periode/i.test(error.message),
+  );
+  assert.equal(opname.store.has(`${CUTOFF_STORE_ID}:2026:02:event`), false, "tidak boleh ada event finalisasi tersimpan");
+  assert.equal(ctx.calls.length, 0, "diblok SEBELUM menarik data Olsera");
+});
+
+test("finalize TANPA startDate: BA lintas bulan tetap DIBLOK oleh gate lama (perilaku existing tidak berubah)", async () => {
+  const opname = fakeOpnameCollection([
+    { _id: `${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, systemClosingQty: 12, differenceQty: -1, status: "PERLU_DICEK", note: null, updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },
+  ]);
+  const ctx = cutoffContext(opname, { "2026-03-04": 12 });
+  await assert.rejects(
+    () =>
+      finalizeInventoryStockOpname(
+        { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR.email, cutoff: "2026-03-04", cutoffDate: "2026-03-04", cutoffConfirmed: true, baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email }, now: new Date("2026-08-28T00:00:00Z") },
+        ctx,
+      ),
+    (error: unknown) => error instanceof InventoryStockOpnameError && /salah periode/i.test(error.message),
+  );
+});
+
 test("finalize cutoff: diblokir bila cutoffDate diisi tapi cutoffConfirmed tidak dicentang (konfirmasi wajib, pola sama baOnlyDifferencesConfirmed)", async () => {
   const opname = fakeOpnameCollection([
     { _id: `${CUTOFF_STORE_ID}:2026:07:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 7, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 36, systemClosingQty: 36, differenceQty: 0, status: "COCOK", note: null, updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },

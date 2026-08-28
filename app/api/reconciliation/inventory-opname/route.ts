@@ -104,6 +104,9 @@ export async function POST(request: Request) {
         actor: user.email,
         cutoff: String(body.cutoff ?? ""),
         cutoffDate: typeof body.cutoffDate === "string" ? body.cutoffDate : null,
+        // Opsional — bila diisi, validasi cutoff beralih ke mode rentang bebas
+        // (periode BA boleh melintasi batas bulan). Tanpa ini, gate lama berlaku.
+        startDate: typeof body.startDate === "string" ? body.startDate : null,
         cutoffConfirmed: body.cutoffConfirmed === true,
         baOnlyDifferencesConfirmed: body.baOnlyDifferencesConfirmed === true,
         attachment: { fileName: attachment.fileName, mimeType: String(attachment.mimeType ?? "application/octet-stream"), size: Number(attachment.size ?? 0), url: attachment.url, uploadedAt: new Date(), uploadedBy: user.email },

@@ -203,6 +203,73 @@ test("validateCutoffPlausibility: cutoff di masa depan -> diblok", () => {
   assert.match(result.reason ?? "", /masa depan/i);
 });
 
+// --- Tahap 2: mode rentang bebas (startDate diisi) ---
+
+test("validateCutoffPlausibility rentang bebas: BA Februari 2026 (04 Feb s/d 04 Mar) LOLOS walau cutoff jatuh di bulan Maret", () => {
+  const result = validateCutoffPlausibility({ cutoffDate: "2026-03-04", year: 2026, month: 2, today: "2026-08-28", startDate: "2026-02-04" });
+  assert.equal(result.ok, true, "gate lama menolak ini semata karena bulan cutoff != bulan periode");
+  assert.equal(result.reason, null);
+});
+
+test("validateCutoffPlausibility rentang bebas: BA Juni paruh pertama (01-16) dan paruh kedua (17-30) sama-sama lolos", () => {
+  const first = validateCutoffPlausibility({ cutoffDate: "2026-06-16", year: 2026, month: 6, today: "2026-08-28", startDate: "2026-06-01" });
+  const second = validateCutoffPlausibility({ cutoffDate: "2026-06-30", year: 2026, month: 6, today: "2026-08-28", startDate: "2026-06-17" });
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+});
+
+test("validateCutoffPlausibility rentang bebas: BA Desember TIDAK bisa dimasukkan ke periode Februari (jangkar awal periode)", () => {
+  const result = validateCutoffPlausibility({ cutoffDate: "2025-12-31", year: 2026, month: 2, today: "2026-08-28", startDate: "2025-12-01" });
+  assert.equal(result.ok, false, "BA yang jauh dari periode WAJIB tetap diblok — ini alasan gate lama ada");
+  assert.match(result.reason ?? "", /salah periode/i);
+});
+
+test("validateCutoffPlausibility rentang bebas: awal periode di bulan lain (03 Feb untuk periode Maret) diblok", () => {
+  const result = validateCutoffPlausibility({ cutoffDate: "2026-03-31", year: 2026, month: 3, today: "2026-08-28", startDate: "2026-02-03" });
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /Awal periode BA .* tidak berada pada periode 2026-03/i);
+});
+
+test("validateCutoffPlausibility rentang bebas: cutoff mendahului awal periode -> diblok (rentang terbalik)", () => {
+  const result = validateCutoffPlausibility({ cutoffDate: "2026-02-03", year: 2026, month: 2, today: "2026-08-28", startDate: "2026-02-10" });
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /rentang terbalik/i);
+});
+
+test("validateCutoffPlausibility rentang bebas: rentang > CUTOFF_MAX_LOOKBACK_DAYS diblok, tidak diam-diam diklem saat finalisasi", () => {
+  const result = validateCutoffPlausibility({ cutoffDate: "2026-05-01", year: 2026, month: 2, today: "2026-08-28", startDate: "2026-02-01" });
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /melebihi batas 75 hari/i);
+});
+
+test("validateCutoffPlausibility rentang bebas: tepat 75 hari masih lolos (batas inklusif)", () => {
+  const start = "2026-02-01";
+  const cutoff = new Date(Date.parse(`${start}T00:00:00Z`) + 75 * 86_400_000).toISOString().slice(0, 10);
+  const result = validateCutoffPlausibility({ cutoffDate: cutoff, year: 2026, month: 2, today: "2026-08-28", startDate: start });
+  assert.equal(result.ok, true);
+});
+
+test("validateCutoffPlausibility rentang bebas: cutoff di masa depan tetap diblok walau startDate sah", () => {
+  const result = validateCutoffPlausibility({ cutoffDate: "2026-09-01", year: 2026, month: 8, today: "2026-08-28", startDate: "2026-08-01" });
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /masa depan/i);
+});
+
+test("validateCutoffPlausibility rentang bebas: startDate tidak valid diblok, tidak diam-diam jatuh ke gate lama", () => {
+  const result = validateCutoffPlausibility({ cutoffDate: "2026-03-04", year: 2026, month: 2, today: "2026-08-28", startDate: "04 Februari 2026" });
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /Tanggal awal periode BA tidak terbaca/i);
+});
+
+test("validateCutoffPlausibility: startDate null/undefined -> gate LAMA persis (cutoff wajib sebulan dengan periode)", () => {
+  const explicitNull = validateCutoffPlausibility({ cutoffDate: "2026-03-04", year: 2026, month: 2, today: "2026-08-28", startDate: null });
+  const omitted = validateCutoffPlausibility({ cutoffDate: "2026-03-04", year: 2026, month: 2, today: "2026-08-28" });
+  assert.equal(explicitNull.ok, false, "tanpa startDate perilaku existing TIDAK boleh berubah");
+  assert.equal(omitted.ok, false);
+  assert.match(explicitNull.reason ?? "", /salah periode/i);
+  assert.deepEqual(explicitNull, omitted, "null dan tidak diisi harus identik");
+});
+
 test("parseInventoryBaPeriodText: 'Periode 01 Juli 2026 s/d 16 Juli 2026' -> cutoff akhir periode (16 Juli), BUKAN tanggal BA", () => {
   const result = parseInventoryBaPeriodText("Stock Opname Periode 01 Juli 2026 s/d 16 Juli 2026. Tanggal BA: 17 Juli 2026.");
   assert.equal(result.status, "OK");

@@ -228,19 +228,58 @@ export type CutoffValidationResult = { ok: boolean; reason: string | null };
  * finalisasi (butuh review manual), TIDAK PERNAH menebak cutoff yang
  * "masuk akal".
  */
-export function validateCutoffPlausibility(input: { cutoffDate: string | null; year: number; month: number; today: string }): CutoffValidationResult {
+export function validateCutoffPlausibility(input: { cutoffDate: string | null; year: number; month: number; today: string; startDate?: string | null }): CutoffValidationResult {
   if (!input.cutoffDate || !isValidIsoDate(input.cutoffDate)) {
     return { ok: false, reason: "Tanggal cutoff BA tidak terbaca/tidak valid — perlu ditinjau manual sebelum finalisasi." };
   }
-  const [cy, cm] = input.cutoffDate.split("-").map(Number);
-  if (cy !== input.year || cm !== input.month) {
-    return {
-      ok: false,
-      reason: `Cutoff BA (${input.cutoffDate}) tidak berada pada periode ${input.year}-${String(input.month).padStart(2, "0")} yang dipilih — kemungkinan BA salah periode, perlu ditinjau manual.`,
-    };
-  }
+  const period = `${input.year}-${String(input.month).padStart(2, "0")}`;
+  const startDate = input.startDate ?? null;
+
+  // Masa depan diblok lebih dulu — berlaku untuk KEDUA mode, tidak ada BA yang
+  // sah dengan cutoff yang belum terjadi.
   if (input.cutoffDate > input.today) {
     return { ok: false, reason: "Cutoff BA berada di masa depan — tidak bisa direkonsiliasi." };
+  }
+
+  // Mode LAMA (tanpa startDate): cutoff wajib sebulan dengan periode terpilih.
+  // Dipertahankan PERSIS supaya BA existing yang tidak punya awal periode
+  // eksplisit tidak berubah perilakunya sama sekali.
+  if (startDate === null) {
+    const [cy, cm] = input.cutoffDate.split("-").map(Number);
+    if (cy !== input.year || cm !== input.month) {
+      return {
+        ok: false,
+        reason: `Cutoff BA (${input.cutoffDate}) tidak berada pada periode ${period} yang dipilih — kemungkinan BA salah periode, perlu ditinjau manual.`,
+      };
+    }
+    return { ok: true, reason: null };
+  }
+
+  // Mode RENTANG BEBAS: periode BA boleh melintasi batas bulan (BA Februari
+  // 2026 = 04 Feb s/d 04 Mar) atau hanya sebagian bulan (BA Juni paruh kedua =
+  // 17 s/d 30 Juni). Yang menggantikan gate "sebulan dengan periode" adalah
+  // JANGKAR AWAL PERIODE: startDate wajib jatuh di bulan yang dipilih. Itu
+  // sesuai cara BA dinamai (BA dinamai menurut bulan MULAI-nya), dan tetap
+  // menolak BA yang jauh dari periode — BA Desember tidak bisa dimasukkan ke
+  // periode Februari karena startDate-nya bukan bulan Februari.
+  if (!isValidIsoDate(startDate)) {
+    return { ok: false, reason: "Tanggal awal periode BA tidak terbaca/tidak valid — perlu ditinjau manual sebelum finalisasi." };
+  }
+  if (input.cutoffDate < startDate) {
+    return { ok: false, reason: `Cutoff BA (${input.cutoffDate}) mendahului awal periode (${startDate}) — rentang terbalik, perlu ditinjau manual.` };
+  }
+  if (startDate.slice(0, 7) !== period) {
+    return {
+      ok: false,
+      reason: `Awal periode BA (${startDate}) tidak berada pada periode ${period} yang dipilih — kemungkinan BA salah periode, perlu ditinjau manual.`,
+    };
+  }
+  const spanDays = Math.round((Date.parse(`${input.cutoffDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000);
+  if (spanDays > CUTOFF_MAX_LOOKBACK_DAYS) {
+    return {
+      ok: false,
+      reason: `Rentang BA ${startDate} s/d ${input.cutoffDate} (${spanDays} hari) melebihi batas ${CUTOFF_MAX_LOOKBACK_DAYS} hari — perlu ditinjau manual.`,
+    };
   }
   return { ok: true, reason: null };
 }
