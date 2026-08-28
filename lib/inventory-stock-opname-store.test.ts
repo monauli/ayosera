@@ -328,6 +328,93 @@ test("finalize cutoff: sukses saat cutoffDate cocok periode, dikonfirmasi, dan a
   assert.equal(eventDoc.cutoffDate, "2026-07-16");
 });
 
+// --- Jalur SIMPAN memakai sumber angka yang sama dengan jalur MUAT ---
+
+test("save rentang bebas: BA Februari (04 Feb s/d 04 Mar) — systemClosingQty TERSIMPAN sama dengan yang DITAMPILKAN, bukan angka akhir bulan", async () => {
+  const opname = fakeOpnameCollection();
+  // Tiruan Olsera: sisa pada 04 Mar (akhir periode BA) = 12.
+  const ctx = cutoffContext(opname, { "2026-03-04": 12 });
+
+  const saved = await saveInventoryOpnameBatch(
+    {
+      storeId: CUTOFF_STORE_ID,
+      year: 2026,
+      month: 2,
+      actor: SUPERVISOR,
+      entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, note: "1 rusak" }],
+      cutoffDate: "2026-03-04",
+      startDate: "2026-02-04",
+    },
+    ctx,
+  );
+
+  assert.equal(ctx.calls[0].startDate, "2026-02-04", "simpan WAJIB menarik rentang BA");
+  assert.equal(ctx.calls[0].endDate, "2026-03-04");
+
+  const stored = opname.store.get(`${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`) as Record<string, unknown>;
+  assert.equal(stored.systemClosingQty, 12, "angka TERSIMPAN harus dari rentang BA");
+  assert.equal(stored.differenceQty, -1, "11 fisik - 12 sistem");
+
+  // Inilah inti perbaikannya: yang tersimpan == yang ditampilkan.
+  assert.equal(saved.rows[0].systemClosingQty, 12);
+  assert.equal(stored.systemClosingQty, saved.rows[0].systemClosingQty, "tersimpan dan ditampilkan WAJIB angka yang sama");
+});
+
+test("save rentang bebas: respons simpan memakai jalur cutoff, bukan snapshot bulanan", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-03-04": 12 });
+  const saved = await saveInventoryOpnameBatch(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR, entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, note: null }], cutoffDate: "2026-03-04", startDate: "2026-02-04" },
+    ctx,
+  );
+  assert.equal((saved as { cutoffDate?: string }).cutoffDate, "2026-03-04", "respons WAJIB hasil loadInventoryOpnameCutoff");
+  assert.equal((saved as { startDate?: string }).startDate, "2026-02-04");
+});
+
+test("save TANPA cutoffDate: tetap memakai snapshot bulanan, tidak pernah memanggil API Olsera (perilaku existing)", async () => {
+  const opname = fakeOpnameCollection();
+  const { impl, calls } = fakeCutoffFetch({ "2026-03-04": 12 });
+  // Snapshot bulanan Februari: closing 20 (SENGAJA beda dari sisa cutoff 12,
+  // supaya ketahuan kalau jalur simpan salah mengambil sumber).
+  const ctx = {
+    snapshots: fakeRead<OlseraInventoryMonthlySnapshotDocument>([
+      snapshotDoc({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: CUTOFF_PRODUCT_ID, variantId: null, openingQty: 20, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 20 }),
+    ]),
+    opname,
+    fetchStockMovementRangeImpl: impl,
+    matchingContext: cutoffMatchingContext(),
+    // loadInventoryOpnameMonth punya cabang khusus Februari 2026 yang menarik
+    // katalog dari Mongo bila approvedRows tidak disuntikkan — dikosongkan di
+    // sini supaya tes ini murni menguji sumber angka, bukan overlay historis.
+    approvedRows: [],
+  } as InventoryStockOpnameContext;
+
+  await saveInventoryOpnameBatch(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR, entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 19, note: null }] },
+    ctx,
+  );
+
+  assert.equal(calls.length, 0, "tanpa cutoffDate API Olsera TIDAK BOLEH dipanggil sama sekali");
+  const stored = opname.store.get(`${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`) as Record<string, unknown>;
+  assert.equal(stored.systemClosingQty, 20, "WAJIB dari snapshot bulanan (20), bukan sisa cutoff (12)");
+  assert.equal(stored.differenceQty, -1);
+});
+
+test("save rentang bebas: rentang terbalik ditolak sebelum menyentuh API maupun menulis dokumen", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContext(opname, { "2026-03-04": 12 });
+  await assert.rejects(
+    () =>
+      saveInventoryOpnameBatch(
+        { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR, entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, note: null }], cutoffDate: "2026-03-04", startDate: "2026-03-10" },
+        ctx,
+      ),
+    (error: unknown) => error instanceof InventoryStockOpnameError && /tidak boleh melewati cutoffDate/.test((error as Error).message),
+  );
+  assert.equal(ctx.calls.length, 0);
+  assert.equal(opname.store.size, 0);
+});
+
 test("finalize rentang bebas: BA Februari 2026 (04 Feb s/d 04 Mar) BISA difinalisasi — end-to-end, bukan cuma lolos validator", async () => {
   const opname = fakeOpnameCollection([
     { _id: `${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`, storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 11, systemClosingQty: 12, differenceQty: -1, status: "PERLU_DICEK", note: "1 rusak", updatedBy: SUPERVISOR.email, createdAt: new Date(), updatedAt: new Date() },

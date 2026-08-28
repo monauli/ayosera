@@ -424,7 +424,32 @@ export type SaveInventoryOpnameBatchInput = {
   actor: { role: "supervisor" | "user"; email: string };
   entries: InventoryOpnameEntryInput[];
   baOnlyDifferencesConfirmed?: boolean;
+  /** LABEL periode BA (mis. "2026-02"), BUKAN tanggal — dipakai verifyStockOpnameBa sebagai expectedCutoff. */
   cutoff?: string;
+  /**
+   * Tanggal akhir periode BA (ISO). BILA DIISI, angka sistem yang DISIMPAN
+   * dihitung dari rentang BA lewat fetchCutoffSystemRows — sumber yang SAMA
+   * dipakai jalur muat (loadInventoryOpnameCutoff) dan finalisasi. Tanpa ini,
+   * perilaku LAMA dipertahankan: snapshot bulanan.
+   */
+  cutoffDate?: string | null;
+  /** Awal periode BA (ISO), hanya bermakna bersama cutoffDate. Lihat resolveCutoffQueryRange. */
+  startDate?: string | null;
+};
+
+/**
+ * Baris angka sistem yang dipakai saat MENYIMPAN BA — satu bentuk untuk kedua
+ * sumber, supaya loop penulisan di bawah tidak perlu tahu asalnya dari snapshot
+ * bulanan atau dari rentang cutoff.
+ */
+type SaveSystemRow = {
+  productId: number;
+  variantId: number | null;
+  /** closingQty MENTAH sumber — dipakai apa adanya oleh perhitungan differenceQty verifikasi BA (perilaku lama dipertahankan persis). */
+  rawClosingQty: number | null;
+  /** closingQty efektif (snapshot: closingQty ?? formula; cutoff: "sisa" API). */
+  systemClosingQty: number | null;
+  manualAdjust: boolean;
 };
 
 function validateEntries(entries: unknown): InventoryOpnameEntryInput[] {
@@ -461,15 +486,47 @@ export async function saveInventoryOpnameBatch(
   const month = validateMonth(input.month);
   const entries = validateEntries(input.entries);
 
+  const cutoffDate = input.cutoffDate ?? null;
+  const startDate = input.startDate ?? undefined;
+  if (cutoffDate !== null) {
+    if (!isValidIsoDate(cutoffDate)) throw new InventoryStockOpnameError("cutoffDate tidak valid — format wajib YYYY-MM-DD.");
+    if (startDate !== undefined) {
+      if (!isValidIsoDate(startDate)) throw new InventoryStockOpnameError("startDate tidak valid — format wajib YYYY-MM-DD.");
+      if (startDate > cutoffDate) throw new InventoryStockOpnameError(`startDate (${startDate}) tidak boleh melewati cutoffDate (${cutoffDate}).`);
+    }
+  }
+
   const { snapshots, opname } = await resolveInventoryStockOpnameContext(context);
-  const snapshotRows = await snapshots.find({ storeId, year, month }).toArray();
-  const snapshotByKey = new Map(snapshotRows.map((snap) => [opnameKey(snap.productId, snap.variantId), snap]));
+
+  // Angka sistem yang disimpan WAJIB berasal dari sumber yang sama dengan yang
+  // ditampilkan & difinalisasi. Dengan cutoffDate -> rentang BA (fetchCutoffSystemRows,
+  // primitif yang SAMA dipakai loadInventoryOpnameCutoff). Tanpa cutoffDate ->
+  // snapshot bulanan, PERSIS seperti sebelumnya.
+  let systemRows: SaveSystemRow[];
+  if (cutoffDate !== null) {
+    const deps = await resolveCutoffDeps(context);
+    const fetched = await fetchCutoffSystemRows(cutoffDate, deps, startDate);
+    if (!fetched.ok) throw new InventoryStockOpnameError(`Gagal menarik stok sistem Olsera pada cutoff ${cutoffDate}: ${fetched.error}`);
+    // Jalur cutoff tidak punya konsep carry-forward incomplete/canonicalProductId
+    // (lihat catatan di loadInventoryOpnameCutoff) — manualAdjust selalu false.
+    systemRows = fetched.rows.map((sys) => ({ productId: sys.productId, variantId: sys.variantId, rawClosingQty: sys.closingQty, systemClosingQty: sys.closingQty, manualAdjust: false }));
+  } else {
+    const snapshotRows = await snapshots.find({ storeId, year, month }).toArray();
+    systemRows = snapshotRows.map((snap) => ({
+      productId: snap.productId,
+      variantId: snap.variantId,
+      rawClosingQty: snap.closingQty,
+      systemClosingQty: resolveSystemClosingQty({ openingQty: snap.openingQty, incomingQty: snap.incomingQty, returnQty: snap.returnQty, salesQty: snap.salesQty, outgoingQty: snap.outgoingQty, closingQty: snap.closingQty }),
+      manualAdjust: needsManualAdjust({ status: snap.status, canonicalProductId: snap.canonicalProductId }),
+    }));
+  }
+  const systemByKey = new Map(systemRows.map((row) => [opnameKey(row.productId, row.variantId), row]));
 
   if (input.baOnlyDifferencesConfirmed !== undefined) {
     const cutoff = input.cutoff ?? `${year}-${String(month).padStart(2, "0")}`;
     const verification = verifyStockOpnameBa({
-      systemRows: snapshotRows.map((snap) => ({ productId: snap.productId, variantId: snap.variantId, systemClosingQty: resolveSystemClosingQty({ openingQty: snap.openingQty, incomingQty: snap.incomingQty, returnQty: snap.returnQty, salesQty: snap.salesQty, outgoingQty: snap.outgoingQty, closingQty: snap.closingQty }) })),
-      baEntries: entries.map((entry) => ({ productId: entry.productId, variantId: entry.variantId, physicalQty: entry.physicalQty, differenceQty: entry.physicalQty === null ? null : (snapshotByKey.get(opnameKey(entry.productId, entry.variantId))?.closingQty ?? null) === null ? null : entry.physicalQty - (snapshotByKey.get(opnameKey(entry.productId, entry.variantId))?.closingQty ?? 0), note: entry.note ?? null, cutoff })),
+      systemRows: systemRows.map((row) => ({ productId: row.productId, variantId: row.variantId, systemClosingQty: row.systemClosingQty })),
+      baEntries: entries.map((entry) => ({ productId: entry.productId, variantId: entry.variantId, physicalQty: entry.physicalQty, differenceQty: entry.physicalQty === null ? null : (systemByKey.get(opnameKey(entry.productId, entry.variantId))?.rawClosingQty ?? null) === null ? null : entry.physicalQty - (systemByKey.get(opnameKey(entry.productId, entry.variantId))?.rawClosingQty ?? 0), note: entry.note ?? null, cutoff })),
       expectedCutoff: cutoff,
       baOnlyDifferencesConfirmed: input.baOnlyDifferencesConfirmed,
     });
@@ -478,10 +535,10 @@ export async function saveInventoryOpnameBatch(
 
   const now = new Date();
   for (const entry of entries) {
-    const snap = snapshotByKey.get(opnameKey(entry.productId, entry.variantId));
-    // Produk yang tidak ada di snapshot bulan ini dilewati (bukan error keras) —
-    // input hanya boleh datang dari daftar yang memang dimuat dari snapshot bulan tsb.
-    if (!snap) continue;
+    const sys = systemByKey.get(opnameKey(entry.productId, entry.variantId));
+    // Produk yang tidak ada di sumber periode ini dilewati (bukan error keras) —
+    // input hanya boleh datang dari daftar yang memang dimuat untuk periode tsb.
+    if (!sys) continue;
 
     const id = buildOpnameId({ storeId, year, month, productId: entry.productId, variantId: entry.variantId });
 
@@ -490,16 +547,8 @@ export async function saveInventoryOpnameBatch(
       continue;
     }
 
-    const flow = {
-      openingQty: snap.openingQty,
-      incomingQty: snap.incomingQty,
-      returnQty: snap.returnQty,
-      salesQty: snap.salesQty,
-      outgoingQty: snap.outgoingQty,
-      closingQty: snap.closingQty,
-    };
-    const systemClosingQty = resolveSystemClosingQty(flow);
-    const manualAdjust = needsManualAdjust({ status: snap.status, canonicalProductId: snap.canonicalProductId });
+    const systemClosingQty = sys.systemClosingQty;
+    const manualAdjust = sys.manualAdjust;
     const differenceQty = computeDifferenceQty(entry.physicalQty, systemClosingQty);
     // physicalQty selalu terisi di sini (null ditangani via deleteOne di atas) —
     // determineOpnameStatus tidak pernah mengembalikan BELUM_DIISI pada kondisi ini.
@@ -528,7 +577,12 @@ export async function saveInventoryOpnameBatch(
     );
   }
 
-  return loadInventoryOpnameMonth({ storeId, year, month }, context);
+  // Respons simpan memakai jalur yang SAMA dengan sumber angkanya — kalau
+  // disimpan berbasis rentang BA, yang dikembalikan juga rentang BA, bukan
+  // snapshot bulanan.
+  return cutoffDate !== null
+    ? loadInventoryOpnameCutoff({ storeId, year, month, cutoffDate, startDate: startDate ?? null }, context)
+    : loadInventoryOpnameMonth({ storeId, year, month }, context);
 }
 
 /**

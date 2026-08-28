@@ -122,6 +122,10 @@ export async function POST(request: Request) {
       entries: (body.entries ?? []) as never,
       baOnlyDifferencesConfirmed: body.baOnlyDifferencesConfirmed === true ? true : undefined,
       cutoff: typeof body.cutoff === "string" ? body.cutoff : undefined,
+      // Bila diisi, angka sistem yang disimpan memakai rentang BA — sumber yang
+      // sama dengan jalur muat & finalisasi. Tanpa keduanya: snapshot bulanan.
+      cutoffDate: typeof body.cutoffDate === "string" ? body.cutoffDate : null,
+      startDate: typeof body.startDate === "string" ? body.startDate : null,
     });
     return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
   } catch (error) {
