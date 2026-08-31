@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, Moon, RefreshCw, Save, Search, Sun, Unlock, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, Moon, Printer, RefreshCw, Save, Search, Sun, Unlock, X } from "lucide-react";
 import { visibleInventoryRows } from "@/lib/olsera-inventory-ui";
 import { analyzeInventoryBaFile } from "@/lib/inventory-ba-client";
 import { normalizeInventoryBaName } from "@/lib/inventory-ba-parser";
@@ -580,6 +580,11 @@ export default function InventoryOpnamePage() {
               {saving ? <Loader2 className="spin" /> : <Save />} Simpan Semua
             </button>
           )}
+          {data && (
+            <button className="recon-button secondary" onClick={() => window.print()}>
+              <Printer /> Cetak
+            </button>
+          )}
           <button
             type="button"
             className="recon-button secondary"
@@ -764,6 +769,17 @@ export default function InventoryOpnamePage() {
         </section>
       ) : (
         <>
+          <div className="recon-print-area">
+            {/* Hanya untuk cetak (@media print) — sengaja tidak dirender di
+                layar, lihat .recon-print-header di globals.css. */}
+            <div className="recon-print-header">
+              <h1>Rekonsiliasi Inventori dengan Berita Acara</h1>
+              <p>
+                Periode: {data.cutoffDate ? `${formatIsoDateID(data.startDate)} - ${formatIsoDateID(data.cutoffDate)}` : `${MONTH_NAMES[Number(month) - 1]} ${year}`}
+                {data.cutoffDate ? ` · Cutoff: ${formatIsoDateID(data.cutoffDate)}` : ""}
+              </p>
+              <p>Dicetak {new Intl.DateTimeFormat("id-ID", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date())}</p>
+            </div>
           <section className="recon-cards">
             {([
               ["Total Produk", liveSummary.totalProduk],
@@ -808,6 +824,7 @@ export default function InventoryOpnamePage() {
               <table className="recon-table recon-inventory-table">
                 <thead>
                   <tr>
+                    <th>No</th>
                     <th>Kategori</th>
                     <th>Produk</th>
                     <th>Varian</th>
@@ -826,8 +843,9 @@ export default function InventoryOpnamePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((row) => (
+                  {filteredRows.map((row, index) => (
                     <tr key={rowKey(row.productId, row.variantId)}>
+                      <td>{index + 1}</td>
                       <td>{row.category}</td>
                       <td>
                         <button className="recon-link" title={row.productName} onClick={() => setSelected(row)}>
@@ -897,6 +915,7 @@ export default function InventoryOpnamePage() {
               </div>
             </section>
           )}
+          </div>
         </>
       )}
 
