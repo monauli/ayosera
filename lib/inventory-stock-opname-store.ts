@@ -348,12 +348,15 @@ export async function loadInventoryOpnameCutoff(
     if (startDate > input.cutoffDate) throw new InventoryStockOpnameError(`startDate (${startDate}) tidak boleh melewati cutoffDate (${input.cutoffDate}).`);
   }
 
-  const { opname } = await resolveInventoryStockOpnameContext(context);
+  const { opname, snapshots } = await resolveInventoryStockOpnameContext(context);
   const deps = await resolveCutoffDeps(context);
 
-  const [fetched, opnameRows] = await Promise.all([
+  const [fetched, opnameRows, snapshotRows] = await Promise.all([
     fetchCutoffSystemRows(input.cutoffDate, deps, startDate),
     opname.find({ storeId, year, month }).toArray(),
+    // Dipakai HANYA untuk mengetahui produk apa saja yang punya stok di periode
+    // ini. Angkanya TIDAK pernah jadi Stok Akhir Sistem — lihat blok di bawah.
+    snapshots.find({ storeId, year, month }).toArray(),
   ]);
   if (!fetched.ok) throw new InventoryStockOpnameError(`Gagal menarik stok sistem Olsera pada cutoff ${input.cutoffDate}: ${fetched.error}`);
 
@@ -400,6 +403,65 @@ export async function loadInventoryOpnameCutoff(
     };
   });
 
+  // --- Produk stok diam (tidak dikembalikan API stockmovement) ---------------
+  // API Olsera hanya mengembalikan produk yang PUNYA pergerakan di rentang.
+  // Produk dengan stok diam (opening > 0, incoming 0, sales 0) karena itu tidak
+  // pernah jadi baris, sehingga item Berita Acara untuk produk itu tidak bisa
+  // diisi sama sekali (Feb 2026: BA 51 item, hanya 30 yang tampil).
+  //
+  // Barisnya ditambahkan dari snapshot bulanan HANYA sebagai daftar produk.
+  // `systemClosingQty` SENGAJA null, TIDAK diisi snapshot.closingQty: snapshot
+  // adalah posisi akhir bulan kalender, sedangkan cutoff BA bisa di tengah
+  // bulan (BA Feb 2026 = 04 Feb s/d 04 Mar). Mengisinya berarti menyajikan
+  // angka akhir-bulan sebagai angka cutoff di dokumen yang justru berfungsi
+  // sebagai bukti audit.
+  //
+  // Konsekuensi yang DISENGAJA: systemClosingQty null membuat baris ini
+  // terblokir di finalizeInventoryStockOpname lewat guard `systemClosingQty
+  // === null` yang SUDAH ADA, jadi TIDAK PERNAH ikut BA_OMITTED_ASSUMED_MATCH.
+  // Perlakuannya sama persis dengan baris closing-null di jalur bulanan.
+  const apiKeys = new Set(rows.map((row) => opnameKey(row.productId, row.variantId)));
+  const stagnant = visibleMonthlyInventoryRows(
+    snapshotRows.map((snap) => ({ ...snap, category: snap.groupName })),
+    false,
+  ).filter((snap) => !apiKeys.has(opnameKey(snap.productId, snap.variantId)));
+
+  for (const snap of stagnant) {
+    const opnameDoc = opnameByKey.get(opnameKey(snap.productId, snap.variantId)) ?? null;
+    const physicalQty = opnameDoc?.physicalQty ?? null;
+    rows.push({
+      productId: snap.productId,
+      variantId: snap.variantId,
+      productName: snap.productName,
+      productSku: snap.productSku,
+      category: snap.groupName,
+      // Angka arus TIDAK ditampilkan: nilainya milik bulan kalender, bukan
+      // rentang BA. Menampilkannya akan membuat dua baris bersebelahan di
+      // tabel yang sama punya arti periode yang berbeda tanpa penanda.
+      openingQty: null,
+      incomingQty: null,
+      returnQty: null,
+      salesQty: null,
+      outgoingQty: null,
+      snapshotClosingQty: null,
+      formulaClosingQty: null,
+      systemClosingQty: null,
+      formulaMismatch: false,
+      snapshotStatus: "boundary-only",
+      snapshotDiagnostics: [
+        `Stok Akhir Sistem tidak tersedia untuk cutoff ${input.cutoffDate}: produk ini tidak punya pergerakan pada ${fetched.startDate} s/d ${fetched.endDate}, sehingga API Olsera tidak mengembalikan posisi stoknya pada tanggal itu.`,
+        "Angka snapshot bulanan sengaja TIDAK dipakai karena posisinya akhir bulan kalender, bukan tanggal cutoff BA. Isi Stok Berita Acara dari hitung fisik; baris ini tidak bisa difinalisasi selama angka sistemnya belum tersedia.",
+      ],
+      manualAdjust: false,
+      physicalQty,
+      differenceQty: computeDifferenceQty(physicalQty, null),
+      status: determineOpnameStatus({ physicalQty, systemClosingQty: null, manualAdjust: false }),
+      note: opnameDoc?.note ?? null,
+      updatedBy: opnameDoc?.updatedBy ?? null,
+      updatedAt: opnameDoc?.updatedAt ? new Date(opnameDoc.updatedAt).toISOString() : null,
+      evidenceSource: opnameDoc?.evidenceSource ?? null,
+    });
+  }
   rows.sort((a, b) => a.productName.localeCompare(b.productName, "id"));
 
   const event = opnameRows.find((doc) => doc._id === `${storeId}:${year}:${String(month).padStart(2, "0")}:event`);

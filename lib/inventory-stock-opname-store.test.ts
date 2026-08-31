@@ -202,6 +202,78 @@ test("cutoff: loadInventoryOpnameCutoff memanggil fetchStockMovementRange dengan
   assert.equal(result.cutoffDate, "2026-07-16");
 });
 
+// --- Opsi A: produk stok diam ikut tampil, TANPA angka sistem karangan ---
+
+const STAGNANT_PRODUCT_ID = 909090;
+
+function stagnantSnapshot(overrides: Partial<OlseraInventoryMonthlySnapshotDocument> = {}) {
+  return {
+    _id: `${CUTOFF_STORE_ID}:2026:02:${STAGNANT_PRODUCT_ID}:0`,
+    storeId: CUTOFF_STORE_ID, year: 2026, month: 2,
+    productId: STAGNANT_PRODUCT_ID, variantId: null,
+    productName: "RAKET DIAM", productSku: "SKU-DIAM", groupName: "RAKET",
+    openingQty: 1, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 1,
+    status: "complete", diagnostics: [], source: "baseline-file",
+    ...overrides,
+  } as Partial<OlseraInventoryMonthlySnapshotDocument>;
+}
+
+function cutoffContextWithSnapshots(opname: ReturnType<typeof fakeOpnameCollection>, sisaByEndDate: Record<string, number>, snaps: Array<Partial<OlseraInventoryMonthlySnapshotDocument>>) {
+  return { ...cutoffContext(opname, sisaByEndDate), snapshots: fakeRead<OlseraInventoryMonthlySnapshotDocument>(snaps) };
+}
+
+test("Opsi A: produk snapshot yang TIDAK dikembalikan API tetap jadi baris (item BA bisa diisi)", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-03-04": 12 }, [stagnantSnapshot()]);
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  assert.equal(result.rows.length, 2, "1 baris API + 1 baris produk stok diam");
+  const diam = result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID)!;
+  assert.ok(diam, "produk stok diam harus muncul sebagai baris");
+  assert.equal(diam.productName, "RAKET DIAM");
+});
+
+test("Opsi A: baris stok diam TIDAK mengambil angka dari snapshot.closingQty", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-03-04": 12 }, [stagnantSnapshot({ closingQty: 999 })]);
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  const diam = result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID)!;
+  assert.equal(diam.systemClosingQty, null, "snapshot akhir bulan TIDAK boleh dipakai sebagai angka cutoff");
+  assert.equal(diam.snapshotClosingQty, null);
+  assert.equal(diam.snapshotStatus, "boundary-only");
+  assert.ok(diam.snapshotDiagnostics.length >= 1, "wajib ada penjelasan kenapa angka sistem kosong");
+  assert.match(diam.snapshotDiagnostics.join(" "), /tidak tersedia untuk cutoff 2026-03-04/i);
+});
+
+test("Opsi A: baris API yang sudah ada TIDAK berubah perhitungannya", async () => {
+  const opname = fakeOpnameCollection();
+  const tanpa = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, cutoffContext(opname, { "2026-03-04": 12 }));
+  const dengan = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, [stagnantSnapshot()]));
+  const asli = tanpa.rows.find((row) => row.productId === CUTOFF_PRODUCT_ID)!;
+  const sesudah = dengan.rows.find((row) => row.productId === CUTOFF_PRODUCT_ID)!;
+  assert.deepEqual(sesudah, asli, "baris dari API harus identik sebelum/sesudah penggabungan");
+});
+
+test("Opsi A: produk yang SUDAH dikembalikan API tidak diduplikasi oleh snapshot", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-03-04": 12 }, [stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`, productId: CUTOFF_PRODUCT_ID, productName: "BOLA PADEL CONTOH" })]);
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  assert.equal(result.rows.length, 1, "produk yang sama tidak boleh muncul dua kali");
+  assert.equal(result.rows[0].systemClosingQty, 12, "yang dipakai tetap angka API, bukan snapshot");
+});
+
+test("Opsi A: finalisasi TETAP TERBLOKIR selama ada baris stok diam (tidak ikut BA_OMITTED_ASSUMED_MATCH)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, [stagnantSnapshot()]);
+  await assert.rejects(
+    () => finalizeInventoryStockOpname({
+      storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: "a@b.c", cutoff: "2026-02",
+      cutoffDate: "2026-03-04", startDate: "2026-02-04", cutoffConfirmed: true, baOnlyDifferencesConfirmed: true,
+      attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 1, url: "https://x/ba.pdf", uploadedAt: new Date(), uploadedBy: "a@b.c" },
+      now: new Date("2026-03-05T00:00:00.000Z"),
+    }, ctx),
+    /Finalisasi diblokir/,
+    "baris tanpa angka sistem tidak boleh bisa difinalisasi",
+  );
+  assert.equal(opname.updateCalls, 0, "tidak boleh ada dokumen BA yang ditulis saat finalisasi diblokir");
+});
+
 // --- Tahap 1: startDate rentang bebas (periode BA tidak selalu bulan kalender) ---
 
 test("startDate: TANPA startDate rentang PERSIS seperti sebelumnya (awal bulan cutoff) — backward compatible", async () => {

@@ -841,7 +841,20 @@ export default function InventoryOpnamePage() {
                       <td>{formatQty(row.returnQty)}</td>
                       <td>{formatQty(row.salesQty)}</td>
                       <td>{formatQty(row.outgoingQty)}</td>
-                      <td>{formatQty(row.systemClosingQty)}</td>
+                      <td>
+                        {/* Baris produk stok diam tidak punya posisi stok pada
+                            tanggal cutoff (API Olsera hanya mengembalikan produk
+                            yang bergerak). Jangan tampilkan "—" polos: petugas
+                            harus tahu kenapa kolom ini kosong dan bahwa barisnya
+                            belum bisa difinalisasi. */}
+                        {row.systemClosingQty === null && row.snapshotStatus === "boundary-only" ? (
+                          <span className="recon-badge recon-badge-warn" title={row.snapshotDiagnostics.join(" ")}>
+                            Tidak tersedia pada cutoff
+                          </span>
+                        ) : (
+                          formatQty(row.systemClosingQty)
+                        )}
+                      </td>
                       <td>
                         <div className="recon-opname-cell">
                           <input
