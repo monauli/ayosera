@@ -860,6 +860,7 @@ export default function InventoryOpnamePage() {
                           <input
                             className="recon-opname-input"
                             type="number"
+                            min="0"
                             disabled={!supervisor}
                             value={row.physicalQty ?? ""}
                             onChange={(e) => setEdit(row, { physicalQty: e.target.value === "" ? null : Number(e.target.value) })}

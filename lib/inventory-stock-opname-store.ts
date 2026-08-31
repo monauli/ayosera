@@ -515,7 +515,15 @@ type SaveSystemRow = {
   manualAdjust: boolean;
 };
 
-function validateEntries(entries: unknown): InventoryOpnameEntryInput[] {
+/**
+ * `productNameByKey` OPSIONAL — dipakai HANYA supaya pesan error physicalQty
+ * menyebut nama produk, bukan indeks array yang tidak berarti apa-apa bagi
+ * petugas ("entries[15]" berpindah-pindah setiap baris lain diperbaiki, dan
+ * urutannya bahkan tidak sama dengan urutan tabel yang mereka lihat). Tanpa
+ * lookup (mis. productId belum bisa divalidasi sebagai integer), pesan jatuh
+ * kembali ke bentuk lama berbasis indeks — perilaku LAMA dipertahankan penuh.
+ */
+function validateEntries(entries: unknown, productNameByKey?: ReadonlyMap<string, string>): InventoryOpnameEntryInput[] {
   if (!Array.isArray(entries)) throw new InventoryStockOpnameError("entries harus berupa array.");
   if (entries.length > MAX_ENTRIES_PER_SAVE) throw new InventoryStockOpnameError("entries terlalu banyak dalam satu kali simpan.");
   return entries.map((raw, index) => {
@@ -524,10 +532,12 @@ function validateEntries(entries: unknown): InventoryOpnameEntryInput[] {
     if (!Number.isInteger(entry.productId)) throw new InventoryStockOpnameError(`entries[${index}].productId tidak valid.`);
     const variantId = entry.variantId === null || entry.variantId === undefined ? null : Number(entry.variantId);
     if (variantId !== null && !Number.isInteger(variantId)) throw new InventoryStockOpnameError(`entries[${index}].variantId tidak valid.`);
+    const productLabel = productNameByKey?.get(opnameKey(entry.productId as number, variantId)) ?? `entries[${index}]`;
     let physicalQty: number | null = null;
     if (entry.physicalQty !== null && entry.physicalQty !== undefined) {
       physicalQty = Number(entry.physicalQty);
-      if (!Number.isFinite(physicalQty) || physicalQty < 0) throw new InventoryStockOpnameError(`entries[${index}].physicalQty tidak valid.`);
+      if (!Number.isFinite(physicalQty)) throw new InventoryStockOpnameError(`Stok Berita Acara "${productLabel}" tidak valid — harus berupa angka.`);
+      if (physicalQty < 0) throw new InventoryStockOpnameError(`Stok Berita Acara "${productLabel}" tidak boleh negatif (${physicalQty}).`);
     }
     let note: string | null = null;
     if (entry.note !== null && entry.note !== undefined) {
@@ -547,7 +557,6 @@ export async function saveInventoryOpnameBatch(
   const storeId = input.storeId;
   const year = validateYear(input.year);
   const month = validateMonth(input.month);
-  const entries = validateEntries(input.entries);
 
   const cutoffDate = input.cutoffDate ?? null;
   const startDate = input.startDate ?? undefined;
@@ -561,6 +570,14 @@ export async function saveInventoryOpnameBatch(
 
   const { snapshots, opname } = await resolveInventoryStockOpnameContext(context);
 
+  // Lookup nama produk HANYA untuk pesan error validateEntries (lihat komentar
+  // di validateEntries) — dibaca dari snapshot periode ini, read-only, tidak
+  // memengaruhi angka sistem yang dipakai untuk menyimpan.
+  const productNameByKey = new Map(
+    (await snapshots.find({ storeId, year, month }).toArray()).map((snap) => [opnameKey(snap.productId, snap.variantId), snap.productName]),
+  );
+  const entries = validateEntries(input.entries, productNameByKey);
+
   // Angka sistem yang disimpan WAJIB berasal dari sumber yang sama dengan yang
   // ditampilkan & difinalisasi. Dengan cutoffDate -> rentang BA (fetchCutoffSystemRows,
   // primitif yang SAMA dipakai loadInventoryOpnameCutoff). Tanpa cutoffDate ->
@@ -573,6 +590,29 @@ export async function saveInventoryOpnameBatch(
     // Jalur cutoff tidak punya konsep carry-forward incomplete/canonicalProductId
     // (lihat catatan di loadInventoryOpnameCutoff) — manualAdjust selalu false.
     systemRows = fetched.rows.map((sys) => ({ productId: sys.productId, variantId: sys.variantId, rawClosingQty: sys.closingQty, systemClosingQty: sys.closingQty, manualAdjust: false }));
+
+    // Produk stok diam (tidak dikembalikan API stockmovement) — CERMINAN PERSIS
+    // blok yang sama di loadInventoryOpnameCutoff. Tanpa ini, systemByKey di
+    // bawah tidak mengenal produk yang TIDAK bergerak; produk itu jadi tidak
+    // ada di sumber periode ini (systemByKey.get(...) === undefined), lalu
+    // `if (!sys) continue` di loop tulis melewatinya diam-diam — physicalQty
+    // yang diisi user untuk baris itu tidak pernah tersimpan, hilang lagi
+    // setelah refresh. rawClosingQty & systemClosingQty SENGAJA null (alasan
+    // sama seperti jalur muat: snapshot adalah posisi akhir bulan kalender,
+    // bukan tanggal cutoff BA) — baris ini tetap terblokir di finalisasi lewat
+    // guard `systemClosingQty === null` yang sudah ada, TIDAK diubah di sini.
+    const apiKeys = new Set(systemRows.map((row) => opnameKey(row.productId, row.variantId)));
+    const snapshotRowsForCutoff = await snapshots.find({ storeId, year, month }).toArray();
+    // Filter SAMA (visibleMonthlyInventoryRows) yang dipakai loadInventoryOpnameCutoff
+    // untuk menentukan daftar "produk stok diam" — supaya sumber angka sistem
+    // saat SIMPAN persis mengenal produk yang sama dengan yang tampil di layar.
+    const stagnantForSave = visibleMonthlyInventoryRows(
+      snapshotRowsForCutoff.map((snap) => ({ ...snap, category: snap.groupName })),
+      false,
+    ).filter((snap) => !apiKeys.has(opnameKey(snap.productId, snap.variantId)));
+    for (const snap of stagnantForSave) {
+      systemRows.push({ productId: snap.productId, variantId: snap.variantId, rawClosingQty: null, systemClosingQty: null, manualAdjust: false });
+    }
   } else {
     const snapshotRows = await snapshots.find({ storeId, year, month }).toArray();
     systemRows = snapshotRows.map((snap) => ({

@@ -17,6 +17,7 @@ import {
   type MinimalReadCollection,
 } from "./inventory-stock-opname-store.ts";
 import { buildMatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
+import { buildOpnameId } from "./inventory-stock-opname.ts";
 import type { InventoryProductInput } from "./olsera-inventory-core.ts";
 import type { StockMovementApiRow } from "./olsera-inventory-monthly-core.ts";
 import type { FetchStockMovementResult } from "./olsera-inventory-stockmovement.ts";
@@ -272,6 +273,68 @@ test("Opsi A: finalisasi TETAP TERBLOKIR selama ada baris stok diam (tidak ikut 
     "baris tanpa angka sistem tidak boleh bisa difinalisasi",
   );
   assert.equal(opname.updateCalls, 0, "tidak boleh ada dokumen BA yang ditulis saat finalisasi diblokir");
+});
+
+// --- Opsi 1: bug simpan hilang untuk baris stok diam (fix atas Opsi A) ---
+
+test("Opsi 1: physicalQty untuk baris stok diam benar-benar TERSIMPAN saat saveInventoryOpnameBatch (bug: sebelumnya di-skip diam-diam)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, [stagnantSnapshot()]);
+  await saveInventoryOpnameBatch(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR, entries: [{ productId: STAGNANT_PRODUCT_ID, variantId: null, physicalQty: 3 }], cutoffDate: "2026-03-04", startDate: "2026-02-04" },
+    ctx,
+  );
+  const id = buildOpnameId({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: STAGNANT_PRODUCT_ID, variantId: null });
+  const saved = opname.store.get(id) as { physicalQty: number; systemClosingQty: number | null; status: string } | undefined;
+  assert.ok(saved, "dokumen BA untuk produk stok diam harus tertulis, bukan dilewati (!sys continue)");
+  assert.equal(saved!.physicalQty, 3);
+  assert.equal(saved!.systemClosingQty, null, "systemClosingQty TIDAK diisi dari snapshot, tetap null seperti jalur muat");
+  assert.equal(saved!.status, "PERLU_DICEK", "tanpa angka sistem tidak pernah bisa COCOK");
+});
+
+test("Opsi 1: baris dari API tetap tersimpan normal, angkanya TIDAK berubah oleh penggabungan stagnant", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, [stagnantSnapshot()]);
+  await saveInventoryOpnameBatch(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR, entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: 12 }], cutoffDate: "2026-03-04", startDate: "2026-02-04" },
+    ctx,
+  );
+  const id = buildOpnameId({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: CUTOFF_PRODUCT_ID, variantId: null });
+  const saved = opname.store.get(id) as { physicalQty: number; systemClosingQty: number | null; status: string } | undefined;
+  assert.ok(saved);
+  assert.equal(saved!.systemClosingQty, 12, "angka API tidak boleh ikut jadi null");
+  assert.equal(saved!.status, "COCOK");
+});
+
+// --- Opsi 4: pesan error physicalQty menyebut nama produk, bukan indeks ---
+
+test("Opsi 4: physicalQty negatif -> pesan error menyebut NAMA produk, bukan entries[N]", async () => {
+  const opname = fakeOpnameCollection();
+  // Nama produk diambil dari snapshot periode ini — seed dokumen untuk
+  // CUTOFF_PRODUCT_ID supaya lookup punya sesuatu untuk ditemukan.
+  const ctx = cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, [
+    stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:02:${CUTOFF_PRODUCT_ID}:0`, productId: CUTOFF_PRODUCT_ID, productName: "BOLA PADEL CONTOH" }),
+  ]);
+  await assert.rejects(
+    () => saveInventoryOpnameBatch(
+      { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR, entries: [{ productId: CUTOFF_PRODUCT_ID, variantId: null, physicalQty: -5 }], cutoffDate: "2026-03-04", startDate: "2026-02-04" },
+      ctx,
+    ),
+    /BOLA PADEL CONTOH/,
+    "pesan harus menyebut nama produk yang dilihat petugas di layar",
+  );
+});
+
+test("Opsi 4: produk yang TIDAK ditemukan di snapshot periode ini tetap jatuh ke pesan berbasis indeks (fallback lama)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, []);
+  await assert.rejects(
+    () => saveInventoryOpnameBatch(
+      { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR, entries: [{ productId: 777777, variantId: null, physicalQty: -1 }], cutoffDate: "2026-03-04", startDate: "2026-02-04" },
+      ctx,
+    ),
+    /entries\[0\]/,
+  );
 });
 
 // --- Tahap 1: startDate rentang bebas (periode BA tidak selalu bulan kalender) ---
