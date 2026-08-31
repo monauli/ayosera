@@ -848,7 +848,7 @@ export default function InventoryOpnamePage() {
                             harus tahu kenapa kolom ini kosong dan bahwa barisnya
                             belum bisa difinalisasi. */}
                         {row.systemClosingQty === null && row.snapshotStatus === "boundary-only" ? (
-                          <span className="recon-badge recon-badge-warn" title={row.snapshotDiagnostics.join(" ")}>
+                          <span className="recon-badge recon-badge-warn" title="Tidak ada pergerakan di periode ini, jadi posisi stok pada tanggal cutoff tidak tersedia. Isi Stok Berita Acara dari hitung fisik. Baris ini belum bisa difinalisasi.">
                             Tidak tersedia pada cutoff
                           </span>
                         ) : (
