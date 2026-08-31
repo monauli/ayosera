@@ -21,7 +21,7 @@ import { buildOpnameId } from "./inventory-stock-opname.ts";
 import type { InventoryProductInput } from "./olsera-inventory-core.ts";
 import type { StockMovementApiRow } from "./olsera-inventory-monthly-core.ts";
 import type { FetchStockMovementResult } from "./olsera-inventory-stockmovement.ts";
-import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
+import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument, OlseraProductAliasDocument } from "./mongodb.ts";
 
 type Doc = Record<string, unknown>;
 
@@ -188,6 +188,7 @@ function cutoffContext(
     opname,
     fetchStockMovementRangeImpl: impl,
     matchingContext: cutoffMatchingContext(),
+    aliases: fakeRead<OlseraProductAliasDocument>([]),
     calls,
   };
 }
@@ -219,8 +220,13 @@ function stagnantSnapshot(overrides: Partial<OlseraInventoryMonthlySnapshotDocum
   } as Partial<OlseraInventoryMonthlySnapshotDocument>;
 }
 
-function cutoffContextWithSnapshots(opname: ReturnType<typeof fakeOpnameCollection>, sisaByEndDate: Record<string, number>, snaps: Array<Partial<OlseraInventoryMonthlySnapshotDocument>>) {
-  return { ...cutoffContext(opname, sisaByEndDate), snapshots: fakeRead<OlseraInventoryMonthlySnapshotDocument>(snaps) };
+function cutoffContextWithSnapshots(
+  opname: ReturnType<typeof fakeOpnameCollection>,
+  sisaByEndDate: Record<string, number>,
+  snaps: Array<Partial<OlseraInventoryMonthlySnapshotDocument>>,
+  aliases: Array<Partial<OlseraProductAliasDocument>> = [],
+) {
+  return { ...cutoffContext(opname, sisaByEndDate), snapshots: fakeRead<OlseraInventoryMonthlySnapshotDocument>(snaps), aliases: fakeRead<OlseraProductAliasDocument>(aliases) };
 }
 
 test("Opsi A: produk snapshot yang TIDAK dikembalikan API tetap jadi baris (item BA bisa diisi)", async () => {
@@ -273,6 +279,72 @@ test("Opsi A: finalisasi TETAP TERBLOKIR selama ada baris stok diam (tidak ikut 
     "baris tanpa angka sistem tidak boleh bisa difinalisasi",
   );
   assert.equal(opname.updateCalls, 0, "tidak boleh ada dokumen BA yang ditulis saat finalisasi diblokir");
+});
+
+// --- Opsi B: referensi pembanding (closing snapshot bulan sebelumnya) untuk baris stok diam ---
+
+function previousMonthSnapshot(overrides: Partial<OlseraInventoryMonthlySnapshotDocument> = {}) {
+  return {
+    _id: `${CUTOFF_STORE_ID}:2026:01:${STAGNANT_PRODUCT_ID}:0`,
+    storeId: CUTOFF_STORE_ID, year: 2026, month: 1,
+    productId: STAGNANT_PRODUCT_ID, variantId: null,
+    productName: "RAKET DIAM", productSku: "SKU-DIAM", groupName: "RAKET",
+    openingQty: 1, incomingQty: 0, returnQty: 0, salesQty: 0, outgoingQty: 0, closingQty: 1,
+    status: "complete", diagnostics: [], source: "baseline-file",
+    ...overrides,
+  } as Partial<OlseraInventoryMonthlySnapshotDocument>;
+}
+
+test("Opsi B: reference tersedia dari closing bulan sebelumnya (label + qty), TIDAK mengubah systemClosingQty/differenceQty/status", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-03-04": 12 }, [stagnantSnapshot(), previousMonthSnapshot({ closingQty: 7 })]);
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  const diam = result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID)!;
+  assert.deepEqual(diam.reference, { kind: "available", qty: 7, label: "Ref. akhir Januari: 7" });
+  assert.equal(diam.systemClosingQty, null, "reference TIDAK BOLEH masuk systemClosingQty");
+  assert.equal(diam.differenceQty, null, "reference TIDAK BOLEH memengaruhi differenceQty");
+  assert.equal(diam.status, "BELUM_DIISI", "reference TIDAK BOLEH memengaruhi status finalisasi (physicalQty belum diisi -> BELUM_DIISI, sama seperti tanpa reference)");
+});
+
+test("Opsi B: productId ada di olsera_product_aliases sebagai oldProductId -> reference identity-changed, closing bulan sebelumnya DIABAIKAN", async () => {
+  const ctx = cutoffContextWithSnapshots(
+    fakeOpnameCollection(),
+    { "2026-03-04": 12 },
+    [stagnantSnapshot(), previousMonthSnapshot({ closingQty: 7 })],
+    [{ _id: `${STAGNANT_PRODUCT_ID}:0`, oldProductId: STAGNANT_PRODUCT_ID, oldVariantId: null, newProductId: 999999, newVariantId: null, sku: null, normalizedName: null, categoryId: null, categoryName: null, source: "manual-verified", confidence: "verified", verifiedAt: null, createdAt: new Date(), updatedAt: new Date() }],
+  );
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  const diam = result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID)!;
+  assert.deepEqual(diam.reference, { kind: "identity-changed", label: "Identitas produk berganti — perlu verifikasi manual." }, "closing 7 yang tersedia TIDAK BOLEH ditampilkan — identitas lama tidak dipercaya sama sekali");
+  assert.equal(diam.systemClosingQty, null);
+});
+
+test("Opsi B: closing bulan sebelumnya negatif -> reference invalid-previous, angkanya TIDAK ditampilkan", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-03-04": 12 }, [stagnantSnapshot(), previousMonthSnapshot({ closingQty: -21 })]);
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  const diam = result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID)!;
+  assert.deepEqual(diam.reference, { kind: "invalid-previous", label: "Data bulan sebelumnya tidak valid." });
+  assert.equal(diam.systemClosingQty, null);
+});
+
+test("Opsi B: tidak ada snapshot bulan sebelumnya sama sekali -> reference null (bukan objek kosong)", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-03-04": 12 }, [stagnantSnapshot()]);
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  const diam = result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID)!;
+  assert.equal(diam.reference, null);
+});
+
+test("Opsi B: reference TIDAK ikut tersimpan ke dokumen opname saat saveInventoryOpnameBatch", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, [stagnantSnapshot(), previousMonthSnapshot({ closingQty: 7 })]);
+  await saveInventoryOpnameBatch(
+    { storeId: CUTOFF_STORE_ID, year: 2026, month: 2, actor: SUPERVISOR, entries: [{ productId: STAGNANT_PRODUCT_ID, variantId: null, physicalQty: 3 }], cutoffDate: "2026-03-04", startDate: "2026-02-04" },
+    ctx,
+  );
+  const id = buildOpnameId({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, productId: STAGNANT_PRODUCT_ID, variantId: null });
+  const saved = opname.store.get(id) as Doc | undefined;
+  assert.ok(saved, "dokumen tetap tersimpan seperti sebelumnya");
+  assert.equal(saved!.reference, undefined, "field reference TIDAK BOLEH ada di dokumen opname tersimpan");
+  assert.equal(saved!.systemClosingQty, null);
 });
 
 // --- Opsi 1: bug simpan hilang untuk baris stok diam (fix atas Opsi A) ---

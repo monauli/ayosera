@@ -28,10 +28,10 @@ import {
 } from "./inventory-stock-opname.ts";
 import { attachMovementsToProducts, type UnmatchedMovementEntry } from "./olsera-inventory-monthly-core.ts";
 import { visibleMonthlyInventoryRows } from "./olsera-inventory-ui.ts";
-import type { MatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
+import { previousMonth, type MatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchMatchingContext } from "./olsera-inventory-monthly-snapshot-store.ts";
 import { fetchStockMovementRange, type FetchStockMovementResult } from "./olsera-inventory-stockmovement.ts";
-import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
+import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument, OlseraProductAliasDocument } from "./mongodb.ts";
 import { compareHistoricalInventoryRows, type HistoricalReconciliationRow } from "./inventory-historical-reconciliation.ts";
 import { FEBRUARY_HISTORICAL_SOURCE_REVISION, resolveFebruaryHistoricalRows } from "./february-historical-migration.ts";
 import { FEBRUARY_HISTORICAL_SOURCE } from "./february-historical-source.ts";
@@ -84,6 +84,8 @@ export type MinimalOpnameCollection = MinimalReadCollection<InventoryStockOpname
 export type CutoffFetchOverrides = {
   fetchStockMovementRangeImpl?: (startDate: string, endDate: string) => Promise<FetchStockMovementResult>;
   matchingContext?: MatchingContext;
+  /** Dipakai HANYA untuk referensi baris stok diam (lihat blok "referensi produk stok diam" di loadInventoryOpnameCutoff) — cek apakah productId adalah identitas LAMA yang sudah dialihkan (olsera_product_aliases.oldProductId), bukan untuk resolusi matching movement (itu sudah tercakup di matchingContext). */
+  aliases?: MinimalReadCollection<OlseraProductAliasDocument>;
 };
 
 export type InventoryStockOpnameContext = {
@@ -104,6 +106,14 @@ async function resolveCutoffDeps(context?: CutoffFetchOverrides): Promise<{ fetc
   const fetchStockMovementRangeImpl = context?.fetchStockMovementRangeImpl ?? fetchStockMovementRange;
   const matchingContext = context?.matchingContext ?? (await fetchMatchingContext());
   return { fetchStockMovementRangeImpl, matchingContext };
+}
+
+/** Koleksi alias produk (read-only) — default olsera_product_aliases sungguhan, override lewat context untuk tes. */
+async function resolveAliasesCollection(context?: CutoffFetchOverrides): Promise<MinimalReadCollection<OlseraProductAliasDocument>> {
+  if (context?.aliases) return context.aliases;
+  const { collections } = await import("./mongodb.ts");
+  const { olseraProductAliases } = await collections();
+  return olseraProductAliases;
 }
 
 export type CutoffSystemRow = {
@@ -174,6 +184,20 @@ export async function fetchCutoffSystemRows(cutoffDate: string, deps: { fetchSto
 // Baca gabungan snapshot + berita acara
 // ---------------------------------------------------------------------------
 
+/**
+ * Referensi PEMBANDING untuk baris stok diam (Opsi B audit read-only) — HANYA
+ * dipakai supaya petugas tidak perlu buka BA fisik untuk perkiraan angka.
+ * TIDAK PERNAH masuk ke systemClosingQty/differenceQty/status (dihitung
+ * terpisah total dari itu, lihat loadInventoryOpnameCutoff) dan TIDAK PERNAH
+ * disimpan ke dokumen opname (saveInventoryOpnameBatch tidak menyentuh field
+ * ini sama sekali). `kind` dipertahankan (bukan cuma label) supaya UI bisa
+ * memberi styling berbeda per kasus tanpa parsing teks label.
+ */
+export type StagnantReference =
+  | { kind: "available"; qty: number; label: string }
+  | { kind: "identity-changed"; label: string }
+  | { kind: "invalid-previous"; label: string };
+
 export type InventoryOpnameRow = {
   productId: number;
   variantId: number | null;
@@ -195,6 +219,8 @@ export type InventoryOpnameRow = {
   formulaMismatch: boolean;
   snapshotStatus: "complete" | "boundary-only" | "incomplete";
   snapshotDiagnostics: string[];
+  /** Hanya terisi untuk baris stok diam (snapshotStatus "boundary-only") — lihat StagnantReference. undefined/null untuk baris lain (TIDAK diubah, jalur bulanan lama tidak pernah mengisinya). */
+  reference?: StagnantReference | null;
   manualAdjust: boolean;
   physicalQty: number | null;
   differenceQty: number | null;
@@ -216,6 +242,26 @@ export type InventoryOpnameMonthResult = {
 
 function opnameKey(productId: number, variantId: number | null): string {
   return `${productId}:${variantId ?? 0}`;
+}
+
+const MONTH_NAMES_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+/**
+ * Opsi B (audit read-only) — referensi PEMBANDING baris stok diam, murni
+ * dari closing snapshot bulan sebelumnya. Prioritas cek: identitas berganti
+ * (alias) dulu, baru validitas angka — identitas berganti membuat productId
+ * lama sudah tidak dipercaya sama sekali, apa pun angkanya.
+ */
+function resolveStagnantReference(key: string, aliasOldKeys: Set<string>, previousClosingByKey: Map<string, number | null>, previousMonthNumber: number): StagnantReference | null {
+  if (aliasOldKeys.has(key)) {
+    return { kind: "identity-changed", label: "Identitas produk berganti — perlu verifikasi manual." };
+  }
+  const previousClosing = previousClosingByKey.get(key);
+  if (previousClosing === undefined || previousClosing === null) return null;
+  if (previousClosing < 0) {
+    return { kind: "invalid-previous", label: "Data bulan sebelumnya tidak valid." };
+  }
+  return { kind: "available", qty: previousClosing, label: `Ref. akhir ${MONTH_NAMES_ID[previousMonthNumber - 1]}: ${previousClosing}` };
 }
 
 function lockState(doc: InventoryStockOpnameDocument | undefined): InventoryOpnameMonthResult["lock"] {
@@ -350,15 +396,26 @@ export async function loadInventoryOpnameCutoff(
 
   const { opname, snapshots } = await resolveInventoryStockOpnameContext(context);
   const deps = await resolveCutoffDeps(context);
+  const previousPeriod = previousMonth({ year, month });
 
-  const [fetched, opnameRows, snapshotRows] = await Promise.all([
+  const [fetched, opnameRows, snapshotRows, previousSnapshotRows, aliasDocs] = await Promise.all([
     fetchCutoffSystemRows(input.cutoffDate, deps, startDate),
     opname.find({ storeId, year, month }).toArray(),
     // Dipakai HANYA untuk mengetahui produk apa saja yang punya stok di periode
     // ini. Angkanya TIDAK pernah jadi Stok Akhir Sistem — lihat blok di bawah.
     snapshots.find({ storeId, year, month }).toArray(),
+    // Opsi B (audit read-only): closing snapshot BULAN SEBELUMNYA, HANYA
+    // dipakai sebagai referensi pembanding pada baris stok diam di bawah —
+    // TIDAK PERNAH jadi/menyentuh Stok Akhir Sistem.
+    snapshots.find({ storeId, year: previousPeriod.year, month: previousPeriod.month }).toArray(),
+    resolveAliasesCollection(context).then((col) => col.find({}).toArray()),
   ]);
   if (!fetched.ok) throw new InventoryStockOpnameError(`Gagal menarik stok sistem Olsera pada cutoff ${input.cutoffDate}: ${fetched.error}`);
+
+  // Opsi B: lookup referensi baris stok diam — closing bulan sebelumnya per
+  // produk, dan set productId LAMA (sudah beralih identitas) dari alias.
+  const previousClosingByKey = new Map(previousSnapshotRows.map((snap) => [opnameKey(snap.productId, snap.variantId), snap.closingQty]));
+  const aliasOldKeys = new Set(aliasDocs.map((alias) => opnameKey(alias.oldProductId, alias.oldVariantId)));
 
   const opnameByKey = new Map(opnameRows.map((doc) => [opnameKey(doc.productId, doc.variantId), doc]));
 
@@ -429,6 +486,8 @@ export async function loadInventoryOpnameCutoff(
   for (const snap of stagnant) {
     const opnameDoc = opnameByKey.get(opnameKey(snap.productId, snap.variantId)) ?? null;
     const physicalQty = opnameDoc?.physicalQty ?? null;
+    const stagnantKey = opnameKey(snap.productId, snap.variantId);
+    const reference = resolveStagnantReference(stagnantKey, aliasOldKeys, previousClosingByKey, previousPeriod.month);
     rows.push({
       productId: snap.productId,
       variantId: snap.variantId,
@@ -452,6 +511,7 @@ export async function loadInventoryOpnameCutoff(
         `Stok Akhir Sistem tidak tersedia untuk cutoff ${input.cutoffDate}: produk ini tidak punya pergerakan pada ${fetched.startDate} s/d ${fetched.endDate}, sehingga API Olsera tidak mengembalikan posisi stoknya pada tanggal itu.`,
         "Angka snapshot bulanan sengaja TIDAK dipakai karena posisinya akhir bulan kalender, bukan tanggal cutoff BA. Isi Stok Berita Acara dari hitung fisik; baris ini tidak bisa difinalisasi selama angka sistemnya belum tersedia.",
       ],
+      reference,
       manualAdjust: false,
       physicalQty,
       differenceQty: computeDifferenceQty(physicalQty, null),

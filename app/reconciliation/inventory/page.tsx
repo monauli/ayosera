@@ -38,6 +38,7 @@ type Row = {
   formulaMismatch: boolean;
   snapshotStatus: "complete" | "boundary-only" | "incomplete";
   snapshotDiagnostics: string[];
+  reference?: { kind: "available" | "identity-changed" | "invalid-previous"; qty?: number; label: string } | null;
   manualAdjust: boolean;
   physicalQty: number | null;
   differenceQty: number | null;
@@ -866,9 +867,23 @@ export default function InventoryOpnamePage() {
                             harus tahu kenapa kolom ini kosong dan bahwa barisnya
                             belum bisa difinalisasi. */}
                         {row.systemClosingQty === null && row.snapshotStatus === "boundary-only" ? (
-                          <span className="recon-badge recon-badge-warn" title="Tidak ada pergerakan di periode ini, jadi posisi stok pada tanggal cutoff tidak tersedia. Isi Stok Berita Acara dari hitung fisik. Baris ini belum bisa difinalisasi.">
-                            Tidak tersedia pada cutoff
-                          </span>
+                          <>
+                            <span className="recon-badge recon-badge-warn" title="Tidak ada pergerakan di periode ini, jadi posisi stok pada tanggal cutoff tidak tersedia. Isi Stok Berita Acara dari hitung fisik. Baris ini belum bisa difinalisasi.">
+                              Tidak tersedia pada cutoff
+                            </span>
+                            {/* Referensi PEMBANDING saja (closing snapshot bulan sebelumnya) — BUKAN
+                                angka sistem resmi pada cutoff. Sengaja dipisah dari badge di atas dan
+                                diberi label "Ref." eksplisit supaya tidak tertukar dengan Stok Akhir
+                                Sistem. Tidak pernah masuk systemClosingQty/differenceQty/status/opname. */}
+                            {row.reference ? (
+                              <div
+                                style={{ marginTop: 4, fontSize: "0.75rem", opacity: 0.85 }}
+                                title={row.reference.kind === "available" ? "Referensi dari closing snapshot bulan sebelumnya, HANYA pembanding — bukan Stok Akhir Sistem pada tanggal cutoff." : undefined}
+                              >
+                                {row.reference.label}
+                              </div>
+                            ) : null}
+                          </>
                         ) : (
                           formatQty(row.systemClosingQty)
                         )}
