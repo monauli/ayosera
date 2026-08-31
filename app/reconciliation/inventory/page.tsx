@@ -865,25 +865,33 @@ export default function InventoryOpnamePage() {
                             tanggal cutoff (API Olsera hanya mengembalikan produk
                             yang bergerak). Jangan tampilkan "—" polos: petugas
                             harus tahu kenapa kolom ini kosong dan bahwa barisnya
-                            belum bisa difinalisasi. */}
+                            belum bisa difinalisasi. Satu badge SAJA di kolom ini
+                            (bukan badge + baris terpisah di bawahnya) supaya
+                            tinggi baris tetap sama dengan baris lain — angka
+                            referensi (kalau ada) ikut di DALAM badge yang sama,
+                            bukan elemen baru. */}
                         {row.systemClosingQty === null && row.snapshotStatus === "boundary-only" ? (
-                          <>
-                            <span className="recon-badge recon-badge-warn" title="Tidak ada pergerakan di periode ini, jadi posisi stok pada tanggal cutoff tidak tersedia. Isi Stok Berita Acara dari hitung fisik. Baris ini belum bisa difinalisasi.">
-                              Tidak tersedia pada cutoff
+                          row.reference?.kind === "available" ? (
+                            <span
+                              className="recon-badge recon-badge-neutral"
+                              title="Referensi: posisi stok akhir bulan sebelumnya — BUKAN Stok Akhir Sistem pada tanggal cutoff (produk ini tidak punya pergerakan di periode BA, jadi API Olsera tidak mengembalikan posisinya pada tanggal cutoff). Isi Stok Berita Acara dari hitung fisik; baris ini belum bisa difinalisasi."
+                            >
+                              {formatQty(row.reference.qty ?? null)} (ref)
                             </span>
-                            {/* Referensi PEMBANDING saja (closing snapshot bulan sebelumnya) — BUKAN
-                                angka sistem resmi pada cutoff. Sengaja dipisah dari badge di atas dan
-                                diberi label "Ref." eksplisit supaya tidak tertukar dengan Stok Akhir
-                                Sistem. Tidak pernah masuk systemClosingQty/differenceQty/status/opname. */}
-                            {row.reference ? (
-                              <div
-                                style={{ marginTop: 4, fontSize: "0.75rem", opacity: 0.85 }}
-                                title={row.reference.kind === "available" ? "Referensi dari closing snapshot bulan sebelumnya, HANYA pembanding — bukan Stok Akhir Sistem pada tanggal cutoff." : undefined}
-                              >
-                                {row.reference.label}
-                              </div>
-                            ) : null}
-                          </>
+                          ) : (
+                            <span
+                              className="recon-badge recon-badge-warn"
+                              title={
+                                row.reference?.kind === "identity-changed"
+                                  ? "Identitas produk berganti — perlu verifikasi manual, angka referensi tidak ditampilkan. Stok Akhir Sistem tidak tersedia untuk baris ini; baris ini belum bisa difinalisasi."
+                                  : row.reference?.kind === "invalid-previous"
+                                    ? "Closing bulan sebelumnya tidak valid, referensi tidak ditampilkan. Stok Akhir Sistem tidak tersedia untuk baris ini; baris ini belum bisa difinalisasi."
+                                    : "Tidak ada pergerakan di periode ini, jadi posisi stok pada tanggal cutoff tidak tersedia. Isi Stok Berita Acara dari hitung fisik. Baris ini belum bisa difinalisasi."
+                              }
+                            >
+                              {row.reference?.kind === "identity-changed" ? "Identitas berganti" : row.reference?.kind === "invalid-previous" ? "Data tidak valid" : "Tidak tersedia"}
+                            </span>
+                          )
                         ) : (
                           formatQty(row.systemClosingQty)
                         )}
