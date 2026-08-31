@@ -996,6 +996,7 @@ th[scope],
    halaman cetak. */
 .recon-print-header { display:none; }
 @media print {
+  @page { margin:1.2cm; }
   body * { visibility:hidden; }
   .recon-print-area, .recon-print-area * { visibility:visible; }
   .recon-print-area { position:absolute; left:0; top:0; width:100%; margin:0; padding:0; }
@@ -1009,9 +1010,26 @@ th[scope],
   .recon-cards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.4rem; margin-bottom:1rem; }
   .recon-card { border:1px solid #999; padding:.4rem; }
   .recon-card span, .recon-card strong { color:#000; }
-  .recon-table-wrap { border:none; overflow:visible; }
-  .recon-inventory-table { width:100%; font-size:.75rem; }
-  .recon-inventory-table th, .recon-inventory-table td { padding:.3rem .35rem; color:#000; border-color:#999; }
+  /* BUG (commit e7563c7): baris ini sebelumnya cuma ".recon-table-wrap {
+     overflow:visible }" (0,1,0) — KALAH spesifisitas dari
+     ".recon-table-wrap:has(.recon-inventory-table) { overflow-x:auto }"
+     (0,2,0) di section layar, yang tetap menang walau berada di dalam
+     @media print. Overflow-x:auto tidak bisa di-scroll di cetakan, jadi
+     apa pun yang melebihi lebar halaman (kolom Selisih/Status, dan
+     sebagian header "Stok Berita Acara") betul-betul TERPOTONG dari
+     cetakan, bukan cuma tersembunyi visual. Dibuktikan dengan
+     page.pdf() + ekstraksi teks: header terpotong jadi "...ACA", kolom
+     Selisih & Status hilang total dari cetakan. Selector di sini
+     disamakan (:has(...)) supaya spesifisitasnya menang tanpa !important. */
+  .recon-table-wrap:has(.recon-inventory-table) { border:none; overflow:visible; }
+  /* table-layout:fixed + lebar persen supaya total lebar tabel PASTI muat
+     di lebar halaman cetak berapa pun (tidak bergantung tebakan lebar
+     kolom dalam px/rem seperti tampilan layar) — akar masalah sebenarnya
+     bukan cuma overflow, tapi juga jumlah lebar kolom (~60.5rem/968px
+     untuk 7 kolom yang tersisa) yang sudah melebihi lebar halaman A4/Letter
+     potret sebelum overflow pun ikut berperan. */
+  .recon-inventory-table { width:100%; table-layout:fixed; font-size:.72rem; }
+  .recon-inventory-table th, .recon-inventory-table td { padding:.3rem .35rem; color:#000; border-color:#999; overflow-wrap:anywhere; }
   /* Kolom yang TIDAK diminta cetakan: Varian(4), Stok Awal..Barang Keluar(5-9).
      Sisa yang tampil: No, Kategori, Produk, Stok Akhir Sistem, Stok Berita
      Acara, Selisih, Status — persis daftar yang diminta. */
@@ -1019,9 +1037,24 @@ th[scope],
   .recon-inventory-table td:nth-child(n+4):nth-child(-n+9) {
     display:none;
   }
+  /* Lebar 7 kolom yang tersisa dalam persen, total 100% — table-layout:fixed
+     memakai width pada baris PERTAMA (thead) untuk menentukan lebar kolom. */
+  .recon-inventory-table th:nth-child(1) { width:5%; }   /* No */
+  .recon-inventory-table th:nth-child(2) { width:11%; }  /* Kategori */
+  .recon-inventory-table th:nth-child(3) { width:38%; }  /* Produk */
+  .recon-inventory-table th:nth-child(10) { width:14%; } /* Stok Akhir Sistem */
+  .recon-inventory-table th:nth-child(11) { width:14%; } /* Stok Berita Acara */
+  .recon-inventory-table th:nth-child(12) { width:9%; }  /* Selisih */
+  .recon-inventory-table th:nth-child(13) { width:9%; }  /* Status */
+  /* Header tabel berulang di tiap halaman kalau tabelnya memanjang lebih
+     dari satu halaman (table-header-group adalah default UA untuk thead,
+     dipertegas eksplisit sesuai permintaan) + baris tidak boleh terpotong
+     di tengah antar halaman. */
+  .recon-inventory-table thead { display:table-header-group; }
+  .recon-inventory-table tr { page-break-inside:avoid; break-inside:avoid; }
   .recon-mobile-list { display:none; }
-  .recon-badge { border:1px solid #999; background:transparent; color:#000; }
+  .recon-badge { display:inline-block; border:1px solid #999; background:transparent; color:#000; white-space:normal; }
   .recon-link { color:#000; text-decoration:none; }
-  .recon-opname-input { border:none; background:transparent; color:#000; padding:0; }
+  .recon-opname-input { border:none; background:transparent; color:#000; padding:0; width:auto; }
   .recon-opname-clear { display:none; }
 }
