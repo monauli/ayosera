@@ -1247,9 +1247,14 @@ export default function DashboardPage() {
     setOlseraSyncMessage("");
     const runStartedAt = new Date().toISOString();
     const startedMs = Date.now();
-    const monthStart = `${today.slice(0, 7)}-01`;
+    const selectedRange =
+      olseraReportMode === "monthly"
+        ? monthRangeFromValue(olseraFilterMonth || currentMonth)
+        : { startDate: olseraStart, endDate: olseraEnd };
+    const syncStart = selectedRange.startDate;
+    const syncEnd = selectedRange.endDate < today ? selectedRange.endDate : today;
     const dates: string[] = [];
-    for (let date = monthStart; date <= today; date = addDaysISO(date, 1)) dates.push(date);
+    for (let date = syncStart; date <= syncEnd; date = addDaysISO(date, 1)) dates.push(date);
 
     let matched = 0;
     let updated = 0;
@@ -1309,8 +1314,8 @@ export default function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           finalize: {
-            start_date: monthStart,
-            end_date: today,
+            start_date: syncStart,
+            end_date: syncEnd,
             checked: dates.length,
             matched,
             updated,

@@ -8,6 +8,13 @@ import { auditAndSyncOlseraDay, todayJakarta } from "@/lib/olsera-sync";
 import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-cron-lock";
 import { isDatabaseTimeoutError, withDatabaseRetry } from "@/lib/mongodb-errors";
+import { collections, withMongo } from "@/lib/mongodb";
+
+function previousJakartaDate(date: string) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() - 1);
+  return value.toISOString().slice(0, 10);
+}
 
 const LEASE_MS = 5 * 60 * 1000; // 5 menit — sync hanya menyasar hari ini.
 
@@ -59,6 +66,32 @@ export async function runOlseraSalesCron(authHeader: string | null): Promise<Cro
     // dulu matikan, dan memang harus tetap mati): order sore yang masuk
     // mengubah count/total, sehingga tetap memicu tarik ulang penuh.
     const result = await auditAndSyncOlseraDay(start_date);
+    const yesterday = previousJakartaDate(start_date);
+    const shouldAuditYesterday = await withMongo(async () => {
+      const { olseraSyncState } = await collections();
+      const state = await olseraSyncState.findOne({ _id: "olsera" });
+      return state?.lastDailyAuditDate !== yesterday;
+    });
+    let yesterdayResult: Awaited<ReturnType<typeof auditAndSyncOlseraDay>> | null = null;
+    if (shouldAuditYesterday) {
+      try {
+        yesterdayResult = await auditAndSyncOlseraDay(yesterday);
+        if (yesterdayResult.action !== "failed") {
+          await withMongo(async () => {
+            const { olseraSyncState } = await collections();
+            await olseraSyncState.updateOne(
+              { _id: "olsera" },
+              { $set: { lastDailyAuditDate: yesterday, updatedAt: new Date() } },
+              { upsert: true },
+            );
+          });
+        } else {
+          console.warn(`[cron:olsera:sales] audit H-1 gagal date=${yesterday} — sync hari ini tetap sukses`, yesterdayResult.errorMessage ?? "unknown error");
+        }
+      } catch (error) {
+        console.warn(`[cron:olsera:sales] audit H-1 error date=${yesterday} — sync hari ini tetap sukses`, error);
+      }
+    }
 
     const failed = result.action === "failed";
     const safeErrorCode = failed && result.errorMessage ? classifySalesError(result.errorMessage) : null;
@@ -78,6 +111,7 @@ export async function runOlseraSalesCron(authHeader: string | null): Promise<Cro
         expectedCount: result.expectedOrderCount,
         processedCount: result.processedOrderCount,
         reason: result.reason,
+        yesterdayAction: yesterdayResult?.action ?? "skipped",
         ...(safeErrorCode ? { safeErrorCode } : {}),
       },
     };

@@ -19,6 +19,20 @@ const auditAndSyncOlseraDayMock = mock.fn(async (date: string) => ({
   errorMessage: null as string | null,
 }));
 
+const syncState = { lastDailyAuditDate: null as string | null };
+const syncStateCollection = {
+  findOne: mock.fn(async () => ({ _id: "olsera", lastDailyAuditDate: syncState.lastDailyAuditDate })),
+  updateOne: mock.fn(async (_filter: unknown, update: { $set?: { lastDailyAuditDate?: string } }) => {
+    syncState.lastDailyAuditDate = update.$set?.lastDailyAuditDate ?? syncState.lastDailyAuditDate;
+  }),
+};
+mock.module("@/lib/mongodb", {
+  namedExports: {
+    collections: async () => ({ olseraSyncState: syncStateCollection }),
+    withMongo: async <T>(fn: () => Promise<T>) => fn(),
+  },
+});
+
 mock.module("@/lib/olsera-sync", {
   namedExports: {
     todayJakarta: () => "2026-07-20",
@@ -74,13 +88,14 @@ test("200 sukses: memanggil sync hari ini, melepas lock, runId disertakan", asyn
 });
 
 test("idempotent: dua panggilan berturut-turut sama-sama sukses tanpa efek ganda berbahaya", async () => {
+  syncState.lastDailyAuditDate = null;
   auditAndSyncOlseraDayMock.mock.resetCalls();
   await runOlseraSalesCron("Bearer test-secret");
   await runOlseraSalesCron("Bearer test-secret");
-  assert.equal(auditAndSyncOlseraDayMock.mock.callCount(), 2);
-  for (const call of auditAndSyncOlseraDayMock.mock.calls) {
-    assert.deepEqual(call.arguments, ["2026-07-20"]);
-  }
+  assert.equal(auditAndSyncOlseraDayMock.mock.callCount(), 3);
+  assert.deepEqual(auditAndSyncOlseraDayMock.mock.calls[0].arguments, ["2026-07-20"]);
+  assert.deepEqual(auditAndSyncOlseraDayMock.mock.calls[1].arguments, ["2026-07-19"]);
+  assert.deepEqual(auditAndSyncOlseraDayMock.mock.calls[2].arguments, ["2026-07-20"]);
 });
 
 test("action match (data sudah cocok) -> sukses tanpa tarik ulang, alasan diteruskan ke response", async () => {
@@ -99,6 +114,33 @@ test("action match (data sudah cocok) -> sukses tanpa tarik ulang, alasan diteru
   assert.equal(res.body.expectedCount, 42);
   assert.equal(res.body.processedCount, 0, "match berarti TIDAK ada order detail yang ditarik ulang");
   assert.equal(res.body.reason, "Jumlah dan total cocok");
+});
+
+test("audit H-1 gagal tidak menggagalkan sync hari ini dan marker tidak ditulis", async () => {
+  syncState.lastDailyAuditDate = null;
+  auditAndSyncOlseraDayMock.mock.resetCalls();
+  auditAndSyncOlseraDayMock.mock.mockImplementation(async (date: string) => ({
+    date,
+    action: date === "2026-07-19" ? "failed" : "match",
+    expectedOrderCount: 0,
+    processedOrderCount: 0,
+    reason: null,
+    errorMessage: date === "2026-07-19" ? "temporary Olsera error" : null,
+  }));
+  const updateCallsBefore = syncStateCollection.updateOne.mock.callCount();
+  const res = await runOlseraSalesCron("Bearer test-secret");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(syncState.lastDailyAuditDate, null);
+  assert.equal(syncStateCollection.updateOne.mock.callCount(), updateCallsBefore);
+  auditAndSyncOlseraDayMock.mock.mockImplementation(async (date: string) => ({
+    date,
+    action: "resynced",
+    expectedOrderCount: 3,
+    processedOrderCount: 3,
+    reason: null,
+    errorMessage: null,
+  }));
 });
 
 test("connection-expired: pesan error mengandung 401 dipetakan ke status aman, bukan pesan mentah", async () => {

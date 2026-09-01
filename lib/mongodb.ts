@@ -366,6 +366,8 @@ export type OlseraSyncStateDocument = {
   _id: "olsera";
   /** Tanggal terakhir yang sync-nya tuntas penuh (expected = processed). */
   lastFullySyncedDate: string | null;
+  /** Tanggal H-1 terakhir yang berhasil diaudit cron. */
+  lastDailyAuditDate?: string | null;
   updatedAt: Date;
 };
 
