@@ -509,7 +509,7 @@ export async function loadInventoryOpnameCutoff(
     const hasPeriodOrder = periodOrderItemIds.has(String(snap.productId)) || relatedAliases.some((alias) => periodOrderItemIds.has(String(alias.oldProductId)));
     const carryForwardEligible = !hasPeriodOrder && !hasUnverifiedAlias && previous?.closingQty !== null && previous?.closingQty !== undefined && previous.closingQty >= 0 && previous.status === "complete" && snap.openingQty === previous.closingQty;
     const reference = resolveStagnantReference(stagnantKey, aliasOldKeys, previousClosingByKey, previousPeriod.month);
-    const carryForwardReason = hasPeriodOrder ? "Ada transaksi olsera_order_items pada periode ini." : hasUnverifiedAlias ? "Ada alias produk yang belum terverifikasi." : !previous || previous.closingQty === null ? "Closing bulan sebelumnya tidak tersedia." : previous.closingQty < 0 ? "Closing bulan sebelumnya negatif." : previous.status !== "complete" ? "Snapshot bulan sebelumnya belum complete." : snap.openingQty !== previous.closingQty ? "Chain closing bulan sebelumnya ≠ opening bulan ini." : null;
+    const carryForwardReason = hasPeriodOrder ? "Ada transaksi produk ini pada periode yang diperiksa." : hasUnverifiedAlias ? "Identitas produk belum dipastikan." : !previous || previous.closingQty === null ? "Stok akhir bulan sebelumnya tidak tersedia." : previous.closingQty < 0 ? "Stok akhir bulan sebelumnya bernilai negatif." : previous.status !== "complete" ? "Data stok bulan sebelumnya belum lengkap." : snap.openingQty !== previous.closingQty ? "Stok akhir bulan sebelumnya tidak sama dengan stok awal bulan ini." : null;
     const systemClosingQty = carryForwardEligible ? previous!.closingQty : null;
     rows.push({
       productId: snap.productId,

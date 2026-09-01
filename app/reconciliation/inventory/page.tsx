@@ -883,7 +883,7 @@ export default function InventoryOpnamePage() {
                           </span>
                         ) : (
                           <span title={row.systemClosingSource === "CARRY_FORWARD" ? `Carry-forward dari closing ${formatCarryForwardPeriod(row.systemClosingSourcePeriod ?? "")} — produk tidak bergerak di periode ini` : undefined}>
-                            {formatQty(row.systemClosingQty)}{row.systemClosingSource === "CARRY_FORWARD" && <small className="ml-1">(cf)</small>}
+                            {formatQty(row.systemClosingQty)}{row.systemClosingSource === "CARRY_FORWARD" && <small className="ml-1">(dari bulan lalu)</small>}
                           </span>
                         )}
                       </td>
