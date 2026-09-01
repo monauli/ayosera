@@ -1,0 +1,6 @@
+tmp/
+backup/
+doc export/
+*.xlsx
+*.pdf
+*.zip
