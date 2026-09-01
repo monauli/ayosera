@@ -144,7 +144,6 @@ export default function InventoryOpnamePage() {
   // Awal periode BA — periode BA TIDAK selalu bulan kalender (BA Februari 2026
   // = 04 Feb s/d 04 Mar). Kosong = mode bulanan lama.
   const [startDate, setStartDate] = useState("");
-  const [cutoffConfirmed, setCutoffConfirmed] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<LoadResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -211,7 +210,7 @@ export default function InventoryOpnamePage() {
       // konfirmasi (cutoffConfirmed) — sesuai aturan "cutoff WAJIB dikonfirmasi
       // user, bukan otomatis tanpa konfirmasi". Tanpa konfirmasi, query tetap
       // basis snapshot bulanan lama (backward compatible).
-      const useCutoff = cutoffConfirmed && cutoffDate.trim() !== "";
+      const useCutoff = cutoffDate.trim() !== "";
       const useStart = useCutoff && startDate.trim() !== "";
       const url = `/api/reconciliation/inventory-opname?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}${useCutoff ? `&cutoffDate=${encodeURIComponent(cutoffDate.trim())}` : ""}${useStart ? `&startDate=${encodeURIComponent(startDate.trim())}` : ""}`;
       const response = await fetch(url, { cache: "no-store" });
@@ -254,7 +253,6 @@ export default function InventoryOpnamePage() {
       }
       if (parsed.cutoffDate) {
         setCutoffDate(parsed.cutoffDate);
-        setCutoffConfirmed(false);
       }
       setBaItemsFound(parsed.items.length);
       setBaPeriod({ periodStart: parsed.periodStart, cutoffDate: parsed.cutoffDate });
@@ -342,7 +340,7 @@ export default function InventoryOpnamePage() {
   };
 
   const finalize = async () => {
-    if (!data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed) return;
+    if (!data || !attachment || !cutoffDate || !baOnlyDifferencesConfirmed) return;
     if (shouldBlockFinalizeForUnreadBa({ uploadSucceeded: true, itemsFound: baItemsFound ?? 0 }) && baItemsFound !== null) {
       setFinalizeError(BA_UNREAD_MESSAGE);
       return;
@@ -374,7 +372,7 @@ export default function InventoryOpnamePage() {
       const response = await fetch("/api/reconciliation/inventory-opname", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "finalize", year: Number(year), month: Number(month), cutoff: cutoffDate, cutoffDate, ...(startDate.trim() !== "" ? { startDate: startDate.trim() } : {}), cutoffConfirmed, baOnlyDifferencesConfirmed, attachment }),
+        body: JSON.stringify({ action: "finalize", year: Number(year), month: Number(month), cutoff: cutoffDate, cutoffDate, ...(startDate.trim() !== "" ? { startDate: startDate.trim() } : {}), cutoffConfirmed: true, baOnlyDifferencesConfirmed, attachment }),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || "Finalisasi gagal. Periksa kembali data checker.");
@@ -491,12 +489,16 @@ export default function InventoryOpnamePage() {
       if (canAssumeOmitted && physicalQty === null && row.systemClosingQty !== null && !row.manualAdjust) {
         return { ...row, physicalQty: row.systemClosingQty, differenceQty: 0, status: "COCOK" as OpnameStatus, evidenceSource: "BA_OMITTED_ASSUMED_MATCH" as const };
       }
-      if (!edit) return row;
+      if (!edit) {
+        return row.physicalQty === null && row.systemClosingQty !== null && !row.manualAdjust
+          ? { ...row, status: "BELUM_DIISI" as OpnameStatus }
+          : row;
+      }
       const differenceQty = physicalQty === null || row.systemClosingQty === null ? null : physicalQty - row.systemClosingQty;
       const status: OpnameStatus = row.manualAdjust
         ? "BUTUH_ADJUST_MANUAL"
         : physicalQty === null
-          ? row.snapshotStatus === "complete" ? "COCOK" : "BELUM_DIISI"
+          ? "BELUM_DIISI"
           : row.systemClosingQty === null || physicalQty !== row.systemClosingQty
             ? "PERLU_DICEK"
             : "COCOK";
@@ -547,14 +549,14 @@ export default function InventoryOpnamePage() {
   // Aman: jalur BA hanya menulis inventoryStockOpnameReconciliations, tidak
   // pernah menyentuh olsera_inventory_monthly_snapshots tempat data historis
   // Februari berada.
-  const baFlowRelevant = needsBa || Boolean(attachment) || baRows.length > 0;
+  // Panel BA tampil selama periode belum dikunci, meskipun belum ada selisih.
   // Rentang BA aktif hanya bila cutoff sudah dikonfirmasi user — syarat yang
   // sama dipakai pemuatan, penyimpanan, dan finalisasi.
-  const rangeMode = cutoffConfirmed && cutoffDate.trim() !== "" && startDate.trim() !== "";
+  const rangeMode = cutoffDate.trim() !== "" && startDate.trim() !== "";
   // SATU tempat penentu apakah rentang BA ikut dikirim — dipakai muat, simpan,
   // dan finalisasi supaya ketiganya tidak pernah memakai basis berbeda.
   const baRangePayload = (): { cutoffDate?: string; startDate?: string } =>
-    cutoffConfirmed && cutoffDate.trim() !== ""
+    cutoffDate.trim() !== ""
       ? { cutoffDate: cutoffDate.trim(), ...(startDate.trim() !== "" ? { startDate: startDate.trim() } : {}) }
       : {};
   const baCutoffOutOfPeriod = Boolean(baPeriod?.periodStart && baPeriod?.cutoffDate && cutoffDate && !isDateWithinPeriod(cutoffDate, baPeriod.periodStart, baPeriod.cutoffDate));
@@ -643,7 +645,6 @@ export default function InventoryOpnamePage() {
               onChange={(e) => {
                 const value = e.target.value;
                 setStartDate(value);
-                setCutoffConfirmed(false);
                 // Periode dokumen BA & lock mengikuti bulan tanggal MULAI.
                 if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
                   setYear(value.slice(0, 4));
@@ -660,12 +661,8 @@ export default function InventoryOpnamePage() {
               min={startDate || undefined}
               onChange={(e) => {
                 setCutoffDate(e.target.value);
-                setCutoffConfirmed(false);
               }}
             />
-          </label>
-          <label className="recon-check" style={{ alignSelf: "end" }}>
-            <input type="checkbox" checked={cutoffConfirmed} disabled={!cutoffDate.trim()} onChange={(e) => setCutoffConfirmed(e.target.checked)} /> Konfirmasi cutoff — Stok Akhir Sistem dihitung persis pada tanggal ini
           </label>
         </>
         <label className="recon-check" style={{ alignSelf: "end" }}>
@@ -676,14 +673,14 @@ export default function InventoryOpnamePage() {
       </section>
 
       {data?.cutoffDate && (
-        <p className="recon-readonly">
+        <p className="recon-readonly" style={{ justifyContent: "center", textAlign: "center" }}>
           <strong>Periode BA: {formatIsoDateID(data.startDate)} — {formatIsoDateID(data.cutoffDate)}</strong>
           {" · "}Stok Akhir Sistem dihitung persis pada cutoff {data.cutoffDate} (bukan akhir bulan kalender) — jendela query {data.startDate} s/d {data.endDate}.
         </p>
       )}
       {!data?.cutoffDate && data && (
         <p className="recon-readonly">
-          Periode: <strong>{MONTH_NAMES[Number(month) - 1]} {year}</strong> (bulan penuh) — isi Tanggal mulai + Cutoff lalu centang konfirmasi bila periode Berita Acara bukan bulan kalender.
+          Periode: <strong>{MONTH_NAMES[Number(month) - 1]} {year}</strong> (bulan penuh) — isi Tanggal mulai dan Cutoff bila periode Berita Acara bukan bulan kalender.
         </p>
       )}
 
@@ -694,7 +691,7 @@ export default function InventoryOpnamePage() {
         {data?.monthlyLock?.history?.length ? <details className="recon-history"><summary>Riwayat Lock / Unlock</summary><ul>{data.monthlyLock.history.map((item, index) => { const entry = item as { action?: string; actor?: string; reason?: string | null; at?: string; version?: number }; const accidental = isFebruaryHistoricalFinal && ((entry.action === "lock" && entry.actor === "ariamp@gmail.com" && entry.at?.startsWith("2026-08-14T11:42")) || (entry.action === "unlock" && entry.actor === "timunemas@ayo.local" && entry.at?.startsWith("2026-08-14T11:54"))); if (accidental) return null; return <li key={`${entry.at ?? "event"}-${index}`}><strong>{String(entry.action ?? "").toUpperCase()}</strong> · {entry.at ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.at)) : "—"} · {entry.actor ?? "User"}{entry.reason ? ` · ${entry.reason}` : ""}{entry.version ? ` · v${entry.version}` : ""}</li>; })}</ul></details> : null}
       </section>
 
-      {baFlowRelevant && <section className="recon-filters recon-finalization" aria-label="Penyelesaian Selisih dengan Berita Acara">
+      {data?.monthlyLock?.status !== "locked" && <section className="recon-filters recon-finalization" aria-label="Penyelesaian Selisih dengan Berita Acara">
         <label>
           Berita Acara Stock Opname
           <input type="file" accept="application/pdf,image/jpeg,image/png" disabled={!supervisor || uploading || data?.lock?.status === "LOCKED"} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} />
@@ -715,10 +712,9 @@ export default function InventoryOpnamePage() {
             <p className="recon-readonly">File BA: {data.lock.attachment?.fileName ?? attachment?.fileName ?? "—"}</p>
             <p className="recon-readonly">Data pemeriksaan pada tanggal cutoff sudah dikunci. Transaksi inventori setelah tanggal tersebut tetap berjalan normal.</p>
             {supervisor && <><input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Alasan buka kunci" /><button className="recon-button danger" onClick={() => void unlock()} disabled={unlocking}>{unlocking ? <Loader2 className="spin" /> : <Unlock />} Buka Kunci</button></>}
-          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !cutoffConfirmed || !baOnlyDifferencesConfirmed || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
+          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !baOnlyDifferencesConfirmed || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
         </div>
       </section>}
-      {!baFlowRelevant && data && <p className="recon-readonly">Berita Acara tidak diperlukan karena seluruh stok sudah cocok.</p>}
       {baUnread && <p className="recon-draft"><AlertTriangle /> {BA_UNREAD_MESSAGE}</p>}
       {baBlocksFinalize && <p className="recon-draft"><AlertTriangle /> Ada item Berita Acara berstatus Perlu Dicek atau Tidak Ditemukan — selesaikan review sebelum finalisasi.</p>}
       {baCutoffOutOfPeriod && <p className="recon-draft"><AlertTriangle /> Cutoff yang dipilih berada di luar periode Berita Acara ({baPeriod?.periodStart} s/d {baPeriod?.cutoffDate}).</p>}
