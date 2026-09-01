@@ -665,6 +665,8 @@ export type InventoryStockOpnameDocument = {
   physicalQty: number;
   /** Stok akhir sistem (snapshot) SAAT diverifikasi/disimpan — dicatat sebagai bukti; snapshot sumber tidak pernah ditulis ulang. */
   systemClosingQty: number | null;
+  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD";
+  systemClosingSourcePeriod?: string | null;
   differenceQty: number | null;
   /** "Belum Diisi" tidak pernah tersimpan — direpresentasikan lewat ketiadaan dokumen. */
   status: "COCOK" | "PERLU_DICEK" | "BUTUH_ADJUST_MANUAL";

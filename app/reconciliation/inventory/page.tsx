@@ -35,6 +35,8 @@ type Row = {
   snapshotClosingQty: number | null;
   formulaClosingQty: number | null;
   systemClosingQty: number | null;
+  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD" | null;
+  systemClosingSourcePeriod?: string | null;
   formulaMismatch: boolean;
   snapshotStatus: "complete" | "boundary-only" | "incomplete";
   snapshotDiagnostics: string[];
@@ -97,6 +99,11 @@ function formatIsoDateID(value: string | null | undefined): string {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return value ?? "-";
   const [year, month, day] = value.split("-");
   return `${day} ${MONTH_NAMES[Number(month) - 1]?.slice(0, 3) ?? month} ${year}`;
+}
+
+function formatCarryForwardPeriod(value: string): string {
+  const [year, month] = value.split("-").map(Number);
+  return `${MONTH_NAMES[month - 1] ?? value} ${year}`;
 }
 
 function currentJakartaYearMonth(): { year: number; month: number } {
@@ -871,29 +878,13 @@ export default function InventoryOpnamePage() {
                             referensi (kalau ada) ikut di DALAM badge yang sama,
                             bukan elemen baru. */}
                         {row.systemClosingQty === null && row.snapshotStatus === "boundary-only" ? (
-                          row.reference?.kind === "available" ? (
-                            <span
-                              className="recon-badge recon-badge-neutral"
-                              title="Referensi: posisi stok akhir bulan sebelumnya — BUKAN Stok Akhir Sistem pada tanggal cutoff (produk ini tidak punya pergerakan di periode BA, jadi API Olsera tidak mengembalikan posisinya pada tanggal cutoff). Isi Stok Berita Acara dari hitung fisik; baris ini belum bisa difinalisasi."
-                            >
-                              {formatQty(row.reference.qty ?? null)} (ref)
-                            </span>
-                          ) : (
-                            <span
-                              className="recon-badge recon-badge-warn"
-                              title={
-                                row.reference?.kind === "identity-changed"
-                                  ? "Identitas produk berganti — perlu verifikasi manual, angka referensi tidak ditampilkan. Stok Akhir Sistem tidak tersedia untuk baris ini; baris ini belum bisa difinalisasi."
-                                  : row.reference?.kind === "invalid-previous"
-                                    ? "Closing bulan sebelumnya tidak valid, referensi tidak ditampilkan. Stok Akhir Sistem tidak tersedia untuk baris ini; baris ini belum bisa difinalisasi."
-                                    : "Tidak ada pergerakan di periode ini, jadi posisi stok pada tanggal cutoff tidak tersedia. Isi Stok Berita Acara dari hitung fisik. Baris ini belum bisa difinalisasi."
-                              }
-                            >
-                              {row.reference?.kind === "identity-changed" ? "Identitas berganti" : row.reference?.kind === "invalid-previous" ? "Data tidak valid" : "Tidak tersedia"}
-                            </span>
-                          )
+                          <span className="recon-badge recon-badge-warn" title={row.snapshotDiagnostics.at(-1) ?? "Carry-forward tidak diizinkan; perlu verifikasi manual."}>
+                            Tidak diisi
+                          </span>
                         ) : (
-                          formatQty(row.systemClosingQty)
+                          <span title={row.systemClosingSource === "CARRY_FORWARD" ? `Carry-forward dari closing ${formatCarryForwardPeriod(row.systemClosingSourcePeriod ?? "")} — produk tidak bergerak di periode ini` : undefined}>
+                            {formatQty(row.systemClosingQty)}{row.systemClosingSource === "CARRY_FORWARD" && <small className="ml-1">(cf)</small>}
+                          </span>
                         )}
                       </td>
                       <td>

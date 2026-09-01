@@ -31,7 +31,7 @@ import { visibleMonthlyInventoryRows } from "./olsera-inventory-ui.ts";
 import { previousMonth, type MatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchMatchingContext } from "./olsera-inventory-monthly-snapshot-store.ts";
 import { fetchStockMovementRange, type FetchStockMovementResult } from "./olsera-inventory-stockmovement.ts";
-import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument, OlseraProductAliasDocument } from "./mongodb.ts";
+import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument, OlseraProductAliasDocument, OlseraOrderItemDocument } from "./mongodb.ts";
 import { compareHistoricalInventoryRows, type HistoricalReconciliationRow } from "./inventory-historical-reconciliation.ts";
 import { FEBRUARY_HISTORICAL_SOURCE_REVISION, resolveFebruaryHistoricalRows } from "./february-historical-migration.ts";
 import { FEBRUARY_HISTORICAL_SOURCE } from "./february-historical-source.ts";
@@ -91,14 +91,15 @@ export type CutoffFetchOverrides = {
 export type InventoryStockOpnameContext = {
   snapshots: MinimalReadCollection<OlseraInventoryMonthlySnapshotDocument>;
   opname: MinimalOpnameCollection;
+  orderItems?: MinimalReadCollection<OlseraOrderItemDocument>;
   approvedRows?: readonly HistoricalReconciliationRow[];
 } & CutoffFetchOverrides;
 
 export async function resolveInventoryStockOpnameContext(context?: InventoryStockOpnameContext): Promise<InventoryStockOpnameContext> {
   if (context) return context;
   const { collections } = await import("./mongodb.ts");
-  const { olseraInventoryMonthlySnapshots, inventoryStockOpnameReconciliations } = await collections();
-  return { snapshots: olseraInventoryMonthlySnapshots, opname: inventoryStockOpnameReconciliations };
+  const { olseraInventoryMonthlySnapshots, inventoryStockOpnameReconciliations, olseraOrderItems } = await collections();
+  return { snapshots: olseraInventoryMonthlySnapshots, opname: inventoryStockOpnameReconciliations, orderItems: olseraOrderItems };
 }
 
 /** Resolusi dependency jalur cutoff — default: fetchStockMovementRange (Open API Olsera live, read-only) + fetchMatchingContext (katalog Mongo, read-only). Override lewat context untuk tes (tanpa network/Mongo sungguhan). */
@@ -216,6 +217,8 @@ export type InventoryOpnameRow = {
   formulaClosingQty: number | null;
   /** Angka yang benar-benar dipakai sebagai "Stok Akhir Sistem" (closingQty snapshot, fallback ke rumus bila snapshot kosong). */
   systemClosingQty: number | null;
+  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD" | null;
+  systemClosingSourcePeriod?: string | null;
   formulaMismatch: boolean;
   snapshotStatus: "complete" | "boundary-only" | "incomplete";
   snapshotDiagnostics: string[];
@@ -394,11 +397,11 @@ export async function loadInventoryOpnameCutoff(
     if (startDate > input.cutoffDate) throw new InventoryStockOpnameError(`startDate (${startDate}) tidak boleh melewati cutoffDate (${input.cutoffDate}).`);
   }
 
-  const { opname, snapshots } = await resolveInventoryStockOpnameContext(context);
+  const { opname, snapshots, orderItems } = await resolveInventoryStockOpnameContext(context);
   const deps = await resolveCutoffDeps(context);
   const previousPeriod = previousMonth({ year, month });
 
-  const [fetched, opnameRows, snapshotRows, previousSnapshotRows, aliasDocs] = await Promise.all([
+  const [fetched, opnameRows, snapshotRows, previousSnapshotRows, aliasDocs, periodOrderItems] = await Promise.all([
     fetchCutoffSystemRows(input.cutoffDate, deps, startDate),
     opname.find({ storeId, year, month }).toArray(),
     // Dipakai HANYA untuk mengetahui produk apa saja yang punya stok di periode
@@ -409,6 +412,7 @@ export async function loadInventoryOpnameCutoff(
     // TIDAK PERNAH jadi/menyentuh Stok Akhir Sistem.
     snapshots.find({ storeId, year: previousPeriod.year, month: previousPeriod.month }).toArray(),
     resolveAliasesCollection(context).then((col) => col.find({}).toArray()),
+    (orderItems ?? { find: () => ({ toArray: async () => [] }) }).find({ date: { $gte: startDate ?? `${year}-${String(month).padStart(2, "0")}-01`, $lte: input.cutoffDate } }).toArray(),
   ]);
   if (!fetched.ok) throw new InventoryStockOpnameError(`Gagal menarik stok sistem Olsera pada cutoff ${input.cutoffDate}: ${fetched.error}`);
 
@@ -416,6 +420,16 @@ export async function loadInventoryOpnameCutoff(
   // produk, dan set productId LAMA (sudah beralih identitas) dari alias.
   const previousClosingByKey = new Map(previousSnapshotRows.map((snap) => [opnameKey(snap.productId, snap.variantId), snap.closingQty]));
   const aliasOldKeys = new Set(aliasDocs.map((alias) => opnameKey(alias.oldProductId, alias.oldVariantId)));
+  const aliasByNewKey = new Map<string, OlseraProductAliasDocument[]>();
+  for (const alias of aliasDocs) {
+    if (alias.newProductId === null) continue;
+    const key = opnameKey(alias.newProductId, alias.newVariantId);
+    aliasByNewKey.set(key, [...(aliasByNewKey.get(key) ?? []), alias]);
+  }
+  const periodOrderItemIds = new Set<string>();
+  for (const item of periodOrderItems) {
+    for (const id of [item.productId, item.resolvedProductId]) if (id !== null && id !== undefined) periodOrderItemIds.add(String(id));
+  }
 
   const opnameByKey = new Map(opnameRows.map((doc) => [opnameKey(doc.productId, doc.variantId), doc]));
 
@@ -446,6 +460,8 @@ export async function loadInventoryOpnameCutoff(
       snapshotClosingQty: systemClosingQty,
       formulaClosingQty: computeFormulaClosingQty(flow),
       systemClosingQty,
+      systemClosingSource: "API_CUTOFF",
+      systemClosingSourcePeriod: null,
       formulaMismatch: hasFormulaMismatch(flow),
       snapshotStatus: "complete",
       snapshotDiagnostics: [],
@@ -487,7 +503,14 @@ export async function loadInventoryOpnameCutoff(
     const opnameDoc = opnameByKey.get(opnameKey(snap.productId, snap.variantId)) ?? null;
     const physicalQty = opnameDoc?.physicalQty ?? null;
     const stagnantKey = opnameKey(snap.productId, snap.variantId);
+    const previous = previousSnapshotRows.find((row) => opnameKey(row.productId, row.variantId) === stagnantKey);
+    const relatedAliases = aliasDocs.filter((alias) => opnameKey(alias.oldProductId, alias.oldVariantId) === stagnantKey || opnameKey(alias.newProductId ?? -1, alias.newVariantId) === stagnantKey);
+    const hasUnverifiedAlias = relatedAliases.some((alias) => alias.confidence !== "verified" || !alias.verifiedAt);
+    const hasPeriodOrder = periodOrderItemIds.has(String(snap.productId)) || relatedAliases.some((alias) => periodOrderItemIds.has(String(alias.oldProductId)));
+    const carryForwardEligible = !hasPeriodOrder && !hasUnverifiedAlias && previous?.closingQty !== null && previous?.closingQty !== undefined && previous.closingQty >= 0 && previous.status === "complete" && snap.openingQty === previous.closingQty;
     const reference = resolveStagnantReference(stagnantKey, aliasOldKeys, previousClosingByKey, previousPeriod.month);
+    const carryForwardReason = hasPeriodOrder ? "Ada transaksi olsera_order_items pada periode ini." : hasUnverifiedAlias ? "Ada alias produk yang belum terverifikasi." : !previous || previous.closingQty === null ? "Closing bulan sebelumnya tidak tersedia." : previous.closingQty < 0 ? "Closing bulan sebelumnya negatif." : previous.status !== "complete" ? "Snapshot bulan sebelumnya belum complete." : snap.openingQty !== previous.closingQty ? "Chain closing bulan sebelumnya ≠ opening bulan ini." : null;
+    const systemClosingQty = carryForwardEligible ? previous!.closingQty : null;
     rows.push({
       productId: snap.productId,
       variantId: snap.variantId,
@@ -504,18 +527,20 @@ export async function loadInventoryOpnameCutoff(
       outgoingQty: null,
       snapshotClosingQty: null,
       formulaClosingQty: null,
-      systemClosingQty: null,
+      systemClosingQty,
+      systemClosingSource: carryForwardEligible ? "CARRY_FORWARD" : null,
+      systemClosingSourcePeriod: carryForwardEligible ? `${previousPeriod.year}-${String(previousPeriod.month).padStart(2, "0")}` : null,
       formulaMismatch: false,
       snapshotStatus: "boundary-only",
       snapshotDiagnostics: [
         `Stok Akhir Sistem tidak tersedia untuk cutoff ${input.cutoffDate}: produk ini tidak punya pergerakan pada ${fetched.startDate} s/d ${fetched.endDate}, sehingga API Olsera tidak mengembalikan posisi stoknya pada tanggal itu.`,
-        "Angka snapshot bulanan sengaja TIDAK dipakai karena posisinya akhir bulan kalender, bukan tanggal cutoff BA. Isi Stok Berita Acara dari hitung fisik; baris ini tidak bisa difinalisasi selama angka sistemnya belum tersedia.",
+        carryForwardEligible ? `Stok diam terverifikasi; memakai closing ${previousPeriod.year}-${String(previousPeriod.month).padStart(2, "0")} sebagai carry-forward.` : `Carry-forward tidak diizinkan: ${carryForwardReason}`,
       ],
       reference,
       manualAdjust: false,
       physicalQty,
-      differenceQty: computeDifferenceQty(physicalQty, null),
-      status: determineOpnameStatus({ physicalQty, systemClosingQty: null, manualAdjust: false }),
+      differenceQty: computeDifferenceQty(physicalQty, systemClosingQty),
+      status: determineOpnameStatus({ physicalQty, systemClosingQty, manualAdjust: false }),
       note: opnameDoc?.note ?? null,
       updatedBy: opnameDoc?.updatedBy ?? null,
       updatedAt: opnameDoc?.updatedAt ? new Date(opnameDoc.updatedAt).toISOString() : null,
@@ -573,6 +598,8 @@ type SaveSystemRow = {
   /** closingQty efektif (snapshot: closingQty ?? formula; cutoff: "sisa" API). */
   systemClosingQty: number | null;
   manualAdjust: boolean;
+  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD";
+  systemClosingSourcePeriod?: string | null;
 };
 
 /**
@@ -673,6 +700,14 @@ export async function saveInventoryOpnameBatch(
     for (const snap of stagnantForSave) {
       systemRows.push({ productId: snap.productId, variantId: snap.variantId, rawClosingQty: null, systemClosingQty: null, manualAdjust: false });
     }
+    // Reuse the exact eligibility evaluation used by the read path so save/finalize
+    // cannot disagree about whether a stagnant row is safe to carry forward.
+    const verified = await loadInventoryOpnameCutoff({ storeId, year, month, cutoffDate, startDate }, context);
+    const verifiedByKey = new Map(verified.rows.map((row) => [opnameKey(row.productId, row.variantId), row]));
+    systemRows = systemRows.map((row) => {
+      const source = verifiedByKey.get(opnameKey(row.productId, row.variantId));
+      return source ? { ...row, systemClosingQty: source.systemClosingQty, rawClosingQty: source.systemClosingQty, systemClosingSource: source.systemClosingSource ?? undefined, systemClosingSourcePeriod: source.systemClosingSourcePeriod ?? null } : row;
+    });
   } else {
     const snapshotRows = await snapshots.find({ storeId, year, month }).toArray();
     systemRows = snapshotRows.map((snap) => ({
@@ -740,6 +775,8 @@ export async function saveInventoryOpnameBatch(
           variantId: entry.variantId,
           physicalQty: entry.physicalQty,
           systemClosingQty,
+          systemClosingSource: sys.systemClosingSource ?? "API_CUTOFF",
+          systemClosingSourcePeriod: sys.systemClosingSourcePeriod ?? null,
           differenceQty,
           status,
           note: entry.note,
