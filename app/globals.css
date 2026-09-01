@@ -864,6 +864,7 @@ th[scope],
    Menggunakan token graphite/rose shell agar light/dark tetap konsisten.
    ============================================================ */
 .recon-page { min-height: 100vh; background: rgb(var(--rd-bg)); color: rgb(var(--rd-text-secondary)); padding: 1.5rem; }
+.recon-header,.recon-filters,.recon-cards,.recon-readiness,.recon-table-wrap,.recon-skeleton,.recon-empty,.recon-ba-results,.recon-draft,.recon-special,.recon-readonly { width:100%; box-sizing:border-box; }
 .recon-header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; max-width:1500px; margin:0 auto 1.25rem; }
 .recon-header h1 { margin:.25rem 0; color:rgb(var(--rd-text)); font-size:1.75rem; font-weight:700; letter-spacing:-.02em; }
 .recon-header p,.recon-back { color:rgb(var(--rd-text-tertiary)); font-size:.875rem; }
