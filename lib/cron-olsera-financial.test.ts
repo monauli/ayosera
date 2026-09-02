@@ -777,8 +777,9 @@ test("selectFinancialCronTargetWithHistory (scope auto): previous dengan progres
   const auto = selectFinancialCronTargetWithHistory({ ...input, scope: "auto" as const });
   assert.deepEqual(auto, { period: "2026-08", startFresh: false, reason: "previous-unfinished" });
 
-  // scope "current" (dipakai app/api/cron/olsera/financial/route.ts) memang
-  // tidak pernah menyentuh previous — prioritas baru tidak boleh mengubah itu.
+  // scope "current" memang tidak pernah menyentuh previous — prioritas baru
+  // tidak boleh mengubah itu. (Route cron sendiri sekarang memakai scope
+  // "auto"; scope "current" tetap didukung sebagai mode sempit.)
   const current = selectFinancialCronTargetWithHistory({ ...input, scope: "current" as const });
   assert.equal(current?.period, "2026-09");
   assert.equal(current?.reason, "current-unfinished");

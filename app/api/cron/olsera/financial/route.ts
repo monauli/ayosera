@@ -12,9 +12,16 @@ export const maxDuration = 300;
  * cron = satu step, checkpoint tersimpan per periode sehingga proses yang
  * belum selesai dilanjutkan otomatis oleh panggilan berikutnya. Body opsional
  * `{year, month}` (JSON) untuk override periode; default bulan berjalan (WIB).
+ *
+ * scope "auto" (sebelumnya di-hardcode "current"): bulan SEBELUMNYA ikut
+ * dipertimbangkan lagi, supaya prioritas "previous yang sudah setengah jalan
+ * menyalip current" (lib/cron-olsera-financial.ts,
+ * financialPreviousResumeShouldPreemptCurrent) benar-benar aktif — dengan
+ * scope "current" cabang itu tidak pernah tercapai karena previous tidak
+ * pernah masuk pertimbangan sama sekali.
  */
 export async function POST(request: Request) {
   const input = await request.json().catch(() => undefined);
-  const { status, body } = await runOlseraFinancialCron(request.headers.get("authorization"), { ...input, scope: "current" });
+  const { status, body } = await runOlseraFinancialCron(request.headers.get("authorization"), { ...input, scope: "auto" });
   return NextResponse.json(body, { status });
 }
