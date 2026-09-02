@@ -389,10 +389,66 @@ test("selectFinancialCronTarget: previousPeriod null (di/sebelum baseline) -> ti
   assert.deepEqual(target, { period: "2026-02", startFresh: true, reason: "current-unfinished" });
 });
 
-test("selectFinancialCronTarget: current unfinished DIDAHULUKAN dari previous unfinished (prioritas current > previous)", () => {
+test("selectFinancialCronTarget: current unfinished DIDAHULUKAN dari previous unfinished yang BELUM punya progres (accountCursor 0 / belum ada log)", () => {
   const now = new Date("2026-08-09T00:00:00Z");
-  const target = selectFinancialCronTarget({ currentPeriod: "2026-08", previousPeriod: "2026-07", currentLog: { status: "running", finalized: false, updatedAt: now, completedAt: null }, previousLog: null, now });
-  assert.equal(target?.period, "2026-08");
+  const currentLog = { status: "running" as const, finalized: false, updatedAt: now, completedAt: null };
+
+  // previous belum pernah dijalankan sama sekali.
+  const noLog = selectFinancialCronTarget({ currentPeriod: "2026-08", previousPeriod: "2026-07", currentLog, previousLog: null, now });
+  assert.equal(noLog?.period, "2026-08");
+  assert.equal(noLog?.reason, "current-unfinished");
+
+  // previous SUDAH punya log dan belum selesai, tapi accountCursor masih 0 —
+  // tidak ada kerja setengah jalan yang ditunda, jadi current tetap duluan.
+  const noProgress = selectFinancialCronTarget({
+    currentPeriod: "2026-08",
+    previousPeriod: "2026-07",
+    currentLog,
+    previousLog: { status: "running", finalized: false, updatedAt: now, completedAt: null, accountCursor: 0 },
+    now,
+  });
+  assert.equal(noProgress?.period, "2026-08");
+  assert.equal(noProgress?.reason, "current-unfinished");
+});
+
+test("selectFinancialCronTarget: previous unfinished DENGAN progres (accountCursor > 0) MENYALIP current yang baru mulai", () => {
+  const now = new Date("2026-09-02T12:00:00Z");
+  // Kasus nyata yang jadi pemicu perbaikan: Agustus sudah 50/85 lalu September
+  // masuk dan tidak pernah tuntas -> tanpa perbaikan ini Agustus tidak pernah
+  // disentuh lagi karena current menang mutlak setiap invocation.
+  const target = selectFinancialCronTarget({
+    currentPeriod: "2026-09",
+    previousPeriod: "2026-08",
+    currentLog: { status: "running", finalized: false, updatedAt: now, completedAt: null, accountCursor: 0 },
+    previousLog: { status: "running", finalized: false, updatedAt: new Date(now.getTime() - 6 * HOUR_MS), completedAt: null, accountCursor: 50 },
+    now,
+  });
+  assert.deepEqual(target, { period: "2026-08", startFresh: false, reason: "previous-unfinished" }, "previous setengah jalan harus dilanjutkan dulu, dan selalu di-RESUME (startFresh false)");
+});
+
+test("selectFinancialCronTarget: previous sudah success -> current unfinished tetap diproses (perilaku existing, tidak berubah)", () => {
+  const now = new Date("2026-09-02T12:00:00Z");
+  const target = selectFinancialCronTarget({
+    currentPeriod: "2026-09",
+    previousPeriod: "2026-08",
+    currentLog: { status: "running", finalized: false, updatedAt: now, completedAt: null, accountCursor: 7 },
+    previousLog: { status: "success", finalized: true, updatedAt: now, completedAt: now, accountCursor: 85 },
+    now,
+  });
+  assert.deepEqual(target, { period: "2026-09", startFresh: false, reason: "current-unfinished" });
+});
+
+test("selectFinancialCronTarget: previous partial-final lewat cooldown (akan di-RESTART dari 0) TIDAK menyalip current — progres lamanya memang dibuang", () => {
+  const now = new Date("2026-09-02T12:00:00Z");
+  const target = selectFinancialCronTarget({
+    currentPeriod: "2026-09",
+    previousPeriod: "2026-08",
+    currentLog: { status: "running", finalized: false, updatedAt: now, completedAt: null, accountCursor: 7 },
+    // accountCursor 85 tapi finalized -> financialPeriodNeedsFreshStart true.
+    previousLog: { status: "partial", finalized: true, updatedAt: new Date(now.getTime() - 2 * HOUR_MS), completedAt: null, accountCursor: 85 },
+    now,
+  });
+  assert.equal(target?.period, "2026-09", "menyalip di sini hanya menukar starvation current dengan previous yang restart dari nol terus-menerus");
   assert.equal(target?.reason, "current-unfinished");
 });
 
@@ -579,7 +635,10 @@ test("Test H (3B.1): Juli pada tanggal Agustus -> diklasifikasikan sebagai PREVI
   const previousPeriod = "2026-07";
   const julyStaleRunning = { status: "running" as const, finalized: false, updatedAt: new Date("2026-08-07T07:34:54.385Z"), completedAt: null };
   const target = selectFinancialCronTarget({ currentPeriod, previousPeriod, currentLog: null, previousLog: julyStaleRunning, now });
-  // current (Agustus) belum ada log -> unfinished juga, jadi Agustus menang lebih dulu (prioritas current > previous).
+  // current (Agustus) belum ada log -> unfinished juga, dan Juli di sini
+  // BELUM punya progres (accountCursor tidak diisi -> dibaca 0), jadi Agustus
+  // menang lebih dulu. Kalau Juli sudah punya progres, urutannya terbalik —
+  // lihat test "previous unfinished DENGAN progres ... MENYALIP current".
   // Test ini murni membuktikan Juli identifiable sebagai previousPeriod, bukan currentPeriod.
   assert.equal(previousPeriod, "2026-07");
   assert.notEqual(currentPeriod, "2026-07");
@@ -702,6 +761,27 @@ test("anti-starvation: current unfinished tetap mengalahkan historical unfinishe
   assert.equal(target?.period, "2026-08");
   assert.equal(target?.reason, "current-unfinished");
   assert.equal(target?.startFresh, false);
+});
+
+test("selectFinancialCronTargetWithHistory (scope auto): previous dengan progres menyalip current, tapi scope current TIDAK terpengaruh", () => {
+  const now = new Date("2026-09-02T12:00:00Z");
+  const input = {
+    currentPeriod: "2026-09",
+    previousPeriod: "2026-08",
+    currentLog: fakeRun({ period: "2026-09", status: "running" as const, finalized: false, accountCursor: 0, completedAt: null, updatedAt: now }),
+    previousLog: fakeRun({ period: "2026-08", status: "running" as const, finalized: false, accountCursor: 50, completedAt: null, updatedAt: new Date(now.getTime() - 6 * HOUR_MS) }),
+    historicalLogs: [] as never[],
+    now,
+  };
+
+  const auto = selectFinancialCronTargetWithHistory({ ...input, scope: "auto" as const });
+  assert.deepEqual(auto, { period: "2026-08", startFresh: false, reason: "previous-unfinished" });
+
+  // scope "current" (dipakai app/api/cron/olsera/financial/route.ts) memang
+  // tidak pernah menyentuh previous — prioritas baru tidak boleh mengubah itu.
+  const current = selectFinancialCronTargetWithHistory({ ...input, scope: "current" as const });
+  assert.equal(current?.period, "2026-09");
+  assert.equal(current?.reason, "current-unfinished");
 });
 
 test("anti-starvation: historical unfinished tertua dipilih setelah current selesai", () => {

@@ -35,11 +35,14 @@
 // PENTING — batas waktu Vercel/cron-job.org: satu invocation TETAP hanya
 // mengerjakan SATU periode (dipilih lewat selectFinancialCronTarget, bukan
 // dua periode sekaligus). Prioritas (lihat dokumentasi lengkap di
-// selectFinancialCronTarget): periode yang benar-benar belum selesai
-// (current dulu, baru previous) SELALU didahulukan dari periode yang
-// "hanya" perlu refresh ulang — supaya previous yang sedang berjalan tidak
-// pernah kelaparan hanya karena current kebetulan sudah waktunya
-// di-refresh ulang.
+// selectFinancialCronTarget): periode yang benar-benar belum selesai SELALU
+// didahulukan dari periode yang "hanya" perlu refresh ulang — supaya previous
+// yang sedang berjalan tidak pernah kelaparan hanya karena current kebetulan
+// sudah waktunya di-refresh ulang. Di antara sesama "belum selesai",
+// previous yang SUDAH punya progres nyata dan akan di-resume menyalip current
+// (financialPreviousResumeShouldPreemptCurrent) supaya periode setengah jalan
+// tidak terjebak permanen di belakang current yang tidak pernah tuntas;
+// selebihnya current tetap lebih dulu.
 import { todayJakarta } from "@/lib/olsera-sync";
 import { FINANCIAL_BASELINE_PERIOD, previousFinancialPeriod, validatePeriod } from "@/lib/olsera-financial-core";
 import { FinancialClientError } from "@/lib/olsera-financial-client";
@@ -109,8 +112,16 @@ export type CronOlseraFinancialResponse = {
   body: Record<string, unknown>;
 };
 
-/** Bentuk minimal sync log yang dibutuhkan logic pemilihan periode — subset FinancialSyncRun, supaya mudah diuji tanpa objek run penuh. */
-export type FinancialSyncLogLite = Pick<FinancialSyncRun, "status" | "finalized" | "updatedAt" | "completedAt"> | null;
+/**
+ * Bentuk minimal sync log yang dibutuhkan logic pemilihan periode — subset
+ * FinancialSyncRun, supaya mudah diuji tanpa objek run penuh. `accountCursor`
+ * OPSIONAL: jalur production selalu mengoper dokumen run penuh (punya field
+ * ini), sementara fixture test lama yang tidak menyebutnya tetap valid dan
+ * dibaca sebagai "belum ada progres" (0) — lihat financialPreviousResumeShouldPreemptCurrent.
+ */
+export type FinancialSyncLogLite =
+  | (Pick<FinancialSyncRun, "status" | "finalized" | "updatedAt" | "completedAt"> & Partial<Pick<FinancialSyncRun, "accountCursor">>)
+  | null;
 
 function toTime(value: Date | string | null | undefined): number {
   if (!value) return 0;
@@ -147,6 +158,40 @@ export function isFinancialSyncRunStale(log: FinancialSyncLogLite, now: Date, th
   return now.getTime() - toTime(log.updatedAt) >= thresholdMs;
 }
 
+/**
+ * true bila periode SEBELUMNYA harus MENDAHULUI periode berjalan pada
+ * invocation ini.
+ *
+ * Root cause yang diperbaiki: sebelumnya "current belum selesai" SELALU
+ * menang mutlak, tanpa syarat. Akibatnya periode previous yang sudah setengah
+ * jalan (mis. Agustus di akun 50/85) bisa terjebak permanen selama current
+ * tidak pernah berhasil tuntas — tiap invocation dihabiskan untuk current,
+ * dan checkpoint previous tidak pernah disentuh lagi.
+ *
+ * Syaratnya SEMPIT dan sengaja begitu — previous hanya boleh menyalip bila
+ * benar-benar ada kerja setengah jadi yang akan HILANG gilirannya:
+ *  1. previous belum "success" (isFinancialPeriodUnfinished), DAN
+ *  2. previous punya progres nyata: accountCursor > 0, DAN
+ *  3. previous akan DI-RESUME, bukan di-restart (!financialPeriodNeedsFreshStart).
+ *
+ * Syarat 3 penting: run "partial" yang sudah final dan lewat cooldown akan
+ * di-start ULANG dari accountCursor 0 — progres lamanya memang dibuang, jadi
+ * tidak ada yang perlu dilindungi dan menyalip current di situ hanya menukar
+ * satu starvation dengan starvation lain (previous restart dari nol terus,
+ * current tidak pernah jalan).
+ *
+ * Bila previous belum punya progres sama sekali (accountCursor 0 / belum ada
+ * log), current tetap didahulukan seperti perilaku lama — tidak ada yang
+ * ditunda, dan previous tetap kebagian lewat cabang previous-unfinished /
+ * historical-unfinished di bawahnya.
+ */
+export function financialPreviousResumeShouldPreemptCurrent(previousLog: FinancialSyncLogLite, now: Date): boolean {
+  if (!previousLog) return false;
+  if (!isFinancialPeriodUnfinished(previousLog, now)) return false;
+  if (financialPeriodNeedsFreshStart(previousLog, now)) return false;
+  return (previousLog.accountCursor ?? 0) > 0;
+}
+
 export type FinancialCronTarget = {
   period: string;
   /** true = panggil startFinancialSync (run baru/di-restart); false = lanjutkan run existing via stepFinancialSync. */
@@ -181,6 +226,14 @@ export function selectFinancialCronTargetWithHistory(input: {
 }): FinancialCronTarget | null {
   const now = input.now ?? new Date();
   const scope = input.scope ?? "auto";
+  // Previous yang sudah setengah jalan menyalip current (lihat
+  // financialPreviousResumeShouldPreemptCurrent). HANYA untuk scope "auto":
+  // scope "current" memang tidak pernah menyentuh previous sama sekali, dan
+  // scope "historical" tidak pernah menyentuh current — keduanya tidak punya
+  // konflik prioritas yang perlu diputus di sini.
+  if (scope === "auto" && input.previousPeriod && financialPreviousResumeShouldPreemptCurrent(input.previousLog, now)) {
+    return { period: input.previousPeriod, startFresh: false, reason: "previous-unfinished" };
+  }
   if (scope !== "historical" && isFinancialPeriodUnfinished(input.currentLog, now)) {
     return { period: input.currentPeriod, startFresh: financialPeriodNeedsFreshStart(input.currentLog, now), reason: "current-unfinished" };
   }
@@ -232,10 +285,15 @@ function isFinancialPeriodRefreshDue(log: FinancialSyncLogLite, now: Date, inter
  *
  * Prioritas (Phase 3B.1 — perbaikan atas Phase 3B, lihat catatan
  * CURRENT_MONTH_REFRESH_INTERVAL_MS di atas file):
- *   1. current yang belum selesai (resume/start) — current SELALU didahulukan
- *      selama benar-benar belum selesai, supaya proses yang sudah dimulai
- *      bisa tuntas.
- *   2. previous yang belum selesai — dicek SEBELUM current-refresh-due,
+ *   0. previous yang belum selesai TAPI sudah punya progres nyata dan akan
+ *      di-resume (financialPreviousResumeShouldPreemptCurrent) — menyalip
+ *      current supaya periode setengah jalan tidak terjebak permanen di
+ *      belakang current yang tidak pernah tuntas.
+ *   1. current yang belum selesai (resume/start) — didahulukan selama tidak
+ *      ada previous setengah jalan di poin 0, supaya proses yang sudah
+ *      dimulai bisa tuntas.
+ *   2. previous yang belum selesai (termasuk yang belum punya progres sama
+ *      sekali) — dicek SEBELUM current-refresh-due,
  *      supaya previous yang sedang "running"/"partial" TIDAK PERNAH
  *      kelaparan hanya karena current kebetulan sudah waktunya di-refresh
  *      ulang (current-refresh-due bukan "belum selesai", jadi prioritasnya
@@ -256,6 +314,7 @@ export function selectFinancialCronTarget(input: {
   now?: Date;
 }): FinancialCronTarget | null {
   const now = input.now ?? new Date();
+  if (input.previousPeriod && financialPreviousResumeShouldPreemptCurrent(input.previousLog, now)) return { period: input.previousPeriod, startFresh: false, reason: "previous-unfinished" };
   if (isFinancialPeriodUnfinished(input.currentLog, now)) return { period: input.currentPeriod, startFresh: financialPeriodNeedsFreshStart(input.currentLog, now), reason: "current-unfinished" };
   if (input.previousPeriod && isFinancialPeriodUnfinished(input.previousLog, now)) return { period: input.previousPeriod, startFresh: financialPeriodNeedsFreshStart(input.previousLog, now), reason: "previous-unfinished" };
   return selectFinancialCronTargetWithHistory({ ...input, historicalLogs: [], scope: "auto" });
