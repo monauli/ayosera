@@ -10,31 +10,51 @@
 // Sync yang sudah "success" TIDAK PERNAH dicek ulang oleh cron utama —
 // cabang lama yang dulu menutup celah ini (previous-refresh-due,
 // lib/cron-olsera-financial.ts) DIMATIKAN PERMANEN karena efeknya me-restart
-// PENUH 85 akun dari accountCursor 0 tiap 24 jam, terlalu mahal untuk
-// kebutuhan yang sebenarnya sempit (9 akun revenue saja).
+// PENUH 85 akun dari accountCursor 0 tiap 24 jam — membuang progres sync
+// awal dan membakar puluhan invocation per hari.
 //
-// Cron ini mengisi celah itu dengan MURAH: re-fetch getLedgerDetail() untuk
-// akun revenue tetap (REVENUE_RECHECK_ACCOUNT_CODES) pada periode BULAN
-// SEBELUMNYA (relatif tanggal cron jalan, previousFinancialPeriod), sekali
-// per RONDE MINGGUAN — TANPA startFinancialSync/getAccounts/
-// createFinancialSyncRun sama sekali (daftar akun konstan, jadi NOL request
-// Olsera untuk daftar akun sebelum getLedgerDetail() pertama). State ronde
-// disimpan di field `revenueRecheck` pada dokumen sync log periode itu
-// sendiri (olsera_financial_sync_logs, lib/olsera-financial-store.ts) —
-// TERPISAH SENGAJA dari failedAccountCodes/accountAttempts/finalized, yang
-// khusus untuk akun GAGAL saat sync AWAL periode (bukan akun yang sudah
-// berhasil tapi perlu dicek ulang).
+// Cron ini mengisi celah itu jauh lebih murah: re-fetch getLedgerDetail()
+// per akun dari checkpoint sendiri (cursor), sekali per RONDE MINGGUAN,
+// pada periode BULAN SEBELUMNYA (relatif tanggal cron jalan,
+// previousFinancialPeriod) — TANPA startFinancialSync/getAccounts/
+// createFinancialSyncRun sama sekali. Daftar akun = `run.accountCodes` pada
+// dokumen sync log periode itu: daftar yang SAMA PERSIS yang disimpan
+// startFinancialSync() dari getAccounts() saat sync awal (2026-09-03:
+// diperluas dari 9 akun revenue tetap menjadi SEMUA akun, karena retry
+// manual 2026-08 membuktikan akun non-revenue — mis. 11300/11107/11400 —
+// juga kena pola snapshot-timing yang sama). Dibaca dari dokumen, bukan
+// dari Olsera: NOL request untuk daftar akun sebelum getLedgerDetail()
+// pertama, dan bila daftar akun di sumbernya berubah, ronde berikutnya
+// otomatis ikut. State ronde disimpan di field `revenueRecheck` pada
+// dokumen sync log periode itu sendiri (olsera_financial_sync_logs,
+// lib/olsera-financial-store.ts) — TERPISAH SENGAJA dari
+// failedAccountCodes/accountAttempts/finalized, yang khusus untuk akun GAGAL
+// saat sync AWAL periode (bukan akun yang sudah berhasil tapi perlu dicek
+// ulang). Ronde yang sedang berjalan memakai `accountCodes` yang tersimpan
+// di state-nya sendiri (bukan run.accountCodes) — ronde lama yang dimulai
+// dengan daftar 9 akun tetap selesai dengan 9 akun, ronde baru memakai
+// daftar penuh.
 //
 // Jadwal invocation vs jadwal ronde — DUA KONSEP BERBEDA:
-//   - Kadensi INVOCATION (jadwal cron-job.org): disarankan TIAP JAM (mis.
-//     menit :15), menjauh dari financial (:45) dan inventory (:25).
-//   - Kadensi RONDE (REVENUE_RECHECK_ROUND_INTERVAL_MS): 7 hari. Ronde hanya
-//     boleh MULAI sekali per jendela ini; begitu mulai, invocation
-//     berikutnya (jam demi jam) melanjutkan checkpoint (cursor) sampai
-//     benar-benar selesai (9 akun / REVENUE_RECHECK_SLOTS_PER_INVOCATION
-//     slot ≈ 2-3 invocation), lalu berhenti sampai jendela berikutnya lewat.
+//   - Kadensi INVOCATION (jadwal cron-job.org, menit :15 supaya menjauh dari
+//     financial (:45) dan inventory (:25)).
+//   - Kadensi RONDE (REVENUE_RECHECK_ROUND_INTERVAL_MS): 7 hari, dihitung
+//     sejak ronde terakhir SELESAI. Ronde hanya boleh MULAI sekali per
+//     jendela ini; begitu mulai, invocation berikutnya melanjutkan
+//     checkpoint (cursor) sampai benar-benar selesai, berapa pun umurnya
+//     (ronde berjalan TIDAK PERNAH di-restart oleh jendela 7 hari), lalu
+//     berhenti sampai jendela berikutnya lewat. Simulasi 2026-09-03 dengan
+//     jumlah baris nyata 2026-08 (85 akun, 12.131 baris): ≈22 invocation per
+//     ronde pada REVENUE_RECHECK_SLOTS_PER_INVOCATION=4 → ≈7 hari pada 3
+//     invocation/hari, ≈4 hari pada 6/hari.
 //   Invocation di luar jendela ronde itu no-op murah: satu findOne, TANPA
 //   request Olsera apa pun.
+//
+// Batas yang disadari: periode target dihitung ulang tiap invocation
+// (previousFinancialPeriod dari tanggal hari ini). Ronde yang belum selesai
+// saat bulan berganti akan DITINGGALKAN (state-nya tetap di dokumen periode
+// lama dengan roundFinishedAt null) karena target pindah ke periode baru —
+// makin lama satu ronde, makin besar peluang ini terjadi.
 import "server-only";
 import { todayJakarta } from "@/lib/olsera-sync";
 import {
@@ -64,20 +84,18 @@ import { isDatabaseTimeoutError, withDatabaseRetry } from "@/lib/mongodb-errors"
 import { collections, withMongo } from "@/lib/mongodb";
 
 /**
- * Akun revenue yang di-re-check tiap ronde — konstanta, TIDAK PERNAH diambil
- * dari Olsera (getAccounts() tidak pernah dipanggil cron ini). Mencakup
- * seluruh grup 40000-40007 + 21003 (bukan cuma 40001/40004/21003 yang
- * dipakai computeOmzetOlseraLedger()) karena bukti empiris 2026-09-02:
- * 40000/40002/40003 juga menerima baris susulan dengan pola sama, walau
- * tidak menyentuh omzet AYO — mereka tetap menyentuh laba-rugi.
- */
-export const REVENUE_RECHECK_ACCOUNT_CODES = ["40000", "40001", "40002", "40003", "40004", "40005", "40006", "40007", "21003"] as const;
-
-/**
- * Slot (akun) maksimum diproses per invocation. Guard start-safety di bawah
- * (SAMA PERSIS dengan cron Financial utama) memangkasnya sendiri saat akun
- * berat — akun revenue terukur 2026-09-02 (deltaSyncedAt): 40000 ~1069
- * baris/1,0s, 40002 ~589 baris/5,9s. Angka ini pagar atas, bukan target.
+ * Slot (akun) maksimum diproses per invocation — pagar atas, bukan target,
+ * dan BUKAN yang menjaga budget: guard start-safety di bawah (SAMA PERSIS
+ * dengan cron Financial utama) yang menolak memulai akun baru begitu sisa
+ * waktu < FINANCIAL_MIN_REMAINING_MS_TO_START_WORK, apa pun nilai slot ini.
+ * Worst-case wall satu invocation (akun mulai tepat di detik 12 + request
+ * timeout 10 s + upsert akun terberat) identik dengan cron utama dan tidak
+ * berubah berapa pun slot-nya. Dicek ulang 2026-09-03 setelah cakupan
+ * diperluas ke semua akun: akun terberat 2026-08 adalah 11300 (3.828 baris,
+ * fetch 1,4 s), 11107 (1.994), 11400 (1.925), 51000 (1.924), 40000 (1.069)
+ * — biaya per akun didominasi upsert Mongo (~1,2 ms/baris) + ~1,3 s tetap;
+ * 4 akun termasuk dua terberat terukur 12,8 s di cron utama (telemetry
+ * 2026-09-02T19:19:29Z), masih di bawah batas mulai 12 s untuk akun ke-4.
  */
 export const REVENUE_RECHECK_SLOTS_PER_INVOCATION = 4;
 
@@ -94,8 +112,8 @@ const MIN_REMAINING_MS_TO_START_WORK = FINANCIAL_MIN_REMAINING_MS_TO_START_WORK;
 
 export type RevenueRecheckState = NonNullable<FinancialSyncRun["revenueRecheck"]>;
 
-function freshState(now: Date): RevenueRecheckState {
-  return { accountCodes: [...REVENUE_RECHECK_ACCOUNT_CODES], cursor: 0, roundStartedAt: now, roundFinishedAt: null, attempts: 0, changed: [] };
+function freshState(now: Date, accountCodes: readonly string[]): RevenueRecheckState {
+  return { accountCodes: [...accountCodes], cursor: 0, roundStartedAt: now, roundFinishedAt: null, attempts: 0, changed: [] };
 }
 
 function toTime(value: Date | string | null | undefined): number {
@@ -175,7 +193,12 @@ export async function runOlseraRevenueRecheckCron(authHeader: string | null, now
     if (isRevenueRecheckRoundInProgress(existing)) {
       state = existing as RevenueRecheckState;
     } else if (isRevenueRecheckRoundDue(existing, startedAtDate)) {
-      state = freshState(startedAtDate);
+      // Daftar akun ronde baru = run.accountCodes (disimpan startFinancialSync()
+      // dari getAccounts() saat sync awal periode ini) — TIDAK ada request
+      // Olsera untuk daftar akun. Kosong (dokumen lama/rusak) -> tidak ada yang
+      // bisa dicek; jangan mulai ronde yang langsung "selesai" tanpa kerja.
+      if (!run.accountCodes?.length) return noop("no-account-codes", period);
+      state = freshState(startedAtDate, run.accountCodes);
     } else {
       return noop("round-not-due", period);
     }

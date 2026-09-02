@@ -275,7 +275,9 @@ export function selectFinancialCronTargetWithHistory(input: {
     // aslinya (menangkap jurnal susulan di akun REVENUE setelah tutup buku)
     // sekarang dilayani jalur terpisah yang jauh lebih murah: cron
     // "revenue re-check mingguan" (lib/cron-olsera-revenue-recheck.ts) —
-    // fetch ulang ~9 akun lewat getLedgerDetail() saja, TANPA startFresh/
+    // fetch ulang akun-akun run.accountCodes (sejak 2026-09-03 SEMUA akun,
+    // bukan lagi 9 akun revenue) lewat getLedgerDetail() saja, beberapa akun
+    // per invocation dari checkpoint sendiri (cursor) — TANPA startFresh/
     // createFinancialSyncRun/getAccounts sama sekali.
     //
     // backlog historis (periode 2+ bulan sebelum current, mis. Maret saat

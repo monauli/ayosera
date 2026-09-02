@@ -63,6 +63,10 @@ type FakeSyncLog = {
   revenueRecheck?: FakeRevenueRecheckState;
   [key: string]: unknown;
 };
+// 85 kode akun palsu — meniru run.accountCodes yang disimpan startFinancialSync()
+// dari getAccounts() (jumlahnya 85 di production). Ronde baru HARUS memakai
+// daftar ini apa adanya, bukan daftar tetap di dalam modul.
+const FAKE_ACCOUNT_CODES = Array.from({ length: 85 }, (_, i) => String(10000 + i));
 function fakeSyncLog(overrides: Partial<FakeSyncLog> = {}): FakeSyncLog {
   return {
     _id: "financial:324175:2026-08",
@@ -71,7 +75,7 @@ function fakeSyncLog(overrides: Partial<FakeSyncLog> = {}): FakeSyncLog {
     status: "success",
     phase: "completed",
     accountCursor: 85,
-    accountCodes: [],
+    accountCodes: [...FAKE_ACCOUNT_CODES],
     reportsCompleted: [],
     recordsProcessed: 0,
     accountsProcessed: 85,
@@ -162,7 +166,6 @@ mock.module("@/lib/mongodb", {
 let runOlseraRevenueRecheckCron: typeof import("./cron-olsera-revenue-recheck.ts").runOlseraRevenueRecheckCron;
 let isRevenueRecheckRoundDue: typeof import("./cron-olsera-revenue-recheck.ts").isRevenueRecheckRoundDue;
 let isRevenueRecheckRoundInProgress: typeof import("./cron-olsera-revenue-recheck.ts").isRevenueRecheckRoundInProgress;
-let REVENUE_RECHECK_ACCOUNT_CODES: typeof import("./cron-olsera-revenue-recheck.ts").REVENUE_RECHECK_ACCOUNT_CODES;
 let REVENUE_RECHECK_SLOTS_PER_INVOCATION: typeof import("./cron-olsera-revenue-recheck.ts").REVENUE_RECHECK_SLOTS_PER_INVOCATION;
 
 before(async () => {
@@ -170,7 +173,6 @@ before(async () => {
   runOlseraRevenueRecheckCron = mod.runOlseraRevenueRecheckCron;
   isRevenueRecheckRoundDue = mod.isRevenueRecheckRoundDue;
   isRevenueRecheckRoundInProgress = mod.isRevenueRecheckRoundInProgress;
-  REVENUE_RECHECK_ACCOUNT_CODES = mod.REVENUE_RECHECK_ACCOUNT_CODES;
   REVENUE_RECHECK_SLOTS_PER_INVOCATION = mod.REVENUE_RECHECK_SLOTS_PER_INVOCATION;
 });
 
@@ -246,7 +248,7 @@ test("ronde TIDAK jalan kalau roundFinishedAt belum 7 hari lalu -> status round-
   assert.equal(getLedgerDetailMock.mock.callCount(), 0);
 });
 
-test("ronde jalan dan maju cursor-nya saat semua syarat terpenuhi (ronde baru, belum pernah ada revenueRecheck)", async () => {
+test("ronde baru memakai SEMUA run.accountCodes (85, daftar yang disimpan sync awal dari getAccounts) — bukan daftar tetap — dan maju cursor-nya", async () => {
   resetAll();
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => fakeSyncLog({ status: "success", revenueRecheck: undefined }));
   countLedgerEntriesForAccountMock.mock.mockImplementation(async () => 5);
@@ -256,21 +258,54 @@ test("ronde jalan dan maju cursor-nya saat semua syarat terpenuhi (ronde baru, b
 
   assert.equal(res.body.status, "in-progress");
   assert.equal(res.body.period, "2026-08");
+  assert.equal(res.body.accountsTotal, 85, "total akun ronde = panjang run.accountCodes, bukan 9");
   assert.equal(res.body.cursor, REVENUE_RECHECK_SLOTS_PER_INVOCATION);
   assert.equal(getLedgerDetailMock.mock.callCount(), REVENUE_RECHECK_SLOTS_PER_INVOCATION);
+  assert.deepEqual(
+    getLedgerDetailMock.mock.calls.map((call) => call.arguments[1]),
+    FAKE_ACCOUNT_CODES.slice(0, REVENUE_RECHECK_SLOTS_PER_INVOCATION),
+    "akun yang di-fetch = urutan run.accountCodes dari awal",
+  );
   assert.equal(bulkUpsertLedgerEntriesMock.mock.callCount(), REVENUE_RECHECK_SLOTS_PER_INVOCATION);
   assert.equal(updateFinancialSyncRunMock.mock.callCount(), 1);
   const [runId, patch] = updateFinancialSyncRunMock.mock.calls[0].arguments;
   assert.equal(runId, "financial:324175:2026-08");
   const revenueRecheck = (patch as { revenueRecheck: FakeRevenueRecheckState }).revenueRecheck;
   assert.equal(revenueRecheck.cursor, REVENUE_RECHECK_SLOTS_PER_INVOCATION);
-  assert.deepEqual(revenueRecheck.accountCodes, [...REVENUE_RECHECK_ACCOUNT_CODES]);
+  assert.deepEqual(revenueRecheck.accountCodes, FAKE_ACCOUNT_CODES);
   assert.equal(revenueRecheck.roundFinishedAt, null, "ronde belum selesai -> roundFinishedAt tetap null");
+});
+
+test("run.accountCodes KOSONG -> status no-account-codes: TIDAK ada request Olsera, TIDAK ada ronde/state ditulis", async () => {
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => fakeSyncLog({ status: "success", accountCodes: [], revenueRecheck: undefined }));
+
+  const res = await runOlseraRevenueRecheckCron("Bearer test-secret");
+
+  assert.equal(res.body.status, "no-account-codes");
+  assert.equal(getLedgerDetailMock.mock.callCount(), 0);
+  assert.equal(updateFinancialSyncRunMock.mock.callCount(), 0);
+  assert.equal(releaseOlseraSyncLockMock.mock.callCount(), 1, "lock cron tetap dilepas walau no-op");
+});
+
+test("ronde LAMA yang masih berjalan dengan daftar 9 akun tetap memakai daftar di state-nya sendiri (bukan run.accountCodes yang sudah 85) sampai selesai", async () => {
+  resetAll();
+  const legacyNine = ["40000", "40001", "40002", "40003", "40004", "40005", "40006", "40007", "21003"];
+  const midRound: FakeRevenueRecheckState = { accountCodes: legacyNine, cursor: 4, roundStartedAt: new Date(Date.now() - 60 * 60 * 1000), roundFinishedAt: null, attempts: 0, changed: [] };
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => fakeSyncLog({ status: "success", revenueRecheck: midRound }));
+  countLedgerEntriesForAccountMock.mock.mockImplementation(async () => 1);
+  getLedgerDetailMock.mock.mockImplementation(async () => ({ totalRecords: 1, entries: [] }));
+
+  const res = await runOlseraRevenueRecheckCron("Bearer test-secret");
+
+  assert.equal(res.body.status, "in-progress");
+  assert.equal(res.body.accountsTotal, 9, "ronde berjalan tetap 9 akun, tidak diganti jadi 85 di tengah jalan");
+  assert.deepEqual(getLedgerDetailMock.mock.calls.map((call) => call.arguments[1]), legacyNine.slice(4, 4 + REVENUE_RECHECK_SLOTS_PER_INVOCATION));
 });
 
 test("ronde MID-CURSOR (belum 7 hari sejak roundStartedAt) TETAP dilanjutkan — gerbang 7 hari hanya berlaku untuk MULAI ronde baru, bukan melanjutkan yang sudah berjalan", async () => {
   resetAll();
-  const midRound: FakeRevenueRecheckState = { accountCodes: [...REVENUE_RECHECK_ACCOUNT_CODES], cursor: 4, roundStartedAt: new Date(Date.now() - 60 * 60 * 1000), roundFinishedAt: null, attempts: 0, changed: [] };
+  const midRound: FakeRevenueRecheckState = { accountCodes: [...FAKE_ACCOUNT_CODES], cursor: 4, roundStartedAt: new Date(Date.now() - 60 * 60 * 1000), roundFinishedAt: null, attempts: 0, changed: [] };
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => fakeSyncLog({ status: "success", revenueRecheck: midRound }));
   countLedgerEntriesForAccountMock.mock.mockImplementation(async () => 1);
   getLedgerDetailMock.mock.mockImplementation(async () => ({ totalRecords: 1, entries: [] }));
@@ -297,7 +332,7 @@ test("respons KOSONG dari getLedgerDetail() DI-SKIP sepenuhnya — TIDAK ada ups
 
 test("reconcileLedgerSummarySnapshot dipanggil di akhir ronde; laporan bulanan TIDAK disegarkan bila changed kosong", async () => {
   resetAll();
-  const almostDone: FakeRevenueRecheckState = { accountCodes: [...REVENUE_RECHECK_ACCOUNT_CODES], cursor: REVENUE_RECHECK_ACCOUNT_CODES.length - 1, roundStartedAt: new Date(Date.now() - 60_000), roundFinishedAt: null, attempts: 0, changed: [] };
+  const almostDone: FakeRevenueRecheckState = { accountCodes: [...FAKE_ACCOUNT_CODES], cursor: FAKE_ACCOUNT_CODES.length - 1, roundStartedAt: new Date(Date.now() - 60_000), roundFinishedAt: null, attempts: 0, changed: [] };
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => fakeSyncLog({ status: "success", revenueRecheck: almostDone }));
   countLedgerEntriesForAccountMock.mock.mockImplementation(async () => 3);
   getLedgerDetailMock.mock.mockImplementation(async () => ({ totalRecords: 3, entries: [] })); // rowsBefore === rowsAfter -> tidak berubah
@@ -316,7 +351,7 @@ test("reconcileLedgerSummarySnapshot dipanggil di akhir ronde; laporan bulanan T
 
 test("laporan bulanan DISEGARKAN via Promise.all HANYA saat changed tidak kosong (ada akun yang row count-nya berubah)", async () => {
   resetAll();
-  const almostDone: FakeRevenueRecheckState = { accountCodes: [...REVENUE_RECHECK_ACCOUNT_CODES], cursor: REVENUE_RECHECK_ACCOUNT_CODES.length - 1, roundStartedAt: new Date(Date.now() - 60_000), roundFinishedAt: null, attempts: 0, changed: [] };
+  const almostDone: FakeRevenueRecheckState = { accountCodes: [...FAKE_ACCOUNT_CODES], cursor: FAKE_ACCOUNT_CODES.length - 1, roundStartedAt: new Date(Date.now() - 60_000), roundFinishedAt: null, attempts: 0, changed: [] };
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => fakeSyncLog({ status: "success", revenueRecheck: almostDone }));
   countLedgerEntriesForAccountMock.mock.mockImplementation(async () => 3);
   getLedgerDetailMock.mock.mockImplementation(async () => ({ totalRecords: 5, entries: [] })); // rowsBefore 3 != rowsAfter 5 -> berubah
