@@ -187,6 +187,16 @@ export async function upsertAccounts(rows: unknown[], context?: FinancialCollect
   });
 }
 
+/**
+ * Jumlah baris ledger tersimpan untuk SATU akun+periode SEKARANG (termasuk
+ * saldo awal, sama seperti `totalRecords` dari normalizeLedgerDetailPayload —
+ * dipakai cron "revenue re-check mingguan" untuk membandingkan sebelum/
+ * sesudah fetch ulang, murni pembacaan, tidak pernah mengubah data.
+ */
+export async function countLedgerEntriesForAccount(period: string, accountCode: string, context?: FinancialCollections): Promise<number> {
+  return runWithReadCollections(context, (fc) => fc.ledgerEntries.countDocuments({ storeId: storeId(), period, accountCode }));
+}
+
 export async function bulkUpsertLedgerEntries(
   accountCode: string,
   period: string,
@@ -280,6 +290,27 @@ export type FinancialSyncRun = {
   startedAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
+  /**
+   * State cron "revenue re-check mingguan" (lib/cron-olsera-revenue-recheck.ts)
+   * — TERPISAH SENGAJA dari failedAccountCodes/accountAttempts/finalized di
+   * atas, yang khusus untuk akun GAGAL saat sync awal periode ini. Field ini
+   * melacak ronde re-fetch periodik untuk akun REVENUE yang SUDAH berhasil
+   * (menangkap jurnal susulan/backdated Olsera yang masuk setelah tutup
+   * buku). `undefined` = belum pernah ada ronde untuk periode ini.
+   */
+  revenueRecheck?: {
+    /** Snapshot daftar akun SAAT ronde ini dimulai — stabil sepanjang ronde walau konstanta di kode berubah. */
+    accountCodes: string[];
+    /** 0..accountCodes.length; >= accountCodes.length berarti seluruh akun sudah di-fetch ulang ronde ini. */
+    cursor: number;
+    roundStartedAt: Date | null;
+    /** null = ronde ini masih berjalan (mid-fetch ATAU sudah selesai fetch tapi belum finalisasi laporan). */
+    roundFinishedAt: Date | null;
+    /** Penghitung kegagalan getLedgerDetail() sepanjang ronde — murni audit, TIDAK menghentikan ronde (akun gagal tetap dilewati, cursor tetap maju). */
+    attempts: number;
+    /** Akun yang jumlah barisnya berubah dibanding sebelum ronde ini — dipakai memutuskan perlu tidaknya refresh 4 laporan bulanan di akhir ronde. */
+    changed: Array<{ code: string; rowsBefore: number; rowsAfter: number; at: Date }>;
+  };
 };
 
 export async function createFinancialSyncRun(period: string, accountCodes: string[], context?: FinancialCollections): Promise<FinancialSyncRun> {
