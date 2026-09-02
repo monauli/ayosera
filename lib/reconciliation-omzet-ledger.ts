@@ -20,11 +20,12 @@
 // disimpulkan otomatis dari besar-kecilnya selisih.
 import "server-only";
 import { isCurrentJakartaPeriod, jakartaCurrentPeriod } from "./olsera-financial-core.ts";
-import { getRevenueAmount, isRevenueEligibleTransaction } from "./revenue.ts";
+import { getRevenueAmount, isCancelledTransaction, isRevenueEligibleTransaction } from "./revenue.ts";
 import type { BookingDocument } from "./mongodb.ts";
 import { readActiveStagedPaymentEvents, type StagingReadContext } from "./ayo-payment-event-staging.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 import { classifyAyoSport, type Sport } from "./court-mapping.ts";
+import { dashboardPaymentAmountsByBooking } from "./dashboard-payment-metrics.ts";
 
 // ---------------------------------------------------------------------------
 // Konstanta akun (SATU-SATUNYA tempat kode akun ini dirujuk untuk omzet)
@@ -280,20 +281,45 @@ function addSportAmount(target: ReturnType<typeof emptySportBreakdown>, sport: S
 /**
  * Payment events are first classified by their normalized fieldName. If it is
  * absent/unknown, use the matching booking's field_name; conflicts stay
- * unmapped rather than being guessed. Identity, amounts, and total are intact.
+ * unmapped rather than being guessed.
+ *
+ * Same booking-level rules as the Dashboard card (buildDashboardPaymentMetrics,
+ * lib/dashboard-payment-metrics.ts): events belonging to a cancelled booking are
+ * excluded, and split-payment events for one booking are merged into a single
+ * amount via dashboardPaymentAmountsByBooking() before being counted — a
+ * booking is one transaction, not one per payment. Events without a bookingId
+ * can't be matched to a booking's status, so they still count individually.
+ * Sport classification for a merged booking uses its first (identity-order)
+ * event's fieldName as representative.
  */
 export function computeAyoPaymentEventSportBreakdown(
   events: readonly AyoPaymentEvent[],
   bookings: readonly Pick<OmzetLedgerBookingInput, "booking_id" | "field_name">[],
+  cancelledBookingIds: ReadonlySet<string> = new Set(),
 ) {
   const target = emptySportBreakdown();
   const bookingSports = sportFromBookings(bookings);
-  const unique = new Map(events.map((event) => [event.identity, event]));
-  for (const event of unique.values()) {
+  const unique = [...new Map(events.map((event) => [event.identity, event])).values()].filter(
+    (event) => !event.bookingId || !cancelledBookingIds.has(event.bookingId),
+  );
+
+  const representativeByBooking = new Map<string, AyoPaymentEvent>();
+  for (const event of unique) {
+    if (!event.bookingId || representativeByBooking.has(event.bookingId)) continue;
+    representativeByBooking.set(event.bookingId, event);
+  }
+  for (const [bookingId, amount] of dashboardPaymentAmountsByBooking(unique)) {
+    const event = representativeByBooking.get(bookingId)!;
     const fromEvent = classifyAyoSport(String(event.fieldName ?? ""));
-    const fromBooking = bookingSports.get(event.bookingId);
+    const fromBooking = bookingSports.get(bookingId);
     const sport = fromEvent !== "UNKNOWN" ? fromEvent : fromBooking === "PADEL" || fromBooking === "PICKLEBALL" ? fromBooking : "UNKNOWN";
-    addSportAmount(target, sport, event.amount);
+    addSportAmount(target, sport, amount);
+  }
+
+  for (const event of unique) {
+    if (event.bookingId) continue;
+    const fromEvent = classifyAyoSport(String(event.fieldName ?? ""));
+    addSportAmount(target, fromEvent, event.amount);
   }
   return target;
 }
@@ -323,13 +349,25 @@ export function computeAyoSide(bookings: Array<Pick<BookingDocument, "date" | "t
 }
 
 /**
- * Active payment events are monetary records, not bookings. Sum every unique
- * event identity directly: a payment can belong to a pre-existing booking or
- * use a non-BK reference, and must not be discarded by booking display rules.
+ * Active payment events are monetary records, not bookings — a payment can
+ * belong to a pre-existing booking or use a non-BK reference, and must not be
+ * discarded by booking display rules. Same booking-level rules as
+ * computeAyoPaymentEventSportBreakdown() above (and the Dashboard card,
+ * buildDashboardPaymentMetrics): events belonging to a cancelled booking are
+ * excluded, and split-payment events for one booking count as ONE
+ * transaction via dashboardPaymentAmountsByBooking(). Events without a
+ * bookingId still count individually.
  */
-export function computeAyoPaymentEventSide(events: readonly AyoPaymentEvent[]): OmzetLedgerSide {
-  const unique = new Map(events.map((event) => [event.identity, event]));
-  return { count: unique.size, revenue: [...unique.values()].reduce((sum, event) => sum + event.amount, 0) };
+export function computeAyoPaymentEventSide(events: readonly AyoPaymentEvent[], cancelledBookingIds: ReadonlySet<string> = new Set()): OmzetLedgerSide {
+  const unique = [...new Map(events.map((event) => [event.identity, event])).values()].filter(
+    (event) => !event.bookingId || !cancelledBookingIds.has(event.bookingId),
+  );
+  const amountsByBooking = dashboardPaymentAmountsByBooking(unique);
+  const unlinked = unique.filter((event) => !event.bookingId);
+  return {
+    count: amountsByBooking.size + unlinked.length,
+    revenue: [...amountsByBooking.values()].reduce((sum, amount) => sum + amount, 0) + unlinked.reduce((sum, event) => sum + event.amount, 0),
+  };
 }
 
 function sportStatus(difference: number): "COCOK" | "PERLU_DICEK" {
@@ -601,8 +639,13 @@ async function loadPeriodData(period: string, context?: OmzetLedgerSourceContext
 /** Ringkasan SATU bulan — dipakai daftar bulanan di /reconciliation. */
 export async function loadOmzetLedgerMonthSummary(period: string, context?: OmzetLedgerSourceContext, now: Date = new Date()): Promise<OmzetOlseraLedgerResult> {
   const { bookingRows, paymentEvents, entries40001, entries40004, entries21003, explanation } = await loadPeriodData(period, context);
+  // Sama seperti cancelledBookingIds di app/api/dashboard/route.ts — booking
+  // cancelled TIDAK PERNAH ikut Omzet AYO, walau payment event-nya masih ada.
+  const cancelledBookingIds = new Set(
+    bookingRows.filter((booking) => isCancelledTransaction(booking)).map((booking) => booking.booking_id).filter((id): id is string => Boolean(id)),
+  );
   const ayoSportBreakdown = paymentEvents
-    ? computeAyoPaymentEventSportBreakdown(paymentEvents, bookingRows)
+    ? computeAyoPaymentEventSportBreakdown(paymentEvents, bookingRows, cancelledBookingIds)
     : computeAyoBookingSportBreakdown(bookingRows);
   return computeOmzetOlseraLedger(period, ayoSportBreakdown.total, entries40001, entries40004, entries21003, explanation, now, ayoSportBreakdown);
 }

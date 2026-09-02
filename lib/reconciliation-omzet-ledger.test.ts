@@ -76,13 +76,58 @@ test("payment events aktif menjadi sumber omzet AYO Juni/Juli: seluruh event uni
   assert.deepEqual(computeAyoSide([{ date: "2026-07-10", total_price: 168_155_000, status: "paid" }]), { count: 1, revenue: 168_155_000 });
 });
 
-test("payment event dedupe memakai identity, bukan booking id", () => {
+test("payment event dedupe memakai identity, lalu digabung per booking (split-payment = 1 transaksi)", () => {
   const events = [
     paymentEvent("dp", "BK-1", 100_000_000),
     paymentEvent("settlement", "BK-1", 137_491_000),
-    paymentEvent("settlement", "BK-1", 137_491_000),
+    paymentEvent("settlement", "BK-1", 137_491_000), // identity duplikat -> tidak dihitung dua kali
   ];
-  assert.deepEqual(computeAyoPaymentEventSide(events), { count: 2, revenue: 237_491_000 });
+  // dedupe identity -> 2 event unik (dp, settlement), keduanya booking BK-1 yang
+  // sama -> digabung jadi 1 transaksi (sama seperti buildDashboardPaymentMetrics).
+  assert.deepEqual(computeAyoPaymentEventSide(events), { count: 1, revenue: 237_491_000 });
+});
+
+test("payment event milik booking cancelled dikecualikan dari Omzet AYO", () => {
+  const events = [
+    paymentEvent("paid", "BK-active", 150_000),
+    paymentEvent("cancelled-but-paid", "BK-cancelled", 200_000),
+  ];
+  const cancelledBookingIds = new Set(["BK-cancelled"]);
+  assert.deepEqual(computeAyoPaymentEventSide(events, cancelledBookingIds), { count: 1, revenue: 150_000 });
+});
+
+test("split-payment (2 event, 1 booking) dihitung SATU transaksi di breakdown sport", () => {
+  const result = computeAyoPaymentEventSportBreakdown([
+    paymentEventWithSport("dp", "BK-split", 100_000, "Court No 1"),
+    paymentEventWithSport("settlement", "BK-split", 150_000, "Court No 1"),
+  ], []);
+  assert.deepEqual(result.court, { count: 1, revenue: 250_000 });
+  assert.deepEqual(result.total, { count: 1, revenue: 250_000 });
+});
+
+test("booking cancelled dengan payment event bernilai>0 dikecualikan dari breakdown sport", () => {
+  const result = computeAyoPaymentEventSportBreakdown(
+    [
+      paymentEventWithSport("active", "BK-active", 150_000, "Court No 1"),
+      paymentEventWithSport("cancelled", "BK-cancelled", 200_000, "Pickleball"),
+    ],
+    [],
+    new Set(["BK-cancelled"]),
+  );
+  assert.deepEqual(result.court, { count: 1, revenue: 150_000 });
+  assert.deepEqual(result.pickleball, { count: 0, revenue: 0 });
+  assert.deepEqual(result.total, { count: 1, revenue: 150_000 });
+});
+
+test("event tanpa bookingId tetap dihitung individual (tidak bisa dicek status cancelled-nya)", () => {
+  const result = computeAyoPaymentEventSportBreakdown(
+    [
+      { identity: "no-booking-1", bookingId: "", amount: 50_000, fieldName: "Court No 1" } as AyoPaymentEvent,
+      { identity: "no-booking-2", bookingId: "", amount: 75_000, fieldName: "Court No 1" } as AyoPaymentEvent,
+    ],
+    [],
+  );
+  assert.deepEqual(result.court, { count: 2, revenue: 125_000 });
 });
 
 test("breakdown sport memakai field payment event, lalu booking_id untuk DP dan pelunasan", () => {
@@ -101,8 +146,9 @@ test("breakdown sport memakai field payment event, lalu booking_id untuk DP dan 
     paymentEventWithSport("dp", "BK-legacy", 75_000),
     paymentEventWithSport("settlement", "BK-legacy", 125_000),
   ], [{ booking_id: "BK-legacy", field_name: "Pickleball" }]);
-  assert.deepEqual(fromBooking.pickleball, { count: 2, revenue: 200_000 });
-  assert.deepEqual(fromBooking.total, { count: 2, revenue: 200_000 });
+  // DP + pelunasan pada booking yang sama -> digabung jadi 1 transaksi.
+  assert.deepEqual(fromBooking.pickleball, { count: 1, revenue: 200_000 });
+  assert.deepEqual(fromBooking.total, { count: 1, revenue: 200_000 });
 });
 
 test("breakdown sport mendedupe historical/rolling berdasarkan identity dan tidak membuang event unmapped", () => {
@@ -649,7 +695,7 @@ test("route /reconciliation memakai helper ledger yang menghitung active payment
   assert.match(page, /AYO Belum Terpetakan/);
   assert.match(route, /loadOmzetLedgerRecentSummaries/);
   assert.match(ledger, /readActiveStagedPaymentEvents/);
-  assert.match(ledger, /computeAyoPaymentEventSportBreakdown\(paymentEvents, bookingRows\)/);
+  assert.match(ledger, /computeAyoPaymentEventSportBreakdown\(paymentEvents, bookingRows, cancelledBookingIds\)/);
   assert.doesNotMatch(ledger, /events\.filter\(\(event\) => event\.bookingId\.startsWith\("BK"\)\)/);
 });
 
