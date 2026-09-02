@@ -36,13 +36,26 @@ export function dashboardPaymentTypeByBooking(paymentEvents: readonly AyoPayment
   return types;
 }
 
-/** Payment events are a separate dataset from bookings: never apply booking-status eligibility here. */
-export function buildDashboardPaymentMetrics(input: { bookingTotal: number; fallbackTransactions: number; fallbackRevenue: number; paymentEvents: readonly AyoPaymentEvent[] | null }) {
+/**
+ * Card metrics must match Court Performance's counting unit: one transaction
+ * per booking (dashboardPaymentAmountsByBooking sums split-payment events
+ * together), excluding events whose booking is cancelled — same
+ * isCancelledTransaction rule Court Performance already applies via
+ * `revenueEligible` in app/api/dashboard/route.ts, passed in here as
+ * `cancelledBookingIds` instead of re-derived. Events with no bookingId can't
+ * be matched to a booking's status, so they still count individually.
+ */
+export function buildDashboardPaymentMetrics(input: { bookingTotal: number; fallbackTransactions: number; fallbackRevenue: number; paymentEvents: readonly AyoPaymentEvent[] | null; cancelledBookingIds?: ReadonlySet<string> }) {
   if (!input.paymentEvents) return { totalTransactions: input.fallbackTransactions, revenueMonth: input.fallbackRevenue, bookingTotal: input.bookingTotal };
-  const unique = uniqueDashboardPaymentEvents(input.paymentEvents);
+  const cancelledBookingIds = input.cancelledBookingIds ?? new Set<string>();
+  const unique = uniqueDashboardPaymentEvents(input.paymentEvents).filter(
+    (event) => !event.bookingId || !cancelledBookingIds.has(event.bookingId),
+  );
+  const amountsByBooking = dashboardPaymentAmountsByBooking(unique);
+  const unlinked = unique.filter((event) => !event.bookingId);
   return {
-    totalTransactions: unique.length,
-    revenueMonth: unique.reduce((sum, event) => sum + event.amount, 0),
+    totalTransactions: amountsByBooking.size + unlinked.length,
+    revenueMonth: [...amountsByBooking.values()].reduce((sum, amount) => sum + amount, 0) + unlinked.reduce((sum, event) => sum + event.amount, 0),
     bookingTotal: input.bookingTotal,
   };
 }

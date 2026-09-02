@@ -67,9 +67,11 @@ test("agregasi export memakai identity Dashboard: payment berbeda dijumlahkan, d
   const amounts = dashboardPaymentAmountsByBooking([first, second, duplicateLatest]);
   assert.equal(amounts.get("MN/2428/260729/0002761"), 200000);
   assert.equal(amounts.size, 1);
+  // totalTransactions = 1 (bukan 2): split-payment satu booking dihitung sebagai
+  // satu transaksi, sama seperti Court Performance (dashboardPaymentAmountsByBooking).
   assert.deepEqual(
     buildDashboardPaymentMetrics({ bookingTotal: 1, fallbackTransactions: 1, fallbackRevenue: 50000, paymentEvents: [first, second, duplicateLatest] }),
-    { totalTransactions: 2, revenueMonth: 200000, bookingTotal: 1 },
+    { totalTransactions: 1, revenueMonth: 200000, bookingTotal: 1 },
   );
 });
 

@@ -110,13 +110,20 @@ export async function GET(request: Request) {
       const displayFiltered = analyzedFiltered.filter((item) => item.display);
       const revenueEligible = displayFiltered.filter((item) => !item.cancelled);
       const revenueFiltered = displayFiltered.reduce((sum, item) => sum + item.revenue, 0);
-      // Payment metrics must stay independent from booking status/display rules.
-      // Booking rows remain the source for every booking widget below.
+      // Card must count/sum the same unit as Court Performance: one
+      // transaction per booking, excluding cancelled bookings (see
+      // lib/dashboard-payment-metrics.ts buildDashboardPaymentMetrics).
+      // cancelledBookingIds reuses the cancelled flag already computed above
+      // instead of re-deriving it.
+      const cancelledBookingIds = new Set(
+        analyzedFiltered.filter((item) => item.cancelled).map((item) => item.booking.booking_id),
+      );
       const paymentMetrics = buildDashboardPaymentMetrics({
         bookingTotal: displayFiltered.length,
         fallbackTransactions: displayFiltered.length,
         fallbackRevenue: revenueFiltered,
         paymentEvents: validatedPaymentEvents?.events ?? null,
+        cancelledBookingIds,
       });
 
       const analyzedToday = todayBookingsWithPayments.map(analyzeBooking);
