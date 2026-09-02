@@ -120,7 +120,7 @@ export async function GET(request: Request) {
       );
       const paymentMetrics = buildDashboardPaymentMetrics({
         bookingTotal: displayFiltered.length,
-        fallbackTransactions: displayFiltered.length,
+        fallbackTransactions: revenueEligible.length,
         fallbackRevenue: revenueFiltered,
         paymentEvents: validatedPaymentEvents?.events ?? null,
         cancelledBookingIds,
