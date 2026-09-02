@@ -126,9 +126,20 @@ test("aktivasi memakai satu pointer atomik, rollback tidak menghapus, dan Olsera
 // bookings.total_price mentah untuk SEMUA booking bulan berjalan.
 // ---------------------------------------------------------------------------
 
-test("REGRESSION 21 Agustus: endDate akhir bulan kalender untuk bulan BERJALAN ditolak resolveStagingRange (bukti root cause)", () => {
+// Fix (2 September): resolveStagingRange() sendiri sekarang memotong endDate
+// masa depan ke hari ini (sama seperti workaround manual di ketiga route
+// export di bawah), bukan menolak seluruh rentang. Ini menutup celah yang
+// sama untuk pemanggil yang BELUM meng-cap sendiri, mis. app/api/dashboard/
+// route.ts — sebelum fix ini, dashboard bulan berjalan selalu fallback.
+test("REGRESSION 21 Agustus (ditutup di sumber): endDate akhir bulan kalender untuk bulan BERJALAN dipotong ke hari ini, bukan ditolak", () => {
   const today = new Date("2026-08-21T12:00:00Z");
-  const rejected = resolveStagingRange({ startDate: "2026-08-01", endDate: "2026-08-31" }, today);
+  const accepted = resolveStagingRange({ startDate: "2026-08-01", endDate: "2026-08-31" }, today);
+  assert.deepEqual(accepted, { range: { period: "2026-08", start: "2026-08-01", end: "2026-08-21" } });
+});
+
+test("startDate itu sendiri di masa depan tetap ditolak (tidak ada yang bisa dipotong)", () => {
+  const today = new Date("2026-08-21T12:00:00Z");
+  const rejected = resolveStagingRange({ startDate: "2026-09-01", endDate: "2026-09-30" }, today);
   assert.deepEqual(rejected, { error: "tanggal masa depan tidak diizinkan" });
 });
 

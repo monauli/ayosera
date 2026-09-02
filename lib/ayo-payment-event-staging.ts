@@ -63,10 +63,14 @@ export function resolveStagingRange(input: StagingRangeInput, now = new Date()):
   }
   if (!startDate || !endDate || !validDate(startDate) || !validDate(endDate)) return { error: "startDate dan endDate harus format YYYY-MM-DD yang valid" };
   if (endDate < startDate) return { error: "endDate tidak boleh sebelum startDate" };
-  if (endDate > today) return { error: "tanggal masa depan tidak diizinkan" };
-  const days = (Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000 + 1;
+  if (startDate > today) return { error: "tanggal masa depan tidak diizinkan" };
+  // Rentang berjalan (mis. 1..akhir bulan ini) dipotong ke hari ini, sama seperti
+  // shorthand `month` di atas — bukan ditolak, supaya bulan berjalan tetap bisa
+  // memakai payment events tervalidasi sampai hari terakhir yang datanya ada.
+  const end = endDate > today ? today : endDate;
+  const days = (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000 + 1;
   if (days > MAX_STAGING_DAYS) return { error: `rentang maksimal ${MAX_STAGING_DAYS} hari` };
-  return { range: { period: rangePeriod(startDate, endDate, today), start: startDate, end: endDate } };
+  return { range: { period: rangePeriod(startDate, end, today), start: startDate, end } };
 }
 
 export function validateStagingPeriod(period: AyoStagingPeriod, events: readonly AyoPaymentEvent[], duplicate: number, conflict: number): StagingPeriodStatus {
@@ -96,7 +100,7 @@ export async function readActiveStagedPaymentEvents(startDate: string, endDate: 
     if (!isActivatableRun(run)) return null;
     const official = resolved.range.period === "2026-06" || resolved.range.period === "2026-07";
     if (official && run.periods[resolved.range.period]?.validationStatus !== "validated") return null;
-    const range = { $gte: new Date(`${startDate}T00:00:00.000Z`), $lte: new Date(`${endDate}T23:59:59.999Z`) };
+    const range = { $gte: new Date(`${resolved.range.start}T00:00:00.000Z`), $lte: new Date(`${resolved.range.end}T23:59:59.999Z`) };
     const historical = await source.events.find({ runId: run._id, eventDate: range }).toArray();
     if (official) {
       const status = validateStagingPeriod(resolved.range.period, historical, 0, 0);
