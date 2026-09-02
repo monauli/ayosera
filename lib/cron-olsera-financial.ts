@@ -108,7 +108,7 @@ const CURRENT_MONTH_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // lihat lib/olsera-financial-sync.ts). Dipilih longgar (beberapa jam) karena
 // ledger-details ~85-90 akun @ LEDGER_BATCH_SIZE=4/step butuh puluhan step,
 // dan sekarang current+previous bergantian berbagi kuota cron yang sama.
-const RUNNING_STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000;
+export const RUNNING_STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000;
 
 export type CronOlseraFinancialResponse = {
   status: number;

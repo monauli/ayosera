@@ -307,6 +307,71 @@ test("getOlseraFinancialHealth: error terakhir -> BERMASALAH", async () => {
   assert.equal(result.issue, "AKSES_API_BERMASALAH");
 });
 
+// --- Stale-running detection (insiden Agustus 2026: run macet 2+ hari tetap TERHUBUNG
+// karena tidak ada lastError eksplisit) — reuse isFinancialSyncRunStale, ambang 4 jam. ---
+
+test("getOlseraFinancialHealth: run 'running' >4 jam tanpa progres (updatedAt basi) -> BERMASALAH + SINKRONISASI_MACET, pesan sebut periode", async () => {
+  fakeCollections = {
+    olseraFinancialSyncLogs: new FakeCollection([
+      {
+        period: "2026-08",
+        status: "running",
+        finalized: false,
+        accountCursor: 12,
+        startedAt: new Date("2026-08-06T09:00:00Z"),
+        updatedAt: new Date("2026-08-09T05:00:00Z"), // 5 jam sebelum NOW -> stale (ambang 4 jam)
+        completedAt: null,
+        errorMessage: null,
+      },
+    ]),
+  };
+  const result = await getOlseraFinancialHealth(NOW);
+  assert.equal(result.status, "BERMASALAH");
+  assert.equal(result.issue, "SINKRONISASI_MACET");
+  assert.match(result.lastError ?? "", /2026-08/);
+  assert.match(result.lastError ?? "", />4 jam tanpa progres/);
+});
+
+test("getOlseraFinancialHealth: run 'running' baru saja update (progres aktif) -> tetap TERHUBUNG", async () => {
+  fakeCollections = {
+    olseraFinancialSyncLogs: new FakeCollection([
+      {
+        period: "2026-08",
+        status: "running",
+        finalized: false,
+        accountCursor: 40,
+        startedAt: new Date("2026-08-09T09:00:00Z"),
+        updatedAt: new Date("2026-08-09T09:55:00Z"), // 5 menit sebelum NOW -> belum stale
+        completedAt: null,
+        errorMessage: null,
+      },
+    ]),
+  };
+  const result = await getOlseraFinancialHealth(NOW);
+  assert.equal(result.status, "TERHUBUNG");
+  assert.equal(result.issue, null);
+});
+
+test("getOlseraFinancialHealth: run sudah 'success' (completed) walau lama -> tetap TERHUBUNG, bukan dianggap macet", async () => {
+  fakeCollections = {
+    olseraFinancialSyncLogs: new FakeCollection([
+      {
+        period: "2026-08",
+        status: "success",
+        finalized: true,
+        accountCursor: 90,
+        startedAt: new Date("2026-08-06T09:00:00Z"),
+        updatedAt: new Date("2026-08-06T12:00:00Z"),
+        completedAt: new Date("2026-08-06T12:00:00Z"),
+        errorMessage: null,
+      },
+    ]),
+  };
+  const result = await getOlseraFinancialHealth(NOW);
+  assert.equal(result.status, "TERHUBUNG");
+  assert.equal(result.issue, null);
+});
+
 // --- Secrets never surface in module health output ------------------------
 
 test("ModuleHealth tidak pernah membawa field token/secret/Authorization/Mongo URI", async () => {

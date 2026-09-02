@@ -1,5 +1,6 @@
 import "server-only";
 import { collections, withMongo } from "@/lib/mongodb";
+import { isFinancialSyncRunStale, RUNNING_STALE_THRESHOLD_MS } from "@/lib/cron-olsera-financial";
 
 // Phase 3D.1 — Connection Health Monitoring. Baca ULANG log/checkpoint sync yang
 // SUDAH ADA (sync_logs, olsera_sync_log, olsera_financial_sync_logs,
@@ -13,7 +14,8 @@ export type ConnectionIssueKind =
   | "TIMEOUT"
   | "TIDAK_BISA_TERHUBUNG"
   | "SERVER_SUMBER_BERMASALAH"
-  | "DATA_TIDAK_VALID";
+  | "DATA_TIDAK_VALID"
+  | "SINKRONISASI_MACET";
 
 export const CONNECTION_STATUS_LABEL: Record<ConnectionStatus, string> = {
   TERHUBUNG: "Terhubung",
@@ -27,6 +29,7 @@ export const CONNECTION_ISSUE_LABEL: Record<ConnectionIssueKind, string> = {
   TIDAK_BISA_TERHUBUNG: "Tidak Bisa Terhubung",
   SERVER_SUMBER_BERMASALAH: "Server Sumber Bermasalah",
   DATA_TIDAK_VALID: "Data Tidak Valid",
+  SINKRONISASI_MACET: "Sinkronisasi Macet",
 };
 
 export type ModuleHealth = {
@@ -170,12 +173,26 @@ export async function getOlseraFinancialHealth(now = new Date()): Promise<Module
       olseraFinancialSyncLogs.find().sort({ startedAt: -1 }).limit(1).next(),
       olseraFinancialSyncLogs.find({ status: "success" }).sort({ startedAt: -1 }).limit(1).next(),
     ]);
-    return buildModuleHealth("olsera-financial", "Olsera Financial", {
+    const health = buildModuleHealth("olsera-financial", "Olsera Financial", {
       lastSuccessfulSyncAt: lastSuccess?.completedAt ?? lastSuccess?.startedAt ?? null,
       lastAttemptAt: lastLog?.startedAt ?? null,
       lastError: lastLog?.errorMessage ?? null,
       now,
     });
+    // Insiden Agustus 2026: run yang macet berjam-jam tanpa progres tetap TERHUBUNG
+    // di sini karena tidak pernah tercatat lastError eksplisit. isFinancialSyncRunStale
+    // (lib/cron-olsera-financial.ts) sudah mendeteksi ini untuk observability cron —
+    // reuse ambang yang sama supaya health-check tidak menyamarkan run macet sebagai sehat.
+    if (health.status === "TERHUBUNG" && lastLog && isFinancialSyncRunStale({ ...lastLog, finalized: lastLog.finalized ?? false }, now)) {
+      const staleHours = Math.floor(RUNNING_STALE_THRESHOLD_MS / 3_600_000);
+      return {
+        ...health,
+        status: "BERMASALAH",
+        issue: "SINKRONISASI_MACET",
+        lastError: `Sync periode ${lastLog.period} sudah running >${staleHours} jam tanpa progres (terakhir update ${lastLog.updatedAt.toISOString()}).`,
+      };
+    }
+    return health;
   });
 }
 
