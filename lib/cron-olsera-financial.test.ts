@@ -369,12 +369,12 @@ test("selectFinancialCronTarget: current DAN previous success, previous BARU SAJ
   assert.equal(target, null);
 });
 
-test("selectFinancialCronTarget: current DAN previous success, previous sudah LEWAT interval refresh -> pilih previous, startFresh — Test D", () => {
+test("selectFinancialCronTarget: current DAN previous success, previous jauh lewat interval refresh lama -> TETAP null (previous-refresh-due dimatikan permanen) — Test D", () => {
   const now = new Date("2026-08-09T00:00:00Z");
   const currentLog = { status: "success" as const, finalized: true, updatedAt: now, completedAt: now };
-  const previousLog = { status: "success" as const, finalized: true, updatedAt: now, completedAt: new Date(now.getTime() - DAY_MS - HOUR_MS) }; // 25 jam lalu, > 24 jam
+  const previousLog = { status: "success" as const, finalized: true, updatedAt: now, completedAt: new Date(now.getTime() - DAY_MS - HOUR_MS) }; // 25 jam lalu — dulu > 24 jam cukup memicu refresh
   const target = selectFinancialCronTarget({ currentPeriod: "2026-08", previousPeriod: "2026-07", currentLog, previousLog, now });
-  assert.deepEqual(target, { period: "2026-07", startFresh: true, reason: "previous-refresh-due" });
+  assert.equal(target, null, "previous-refresh-due dimatikan permanen — previous sudah success TIDAK PERNAH direstart lagi oleh cron ini, apa pun umur completedAt-nya");
 });
 
 test("selectFinancialCronTarget: bulan 2 bulan ke belakang TIDAK PERNAH masuk parameter sama sekali (fungsi hanya menerima current+previous, tidak ada slot ketiga)", () => {
@@ -503,20 +503,18 @@ test("isFinancialSyncRunStale: status success/partial-final TIDAK PERNAH diangga
 
 // ---- Integration: runOlseraFinancialCron auto-mode dual-period behavior ----
 
-test("Test A: previous month punya jurnal baru setelah sync lama (success TAPI lewat interval) -> refresh berikutnya memperbarui data (startFinancialSync dipanggil utk previous)", async () => {
+test("Test A: previous month success lewat interval refresh lama -> TETAP up-to-date, startFinancialSync TIDAK dipanggil (previous-refresh-due dimatikan permanen)", async () => {
   resetAll();
   getFinancialSyncLogForPeriodMock.mock.mockImplementation(async (period: string) =>
     period === "2026-07"
       ? fakeRun({ status: "success", phase: "completed", finalized: true, completedAt: new Date() }) // current sudah selesai
-      : fakeRun({ period, status: "success", phase: "completed", finalized: true, completedAt: new Date(Date.now() - DAY_MS - HOUR_MS) }), // previous success TAPI 25 jam lalu
+      : fakeRun({ period, status: "success", phase: "completed", finalized: true, completedAt: new Date(Date.now() - DAY_MS - HOUR_MS) }), // previous success 25 jam lalu — dulu cukup untuk memicu restart penuh
   );
-  startFinancialSyncMock.mock.mockImplementationOnce(async (_year: unknown, _month: unknown) => fakeRun({ period: "2026-06", status: "running", phase: "monthly-reports", accountCursor: 0 }));
-  stepFinancialSyncMock.mock.mockImplementation(async () => fakeRun({ period: "2026-06", status: "success", phase: "completed" }));
 
   const res = await runOlseraFinancialCron("Bearer test-secret");
-  assert.equal(res.body.period, "2026-06");
-  assert.equal(startFinancialSyncMock.mock.callCount(), 1);
-  assert.deepEqual(startFinancialSyncMock.mock.calls[0].arguments, ["2026", "06"]);
+  assert.equal(res.body.status, "up-to-date");
+  assert.equal(startFinancialSyncMock.mock.callCount(), 0, "previous yang sudah success TIDAK PERNAH di-restart lagi oleh cron ini, apa pun umur completedAt-nya");
+  assert.equal(stepFinancialSyncMock.mock.callCount(), 0);
 });
 
 test("Test E: bulan berjalan tetap refresh normal ketika belum pernah sync (perilaku existing tidak berubah)", async () => {
@@ -598,12 +596,12 @@ test("Test C (3B.1): previous success + 24 jam BELUM lewat -> tidak refresh (dup
   assert.equal(target, null);
 });
 
-test("Test D (3B.1): previous success + 24 jam SUDAH lewat -> eligible refresh (duplikat Test D lama, dipertahankan)", () => {
+test("Test D (3B.1): previous success + 24 jam SUDAH lewat -> TETAP null, bukan lagi eligible refresh (previous-refresh-due dimatikan permanen; duplikat Test D lama, dipertahankan)", () => {
   const now = new Date("2026-08-09T12:00:00Z");
   const currentLog = { status: "success" as const, finalized: true, updatedAt: now, completedAt: now };
   const previousLog = { status: "success" as const, finalized: true, updatedAt: now, completedAt: new Date(now.getTime() - 25 * HOUR_MS) };
   const target = selectFinancialCronTarget({ currentPeriod: "2026-08", previousPeriod: "2026-07", currentLog, previousLog, now });
-  assert.deepEqual(target, { period: "2026-07", startFresh: true, reason: "previous-refresh-due" });
+  assert.equal(target, null);
 });
 
 test("Test E (3B.1): current success fresh + previous running stale -> previous di-resume (bukan current yang dipaksa refresh)", () => {
@@ -677,12 +675,15 @@ test("Test J (3B.1): panggilan cron berulang akhirnya memberi giliran current DA
   assert.equal(target?.period, "2026-08");
   assert.equal(target?.reason, "current-refresh-due");
 
-  // t0 + 25 jam: current sudah di-refresh ulang (anggap barusan berhasil lagi), previous sekarang due (>24h) -> giliran previous.
+  // t0 + 25 jam: current sudah di-refresh ulang (anggap barusan berhasil lagi), previous jauh lewat 24 jam -> TETAP null.
+  // previous-refresh-due DIMATIKAN PERMANEN: previous yang sudah success
+  // tidak lagi di-restart secara berkala oleh cron ini, betapapun lama
+  // completedAt-nya — beda dengan current-refresh-due (langkah sebelumnya)
+  // yang TETAP aktif.
   now = new Date(now.getTime() + 18 * HOUR_MS); // total +25 jam dari t0
   const currentRefreshedAgain = { status: "success" as const, finalized: true, updatedAt: new Date(now.getTime() - 1 * HOUR_MS), completedAt: new Date(now.getTime() - 1 * HOUR_MS) };
   target = selectFinancialCronTarget({ currentPeriod: "2026-08", previousPeriod: "2026-07", currentLog: currentRefreshedAgain, previousLog: previousJustSucceeded, now });
-  assert.equal(target?.period, "2026-07");
-  assert.equal(target?.reason, "previous-refresh-due");
+  assert.equal(target, null);
 });
 
 // --- Phase 3C.5 — deadline internal (F, G): berhenti karena time budget
@@ -823,56 +824,74 @@ test("selectFinancialCronTargetWithHistory (scope auto): previous dengan progres
   assert.equal(current?.reason, "current-unfinished");
 });
 
-test("anti-starvation: historical unfinished tertua dipilih setelah current selesai", () => {
+test("historical-unfinished (scope auto): backlog 2+ bulan ke belakang TIDAK PERNAH dipilih lagi, apa pun kondisinya (dimatikan permanen) — dulu 'anti-starvation: historical unfinished tertua dipilih setelah current selesai'", () => {
   const now = new Date("2026-08-12T00:00:00Z");
+  // Fixture SAMA seperti sebelumnya (Feb running/Apr failed/Jun partial-belum-final,
+  // current+previous keduanya success) — dulu Februari (tertua, unfinished)
+  // menang. Sekarang cabangnya dimatikan: hasilnya harus null, TIDAK PERNAH
+  // menjangkau backlog itu lagi lewat scope "auto".
+  const historicalLogs = [
+    { ...fakeRun({ _id: "financial:1:2026-06", period: "2026-06", status: "partial", finalized: true, updatedAt: new Date("2026-06-03T00:00:00Z") }), completedAt: null },
+    { ...fakeRun({ _id: "financial:1:2026-02", period: "2026-02", status: "running", finalized: false, updatedAt: new Date("2026-08-11T00:00:00Z") }), completedAt: null },
+    { ...fakeRun({ _id: "financial:1:2026-04", period: "2026-04", status: "failed", finalized: true, updatedAt: new Date("2026-04-03T00:00:00Z") }), completedAt: null },
+  ];
+  const input = {
+    currentPeriod: "2026-08",
+    previousPeriod: "2026-07",
+    currentLog: { status: "success" as const, finalized: true, updatedAt: now, completedAt: now },
+    previousLog: { status: "success" as const, finalized: true, updatedAt: now, completedAt: now },
+    historicalLogs,
+    now,
+  };
+
+  assert.equal(selectFinancialCronTargetWithHistory({ ...input, scope: "auto" }), null);
+
+  // Mekanisme lamanya sendiri TIDAK dihapus, hanya tidak pernah dievaluasi
+  // lagi lewat scope "auto" — scope "historical" eksplisit (tidak pernah
+  // dipanggil production sejak endpoint /historical dihapus, 65c427d) masih
+  // memilih Februari persis seperti dulu. Bukti bahwa ini benar-benar
+  // "dimatikan dari jalur auto", bukan "logikanya rusak".
+  const historicalScope = selectFinancialCronTargetWithHistory({ ...input, scope: "historical" });
+  assert.equal(historicalScope?.period, "2026-02");
+  assert.equal(historicalScope?.reason, "historical-unfinished");
+});
+
+test("previous-unfinished (scope auto): previousPeriod tanpa progres (log null) TETAP dipilih — MENGGANTIKAN historical-unfinished untuk kasus ini, backlog Mei (2+ bulan, progres nyata) TIDAK IKUT tersentuh", () => {
+  const now = new Date("2026-08-16T00:00:00Z");
+  const may = fakeRun({ period: "2026-05", status: "running", phase: "ledger-details", accountCursor: 76, updatedAt: now });
+  const currentSuccess = fakeRun({ period: "2026-08", status: "success", completedAt: now, updatedAt: now });
+
+  // previousPeriod (Juli) belum pernah disync sama sekali (log null) -> tetap
+  // kebagian giliran, tapi lewat cabang previous-unfinished eksplisit
+  // (BUKAN historical-unfinished, yang sudah dimatikan). Mei — backlog 2+
+  // bulan dengan progres nyata (cursor 76) — TIDAK ikut disentuh sama sekali:
+  // startFresh:true membuktikan ini previous-unfinished (log null), bukan
+  // resume checkpoint Mei.
   const target = selectFinancialCronTargetWithHistory({
     currentPeriod: "2026-08",
     previousPeriod: "2026-07",
-    currentLog: { status: "success", finalized: true, updatedAt: now, completedAt: now },
-    previousLog: { status: "success", finalized: true, updatedAt: now, completedAt: now },
-    historicalLogs: [
-      { ...fakeRun({ _id: "financial:1:2026-06", period: "2026-06", status: "partial", finalized: true, updatedAt: new Date("2026-06-03T00:00:00Z") }), completedAt: null },
-      { ...fakeRun({ _id: "financial:1:2026-02", period: "2026-02", status: "running", finalized: false, updatedAt: new Date("2026-08-11T00:00:00Z") }), completedAt: null },
-      { ...fakeRun({ _id: "financial:1:2026-04", period: "2026-04", status: "failed", finalized: true, updatedAt: new Date("2026-04-03T00:00:00Z") }), completedAt: null },
-    ],
-    now,
-  });
-  assert.equal(target?.period, "2026-02");
-  assert.equal(target?.reason, "historical-unfinished");
-  assert.equal(target?.startFresh, false);
-});
-
-test("historical backlog: running Mei cursor 76 dipilih lalu periode kosong Juni dan Juli dipilih berurutan", () => {
-  const now = new Date("2026-08-16T00:00:00Z");
-  const may = fakeRun({ period: "2026-05", status: "running", phase: "ledger-details", accountCursor: 76, updatedAt: now });
-  const june = selectFinancialCronTargetWithHistory({
-    currentPeriod: "2026-08",
-    previousPeriod: "2026-07",
-    currentLog: fakeRun({ period: "2026-08", status: "success", completedAt: now, updatedAt: now }),
+    currentLog: currentSuccess,
     previousLog: null,
     historicalLogs: [may],
     historicalPeriods: ["2026-05", "2026-06", "2026-07"],
+    scope: "auto",
     now,
   });
-  assert.equal(june?.period, "2026-05");
-  assert.equal(june?.startFresh, false);
+  assert.deepEqual(target, { period: "2026-07", startFresh: true, reason: "previous-unfinished" });
 
-  const afterMay = selectFinancialCronTargetWithHistory({
+  // Previous (Juli) SUDAH up to date -> backlog Mei (progres 76/85, running)
+  // tetap TIDAK PERNAH dipilih lewat scope "auto", betapapun nyata progresnya.
+  const afterPreviousDone = selectFinancialCronTargetWithHistory({
     currentPeriod: "2026-08",
     previousPeriod: "2026-07",
-    currentLog: fakeRun({ period: "2026-08", status: "success", completedAt: now, updatedAt: now }),
-    previousLog: null,
-    historicalLogs: [
-      fakeRun({ period: "2026-02", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
-      fakeRun({ period: "2026-03", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
-      fakeRun({ period: "2026-04", status: "success", phase: "completed", completedAt: now, updatedAt: now }),
-      { ...may, status: "success", phase: "completed", completedAt: now, updatedAt: now },
-    ],
+    currentLog: currentSuccess,
+    previousLog: { status: "success", finalized: true, updatedAt: now, completedAt: now },
+    historicalLogs: [may],
     historicalPeriods: ["2026-05", "2026-06", "2026-07"],
+    scope: "auto",
     now,
   });
-  assert.equal(afterMay?.period, "2026-06");
-  assert.equal(afterMay?.startFresh, true);
+  assert.equal(afterPreviousDone, null, "backlog Mei (2+ bulan ke belakang) tidak pernah lagi disentuh cron ini — cron historical dimatikan permanen (aturan 16 Agustus 2026)");
 });
 
 test("cron scope current melewati historical, sedangkan scope historical berhenti setelah Juli selesai", () => {

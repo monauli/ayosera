@@ -21,16 +21,20 @@
 // jurnal terlambat bertanggal periode yang sudah "success" itu, AYOSERA
 // tidak pernah menangkapnya otomatis (hanya lewat tombol Sync manual).
 // Sekarang: mode auto (tanpa {year,month}) memelihara DUA periode setiap
-// invocation — bulan berjalan DAN bulan sebelumnya, KEDUANYA boleh
-// di-refresh ulang otomatis setelah masing-masing jendela waktu
-// (CURRENT_MONTH_REFRESH_INTERVAL_MS / PREVIOUS_MONTH_REFRESH_INTERVAL_MS)
-// walau sudah "success" — bulan berjalan TIDAK BOLEH berhenti permanen
-// setelah "success" (diperbaiki di Phase 3B.1: Phase 3B awal salah
-// mengasumsikan "perilaku current tidak berubah" padahal current month
-// masih terus menerima transaksi baru sepanjang bulan berjalan, sama
-// rentannya dengan kasus Juli). Mode manual (dipanggil dengan {year,month}
-// eksplisit dari tombol Sync UI) TIDAK berubah sama sekali — selalu satu
-// periode persis yang diminta, seperti sebelumnya.
+// invocation — bulan berjalan DAN bulan sebelumnya. Bulan berjalan boleh
+// di-refresh ulang otomatis setelah CURRENT_MONTH_REFRESH_INTERVAL_MS walau
+// sudah "success" — bulan berjalan TIDAK BOLEH berhenti permanen setelah
+// "success" (diperbaiki di Phase 3B.1: Phase 3B awal salah mengasumsikan
+// "perilaku current tidak berubah" padahal current month masih terus
+// menerima transaksi baru sepanjang bulan berjalan, sama rentannya dengan
+// kasus Juli). Bulan SEBELUMNYA yang sudah "success" TIDAK LAGI di-refresh
+// ulang secara periodik oleh cron ini — cabang itu (previous-refresh-due,
+// PREVIOUS_MONTH_REFRESH_INTERVAL_MS lama) dimatikan permanen karena
+// restart penuh 85 akun tiap hari terlalu mahal; jurnal susulan akun revenue
+// sekarang ditangkap lib/cron-olsera-revenue-recheck.ts (lihat file itu).
+// Mode manual (dipanggil dengan {year,month} eksplisit dari tombol Sync UI)
+// TIDAK berubah sama sekali — selalu satu periode persis yang diminta,
+// seperti sebelumnya.
 //
 // PENTING — batas waktu Vercel/cron-job.org: satu invocation TETAP hanya
 // mengerjakan SATU periode (dipilih lewat selectFinancialCronTarget, bukan
@@ -91,14 +95,13 @@ const PARTIAL_RESTART_COOLDOWN_MS = 30 * 60 * 1000;
 // direkomendasikan; boleh diperlonggar lagi kalau nanti terbukti API Olsera
 // terbebani, tapi tidak ada indikasi itu sekarang.
 const CURRENT_MONTH_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
-// Jeda minimum sebelum bulan SEBELUMNYA yang sudah "success" boleh
-// di-refresh ulang otomatis lagi — dipilih ~1x/hari (BUKAN setiap
-// invocation cron, yang dijadwalkan lebih sering seperti modul lain di
-// cron-job.org) berdasarkan pola insiden nyata Juli 2026: jurnal terlambat
-// baru diketahui 3-5 hari setelah bulan berakhir, bukan berkali-kali dalam
-// sehari — jendela harian sudah cukup menutup pola itu tanpa membebani
-// Olsera/MongoDB dengan refresh berulang yang tidak perlu.
-const PREVIOUS_MONTH_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+// PREVIOUS_MONTH_REFRESH_INTERVAL_MS (dulu 24 jam) DIHAPUS — cabang
+// previous-refresh-due yang memakainya dimatikan permanen (lihat komentar
+// besar di selectFinancialCronTargetWithHistory, blok scope "auto"): efeknya
+// me-restart penuh 85 akun dari accountCursor 0 untuk periode yang sudah
+// "success", terlalu mahal untuk sekadar refresh berkala. Kebutuhan aslinya
+// (jurnal susulan akun revenue) sekarang dilayani
+// lib/cron-olsera-revenue-recheck.ts.
 // Ambang "running" dianggap macet (stale) — MURNI untuk observability/log,
 // TIDAK memicu reset/hapus data apa pun: run yang stale tetap di-resume
 // lewat step seperti run yang masih segar (checkpoint sudah aman di MongoDB,
@@ -243,6 +246,52 @@ export function selectFinancialCronTargetWithHistory(input: {
     }
     return null;
   }
+  if (scope === "auto") {
+    // Previous month BELUM selesai (progres NOL ATAU tidak ada log sama
+    // sekali — kasus DENGAN progres sudah ditangani preemption di atas)
+    // tetap harus kebagian giliran. Ini MENGGANTIKAN ketergantungan lama
+    // pada blok historical-unfinished di bawah untuk kasus ini (satu-satunya
+    // alasan blok itu bisa menjangkau previousPeriod sebelumnya) — logikanya
+    // SAMA PERSIS dengan pengecekan yang sudah ada di selectFinancialCronTarget
+    // (fungsi murni di bawah), dipindah ke sini supaya jalur PRODUCTION
+    // (yang memanggil fungsi INI, bukan selectFinancialCronTarget) tidak
+    // kehilangan jaminan Phase 3A/3B: bulan sebelumnya tidak boleh terjebak
+    // permanen hanya karena sync-nya belum pernah dicoba / masih di cursor 0.
+    if (input.previousPeriod && isFinancialPeriodUnfinished(input.previousLog, now)) {
+      return { period: input.previousPeriod, startFresh: financialPeriodNeedsFreshStart(input.previousLog, now), reason: "previous-unfinished" };
+    }
+    if (isFinancialPeriodRefreshDue(input.currentLog, now, CURRENT_MONTH_REFRESH_INTERVAL_MS)) {
+      return { period: input.currentPeriod, startFresh: true, reason: "current-refresh-due" };
+    }
+    // previous-refresh-due DAN backlog historis (2+ bulan ke belakang)
+    // DIMATIKAN PERMANEN untuk scope "auto" — bukan sekadar interval yang
+    // diperpanjang, cabangnya sengaja tidak pernah dievaluasi lagi di sini.
+    //
+    // previous-refresh-due dimatikan karena efeknya MEMBUANG progres:
+    // startFresh:true me-restart createFinancialSyncRun() dari accountCursor
+    // 0 untuk periode yang SUDAH "success" (mis. Agustus 85/85 dibuang lagi
+    // jadi 0/85 tiap 24 jam), memakan puluhan invocation cron untuk sekadar
+    // memeriksa ulang 85 akun yang mayoritas tidak berubah. Kebutuhan
+    // aslinya (menangkap jurnal susulan di akun REVENUE setelah tutup buku)
+    // sekarang dilayani jalur terpisah yang jauh lebih murah: cron
+    // "revenue re-check mingguan" (lib/cron-olsera-revenue-recheck.ts) —
+    // fetch ulang ~9 akun lewat getLedgerDetail() saja, TANPA startFresh/
+    // createFinancialSyncRun/getAccounts sama sekali.
+    //
+    // backlog historis (periode 2+ bulan sebelum current, mis. Maret saat
+    // current Agustus) dimatikan karena aturan final 16 Agustus 2026
+    // (commit 65c427d, "aturan final melarang cron historical") — endpoint
+    // /historical yang dulu sengaja dibuat untuk ini sudah dihapus lagi di
+    // commit yang sama. Membuka scope "auto" (91097b1) TANPA mematikan blok
+    // di bawah ini akan diam-diam menghidupkan kembali aturan yang sudah
+    // dilarang itu begitu ada periode lama yang berubah non-success.
+    return null;
+  }
+  // Hanya scope "historical" yang sampai di sini — dipertahankan UTUH untuk
+  // kompatibilitas fungsi/test (TIDAK PERNAH dipanggil dari production sejak
+  // endpoint /historical dihapus di 65c427d; route.ts sekarang selalu
+  // memakai scope "auto", yang blok backlog historisnya sudah dimatikan
+  // permanen di atas).
   const excluded = new Set([input.currentPeriod].filter(Boolean));
   const logsByPeriod = new Map(input.historicalLogs.map((log) => [log.period, log]));
   const historicalPeriods = input.historicalLogs.length === 0
@@ -258,13 +307,6 @@ export function selectFinancialCronTargetWithHistory(input: {
     .sort((a, b) => a.period.localeCompare(b.period) || toTime(a.updatedAt) - toTime(b.updatedAt))[0];
   if (historical) {
     return { period: historical.period, startFresh: financialPeriodNeedsFreshStart(historical, now), reason: "historical-unfinished" };
-  }
-  if (scope === "historical") return null;
-  if (isFinancialPeriodRefreshDue(input.currentLog, now, CURRENT_MONTH_REFRESH_INTERVAL_MS)) {
-    return { period: input.currentPeriod, startFresh: true, reason: "current-refresh-due" };
-  }
-  if (input.previousPeriod && isFinancialPeriodRefreshDue(input.previousLog, now, PREVIOUS_MONTH_REFRESH_INTERVAL_MS)) {
-    return { period: input.previousPeriod, startFresh: true, reason: "previous-refresh-due" };
   }
   return null;
 }
@@ -302,8 +344,13 @@ function isFinancialPeriodRefreshDue(log: FinancialSyncLogLite, now: Date, inter
  *      berjalan TIDAK PERNAH berhenti permanen setelah "success" (bug Phase
  *      3B yang diperbaiki di sini): transaksi baru terus masuk sepanjang
  *      bulan itu masih berjalan.
- *   4. previous yang sudah "success" TAPI jendela refresh sudah lewat (bug
- *      asli Juli 2026 yang jadi pemicu Phase 3A/3B).
+ *   4. [DIMATIKAN PERMANEN] previous yang sudah "success" TAPI jendela
+ *      refresh sudah lewat — cabang ini pernah menjadi perbaikan bug asli
+ *      Juli 2026 (pemicu Phase 3A/3B), tapi efeknya (restart penuh 85 akun
+ *      dari accountCursor 0 untuk periode yang sudah selesai) terlalu mahal
+ *      untuk dijalankan tiap 24 jam. Kebutuhan aslinya sekarang dilayani
+ *      cron "revenue re-check mingguan" yang jauh lebih murah (lihat
+ *      selectFinancialCronTargetWithHistory, blok scope "auto").
  *   5. tidak ada kerja -> null (no-op).
  */
 export function selectFinancialCronTarget(input: {
