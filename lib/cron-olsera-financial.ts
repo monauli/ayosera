@@ -455,7 +455,48 @@ export async function runOlseraFinancialCron(
     }
 
     const { year: y, month: m } = { year: period.slice(0, 4), month: period.slice(5) };
-    let run: FinancialSyncRun = startFresh || !existing ? await startFinancialSync(y, m) : existing;
+    const needsFreshRun = startFresh || !existing;
+    // Phase 3C.5.2 — startFinancialSync() memanggil getAccounts() (2 request
+    // Olsera) DI LUAR loop step, jadi satu-satunya kerja Olsera di invocation
+    // ini yang TIDAK pernah tersentuh guard deadline: baik guard antar-step di
+    // bawah maupun guard antar-akun di dalam stepFinancialSync baru berlaku
+    // SESUDAH run dibuat. Akibatnya invocation yang memulai periode baru bisa
+    // menghabiskan hampir seluruh budget di getAccounts lalu berhenti dengan
+    // stepsExecuted 0 (terbukti di production: dua invocation 2026-09
+    // berturut-turut, durMs 23.0 dan 23.7 detik, stepsExecuted 0).
+    //
+    // Ambang yang dipakai SAMA persis dengan guard step di bawah dan dengan
+    // stepFinancialSync (MIN_REMAINING_MS_TO_START_WORK = worst-case satu
+    // request Olsera + margin finalisasi) — getAccounts menembak 2 request
+    // PARALEL, jadi worst-case wall-clock-nya tetap satu request timeout.
+    //
+    // Bila sisa waktu tidak cukup: JANGAN mulai. Ini no-op aman, bukan error —
+    // tidak ada dokumen run yang dibuat atau di-reset, lock tetap dilepas di
+    // finally, dan invocation BERIKUTNYA mencoba lagi dari awal dengan budget
+    // penuh. Pola yang sama dengan "up-to-date" dan "stoppedForTimeBudget".
+    if (needsFreshRun && deadlineAt - Date.now() <= MIN_REMAINING_MS_TO_START_WORK) {
+      telemetrySafeErrorCode = "DEADLINE";
+      console.log(`[cron:olsera:financial] runId=${runId} period=${period} sisa waktu invocation tipis sebelum startFinancialSync — start ditunda ke invocation berikutnya (tidak ada run yang dibuat).`);
+      return {
+        status: 200,
+        body: {
+          success: true,
+          mode: "cron",
+          module: "financial",
+          runId,
+          period,
+          status: "start-deferred",
+          stepsExecuted: 0,
+          currentPhase: null,
+          processedCount: 0,
+          nextCheckpoint: null,
+          completed: false,
+          stoppedForTimeBudget: true,
+          ...(explicitRequest ? {} : { staleRunningDetected }),
+        },
+      };
+    }
+    let run: FinancialSyncRun = needsFreshRun || !existing ? await startFinancialSync(y, m) : existing;
     telemetryRun = run;
 
     // Sequential SATU per satu (tidak pernah paralel) — berhenti begitu salah

@@ -730,6 +730,44 @@ test("G) lock tetap dilepas setelah invocation berhenti karena deadline internal
   assert.equal(releaseOlseraSyncLockMock.mock.calls[0].arguments[0], "run-financial-lock-1");
 });
 
+test("H) sisa waktu tipis SEBELUM startFinancialSync -> getAccounts TIDAK dipanggil, no-op aman, invocation berikutnya lanjut normal", async (t) => {
+  resetAll();
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  // Periode baru: belum ada dokumen run -> jalur startFinancialSync.
+  // Pembacaan sync log "memakan" hampir seluruh budget (mensimulasikan lock +
+  // Mongo yang lambat), sehingga saat giliran startFinancialSync sisa waktu
+  // sudah di bawah ambang aman untuk satu request Olsera.
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => {
+    t.mock.timers.tick(FINANCIAL_INVOCATION_TIME_BUDGET_MS - FINANCIAL_MIN_REMAINING_MS_TO_START_WORK);
+    return null;
+  });
+
+  const res = await runOlseraFinancialCron("Bearer test-secret");
+
+  assert.equal(res.status, 200, "berhenti sebelum mulai BUKAN error — tetap HTTP 200");
+  assert.equal(res.body.status, "start-deferred");
+  assert.equal(res.body.completed, false);
+  assert.equal(res.body.stoppedForTimeBudget, true);
+  assert.equal(res.body.stepsExecuted, 0);
+  assert.equal(res.body.nextCheckpoint, null);
+  assert.equal(startFinancialSyncMock.mock.callCount(), 0, "INTI perbaikan: getAccounts() (di dalam startFinancialSync) tidak ikut dipanggil saat budget tipis");
+  assert.equal(stepFinancialSyncMock.mock.callCount(), 0);
+  assert.equal(releaseOlseraSyncLockMock.mock.callCount(), 1, "lock tetap dilepas seperti jalur berhenti lainnya");
+
+  // Invocation BERIKUTNYA dengan budget penuh: jalan normal, run dibuat, step
+  // berjalan sampai selesai — tidak ada state rusak yang ditinggalkan.
+  t.mock.timers.reset();
+  resetAll();
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
+  stepFinancialSyncMock.mock.mockImplementation(async () => fakeRun({ status: "success", phase: "completed", accountCursor: 85, accountsProcessed: 85, finalized: true }));
+
+  const next = await runOlseraFinancialCron("Bearer test-secret");
+
+  assert.equal(startFinancialSyncMock.mock.callCount(), 1, "invocation berikutnya memulai run seperti biasa");
+  assert.equal(next.body.completed, true);
+  assert.equal(next.body.stepsExecuted, 1);
+});
+
 test("deadline BELUM tercapai -> beberapa step tetap berjalan sequential seperti biasa (tidak berhenti prematur)", async (t) => {
   resetAll();
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => null);
