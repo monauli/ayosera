@@ -30,6 +30,9 @@ function jwtExpiry(value: string): Date | null {
   } catch { return null; }
 }
 
+/** Threshold terpusat untuk AKAN_KEDALUWARSA — satu tempat, tidak tersebar/hardcode di banyak lokasi. */
+export const OLSERA_TOKEN_EXPIRING_SOON_DAYS = 7;
+
 export function classifyTokenHealth(source: TokenHealth["source"], token: string | undefined, now = new Date(), lastSuccessfulUse: Date | null = null, lastError: string | null = null): TokenHealth {
   const label = source === "ayo-mobile" ? "AYO Mobile Token" : "Olsera Bearer Token";
   const configured = token?.trim();
@@ -38,7 +41,7 @@ export function classifyTokenHealth(source: TokenHealth["source"], token: string
   const expiry = jwtExpiry(configured);
   if (!expiry) return { source, label, status: "MANUAL_IMPORT_REQUIRED", expiresAt: null, remainingDays: null, checkedAt: now.toISOString(), lastSuccessfulUse: lastSuccessfulUse?.toISOString() ?? null, lastError: lastError ? "Pemeriksaan token terakhir gagal." : null, lastValidSource: lastSuccessfulUse ? "Penggunaan API terakhir" : "Expiry tidak diketahui" };
   const remainingDays = Math.ceil((expiry.getTime() - now.getTime()) / 86_400_000);
-  const status: TokenHealthStatus = remainingDays <= 0 ? "KEDALUWARSA" : remainingDays <= 3 ? "AKAN_KEDALUWARSA" : "AKTIF";
+  const status: TokenHealthStatus = remainingDays <= 0 ? "KEDALUWARSA" : remainingDays <= OLSERA_TOKEN_EXPIRING_SOON_DAYS ? "AKAN_KEDALUWARSA" : "AKTIF";
   return { source, label, status, expiresAt: expiry.toISOString(), remainingDays, checkedAt: now.toISOString(), lastSuccessfulUse: lastSuccessfulUse?.toISOString() ?? null, lastError: null, lastValidSource: "JWT expiry" };
 }
 

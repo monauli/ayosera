@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyTokenHealth, isPrivateToolsUser, privateToolsAllowlist, classifyAyoMobileToken, AYO_TOKEN_EXPIRING_SOON_DAYS } from "./private-integration-monitor.ts";
+import { classifyTokenHealth, isPrivateToolsUser, privateToolsAllowlist, classifyAyoMobileToken, AYO_TOKEN_EXPIRING_SOON_DAYS, OLSERA_TOKEN_EXPIRING_SOON_DAYS } from "./private-integration-monitor.ts";
 
 const jwt = (exp: number) => `x.${Buffer.from(JSON.stringify({ exp })).toString("base64url")}.x`;
 test("private tools fail closed and allow only listed user ids", () => { assert.equal(isPrivateToolsUser({ id: "a" } as never, privateToolsAllowlist("")), false); assert.equal(isPrivateToolsUser({ id: "a" } as never, privateToolsAllowlist("a,b")), true); assert.equal(isPrivateToolsUser({ id: "c" } as never, privateToolsAllowlist("a,b")), false); });
 test("token health classifies active, near expiry, expired, unauthorized, and does not return token", () => { const now = new Date("2026-08-06T00:00:00Z"); const base = now.getTime() / 1000; assert.equal(classifyTokenHealth("ayo-mobile", jwt(base + 10 * 86400), now).status, "AKTIF"); assert.equal(classifyTokenHealth("ayo-mobile", jwt(base + 2 * 86400), now).status, "AKAN_KEDALUWARSA"); assert.equal(classifyTokenHealth("ayo-mobile", jwt(1), now).status, "KEDALUWARSA"); const unauthorized = classifyTokenHealth("olsera-bearer", "secret-value", now, null, "401 Unauthorized"); assert.equal(unauthorized.status, "UNAUTHORIZED"); assert.equal(JSON.stringify(unauthorized).includes("secret-value"), false); });
+
+test(`classifyTokenHealth: threshold AKAN_KEDALUWARSA terpusat di OLSERA_TOKEN_EXPIRING_SOON_DAYS (${OLSERA_TOKEN_EXPIRING_SOON_DAYS} hari), bukan hardcode`, () => {
+  const now = new Date("2026-09-02T00:00:00Z");
+  const base = now.getTime() / 1000;
+  assert.equal(classifyTokenHealth("olsera-bearer", jwt(base + 30 * 86400), now).status, "AKTIF");
+  assert.equal(classifyTokenHealth("olsera-bearer", jwt(base + (OLSERA_TOKEN_EXPIRING_SOON_DAYS - 2) * 86400), now).status, "AKAN_KEDALUWARSA");
+  assert.equal(classifyTokenHealth("olsera-bearer", jwt(base - 1 * 86400), now).status, "KEDALUWARSA");
+});
 
 // --- classifyAyoMobileToken: AYO_MOBILE_TOKEN bukan JWT di production (token opaque,
 // tidak ada exp/refresh resmi) — model ini TIDAK PERNAH menebak expiry. ----------------

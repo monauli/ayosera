@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Lock, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-type Health = { source: string; label: string; status: string; expiresAt: string | null; remainingDays: number | null; checkedAt: string; lastError: string | null; lastValidSource: string | null };
+type TokenHealthStatus = "AKTIF" | "AKAN_KEDALUWARSA" | "KEDALUWARSA" | "UNAUTHORIZED" | "TIDAK_DIKONFIGURASI" | "TEMPORARY" | "MANUAL_IMPORT_REQUIRED";
+type Health = { source: string; label: string; status: TokenHealthStatus; expiresAt: string | null; remainingDays: number | null; checkedAt: string; lastError: string | null; lastValidSource: string | null };
 type AyoTokenHealth = {
   status: "ACTIVE" | "EXPIRING_SOON" | "EXPIRED" | "EXPIRY_UNKNOWN" | "MANUAL_IMPORT_REQUIRED" | "INVALID" | "UNAVAILABLE";
   label: string;
@@ -69,6 +70,17 @@ const AYO_TOKEN_STATUS_COLOR: Record<AyoTokenHealth["status"], string> = {
   MANUAL_IMPORT_REQUIRED: "text-amber-300",
   INVALID: "text-rose-300",
   UNAVAILABLE: "text-slate-400",
+};
+// Status Indonesia dari classifyTokenHealth() (lib/private-integration-monitor.ts) — pola sama
+// dengan AYO_TOKEN_STATUS_COLOR di atas, key set beda karena sumbernya beda fungsi/bahasa.
+const TOKEN_HEALTH_STATUS_COLOR: Record<TokenHealthStatus, string> = {
+  AKTIF: "text-cyan-200",
+  AKAN_KEDALUWARSA: "text-amber-300",
+  KEDALUWARSA: "text-rose-300",
+  UNAUTHORIZED: "text-rose-300",
+  TIDAK_DIKONFIGURASI: "text-slate-400",
+  TEMPORARY: "text-slate-300",
+  MANUAL_IMPORT_REQUIRED: "text-amber-300",
 };
 
 // Bedakan setiap kegagalan supaya panel tidak diam-diam menghilang — akun tanpa
@@ -189,19 +201,25 @@ export function PrivateIntegrationMonitor() {
         <p className="mt-4 text-sm text-slate-400">Belum ada data status integrasi lainnya.</p>
       ) : (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {otherHealth.map((item) => (
-            <div key={item.source} className="rounded-lg border border-white/10 bg-black/10 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <b className="text-sm text-slate-100">{item.label}</b>
-                <span className="text-xs font-semibold text-cyan-200">{item.status}</span>
+          {otherHealth.map((item) => {
+            const isExpiringSoon = item.status === "AKAN_KEDALUWARSA";
+            return (
+              <div key={item.source} className={`rounded-lg border p-3 ${isExpiringSoon ? "border-amber-300/20 bg-amber-950/10" : "border-white/10 bg-black/10"}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    {isExpiringSoon && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-300" />}
+                    <b className="text-sm text-slate-100">{item.label}</b>
+                  </div>
+                  <span className={`text-xs font-semibold ${TOKEN_HEALTH_STATUS_COLOR[item.status]}`}>{item.status}</span>
+                </div>
+                <p className="mt-2 text-xs text-slate-400">
+                  {item.expiresAt ? `Kedaluwarsa: ${new Date(item.expiresAt).toLocaleDateString("id-ID")} (${item.remainingDays} hari)` : "Expiry tidak diketahui"}
+                </p>
+                <p className="text-xs text-slate-500">Sumber valid: {item.lastValidSource ?? "Belum ada"}</p>
+                {item.lastError && <p className="text-xs text-rose-300">{item.lastError}</p>}
               </div>
-              <p className="mt-2 text-xs text-slate-400">
-                {item.expiresAt ? `Kedaluwarsa: ${new Date(item.expiresAt).toLocaleDateString("id-ID")} (${item.remainingDays} hari)` : "Expiry tidak diketahui"}
-              </p>
-              <p className="text-xs text-slate-500">Sumber valid: {item.lastValidSource ?? "Belum ada"}</p>
-              {item.lastError && <p className="text-xs text-rose-300">{item.lastError}</p>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
