@@ -883,6 +883,15 @@ th[scope],
 .recon-filters select option,.recon-form select option { background:rgb(var(--rd-panel-bg)); color:rgb(var(--rd-text)); }.recon-filters input[type="date"],.recon-filters select { color-scheme:var(--rd-color-scheme, dark); }
 .recon-form textarea { min-height:4.5rem; resize:vertical; }
 .recon-keyword { grid-column:span 2; }.recon-check { display:flex !important; align-items:center; gap:.5rem; align-self:end; min-height:2.2rem; }.recon-check input { min-width:auto !important; }
+/* Bug: banner selisih (recon-draft) di section "Ringkasan Rekonsiliasi
+   Inventori" (app/reconciliation/inventory/page.tsx) dirender LANGSUNG di
+   dalam .recon-filters (grid 4 kolom) tanpa grid-column eksplisit -> hanya
+   mengisi 1 dari 4 kolom grid (sempit, tidak sejajar dengan kartu di
+   sekelilingnya) padahal di semua pemakaian lain recon-draft berdiri sendiri
+   di luar grid sebagai banner penuh lebar. grid-column:1/-1 memakai pola yang
+   sama dengan .recon-keyword/.recon-sport-card-wide di atas (span penuh),
+   margin direset karena width sudah 100% dari baris grid, bukan lagi dari cell. */
+.recon-filters > .recon-draft { grid-column:1 / -1; margin:0; }
 .recon-draft,.recon-special,.recon-readonly { width:100%; box-sizing:border-box; max-width:1500px; margin:0 auto 1rem; display:flex; gap:.55rem; align-items:flex-start; border:1px solid rgb(245 158 11 / .4); border-radius:.65rem; background:rgb(245 158 11 / .1); color:rgb(180 83 9); padding:.7rem .85rem; font-size:.8125rem; }.recon-draft svg,.recon-special svg { width:1rem; flex:0 0 auto; margin-top:.05rem; }
 [data-mode="dark"] .recon-draft,[data-mode="dark"] .recon-special { color:rgb(253 230 138); }.recon-readonly { border-color:rgb(59 130 246 / .35); background:rgb(59 130 246 / .09); color:rgb(30 64 175); }[data-mode="dark"] .recon-readonly { color:rgb(147 197 253); }
 .recon-cards { max-width:1500px; margin:0 auto 1rem; display:grid; grid-template-columns:repeat(9,minmax(0,1fr)); gap:.65rem; }.recon-card { min-width:0; border:1px solid rgb(var(--rd-card-border)); border-radius:.7rem; background:linear-gradient(180deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); padding:.75rem; }.recon-card span { display:block; color:rgb(var(--rd-text-tertiary)); font-size:.7rem; }.recon-card strong { display:block; color:rgb(var(--rd-text)); font-size:1.35rem; margin-top:.2rem; }
