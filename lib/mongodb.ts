@@ -395,6 +395,14 @@ export type OlseraOrderItemDocument = {
    */
   addonPrice?: number;
   syncedAt: Date;
+  /**
+   * id order Olsera (Order List `id`) + nominal Order List saat item ini
+   * disinkron — dasar skip pada sync incremental (planIncrementalOrders,
+   * lib/olsera-audit.ts). Optional: dokumen sebelum fitur ini belum
+   * memilikinya, order-nya ditarik ulang sekali lalu ikut skema baru.
+   */
+  orderId?: number;
+  orderTotal?: number | null;
 
   // --- Identitas produk historis (Feature: canonical category mapping) ---
   // Disimpan saat sync agar perubahan product_id di katalog Olsera tidak

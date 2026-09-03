@@ -110,6 +110,7 @@
     "test:cron-olsera-inventory": "node --no-warnings --experimental-strip-types --experimental-test-module-mocks --import ./scripts/alias-register.mjs --test lib/cron-olsera-inventory.test.ts",
     "test:cron-olsera-financial": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/cron-olsera-financial.test.ts",
     "test:cron-olsera-revenue-recheck": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/cron-olsera-revenue-recheck.test.ts",
+    "test:olsera-sync-incremental": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/olsera-sync-incremental.test.ts",
     "test:financial-time-budget": "tsx --conditions=react-server --experimental-test-module-mocks --test lib/financial-time-budget.test.ts",
     "test:olsera-inventory-monthly": "node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs --test lib/olsera-inventory-monthly-core.test.ts lib/olsera-inventory-monthly-export.test.ts lib/olsera-inventory-monthly-auto.test.ts lib/olsera-inventory-monthly-snapshot-core.test.ts lib/olsera-inventory-monthly-snapshot-store.test.ts lib/olsera-inventory-monthly-ui.test.ts lib/olsera-inventory-two-sheet-export.test.ts",
     "reconciliation:internal": "tsx --conditions=react-server scripts/run-reconciliation-internal-olsera.ts",

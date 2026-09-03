@@ -93,9 +93,11 @@ test("idempotent: dua panggilan berturut-turut sama-sama sukses tanpa efek ganda
   await runOlseraSalesCron("Bearer test-secret");
   await runOlseraSalesCron("Bearer test-secret");
   assert.equal(auditAndSyncOlseraDayMock.mock.callCount(), 3);
-  assert.deepEqual(auditAndSyncOlseraDayMock.mock.calls[0].arguments, ["2026-07-20"]);
+  // Hari ini: incremental (hanya order baru/berubah). H-1: TANPA opsi =
+  // tarik ulang penuh (safety-net) — jangan pernah ikut incremental.
+  assert.deepEqual(auditAndSyncOlseraDayMock.mock.calls[0].arguments, ["2026-07-20", { incremental: true }]);
   assert.deepEqual(auditAndSyncOlseraDayMock.mock.calls[1].arguments, ["2026-07-19"]);
-  assert.deepEqual(auditAndSyncOlseraDayMock.mock.calls[2].arguments, ["2026-07-20"]);
+  assert.deepEqual(auditAndSyncOlseraDayMock.mock.calls[2].arguments, ["2026-07-20", { incremental: true }]);
 });
 
 test("action match (data sudah cocok) -> sukses tanpa tarik ulang, alasan diteruskan ke response", async () => {

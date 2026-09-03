@@ -64,8 +64,16 @@ export async function runOlseraSalesCron(authHeader: string | null): Promise<Cro
     // Skip tetap di level HARI lewat perbandingan count+total ke sumber, BUKAN
     // lewat keberadaan dokumen olsera_synced_days (itulah yang `force: true`
     // dulu matikan, dan memang harus tetap mati): order sore yang masuk
-    // mengubah count/total, sehingga tetap memicu tarik ulang penuh.
-    const result = await auditAndSyncOlseraDay(start_date);
+    // mengubah count/total, sehingga tetap memicu tarik ulang.
+    //
+    // incremental (2026-09-03): tarik ulang HARI INI hanya menyentuh order yang
+    // belum tersimpan / nominal Order List-nya berubah (planIncrementalOrders,
+    // lib/olsera-audit.ts). Sebelumnya SETIAP order baru memicu tarik ulang
+    // detail seluruh order hari itu (~0,6 s/order, 2 worker x 200 ms) — run
+    // 00:00 WIB dengan 60+ order selalu >30 s, batas tunggu cron-job.org,
+    // walau function-nya sendiri sukses. Audit H-1 di bawah SENGAJA tetap
+    // penuh (safety-net data rusak/hilang).
+    const result = await auditAndSyncOlseraDay(start_date, { incremental: true });
     const yesterday = previousJakartaDate(start_date);
     const shouldAuditYesterday = await withMongo(async () => {
       const { olseraSyncState } = await collections();

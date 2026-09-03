@@ -84,6 +84,38 @@ export function sumOrderTotals(rows: OrderRow[]): number | null {
   return rows.length ? sum : 0;
 }
 
+/**
+ * Toleransi selisih nominal (rupiah) saat membandingkan nominal Order List
+ * Olsera dengan catatan tersimpan — SATU angka untuk evaluateDayCompleteness
+ * (level hari) dan planIncrementalOrders (level order).
+ */
+export const ORDER_TOTAL_TOLERANCE = 0.5;
+
+export type IncrementalOrderPlan = { fetch: number[]; skip: number[] };
+
+/**
+ * Rencana sync incremental satu hari — versi PER ORDER dari aturan
+ * evaluateDayCompleteness: order yang belum tersimpan (padanan "jumlah
+ * transaksi berbeda") atau nominalnya berubah > ORDER_TOTAL_TOLERANCE
+ * (padanan "total penjualan berbeda") harus ditarik detailnya; nominal null
+ * di salah satu sisi = tidak bisa dibandingkan adil -> tarik. Sisanya di-skip.
+ * `stored` = nominal Order List yang tersimpan per id order (olsera_order_items.orderTotal).
+ */
+export function planIncrementalOrders(listed: OrderRow[], stored: ReadonlyMap<number, number | null>): IncrementalOrderPlan {
+  const fetch: number[] = [];
+  const skip: number[] = [];
+  for (const row of listed) {
+    if (!stored.has(row.id)) {
+      fetch.push(row.id);
+      continue;
+    }
+    const storedTotal = stored.get(row.id) ?? null;
+    if (row.total === null || storedTotal === null || Math.abs(row.total - storedTotal) > ORDER_TOTAL_TOLERANCE) fetch.push(row.id);
+    else skip.push(row.id);
+  }
+  return { fetch, skip };
+}
+
 export type DayCompletenessInput = {
   /** Jumlah order unik menurut API Olsera hari ini. */
   expectedCount: number;
@@ -127,7 +159,7 @@ export function evaluateDayCompleteness(input: DayCompletenessInput): DayComplet
     expectedTotal !== null &&
     marked.expectedTotal !== null &&
     marked.expectedTotal !== undefined &&
-    Math.abs(expectedTotal - marked.expectedTotal) > 0.5
+    Math.abs(expectedTotal - marked.expectedTotal) > ORDER_TOTAL_TOLERANCE
   ) {
     return {
       complete: false,

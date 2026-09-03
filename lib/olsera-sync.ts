@@ -9,7 +9,9 @@ import { collections, withMongo, type OlseraOrderItemDocument, type OlseraSyncLo
 import { getAccessToken } from "@/lib/olsera";
 import {
   evaluateDayCompleteness,
+  extractOrderTotal,
   fetchDayOrderRows,
+  planIncrementalOrders,
   sumOrderTotals,
   type OlseraOrderKind,
 } from "@/lib/olsera-audit";
@@ -41,7 +43,8 @@ const UNKNOWN_CATEGORY = "Tidak Diketahui";
 
 type ProductInfo = { klasifikasi: string; name: string };
 type Aggregate = { qty: number; amount: number; costAmount: number };
-type OrderRef = { id: number; source: "close" | "open" };
+/** `total` = nominal baris Order List (extractOrderTotal) — dasar skip pada mode incremental; null bila list tidak memuat nominal. */
+type OrderRef = { id: number; source: "close" | "open"; total: number | null };
 
 export type OlseraSyncResult = {
   status: "success" | "partial" | "failed";
@@ -60,11 +63,21 @@ export type OlseraSyncResult = {
   resolutionStats: ResolutionStats;
   /** Contoh item unresolved (maks 50) untuk audit cepat tanpa membongkar DB. */
   unresolvedItems: { date: string; orderNo: string; itemName: string; productId: number | null }[];
+  /** Order yang TIDAK ditarik ulang detailnya pada mode incremental (sudah tersimpan, nominal sama) — dihitung juga sebagai processed. */
+  skippedOrderCount: number;
 };
 
 export type OlseraSyncOptions = {
   /** true = sync ulang hari yang sudah tercatat tuntas (default: dilewati). */
   force?: boolean;
+  /**
+   * true = HANYA tarik detail order yang belum ada di olsera_order_items atau
+   * nominal Order List-nya berubah (planIncrementalOrders, lib/olsera-audit.ts);
+   * order lain di-skip — item tersimpannya dipertahankan dan kontribusinya ke
+   * agregat kategori dibaca dari dokumen tersimpan. Dipakai cron Sales untuk
+   * HARI INI saja; audit H-1 dan audit/sync manual tetap penuh (default false).
+   */
+  incremental?: boolean;
 };
 
 // Normalisasi nama klasifikasi (identik dengan skrip validasi): trim, collapse
@@ -156,13 +169,17 @@ async function upsertProductCacheEntry(productId: string, info: ProductInfo) {
   }
 }
 
-// Ambil id order dari list (close atau open) untuk satu tanggal, semua halaman.
-async function fetchOrderIds(
+// Ambil ref order (id + source + nominal Order List) dari list close/open untuk
+// satu tanggal, semua halaman. Nominal dibaca dengan extractOrderTotal — pembaca
+// yang SAMA dengan audit harian (sumOrderTotals), jadi perbandingan per order
+// pada mode incremental memakai angka yang sama persis dengan audit.
+async function fetchOrderRefs(
   token: string,
   kind: "closeorder" | "openorder",
   date: string,
-): Promise<number[]> {
-  const ids: number[] = [];
+): Promise<OrderRef[]> {
+  const refs: OrderRef[] = [];
+  const source = kind === "closeorder" ? "close" : "open";
   let page = 1;
   for (;;) {
     const params: Record<string, string> = {
@@ -175,13 +192,23 @@ async function fetchOrderIds(
     const body = await getJson(token, `${API_PREFIX}/order/${kind}`, params, true);
     if (!body) break;
     const list: Record<string, unknown>[] = Array.isArray(body.data) ? (body.data as Record<string, unknown>[]) : [];
-    for (const order of list) ids.push(Number(order.id));
+    for (const order of list) refs.push({ id: Number(order.id), source, total: extractOrderTotal(order) });
     const meta = body.meta as { last_page?: number } | undefined;
     if (!meta?.last_page || page >= meta.last_page) break;
     page++;
     await sleep(LIST_DELAY_MS);
   }
-  return ids;
+  return refs;
+}
+
+/** Gabung Close + Open paid, dedup by order id (Close menang) — dipakai sync produksi dan audit source. */
+function mergeOrderRefs(closeRefs: OrderRef[], openRefs: OrderRef[]): OrderRef[] {
+  const seen = new Set(closeRefs.map((ref) => ref.id));
+  const orders = [...closeRefs];
+  for (const ref of openRefs) {
+    if (!seen.has(ref.id)) orders.push(ref);
+  }
+  return orders;
 }
 
 type OrderItem = {
@@ -439,6 +466,7 @@ export async function syncOlseraSalesByCategory(
     failedOrders: [],
     resolutionStats: emptyResolutionStats(),
     unresolvedItems: [],
+    skippedOrderCount: 0,
   };
 
   try {
@@ -474,15 +502,12 @@ export async function syncOlseraSalesByCategory(
         continue;
       }
       try {
-        // Langkah 1-3: Close + Open paid, dedup by order id.
-        const closeIds = await fetchOrderIds(token, "closeorder", date);
+        // Langkah 1-3: Close + Open paid, dedup by order id (baris list juga
+        // membawa nominal order — dipakai mode incremental di bawah).
+        const closeRefs = await fetchOrderRefs(token, "closeorder", date);
         await sleep(LIST_DELAY_MS);
-        const openIds = await fetchOrderIds(token, "openorder", date);
-        const seen = new Set(closeIds);
-        const orders: OrderRef[] = closeIds.map((id) => ({ id, source: "close" as const }));
-        for (const id of openIds) {
-          if (!seen.has(id)) orders.push({ id, source: "open" });
-        }
+        const openRefs = await fetchOrderRefs(token, "openorder", date);
+        const orders = mergeOrderRefs(closeRefs, openRefs);
         day.expected = orders.length;
         result.expectedOrderCount += orders.length;
 
@@ -493,6 +518,45 @@ export async function syncOlseraSalesByCategory(
         // Detail per baris item (Export Detail Transaksi) — dikumpulkan bareng
         // agregasi kategori supaya cukup satu kali tarik Close Order Detail.
         const itemDocs: OlseraOrderItemDocument[] = [];
+
+        // Mode incremental (cron Sales, hari ini): order yang sudah tersimpan
+        // dengan nominal Order List yang sama TIDAK ditarik ulang — item
+        // tersimpannya dipertahankan (syncedAt disegarkan di blok tulis) dan
+        // kontribusinya ke agregat kategori dibaca dari dokumen tersimpan
+        // (resolvedCategoryName; null = unresolved = UNKNOWN_CATEGORY, sama
+        // dengan resolusi saat item itu disinkron). Dokumen lama tanpa
+        // orderId/orderTotal (sebelum fitur ini) tidak bisa dibandingkan ->
+        // order-nya ditarik ulang SEKALI, setelah itu ikut skema baru.
+        // resolutionStats/unresolvedItems hanya mencakup order yang ditarik.
+        let toFetch = orders;
+        const skippedOrderIds: number[] = [];
+        if (options.incremental) {
+          const storedDocs = await withMongo(async () => {
+            const { olseraOrderItems } = await collections();
+            return olseraOrderItems
+              .find({ date }, { projection: { orderId: 1, orderTotal: 1, qty: 1, amount: 1, costAmount: 1, resolvedCategoryName: 1 } })
+              .toArray();
+          });
+          const storedTotals = new Map<number, number | null>();
+          for (const doc of storedDocs) if (typeof doc.orderId === "number") storedTotals.set(doc.orderId, doc.orderTotal ?? null);
+          const plan = planIncrementalOrders(orders, storedTotals);
+          const skip = new Set(plan.skip);
+          toFetch = orders.filter((order) => !skip.has(order.id));
+          skippedOrderIds.push(...plan.skip);
+          for (const doc of storedDocs) {
+            if (typeof doc.orderId !== "number" || !skip.has(doc.orderId)) continue;
+            const category = doc.resolvedCategoryName ?? UNKNOWN_CATEGORY;
+            const entry = byCategory.get(category) ?? { qty: 0, amount: 0, costAmount: 0 };
+            entry.qty += toNumber(doc.qty);
+            entry.amount += toNumber(doc.amount);
+            entry.costAmount += toNumber(doc.costAmount);
+            byCategory.set(category, entry);
+          }
+          day.processed += skip.size;
+          result.processedOrderCount += skip.size;
+          result.skippedOrderCount += skip.size;
+          console.log(`Olsera sync (incremental) ${date}: ${toFetch.length} dari ${orders.length} order ditarik detail, ${skip.size} di-skip`);
+        }
 
         const processOrder = async (order: OrderRef) => {
           const { meta, items } = await fetchOrderDetail(token, order); // boleh throw — ditangani pemanggil
@@ -544,6 +608,10 @@ export async function syncOlseraSalesByCategory(
                 customerName: personName(meta.customer_name, meta.customer),
                 tableNo: firstText(meta.table_no, meta.table_name, objectText(meta.table, ["number", "no", "name", "table_no"])),
                 salesByName: salesBy(meta),
+                // Identitas + nominal Order List order ini — dasar skip pada
+                // sync incremental berikutnya (lihat planIncrementalOrders).
+                orderId: order.id,
+                orderTotal: order.total,
                 itemName,
                 qty: toNumber(item.qty),
                 amount: toNumber(item.amount),
@@ -580,8 +648,8 @@ export async function syncOlseraSalesByCategory(
         const worker = async () => {
           for (;;) {
             const index = cursor++;
-            if (index >= orders.length) return;
-            const order = orders[index];
+            if (index >= toFetch.length) return;
+            const order = toFetch[index];
             await sleep(DETAIL_DELAY_MS);
             try {
               await processOrder(order);
@@ -656,6 +724,14 @@ export async function syncOlseraSalesByCategory(
                   },
                 })),
               );
+            }
+            // Mode incremental: item order yang di-skip tetap milik hari ini —
+            // segarkan syncedAt-nya supaya tidak ikut terhapus oleh pembersihan
+            // item basi di bawah (yang tetap membuang order void/dibatalkan,
+            // karena order itu tidak ada lagi di Order List = tidak di-skip
+            // maupun ditarik).
+            if (skippedOrderIds.length) {
+              await olseraOrderItems.updateMany({ date, orderId: { $in: skippedOrderIds } }, { $set: { syncedAt } });
             }
             // Buang item lama yang tidak muncul lagi pada sync ulang hari ini
             // (order dibatalkan/di-void di Olsera) — mencegah data basi tersisa.
@@ -746,12 +822,10 @@ export async function fetchOlseraSalesAuditSource(startDate: string, endDate: st
   const result: OlseraSalesAuditSource = { orders: [], items: [] };
   try {
     for (const date of eachDay(startDate, endDate)) {
-      const closeIds = await fetchOrderIds(auth.token, "closeorder", date);
+      const closeRefs = await fetchOrderRefs(auth.token, "closeorder", date);
       await sleep(LIST_DELAY_MS);
-      const openIds = await fetchOrderIds(auth.token, "openorder", date);
-      const seen = new Set(closeIds);
-      const orders: OrderRef[] = closeIds.map((id) => ({ id, source: "close" }));
-      for (const id of openIds) if (!seen.has(id)) orders.push({ id, source: "open" });
+      const openRefs = await fetchOrderRefs(auth.token, "openorder", date);
+      const orders = mergeOrderRefs(closeRefs, openRefs);
       const details: Array<{ order: OrderRef; meta: OrderMeta; items: OrderItem[] }> = [];
       let cursor = 0;
       const worker = async () => { for (;;) { const index = cursor++; if (index >= orders.length) return; details[index] = { order: orders[index], ...(await fetchOrderDetail(auth.token, orders[index])) }; } };
@@ -810,10 +884,13 @@ async function advanceCheckpointTo(date: string) {
 /**
  * Audit satu tanggal terhadap API Olsera (sumber kebenaran):
  * bandingkan jumlah order + total penjualan Order List dengan catatan MongoDB.
- * Bila belum lengkap → tarik ulang penuh (upsert, aman duplikat).
+ * Bila belum lengkap → tarik ulang (upsert, aman duplikat): PENUH secara
+ * default (safety-net: audit H-1 cron, audit manual, script backfill), atau
+ * `options.incremental` = hanya order yang belum tersimpan/nominalnya berubah
+ * (dipakai cron Sales untuk hari ini — lihat OlseraSyncOptions.incremental).
  * Dipanggil frontend satu tanggal per request agar aman di Vercel.
  */
-export async function auditAndSyncOlseraDay(date: string): Promise<OlseraDayAuditResult> {
+export async function auditAndSyncOlseraDay(date: string, options: { incremental?: boolean } = {}): Promise<OlseraDayAuditResult> {
   const result: OlseraDayAuditResult = {
     date,
     action: "failed",
@@ -884,8 +961,10 @@ export async function auditAndSyncOlseraDay(date: string): Promise<OlseraDayAudi
       return result;
     }
 
-    // Belum lengkap → tarik ulang penuh tanggal ini (force, upsert aman duplikat).
-    const sync = await syncOlseraSalesByCategory(date, date, { force: true });
+    // Belum lengkap → tarik ulang tanggal ini (force = jangan lewati hari yang
+    // sudah ditandai tuntas; upsert aman duplikat). incremental hanya bila
+    // pemanggil memintanya — default tetap tarik ulang PENUH.
+    const sync = await syncOlseraSalesByCategory(date, date, { force: true, incremental: options.incremental === true });
     result.expectedOrderCount = sync.expectedOrderCount;
     result.processedOrderCount = sync.processedOrderCount;
     result.resolutionStats = sync.resolutionStats;

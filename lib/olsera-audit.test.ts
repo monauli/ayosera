@@ -7,9 +7,47 @@ import {
   extractOrderTotal,
   fetchDayOrderRows,
   monthDatesUntil,
+  planIncrementalOrders,
   sumOrderTotals,
+  ORDER_TOTAL_TOLERANCE,
   type OrderListPage,
 } from "./olsera-audit.ts";
+
+// ---- planIncrementalOrders: sync incremental per order (cron Sales hari ini) ----
+
+test("planIncrementalOrders: 50 order, 45 tersimpan sama persis -> hanya 5 ditarik (2 nominal berubah + 3 baru), 45 di-skip", () => {
+  const listed = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, total: 1000 * (i + 1) }));
+  const stored = new Map<number, number | null>();
+  for (let id = 1; id <= 45; id++) stored.set(id, 1000 * id); // sama persis
+  stored.set(46, 999); // nominal berubah
+  stored.set(47, 1); // nominal berubah
+  // 48-50 belum tersimpan sama sekali
+  const plan = planIncrementalOrders(listed, stored);
+  assert.deepEqual(plan.fetch, [46, 47, 48, 49, 50]);
+  assert.equal(plan.skip.length, 45);
+  assert.deepEqual(plan.skip.slice(0, 3), [1, 2, 3]);
+});
+
+test("planIncrementalOrders: nominal null di salah satu sisi -> ditarik; selisih <= toleransi -> di-skip (toleransi SAMA dengan evaluateDayCompleteness)", () => {
+  const stored = new Map<number, number | null>([
+    [1, null],
+    [2, 100],
+    [3, 100],
+    [4, 100],
+  ]);
+  const plan = planIncrementalOrders(
+    [
+      { id: 1, total: 100 }, // stored null -> tidak bisa dibandingkan -> tarik
+      { id: 2, total: null }, // listed null -> tarik
+      { id: 3, total: 100 + ORDER_TOTAL_TOLERANCE }, // tepat di toleransi -> skip
+      { id: 4, total: 100 + ORDER_TOTAL_TOLERANCE + 0.1 }, // lewat toleransi -> tarik
+    ],
+    stored,
+  );
+  assert.deepEqual(plan.fetch, [1, 2, 4]);
+  assert.deepEqual(plan.skip, [3]);
+  assert.deepEqual(planIncrementalOrders([], stored), { fetch: [], skip: [] });
+});
 
 test("monthDatesUntil: pertengahan bulan menghasilkan tanggal 1 s/d hari ini", () => {
   const dates = monthDatesUntil("2026-07-14");
