@@ -339,6 +339,24 @@ export default function InventoryOpnamePage() {
     }
   };
 
+  // Batalkan hasil baca BA (salah baca/ingin ulang): reset semua state
+  // turunan uploadBa, termasuk edits yang sudah diisi otomatis dari BA
+  // ("Dibaca dari BA") kembali ke nilai tersimpan di server (seedEdits).
+  // TIDAK ada request ke server — attachment yang sudah terlanjur diupload ke
+  // blob storage tetap ada di sana (sama seperti "Ganti file"), tapi tidak
+  // pernah tercatat ke database karena hanya dikirim saat finalize().
+  const cancelBaRead = () => {
+    setAttachment(null);
+    setBaReadSummary(null);
+    setBaItemsFound(null);
+    setBaSourcedKeys(new Set());
+    setBaRows([]);
+    setBaPeriod(null);
+    setFinalizeError("");
+    setSaveMessage("");
+    if (data) seedEdits(data.rows);
+  };
+
   const finalize = async () => {
     if (!data || !attachment || !cutoffDate || !baOnlyDifferencesConfirmed) return;
     if (shouldBlockFinalizeForUnreadBa({ uploadSucceeded: true, itemsFound: baItemsFound ?? 0 }) && baItemsFound !== null) {
@@ -712,6 +730,7 @@ export default function InventoryOpnamePage() {
           {readingBa && <p className="recon-readonly"><Loader2 className="spin" /> Membaca Berita Acara...</p>}
           {baReadSummary && <p className="recon-readonly">Periode BA: {baReadSummary.periodStart ?? "Perlu Dicek"} · Cutoff: {baReadSummary.cutoffDate ?? "Perlu Dicek"} · Item ditemukan: {baReadSummary.found} · Cocok otomatis: {baReadSummary.autoCocok} · Perlu Dicek: {baReadSummary.perluDicek}</p>}
           {attachment && data?.lock?.status !== "LOCKED" && <label className="recon-button secondary">Ganti file<input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} /></label>}
+          {attachment && data?.lock?.status !== "LOCKED" && <button type="button" className="recon-button secondary" disabled={!supervisor} onClick={() => cancelBaRead()}><X /> Batal</button>}
         </div>
         <label className="recon-check">
           <input type="checkbox" checked={baOnlyDifferencesConfirmed} disabled={!supervisor || data?.lock?.status === "LOCKED"} onChange={(e) => setBaOnlyDifferencesConfirmed(e.target.checked)} /> Berita Acara hanya mencantumkan item yang memiliki selisih

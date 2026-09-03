@@ -37,3 +37,8 @@ test("pesan 'item masih memiliki selisih' ikut menghitung baris BA yang gagal di
   assert.match(page, /const baUnmatchedCount = baRows\.filter\(\(r\) => r\.matchedProductName === null\)\.length;/);
   assert.match(page, /\$\{liveSummary\.perluDicek \+ liveSummary\.butuhAdjustManual \+ baUnmatchedCount\} item masih memiliki selisih atau data belum valid\./);
 });
+
+test("tombol Batal mereset hasil baca BA tanpa request ke server", () => {
+  assert.match(page, /const cancelBaRead = \(\) => \{/);
+  assert.match(page, /onClick=\{\(\) => cancelBaRead\(\)\}><X \/> Batal<\/button>/);
+});
