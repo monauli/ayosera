@@ -18,7 +18,10 @@ export async function POST(request: Request) {
     if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return NextResponse.json({ error: "Periode tidak valid." }, { status: 400, headers: NO_CACHE_HEADERS });
     if (file.size > 4 * 1024 * 1024 || !["application/pdf", "image/jpeg", "image/png"].includes(file.type)) return NextResponse.json({ error: "File harus PDF/JPG/PNG maksimal 4MB." }, { status: 400, headers: NO_CACHE_HEADERS });
     const uploaded = await uploadOmzetPeriodLockAttachment({ storeId: currentStoreId(), period: `${year}-${String(month).padStart(2, "0")}`, file });
-    return NextResponse.json({ data: { url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, uploadedBy: user.email } }, { status: 201, headers: NO_CACHE_HEADERS });
+    // uploadedAt disertakan di sini (bukan digenerate ulang saat Simpan) supaya
+    // fitur "riwayat BA tersimpan" (saveInventoryOpnameBatch) bisa merekam
+    // waktu upload ASLI, bukan waktu klik Simpan.
+    return NextResponse.json({ data: { url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, uploadedBy: user.email, uploadedAt: new Date().toISOString() } }, { status: 201, headers: NO_CACHE_HEADERS });
   } catch {
     return NextResponse.json({ error: "Gagal mengunggah bukti BA." }, { status: 500, headers: NO_CACHE_HEADERS });
   }

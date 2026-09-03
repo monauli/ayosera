@@ -271,6 +271,8 @@ export type InventoryOpnameMonthResult = {
   rows: InventoryOpnameRow[];
   summary: OpnameSummary;
   lock: { status: "LOCKED" | "UNLOCKED"; cutoff: string | null; cutoffDate: string | null; lockedBy: string | null; lockedAt: string | null; attachment: InventoryStockOpnameDocument["attachment"] } | null;
+  /** Riwayat upload BA bulan ini (lihat InventoryStockOpnameDocument.uploadHistory) — [] bila belum pernah "Simpan Semua" dengan lampiran. Independen dari `lock` (tersedia sebelum/sesudah finalisasi). */
+  uploadHistory: NonNullable<InventoryStockOpnameDocument["uploadHistory"]>;
 };
 
 function opnameKey(productId: number, variantId: number | null): string {
@@ -388,7 +390,7 @@ export async function loadInventoryOpnameMonth(
   rows.sort((a, b) => a.productName.localeCompare(b.productName, "id"));
 
   const event = opnameRows.find((doc) => doc._id === `${storeId}:${year}:${String(month).padStart(2, "0")}:event`);
-  return { storeId, year, month, rows, summary: summarizeOpname(rows), lock: lockState(event) };
+  return { storeId, year, month, rows, summary: summarizeOpname(rows), lock: lockState(event), uploadHistory: event?.uploadHistory ?? [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -580,7 +582,7 @@ export async function loadInventoryOpnameCutoff(
   rows.sort((a, b) => a.productName.localeCompare(b.productName, "id"));
 
   const event = opnameRows.find((doc) => doc._id === `${storeId}:${year}:${String(month).padStart(2, "0")}:event`);
-  return { storeId, year, month, cutoffDate: input.cutoffDate, startDate: fetched.startDate, endDate: fetched.endDate, rows, summary: summarizeOpname(rows), unmatchedOrAmbiguous: fetched.unmatchedOrAmbiguous, lock: lockState(event) };
+  return { storeId, year, month, cutoffDate: input.cutoffDate, startDate: fetched.startDate, endDate: fetched.endDate, rows, summary: summarizeOpname(rows), unmatchedOrAmbiguous: fetched.unmatchedOrAmbiguous, lock: lockState(event), uploadHistory: event?.uploadHistory ?? [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +615,17 @@ export type SaveInventoryOpnameBatchInput = {
   cutoffDate?: string | null;
   /** Awal periode BA (ISO), hanya bermakna bersama cutoffDate. Lihat resolveCutoffQueryRange. */
   startDate?: string | null;
+  /**
+   * Lampiran BA yang sudah diupload SEBELUM "Simpan Semua" ditekan (state
+   * client sejak upload asli — lihat uploadBa di app/reconciliation/inventory/page.tsx)
+   * — OPSIONAL. Bila diisi, dicatat sebagai SATU entri baru di
+   * `uploadHistory` (dokumen event bulan ini), APPEND-ONLY. `uploadedAt`/
+   * `uploadedBy` dipakai APA ADANYA dari input (BUKAN digenerate ulang di
+   * sini) — histori harus merekam siapa upload kapan, bukan siapa menyimpan
+   * kapan. Tanpa attachment (edit manual tanpa upload BA baru): tidak ada
+   * entri histori ditambahkan.
+   */
+  attachment?: { fileName: string; mimeType: string; size: number; url: string; uploadedAt: Date; uploadedBy: string } | null;
 };
 
 /**
@@ -824,6 +837,27 @@ export async function saveInventoryOpnameBatch(
           updatedAt: now,
         },
         $setOnInsert: { _id: id, createdAt: now },
+      },
+      { upsert: true },
+    );
+  }
+
+  // Riwayat upload BA (fitur "riwayat BA tersimpan") — HANYA bila attachment
+  // diberikan (edit manual tanpa upload BA baru tidak menambah entri).
+  // Ditulis ke dokumen event bulan ini (SAMA _id yang dipakai finalize),
+  // TAPI TIDAK menyentuh lockedAt/unlockedAt/attachment/verificationResult —
+  // lockState() di atas hanya menganggap "terkunci"/"dibuka" bila salah satu
+  // dari lockedAt/unlockedAt terisi, jadi $push ini tidak pernah membuat
+  // bulan tampak locked/unlocked padahal belum pernah difinalisasi. Guard
+  // lock+konflik periode (Tahap 3a) di atas sudah lolos di titik ini.
+  if (input.attachment) {
+    const eventId = `${storeId}:${year}:${String(month).padStart(2, "0")}:event`;
+    await opname.updateOne(
+      { _id: eventId },
+      {
+        $setOnInsert: { _id: eventId, storeId, year, month, productId: 0, variantId: null, physicalQty: 0, systemClosingQty: null, differenceQty: null, status: "COCOK", note: null, updatedBy: input.actor.email, createdAt: now },
+        $set: { updatedAt: now },
+        $push: { uploadHistory: { url: input.attachment.url, fileName: input.attachment.fileName, mimeType: input.attachment.mimeType, size: input.attachment.size, uploadedBy: input.attachment.uploadedBy, uploadedAt: input.attachment.uploadedAt } },
       },
       { upsert: true },
     );

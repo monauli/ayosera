@@ -57,6 +57,12 @@ function fakeOpnameCollection(initial: Array<Partial<InventoryStockOpnameDocumen
       if (!existing && !options.upsert) return { matchedCount: 0 };
       const setOnInsert = existing ? {} : ((update.$setOnInsert as Doc) ?? {});
       const merged = { ...existing, ...setOnInsert, ...(update.$set as Doc) };
+      // $push (mis. history/uploadHistory) — sebelumnya no-op karena tidak ada
+      // test yang butuh verifikasi isinya; sekarang dipakai test riwayat BA.
+      for (const [key, value] of Object.entries((update.$push as Doc) ?? {})) {
+        const previous = Array.isArray(merged[key]) ? (merged[key] as unknown[]) : [];
+        merged[key] = [...previous, value];
+      }
       store.set(id, merged);
       return { matchedCount: existing ? 1 : 0, upsertedCount: existing ? 0 : 1 };
     },
@@ -859,6 +865,70 @@ test("save: physicalQty null menghapus dokumen (snapshot valid kembali Cocok tan
   assert.equal(opname.store.size, 0);
   const result = await loadInventoryOpnameMonth({ storeId: 324175, year: 2026, month: 5 }, ctx);
   assert.equal(result.rows[0].status, "COCOK");
+});
+
+// --- Riwayat upload BA (uploadHistory) — fitur "riwayat BA tersimpan"
+// (Round H investigasi) — dicatat HANYA di saveInventoryOpnameBatch, HANYA
+// bila attachment diberikan; uploadedAt/uploadedBy dipakai APA ADANYA dari
+// input (bukan digenerate ulang di titik save), supaya histori merekam
+// siapa upload kapan, bukan siapa menyimpan kapan.
+
+test("save dengan attachment: uploadHistory bertambah 1 entri, uploadedAt/uploadedBy persis dari input (bukan digenerate ulang)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1 })], opname);
+  const originalUploadedAt = new Date("2026-05-10T03:00:00.000Z");
+  const result = await saveInventoryOpnameBatch(
+    {
+      storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR,
+      entries: [{ productId: 1, variantId: null, physicalQty: 8 }],
+      attachment: { fileName: "ba-mei.pdf", mimeType: "application/pdf", size: 123, url: "https://blob.test/ba-mei.pdf", uploadedAt: originalUploadedAt, uploadedBy: "kasir1@ayo.local" },
+    },
+    ctx,
+  );
+  assert.equal(result.uploadHistory.length, 1);
+  assert.equal(result.uploadHistory[0].fileName, "ba-mei.pdf");
+  assert.equal(result.uploadHistory[0].url, "https://blob.test/ba-mei.pdf");
+  assert.equal(result.uploadHistory[0].uploadedBy, "kasir1@ayo.local", "actor histori HARUS pengunggah asli, bukan supervisor yang menyimpan");
+  assert.equal(new Date(result.uploadHistory[0].uploadedAt).getTime(), originalUploadedAt.getTime(), "waktu histori HARUS waktu upload asli, bukan waktu Simpan");
+});
+
+test("save berulang 2x dengan attachment berbeda: uploadHistory terakumulasi jadi 2 entri (append-only, bukan menimpa)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1 })], opname);
+  await saveInventoryOpnameBatch(
+    { storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8 }], attachment: { fileName: "ba-v1.pdf", mimeType: "application/pdf", size: 1, url: "https://blob.test/ba-v1.pdf", uploadedAt: new Date("2026-05-10T03:00:00.000Z"), uploadedBy: "kasir1@ayo.local" } },
+    ctx,
+  );
+  const result = await saveInventoryOpnameBatch(
+    { storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 9 }], attachment: { fileName: "ba-v2.pdf", mimeType: "application/pdf", size: 2, url: "https://blob.test/ba-v2.pdf", uploadedAt: new Date("2026-05-11T03:00:00.000Z"), uploadedBy: "kasir2@ayo.local" } },
+    ctx,
+  );
+  assert.equal(result.uploadHistory.length, 2, "dua kali upload+simpan = dua entri histori, bukan ditimpa");
+  assert.deepEqual(result.uploadHistory.map((entry) => entry.fileName), ["ba-v1.pdf", "ba-v2.pdf"]);
+});
+
+test("save TANPA attachment (edit manual): uploadHistory tidak bertambah", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1 })], opname);
+  await saveInventoryOpnameBatch(
+    { storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8 }], attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 1, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: "kasir1@ayo.local" } },
+    ctx,
+  );
+  const result = await saveInventoryOpnameBatch(
+    { storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 9, note: "koreksi manual" }] },
+    ctx,
+  );
+  assert.equal(result.uploadHistory.length, 1, "edit manual tanpa upload BA baru tidak menambah entri histori");
+});
+
+test("save dengan attachment: dokumen event bulan ini TIDAK terlihat locked/unlocked — riwayat upload tidak memicu status finalisasi palsu", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1 })], opname);
+  const result = await saveInventoryOpnameBatch(
+    { storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8 }], attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 1, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: "kasir1@ayo.local" } },
+    ctx,
+  );
+  assert.equal(result.lock, null, "event doc yang cuma dibuat lewat riwayat upload TIDAK boleh membuat bulan tampak locked/unlocked");
 });
 
 // 7. Viewer tidak dapat menyimpan.

@@ -698,6 +698,17 @@ export type InventoryStockOpnameDocument = {
   verificationResult?: "PASS" | null;
   baOnlyDifferencesConfirmed?: boolean;
   history?: Array<{ action: "lock" | "unlock"; actor: string; reason: string | null; at: Date }>;
+  /**
+   * Riwayat upload BA per bulan (fitur "riwayat BA tersimpan") — SATU entri
+   * per kali "Simpan Semua" dengan lampiran baru, APPEND-ONLY (tidak pernah
+   * ditimpa/dihapus), pada dokumen event bulan ini
+   * (`${storeId}:${year}:${month}:event`). Field TERPISAH dari `history` di
+   * atas (khusus aksi lock/unlock) supaya konsumen yang pattern-match
+   * `action:"lock"|"unlock"` tidak perlu berubah. `uploadedAt`/`uploadedBy`
+   * diambil APA ADANYA dari state client sejak upload asli (lihat
+   * saveInventoryOpnameBatch) — BUKAN waktu/actor saat "Simpan" ditekan.
+   */
+  uploadHistory?: Array<{ url: string; fileName: string; mimeType: string; size: number; uploadedBy: string; uploadedAt: Date }>;
   evidenceSource?: "BA_INPUT" | "BA_OMITTED_ASSUMED_MATCH";
 };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, Moon, Printer, RefreshCw, Save, Search, Sun, Unlock, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, Moon, Paperclip, Printer, RefreshCw, Save, Search, Sun, Unlock, X } from "lucide-react";
 import { visibleInventoryRows } from "@/lib/olsera-inventory-ui";
 import { analyzeInventoryBaFile } from "@/lib/inventory-ba-client";
 import { normalizeInventoryBaName } from "@/lib/inventory-ba-parser";
@@ -68,7 +68,7 @@ type Attachment = { url: string; fileName: string; mimeType: string; size: numbe
 type LockState = { status: "LOCKED" | "UNLOCKED"; cutoff: string | null; cutoffDate: string | null; lockedBy: string | null; lockedAt: string | null; attachment: Attachment | null };
 type MonthlyLockState = { status: "locked" | "unlocked"; lockedBy: string | null; lockedAt: string | null; history: unknown[] } | null;
 type Completeness = { movementProducts: number; catalogOnlyCandidates: number; verifiedForPeriod: number; unverified: number; totalUniverse: number; pass: boolean };
-type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string; lock: LockState | null; monthlyLock?: MonthlyLockState; completeness?: Completeness };
+type LoadResult = { storeId: number; year: number; month: number; rows: Row[]; summary: Summary; cutoffDate?: string; startDate?: string; endDate?: string; lock: LockState | null; monthlyLock?: MonthlyLockState; completeness?: Completeness; uploadHistory?: Attachment[] };
 type User = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 type Edit = { physicalQty: number | null; note: string | null };
 
@@ -474,7 +474,10 @@ export default function InventoryOpnamePage() {
         // Rentang BA ikut dikirim: tombol "Simpan Semua" (simpan tanpa
         // finalisasi) adalah justru kasus yang dulu menyimpan angka akhir bulan
         // padahal layar menampilkan rentang BA.
-        body: JSON.stringify({ year: Number(year), month: Number(month), entries, ...baRangePayload() }),
+        // attachment (bila ada, dari state client sejak upload asli) ikut
+        // dikirim supaya "riwayat BA tersimpan" mencatat entri histori baru —
+        // uploadedAt/uploadedBy TIDAK diubah di sini, tetap dari upload asli.
+        body: JSON.stringify({ year: Number(year), month: Number(month), entries, ...baRangePayload(), ...(attachment ? { attachment } : {}) }),
       });
       const result = await response.json().catch(() => null);
       // Pesan guard periode BA (Tahap 3a) diteruskan APA ADANYA ke user —
@@ -732,6 +735,7 @@ export default function InventoryOpnamePage() {
           {attachment && data?.lock?.status !== "LOCKED" && <label className="recon-button secondary">Ganti file<input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} /></label>}
           {attachment && data?.lock?.status !== "LOCKED" && <button type="button" className="recon-button secondary" disabled={!supervisor} onClick={() => cancelBaRead()}><X /> Batal</button>}
         </div>
+        {data?.uploadHistory?.length ? <details className="recon-history"><summary>Riwayat BA ({data.uploadHistory.length})</summary><ul>{data.uploadHistory.map((entry, index) => <li key={`${entry.url}-${index}`}><a href={entry.url} target="_blank" rel="noreferrer" className="recon-link"><Paperclip size={12} /> {entry.fileName}</a> · {entry.uploadedAt ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.uploadedAt)) : "—"} · {entry.uploadedBy ?? "—"}</li>)}</ul></details> : null}
         <label className="recon-check">
           <input type="checkbox" checked={baOnlyDifferencesConfirmed} disabled={!supervisor || data?.lock?.status === "LOCKED"} onChange={(e) => setBaOnlyDifferencesConfirmed(e.target.checked)} /> Berita Acara hanya mencantumkan item yang memiliki selisih
         </label>

@@ -114,6 +114,24 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
     }
 
+    // Riwayat upload BA (fitur "riwayat BA tersimpan") — attachment OPSIONAL,
+    // dikirim client dari state sejak upload asli. uploadedAt/uploadedBy
+    // dipakai APA ADANYA bila valid (BUKAN di-generate ulang seperti jalur
+    // finalize di atas) — histori merekam siapa upload kapan, bukan siapa
+    // menyimpan kapan. Fallback ke actor/waktu sekarang hanya bila field itu
+    // hilang/rusak, supaya entri histori tidak pernah kosong actor/waktu.
+    const rawAttachment = body.attachment && typeof body.attachment === "object" ? body.attachment as Record<string, unknown> : null;
+    const attachment = rawAttachment && typeof rawAttachment.url === "string" && typeof rawAttachment.fileName === "string"
+      ? {
+          fileName: rawAttachment.fileName,
+          mimeType: typeof rawAttachment.mimeType === "string" ? rawAttachment.mimeType : "application/octet-stream",
+          size: Number(rawAttachment.size ?? 0),
+          url: rawAttachment.url,
+          uploadedAt: typeof rawAttachment.uploadedAt === "string" && !Number.isNaN(Date.parse(rawAttachment.uploadedAt)) ? new Date(rawAttachment.uploadedAt) : new Date(),
+          uploadedBy: typeof rawAttachment.uploadedBy === "string" && rawAttachment.uploadedBy ? rawAttachment.uploadedBy : user.email,
+        }
+      : undefined;
+
     const result = await saveInventoryOpnameBatch({
       storeId: currentStoreId(),
       year: Number(body.year),
@@ -126,6 +144,7 @@ export async function POST(request: Request) {
       // sama dengan jalur muat & finalisasi. Tanpa keduanya: snapshot bulanan.
       cutoffDate: typeof body.cutoffDate === "string" ? body.cutoffDate : null,
       startDate: typeof body.startDate === "string" ? body.startDate : null,
+      attachment,
     });
     return NextResponse.json(result, { headers: NO_CACHE_HEADERS });
   } catch (error) {
