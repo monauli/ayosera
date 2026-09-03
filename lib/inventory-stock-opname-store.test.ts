@@ -21,7 +21,8 @@ import { buildOpnameId } from "./inventory-stock-opname.ts";
 import type { InventoryProductInput } from "./olsera-inventory-core.ts";
 import type { StockMovementApiRow } from "./olsera-inventory-monthly-core.ts";
 import type { FetchStockMovementResult } from "./olsera-inventory-stockmovement.ts";
-import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument, OlseraProductAliasDocument } from "./mongodb.ts";
+import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocument, OlseraProductAliasDocument, InventoryMonthlyPeriodLockDocument } from "./mongodb.ts";
+import { InventoryMonthlyPeriodLockError, type InventoryMonthlyPeriodLockContext } from "./inventory-monthly-period-lock.ts";
 
 type Doc = Record<string, unknown>;
 
@@ -993,6 +994,106 @@ test("end-to-end finalisasi lalu lock event tidak melakukan double adjustment", 
   const unlocked = await unlockInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, reason: "Koreksi pembacaan BA" }, ctx);
   assert.equal(unlocked.status, "UNLOCKED");
   assert.equal(opname.store.get("324175:2026:05:event")?.lockedAt, null);
+});
+
+// --- Guard tulis: bulan locked di level periode (assertInventoryOpnamePeriodNotLocked) ---
+// Pola sama assertOmzetPeriodNotLocked (financial) — bulan yang statusnya
+// "locked" di inventory_monthly_period_locks WAJIB menolak tulisan BA
+// (Simpan/Finalisasi), dan event-lock per-BA TIDAK BOLEH dibuka selagi bulan
+// masih terkunci di level periode itu.
+
+function fakeMonthlyPeriodLock(status: "locked" | "unlocked" | null): InventoryMonthlyPeriodLockContext {
+  const doc: InventoryMonthlyPeriodLockDocument | null =
+    status === null
+      ? null
+      : {
+          _id: "324175:2026-05",
+          storeId: 324175,
+          year: 2026,
+          month: 5,
+          status,
+          snapshots: [],
+          lockedAt: status === "locked" ? new Date("2026-06-01T00:00:00Z") : null,
+          lockedBy: status === "locked" ? "supervisor@ayo.local" : null,
+          unlockedAt: null,
+          unlockedBy: null,
+          history: [],
+          createdAt: new Date("2026-06-01T00:00:00Z"),
+          updatedAt: new Date("2026-06-01T00:00:00Z"),
+        };
+  return {
+    locks: { findOne: async () => doc, findOneAndUpdate: async () => doc },
+    snapshots: { find: () => ({ toArray: async () => [] }) },
+  };
+}
+
+test("saveInventoryOpnameBatch: DITOLAK bila bulan sudah locked di level periode, tidak ada dokumen yang tertulis", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock("locked");
+  await assert.rejects(
+    () => saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8, note: null }] }, ctx),
+    (error: unknown) => error instanceof InventoryMonthlyPeriodLockError && error.code === "LOCKED" && /sudah dikunci/.test(error.message),
+  );
+  assert.equal(opname.updateCalls, 0, "tidak boleh ada tulisan sama sekali setelah ditolak");
+});
+
+test("finalizeInventoryStockOpname: DITOLAK bila bulan sudah locked di level periode, tidak ada dokumen (row maupun event) yang tertulis", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
+  await saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8, note: "selisih fisik" }] }, ctx);
+  const updateCallsBeforeLock = opname.updateCalls;
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock("locked");
+  await assert.rejects(
+    () => finalizeInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, cutoff: "2026-05-31", baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email } }, ctx),
+    (error: unknown) => error instanceof InventoryMonthlyPeriodLockError && error.code === "LOCKED",
+  );
+  assert.equal(opname.updateCalls, updateCallsBeforeLock, "tidak boleh ada tulisan tambahan (row maupun event) setelah ditolak");
+  assert.equal(opname.store.get("324175:2026:05:event"), undefined, "event doc tidak boleh tertulis");
+});
+
+test("unlockInventoryStockOpname: DITOLAK bila bulan masih locked di level periode — harus buka level bulan dulu", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
+  await saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8, note: "selisih fisik" }] }, ctx);
+  await finalizeInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, cutoff: "2026-05-31", baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email } }, ctx);
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock("locked");
+  await assert.rejects(
+    () => unlockInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, reason: "Koreksi pembacaan BA" }, ctx),
+    (error: unknown) => error instanceof InventoryMonthlyPeriodLockError && error.code === "LOCKED" && /Buka kunci periode bulan ini dulu/.test(error.message),
+  );
+  assert.equal(opname.store.get("324175:2026:05:event")?.lockedAt !== null, true, "event-lock BA WAJIB tetap terkunci — unlock ditolak sebelum menyentuh dokumen");
+});
+
+test("unlockInventoryStockOpname: TETAP BOLEH jalan bila bulan berstatus unlocked (bukan locked) di level periode", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
+  await saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8, note: "selisih fisik" }] }, ctx);
+  await finalizeInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, cutoff: "2026-05-31", baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email } }, ctx);
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock("unlocked");
+  const unlocked = await unlockInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, reason: "Koreksi pembacaan BA" }, ctx);
+  assert.equal(unlocked.status, "UNLOCKED");
+});
+
+test("unlockInventoryStockOpname: TETAP BOLEH jalan bila TIDAK ADA dokumen monthly-period-lock sama sekali (bulan belum pernah dikunci di level periode — perilaku existing tidak berubah)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
+  await saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8, note: "selisih fisik" }] }, ctx);
+  await finalizeInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, cutoff: "2026-05-31", baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email } }, ctx);
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock(null);
+  const unlocked = await unlockInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, reason: "Koreksi pembacaan BA" }, ctx);
+  assert.equal(unlocked.status, "UNLOCKED");
+});
+
+test("kondisi normal (bulan unlocked di level periode): save + finalize + unlock semuanya tetap jalan seperti sebelumnya", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = context([snapshotDoc({ productId: 1, closingQty: 10 })], opname);
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock("unlocked");
+  await saveInventoryOpnameBatch({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR, entries: [{ productId: 1, variantId: null, physicalQty: 8, note: "selisih fisik" }] }, ctx);
+  const locked = await finalizeInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, cutoff: "2026-05-31", baOnlyDifferencesConfirmed: true, attachment: { fileName: "ba.pdf", mimeType: "application/pdf", size: 10, url: "https://blob.test/ba.pdf", uploadedAt: new Date(), uploadedBy: SUPERVISOR.email } }, ctx);
+  assert.equal(locked.status, "LOCKED");
+  const unlocked = await unlockInventoryStockOpname({ storeId: 324175, year: 2026, month: 5, actor: SUPERVISOR.email, reason: "Koreksi pembacaan BA" }, ctx);
+  assert.equal(unlocked.status, "UNLOCKED");
 });
 
 test("BA-only: item kosong dianggap Cocok dan disimpan sebagai evidence assumed match", async () => {

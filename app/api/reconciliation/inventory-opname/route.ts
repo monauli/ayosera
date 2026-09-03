@@ -20,7 +20,7 @@ const MAX_BODY_BYTES = 512 * 1024;
 
 function errorResponse(error: unknown) {
   if (error instanceof Response) return error;
-  if (error instanceof InventoryMonthlyPeriodLockError) return NextResponse.json({ error: error.message }, { status: 400, headers: NO_CACHE_HEADERS });
+  if (error instanceof InventoryMonthlyPeriodLockError) return NextResponse.json({ error: error.message }, { status: error.code === "LOCKED" ? 423 : 400, headers: NO_CACHE_HEADERS });
   if (error instanceof InventoryStockOpnameError) {
     const status = error.code === "FORBIDDEN" ? 403 : 400;
     return NextResponse.json({ error: error.message }, { status, headers: NO_CACHE_HEADERS });

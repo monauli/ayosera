@@ -1,6 +1,11 @@
 import { collections, type InventoryMonthlyPeriodLockDocument, type OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
 
-export class InventoryMonthlyPeriodLockError extends Error {}
+export class InventoryMonthlyPeriodLockError extends Error {
+  constructor(message: string, readonly code: "VALIDATION" | "LOCKED" = "VALIDATION") {
+    super(message);
+    this.name = "InventoryMonthlyPeriodLockError";
+  }
+}
 
 type LockCollection = {
   findOne(filter: Record<string, unknown>): Promise<InventoryMonthlyPeriodLockDocument | null>;
@@ -42,6 +47,25 @@ export async function getInventoryPeriodCompleteness(input: { storeId: number; y
 export async function getInventoryMonthlyPeriodLock(storeId: number, year: number, month: number, context?: InventoryMonthlyPeriodLockContext) {
   const c = context ?? await source();
   return c.locks.findOne({ _id: id(storeId, year, month) });
+}
+
+/**
+ * Tolak (throw InventoryMonthlyPeriodLockError code "LOCKED") bila periode
+ * bulan ini berstatus locked di inventory_monthly_period_locks — dipakai
+ * jalur TULIS Berita Acara/stock opname (lib/inventory-stock-opname-store.ts)
+ * SEBELUM menulis, pola PERSIS assertOmzetPeriodNotLocked (lib/reconciliation-omzet-period-lock.ts)
+ * supaya bulan yang sudah dikunci tidak diam-diam berubah lewat Simpan/Finalisasi/
+ * Buka Kunci BA individual. Reuse getInventoryMonthlyPeriodLock — TIDAK ada
+ * koleksi/skema baru.
+ */
+export async function assertInventoryOpnamePeriodNotLocked(storeId: number, year: number, month: number, context?: InventoryMonthlyPeriodLockContext): Promise<void> {
+  const lock = await getInventoryMonthlyPeriodLock(storeId, year, month, context);
+  if (lock?.status === "locked") {
+    throw new InventoryMonthlyPeriodLockError(
+      `Periode ${year}-${String(month).padStart(2, "0")} sudah dikunci (Kunci Periode Inventori) — tulis Berita Acara untuk periode ini ditolak. Buka kunci periode tersebut dulu di halaman Rekonsiliasi Inventori bila memang perlu menulis ulang.`,
+      "LOCKED",
+    );
+  }
 }
 
 export function isValidInventoryMonthlySnapshot(doc: OlseraInventoryMonthlySnapshotDocument): boolean {

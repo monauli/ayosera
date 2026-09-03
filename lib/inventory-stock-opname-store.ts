@@ -35,6 +35,7 @@ import type { InventoryStockOpnameDocument, OlseraInventoryMonthlySnapshotDocume
 import { compareHistoricalInventoryRows, type HistoricalReconciliationRow } from "./inventory-historical-reconciliation.ts";
 import { FEBRUARY_HISTORICAL_SOURCE_REVISION, resolveFebruaryHistoricalRows } from "./february-historical-migration.ts";
 import { FEBRUARY_HISTORICAL_SOURCE } from "./february-historical-source.ts";
+import { assertInventoryOpnamePeriodNotLocked, getInventoryMonthlyPeriodLock, InventoryMonthlyPeriodLockError, type InventoryMonthlyPeriodLockContext } from "./inventory-monthly-period-lock.ts";
 
 export class InventoryStockOpnameError extends Error {
   code: "VALIDATION" | "FORBIDDEN";
@@ -93,6 +94,15 @@ export type InventoryStockOpnameContext = {
   opname: MinimalOpnameCollection;
   orderItems?: MinimalReadCollection<OlseraOrderItemDocument>;
   approvedRows?: readonly HistoricalReconciliationRow[];
+  /**
+   * Override opsional untuk guard lock bulanan (lib/inventory-monthly-period-lock.ts)
+   * — testable tanpa Mongo sungguhan, pola SAMA seperti orderItems/approvedRows
+   * di atas: context DI diberikan tapi field ini tidak diisi -> dianggap
+   * "tidak ada yang locked" (bukan jatuh ke Mongo sungguhan, lihat
+   * resolveMonthlyPeriodLockContext). Hanya panggilan produksi TANPA context
+   * DI sama sekali yang benar-benar membaca inventory_monthly_period_locks asli.
+   */
+  monthlyPeriodLock?: InventoryMonthlyPeriodLockContext;
 } & CutoffFetchOverrides;
 
 export async function resolveInventoryStockOpnameContext(context?: InventoryStockOpnameContext): Promise<InventoryStockOpnameContext> {
@@ -100,6 +110,26 @@ export async function resolveInventoryStockOpnameContext(context?: InventoryStoc
   const { collections } = await import("./mongodb.ts");
   const { olseraInventoryMonthlySnapshots, inventoryStockOpnameReconciliations, olseraOrderItems } = await collections();
   return { snapshots: olseraInventoryMonthlySnapshots, opname: inventoryStockOpnameReconciliations, orderItems: olseraOrderItems };
+}
+
+/** locks/snapshots kosong — dipakai resolveMonthlyPeriodLockContext saat context DI diberikan tapi monthlyPeriodLock tidak diisi (default "tidak ada yang locked", bukan pemanggilan Mongo sungguhan). */
+const EMPTY_MONTHLY_PERIOD_LOCK_CONTEXT: InventoryMonthlyPeriodLockContext = {
+  locks: { findOne: async () => null, findOneAndUpdate: async () => null },
+  snapshots: { find: () => ({ toArray: async () => [] }) },
+};
+
+/**
+ * Resolusi context guard lock bulanan (lihat komentar monthlyPeriodLock di
+ * InventoryStockOpnameContext) — pola PERSIS resolveInventoryStockOpnameContext:
+ * context DI SAMA SEKALI tidak diberikan (panggilan produksi murni) -> biarkan
+ * assertInventoryOpnamePeriodNotLocked jatuh ke Mongo sungguhan sendiri
+ * (context undefined). context DI diberikan tapi monthlyPeriodLock tidak
+ * diisi -> default aman "tidak ada yang locked", TIDAK PERNAH diam-diam
+ * memanggil Mongo sungguhan dari tengah pengujian yang sudah di-mock.
+ */
+function resolveMonthlyPeriodLockContext(context?: InventoryStockOpnameContext): InventoryMonthlyPeriodLockContext | undefined {
+  if (!context) return undefined;
+  return context.monthlyPeriodLock ?? EMPTY_MONTHLY_PERIOD_LOCK_CONTEXT;
 }
 
 /** Resolusi dependency jalur cutoff — default: fetchStockMovementRange (Open API Olsera live, read-only) + fetchMatchingContext (katalog Mongo, read-only). Override lewat context untuk tes (tanpa network/Mongo sungguhan). */
@@ -743,6 +773,12 @@ export async function saveInventoryOpnameBatch(
     if (!verification.canFinalize && input.baOnlyDifferencesConfirmed) throw new InventoryStockOpnameError(verification.reason ?? "BA belum lolos verifikasi.");
   }
 
+  // Pola sama assertOmzetPeriodNotLocked (lib/reconciliation-omzet-period-lock.ts) —
+  // bulan yang sudah dikunci di level periode (Kunci Periode Inventori) tidak
+  // boleh menerima tulisan BA lagi lewat Simpan, sekalipun lock per-BA
+  // (finalize/unlock event doc) tidak menyentuh koleksi ini sama sekali.
+  await assertInventoryOpnamePeriodNotLocked(storeId, year, month, resolveMonthlyPeriodLockContext(context));
+
   const now = new Date();
   for (const entry of entries) {
     const sys = systemByKey.get(opnameKey(entry.productId, entry.variantId));
@@ -877,6 +913,11 @@ export async function finalizeInventoryStockOpname(
     if (!conflict.ok) throw new InventoryStockOpnameError(conflict.reason ?? "Periode ini sudah memuat BA dengan rentang berbeda.");
   }
 
+  // Pola sama assertOmzetPeriodNotLocked — bulan yang sudah dikunci di level
+  // periode (Kunci Periode Inventori) tidak boleh menerima finalisasi BA baru
+  // (loop tulis di bawah maupun dokumen event finalisasi itu sendiri).
+  await assertInventoryOpnamePeriodNotLocked(input.storeId, input.year, input.month, resolveMonthlyPeriodLockContext(context));
+
   const submitted = result.rows.filter((row) => row.physicalQty !== null || input.baOnlyDifferencesConfirmed);
   if (!submitted.length || submitted.some((row) => row.manualAdjust || row.systemClosingQty === null || (!input.baOnlyDifferencesConfirmed && (row.differenceQty === null || row.differenceQty === 0)))) throw new InventoryStockOpnameError("Finalisasi diblokir: masih ada mismatch, mapping tidak pasti, atau item tanpa selisih.");
   const { opname } = await resolveInventoryStockOpnameContext(context);
@@ -902,6 +943,15 @@ export async function finalizeInventoryStockOpname(
 
 export async function unlockInventoryStockOpname(input: { storeId: number; year: number; month: number; actor: string; reason: string }, context?: InventoryStockOpnameContext) {
   if (!input.reason.trim()) throw new InventoryStockOpnameError("Reason unlock wajib diisi.");
+  // Guard TAMBAHAN (beda dari assertInventoryOpnamePeriodNotLocked di atas):
+  // event-lock BA individual TIDAK BOLEH dibuka selagi bulan masih terkunci
+  // di level periode (Kunci Periode Inventori) — bulan harus dibuka dulu di
+  // level itu, supaya "BA individual berubah diam-diam padahal bulan katanya
+  // masih terkunci" tidak pernah terjadi.
+  const monthlyLock = await getInventoryMonthlyPeriodLock(input.storeId, input.year, input.month, resolveMonthlyPeriodLockContext(context));
+  if (monthlyLock?.status === "locked") {
+    throw new InventoryMonthlyPeriodLockError("Buka kunci periode bulan ini dulu sebelum membuka BA individual.", "LOCKED");
+  }
   const { opname } = await resolveInventoryStockOpnameContext(context); const now = new Date();
   const eventId = `${input.storeId}:${input.year}:${String(input.month).padStart(2, "0")}:event`;
   await opname.updateOne({ _id: eventId }, { $set: { lockedAt: null, lockedBy: null, unlockedAt: now, unlockedBy: input.actor, updatedAt: now }, $push: { history: { action: "unlock", actor: input.actor, reason: input.reason.trim().slice(0, MAX_NOTE_LENGTH), at: now } } }, { upsert: false });
