@@ -28,3 +28,12 @@ test("ringkasan inventori memakai format sederhana Cocok", () => {
 test("status Butuh Adjust Manual disembunyikan untuk Februari", () => {
   assert.match(page, /!isFebruaryHistoricalFinal \? \[\[\"Butuh Adjust Manual\"/);
 });
+
+test("pesan 'item masih memiliki selisih' ikut menghitung baris BA yang gagal dicocokkan ke katalog", () => {
+  // Bug produksi: baris BA yang matchedProduct-nya null (TIDAK_DITEMUKAN /
+  // nama ambigu) tidak pernah menulis ke `edits`, jadi tidak pernah muncul di
+  // rowsWithEdits/liveSummary -> pesan selisih bisa menampilkan "0 item" walau
+  // tabel Hasil Pembacaan BA jelas menunjukkan baris dengan Selisih BA != 0.
+  assert.match(page, /const baUnmatchedCount = baRows\.filter\(\(r\) => r\.matchedProductName === null\)\.length;/);
+  assert.match(page, /\$\{liveSummary\.perluDicek \+ liveSummary\.butuhAdjustManual \+ baUnmatchedCount\} item masih memiliki selisih atau data belum valid\./);
+});

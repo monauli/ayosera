@@ -563,6 +563,17 @@ export default function InventoryOpnamePage() {
   const baCocokCount = baRows.filter((r) => r.status === "COCOK").length;
   const baPerluDicekCount = baRows.filter((r) => r.status === "PERLU_DICEK").length;
   const baTidakDitemukanCount = baRows.filter((r) => r.status === "TIDAK_DITEMUKAN").length;
+  // Bug: baris BA yang GAGAL dicocokkan ke katalog (matchedProductName null —
+  // TIDAK_DITEMUKAN atau nama ambigu) tidak pernah masuk ke `edits`/rowsWithEdits
+  // (lihat uploadBa: hanya evaluation.matchedProduct yang menulis ke `edits`),
+  // sehingga selisihnya TIDAK PERNAH ikut terhitung di liveSummary walau
+  // barisnya jelas tampil dengan Selisih BA != 0 di tabel "Hasil Pembacaan
+  // Berita Acara". Baris matched (COCOK atau PERLU_DICEK karena systemQty/
+  // aritmetika beda) SUDAH punya padanan baris katalog sendiri dan sudah ikut
+  // liveSummary.perluDicek/butuhAdjustManual — menjumlahkan baPerluDicekCount
+  // di sini akan menghitung dua kali. Hanya baris ORPHAN (tidak match) yang
+  // perlu ditambahkan secara terpisah.
+  const baUnmatchedCount = baRows.filter((r) => r.matchedProductName === null).length;
   const BA_ROW_STATUS_LABEL: Record<BaRowStatus, string> = { COCOK: "Cocok", PERLU_DICEK: "Perlu Dicek", TIDAK_DITEMUKAN: "Tidak Ditemukan" };
   const BA_ROW_STATUS_TONE: Record<BaRowStatus, "ok" | "warn" | "danger"> = { COCOK: "ok", PERLU_DICEK: "warn", TIDAK_DITEMUKAN: "danger" };
 
@@ -687,7 +698,7 @@ export default function InventoryOpnamePage() {
       <section className="recon-filters" aria-label="Ringkasan Rekonsiliasi Inventori">
         <div><strong>{liveSummary.cocok}/{liveSummary.totalProduk} Cocok</strong></div>
         {data?.monthlyLock?.status === "locked" ? <div className="recon-lock-summary"><LockKeyhole /> Terkunci · {data.monthlyLock.lockedBy ?? "Supervisor"} {supervisor && <button className="recon-button danger" disabled={monthlyLockBusy} onClick={() => void unlockPeriod()}><Unlock /> Buka Kunci</button>}</div> : <button className="recon-button" disabled={!supervisor || !periodReadyToLock || monthlyLockBusy} onClick={() => void lockPeriod()}>{monthlyLockBusy ? <Loader2 className="spin" /> : <LockKeyhole />} Kunci Periode</button>}
-        {!periodReadyToLock && data?.monthlyLock?.status !== "locked" && <p className="recon-draft">{completeness && !completeness.pass ? `Belum dapat dikunci: masih ada ${completeness.unverified} produk katalog yang belum diverifikasi untuk ${MONTH_NAMES[Number(month) - 1]} ${year}.` : `${liveSummary.perluDicek + liveSummary.butuhAdjustManual} item masih memiliki selisih atau data belum valid.`}</p>}
+        {!periodReadyToLock && data?.monthlyLock?.status !== "locked" && <p className="recon-draft">{completeness && !completeness.pass ? `Belum dapat dikunci: masih ada ${completeness.unverified} produk katalog yang belum diverifikasi untuk ${MONTH_NAMES[Number(month) - 1]} ${year}.` : `${liveSummary.perluDicek + liveSummary.butuhAdjustManual + baUnmatchedCount} item masih memiliki selisih atau data belum valid.`}</p>}
         {data?.monthlyLock?.history?.length ? <details className="recon-history"><summary>Riwayat Lock / Unlock</summary><ul>{data.monthlyLock.history.map((item, index) => { const entry = item as { action?: string; actor?: string; reason?: string | null; at?: string; version?: number }; const accidental = isFebruaryHistoricalFinal && ((entry.action === "lock" && entry.actor === "ariamp@gmail.com" && entry.at?.startsWith("2026-08-14T11:42")) || (entry.action === "unlock" && entry.actor === "timunemas@ayo.local" && entry.at?.startsWith("2026-08-14T11:54"))); if (accidental) return null; return <li key={`${entry.at ?? "event"}-${index}`}><strong>{String(entry.action ?? "").toUpperCase()}</strong> · {entry.at ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.at)) : "—"} · {entry.actor ?? "User"}{entry.reason ? ` · ${entry.reason}` : ""}{entry.version ? ` · v${entry.version}` : ""}</li>; })}</ul></details> : null}
       </section>
 
