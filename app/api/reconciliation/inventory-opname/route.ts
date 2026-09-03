@@ -8,7 +8,8 @@ import {
   finalizeInventoryStockOpname,
   unlockInventoryStockOpname,
 } from "@/lib/inventory-stock-opname-store";
-import { isValidIsoDate, isSafeAttachmentUrl } from "@/lib/inventory-stock-opname";
+import { isValidIsoDate } from "@/lib/inventory-stock-opname";
+import { isSafeAttachmentUrl } from "@/lib/attachment-url-safety";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { currentStoreId } from "@/lib/reconciliation-store";
 import { getInventoryMonthlyPeriodLock, getInventoryPeriodCompleteness, InventoryMonthlyPeriodLockError, lockInventoryMonthlyPeriod, unlockInventoryMonthlyPeriod } from "@/lib/inventory-monthly-period-lock";

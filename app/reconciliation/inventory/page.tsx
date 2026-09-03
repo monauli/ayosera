@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileSearch, FileUp, Loader2, LockKeyhole, Moon, Paperclip, Printer, RefreshCw, Save, Search, Sun, Unlock, X } from "lucide-react";
 import { visibleInventoryRows } from "@/lib/olsera-inventory-ui";
-import { isSafeAttachmentUrl } from "@/lib/inventory-stock-opname";
+import { isSafeAttachmentUrl } from "@/lib/attachment-url-safety";
 import { analyzeInventoryBaFile } from "@/lib/inventory-ba-client";
 import { normalizeInventoryBaName } from "@/lib/inventory-ba-parser";
 import {

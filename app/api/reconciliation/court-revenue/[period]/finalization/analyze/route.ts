@@ -13,6 +13,7 @@ import { loadOmzetLedgerMonthDetail } from "@/lib/reconciliation-omzet-ledger";
 import { getOmzetPeriodLock } from "@/lib/reconciliation-omzet-period-lock";
 import { extractBeritaAcaraText } from "@/lib/reconciliation-berita-acara-ocr";
 import { parseBeritaAcaraText, matchBeritaAcaraToSystemDifference } from "@/lib/reconciliation-berita-acara-parser";
+import { isTrustedBlobAttachmentUrl } from "@/lib/attachment-url-safety";
 
 const PERIOD = /^\d{4}-\d{2}$/;
 export const runtime = "nodejs";
@@ -27,6 +28,16 @@ export async function POST(_request: Request, context: { params: Promise<{ perio
     const storeId = currentStoreId();
     const [lock, original] = await Promise.all([getOmzetPeriodLock(storeId, period), loadOmzetLedgerMonthDetail(period)]);
     if (!lock?.attachment) return NextResponse.json({ error: "Berita acara belum diunggah." }, { status: 404, headers: NO_CACHE_HEADERS });
+    // Cegah SSRF — TOLAK fetch() ke URL sembarang, bukan biarkan jalan.
+    // attachment.url HARUS berasal dari Vercel Blob (satu-satunya jalur
+    // tulis saat ini — lihat finalization/upload/route.ts), tapi titik baca
+    // ini tidak boleh diam-diam mengandalkan itu tanpa verifikasi ulang;
+    // https-only saja tidak cukup (https://127.0.0.1/, https://169.254.169.254/
+    // dkk tetap lolos) — lihat lib/attachment-url-safety.ts.
+    if (!isTrustedBlobAttachmentUrl(lock.attachment.url)) {
+      console.error("[reconciliation:period-finalization:analyze] attachment.url bukan origin Vercel Blob yang dipercaya, fetch ditolak", { period, url: lock.attachment.url });
+      return NextResponse.json({ error: "Lampiran berita acara tidak valid — hubungi admin." }, { status: 502, headers: NO_CACHE_HEADERS });
+    }
 
     const systemDifference = original.differenceRevenue;
     let ocr;

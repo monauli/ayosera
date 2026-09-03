@@ -23,7 +23,10 @@ mock.module("@/lib/reconciliation-omzet-ledger", {
   },
 });
 
-let lockAttachment: { url: string; mimeType: string; fileName: string } | null = { url: "https://blob.example/ba.pdf", mimeType: "application/pdf", fileName: "ba.pdf" };
+// URL host HARUS cocok allowlist Vercel Blob (lib/attachment-url-safety.ts
+// isTrustedBlobAttachmentUrl) — route sekarang menolak fetch() ke host lain.
+const TRUSTED_URL = "https://abc123.public.blob.vercel-storage.com/ba.pdf";
+let lockAttachment: { url: string; mimeType: string; fileName: string } | null = { url: TRUSTED_URL, mimeType: "application/pdf", fileName: "ba.pdf" };
 mock.module("@/lib/reconciliation-omzet-period-lock", {
   namedExports: {
     getOmzetPeriodLock: mock.fn(async () => (lockAttachment ? { attachment: lockAttachment } : null)),
@@ -42,8 +45,9 @@ mock.module("@/lib/reconciliation-berita-acara-ocr", {
   },
 });
 
+let fetchCallCount = 0;
 const realFetch = globalThis.fetch;
-globalThis.fetch = (async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as typeof fetch;
+globalThis.fetch = (async () => { fetchCallCount++; return new Response(new Uint8Array([1, 2, 3]), { status: 200 }); }) as typeof fetch;
 
 let POST!: typeof import("./route.ts").POST;
 before(async () => {
@@ -57,10 +61,11 @@ function ctx(period = "2026-03") {
 test.beforeEach(() => {
   supervisorRejects = false;
   ledgerDifference = 740_000;
-  lockAttachment = { url: "https://blob.example/ba.pdf", mimeType: "application/pdf", fileName: "ba.pdf" };
+  lockAttachment = { url: TRUSTED_URL, mimeType: "application/pdf", fileName: "ba.pdf" };
   ocrText = "Berita Acara periode Maret 2026: PENAMBAHAN Rp740.000. Alasan: advance payment received in March recognized as March revenue";
   ocrConfidence = 1;
   ocrThrows = false;
+  fetchCallCount = 0;
 });
 
 test.after(() => {
@@ -88,6 +93,13 @@ test("belum ada attachment -> 404", async () => {
   lockAttachment = null;
   const res = await POST(new Request("http://localhost"), ctx());
   assert.equal(res.status, 404);
+});
+
+test("attachment.url bukan origin Vercel Blob yang dipercaya -> 502, fetch() TIDAK pernah dipanggil (cegah SSRF)", async () => {
+  lockAttachment = { url: "https://127.0.0.1/admin", mimeType: "application/pdf", fileName: "ba.pdf" };
+  const res = await POST(new Request("http://localhost"), ctx());
+  assert.equal(res.status, 502);
+  assert.equal(fetchCallCount, 0, "fetch() tidak boleh dipanggil sama sekali ke URL yang tidak dipercaya");
 });
 
 test("non-supervisor -> 403", async () => {

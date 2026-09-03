@@ -188,19 +188,6 @@ export function isValidIsoDate(value: unknown): value is string {
 }
 
 /**
- * URL lampiran BA (attachment.url) aman untuk dirender sebagai `<a href>` —
- * WAJIB https:// (Vercel Blob selalu mengembalikan https). Dipakai di
- * PERBATASAN tulis (app/api/reconciliation/inventory-opname/route.ts) DAN
- * saat render ("Riwayat BA", app/reconciliation/inventory/page.tsx) — tanpa
- * ini, attachment.url yang dikirim client (bisa lewat request langsung ke
- * endpoint, bukan cuma lewat UI upload) bisa berisi skema seperti
- * "javascript:..." yang tereksekusi saat link diklik (stored XSS).
- */
-export function isSafeAttachmentUrl(value: unknown): value is string {
-  return typeof value === "string" && /^https:\/\//i.test(value);
-}
-
-/**
  * Batas aman jendela query stockmovement — Olsera menolak (HTTP 406, "not
  * allowed pulling data for more than 3 mounts") jendela lebih dari ~90-100
  * hari (lihat lib/olsera-inventory-monthly-core.ts). Nilai di bawah ini
