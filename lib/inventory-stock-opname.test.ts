@@ -17,6 +17,7 @@ import {
   effectiveBaStartDate,
   verifyStockOpnameBa,
   CUTOFF_MAX_LOOKBACK_DAYS,
+  isSafeAttachmentUrl,
 } from "./inventory-stock-opname.ts";
 
 test("BA item selisih valid cocok dengan stok Olsera", () => {
@@ -153,6 +154,16 @@ test("isValidIsoDate: menerima YYYY-MM-DD kalender valid, menolak format lain/ta
   assert.equal(isValidIsoDate(""), false);
   assert.equal(isValidIsoDate(null), false);
   assert.equal(isValidIsoDate(20260716), false);
+});
+
+test("isSafeAttachmentUrl: menerima https://, menolak skema lain (mis. javascript:) — cegah stored XSS lewat Riwayat BA", () => {
+  assert.equal(isSafeAttachmentUrl("https://blob.vercel-storage.com/ba.pdf"), true);
+  assert.equal(isSafeAttachmentUrl("javascript:alert(1)"), false, "skema javascript: harus ditolak, bukan cuma difilter di render");
+  assert.equal(isSafeAttachmentUrl("http://blob.vercel-storage.com/ba.pdf"), false, "http:// (non-secure) ditolak — Vercel Blob selalu https");
+  assert.equal(isSafeAttachmentUrl("data:text/html,<script>alert(1)</script>"), false);
+  assert.equal(isSafeAttachmentUrl(""), false);
+  assert.equal(isSafeAttachmentUrl(null), false);
+  assert.equal(isSafeAttachmentUrl(undefined), false);
 });
 
 test("resolveCutoffQueryRange: default start_date = awal bulan cutoff, end_date = cutoffDate persis", () => {

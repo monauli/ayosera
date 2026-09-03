@@ -8,7 +8,7 @@ import {
   finalizeInventoryStockOpname,
   unlockInventoryStockOpname,
 } from "@/lib/inventory-stock-opname-store";
-import { isValidIsoDate } from "@/lib/inventory-stock-opname";
+import { isValidIsoDate, isSafeAttachmentUrl } from "@/lib/inventory-stock-opname";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { currentStoreId } from "@/lib/reconciliation-store";
 import { getInventoryMonthlyPeriodLock, getInventoryPeriodCompleteness, InventoryMonthlyPeriodLockError, lockInventoryMonthlyPeriod, unlockInventoryMonthlyPeriod } from "@/lib/inventory-monthly-period-lock";
@@ -120,8 +120,12 @@ export async function POST(request: Request) {
     // finalize di atas) — histori merekam siapa upload kapan, bukan siapa
     // menyimpan kapan. Fallback ke actor/waktu sekarang hanya bila field itu
     // hilang/rusak, supaya entri histori tidak pernah kosong actor/waktu.
+    // url WAJIB https:// — attachment.url disimpan lalu dirender sebagai <a href>
+    // di "Riwayat BA" (app/reconciliation/inventory/page.tsx). Tanpa validasi
+    // skema, request langsung ke endpoint ini (melewati UI) bisa menitipkan
+    // "javascript:..." yang tereksekusi saat link itu diklik (stored XSS).
     const rawAttachment = body.attachment && typeof body.attachment === "object" ? body.attachment as Record<string, unknown> : null;
-    const attachment = rawAttachment && typeof rawAttachment.url === "string" && typeof rawAttachment.fileName === "string"
+    const attachment = rawAttachment && isSafeAttachmentUrl(rawAttachment.url) && typeof rawAttachment.fileName === "string"
       ? {
           fileName: rawAttachment.fileName,
           mimeType: typeof rawAttachment.mimeType === "string" ? rawAttachment.mimeType : "application/octet-stream",
