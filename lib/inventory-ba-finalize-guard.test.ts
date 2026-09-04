@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BA_UNREAD_MESSAGE,
   canApplyBaOmittedAssumedMatch,
+  computeOmittedAsMatchEdits,
   evaluateBaRow,
   isBaParseUnread,
   isDateWithinPeriod,
@@ -10,6 +11,7 @@ import {
   shouldBlockFinalizeForBaRows,
   shouldBlockFinalizeForUnreadBa,
   type CatalogRow,
+  type OmittedAsMatchRow,
 } from "./inventory-ba-finalize-guard.ts";
 import { normalizeInventoryBaName } from "./inventory-ba-parser.ts";
 
@@ -45,6 +47,58 @@ test("BA_OMITTED_ASSUMED_MATCH TIDAK aktif ketika checkbox belum dicentang, wala
 test("BA_OMITTED_ASSUMED_MATCH aktif HANYA ketika checkbox dicentang DAN minimal 1 item berhasil diparse", () => {
   assert.equal(canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed: true, itemsFound: 7 }), true);
   assert.equal(canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed: true, itemsFound: 1 }), true);
+});
+
+// computeOmittedAsMatchEdits — pengganti checkbox baOnlyDifferencesConfirmed
+// (state persisten yang bisa desync dari baItemsFound lewat cancelBaRead,
+// lihat app/reconciliation/inventory/page.tsx) jadi aksi sekali-klik.
+
+function omittedRow(overrides: Partial<OmittedAsMatchRow> & { productId: number }): OmittedAsMatchRow {
+  return { variantId: null, physicalQty: null, systemClosingQty: 15, manualAdjust: false, note: null, ...overrides };
+}
+
+test("computeOmittedAsMatchEdits: baris eligible (physicalQty null, systemClosingQty ada, bukan manualAdjust) diisi Cocok", () => {
+  const rows = [omittedRow({ productId: 1, systemClosingQty: 15 })];
+  const next = computeOmittedAsMatchEdits(rows, {}, 7);
+  assert.deepEqual(next["1:0"], { physicalQty: 15, note: null });
+});
+
+test("computeOmittedAsMatchEdits: baris manualAdjust TIDAK disentuh", () => {
+  const rows = [omittedRow({ productId: 1, manualAdjust: true })];
+  const next = computeOmittedAsMatchEdits(rows, {}, 7);
+  assert.equal(next["1:0"], undefined);
+});
+
+test("computeOmittedAsMatchEdits: baris systemClosingQty null TIDAK disentuh (tidak ada angka sistem untuk diasumsikan)", () => {
+  const rows = [omittedRow({ productId: 1, systemClosingQty: null })];
+  const next = computeOmittedAsMatchEdits(rows, {}, 7);
+  assert.equal(next["1:0"], undefined);
+});
+
+test("computeOmittedAsMatchEdits: baris yang SUDAH ada physicalQty (edit manual atau dari BA) TIDAK ditimpa", () => {
+  const rows = [omittedRow({ productId: 1, systemClosingQty: 15 })];
+  const existing = { "1:0": { physicalQty: 8, note: "Dibaca dari BA" } };
+  const next = computeOmittedAsMatchEdits(rows, existing, 7);
+  assert.deepEqual(next["1:0"], { physicalQty: 8, note: "Dibaca dari BA" });
+});
+
+test("computeOmittedAsMatchEdits: itemsFound 0 -> no-op (0 item terbaca tidak boleh diam-diam menganggap semua cocok)", () => {
+  const rows = [omittedRow({ productId: 1, systemClosingQty: 15 })];
+  const next = computeOmittedAsMatchEdits(rows, {}, 0);
+  assert.equal(next["1:0"], undefined);
+});
+
+test("computeOmittedAsMatchEdits: dipanggil 2x (klik tombol dua kali) idempotent — hasil kedua identik dengan hasil pertama", () => {
+  const rows = [omittedRow({ productId: 1, systemClosingQty: 15 }), omittedRow({ productId: 2, systemClosingQty: null }), omittedRow({ productId: 3, manualAdjust: true })];
+  const first = computeOmittedAsMatchEdits(rows, {}, 7);
+  const second = computeOmittedAsMatchEdits(rows, first, 7);
+  assert.deepEqual(second, first);
+});
+
+test("computeOmittedAsMatchEdits: baris lain yang tidak eligible TIDAK ikut membuat entri kosong di edits", () => {
+  const rows = [omittedRow({ productId: 1, systemClosingQty: null }), omittedRow({ productId: 2, manualAdjust: true })];
+  const next = computeOmittedAsMatchEdits(rows, {}, 7);
+  assert.deepEqual(next, {});
 });
 
 const catalog: CatalogRow[] = [

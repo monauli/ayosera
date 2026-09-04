@@ -30,6 +30,43 @@ export function canApplyBaOmittedAssumedMatch(input: { baOnlyDifferencesConfirme
   return input.baOnlyDifferencesConfirmed && input.itemsFound > 0;
 }
 
+export type OmittedAsMatchRow = { productId: number; variantId: number | null; physicalQty: number | null; systemClosingQty: number | null; manualAdjust: boolean; note: string | null };
+export type OmittedAsMatchEdit = { physicalQty: number | null; note: string | null };
+
+/**
+ * Terapkan SEKALI, dipanggil dari tombol aksi "Tandai Item Tanpa Selisih
+ * sebagai Cocok" — BUKAN kondisi reaktif yang dievaluasi ulang tiap render
+ * (itu bug lama: checkbox baOnlyDifferencesConfirmed bisa tetap tercentang
+ * padahal baItemsFound sudah direset null oleh cancelBaRead(), membuat
+ * canApplyBaOmittedAssumedMatch diam-diam jadi false tanpa indikasi visual).
+ * Untuk tiap baris yang efektif BELUM terisi (physicalQty null — termasuk
+ * edit yang sudah ada) DAN punya stok sistem yang diketahui (systemClosingQty
+ * bukan null) DAN bukan manualAdjust, isi edits-nya dengan physicalQty =
+ * systemClosingQty (dianggap Cocok tanpa selisih). Reuse canApplyBaOmittedAssumedMatch
+ * apa adanya (baOnlyDifferencesConfirmed selalu true di sini — konfirmasi
+ * SEKARANG melekat pada aksi klik tombolnya sendiri, bukan state terpisah)
+ * supaya syarat "0 item terbaca -> jangan diam-diam anggap semua cocok"
+ * tetap satu sumber kebenaran, tidak diduplikasi.
+ * Idempotent: baris yang sudah terisi (dari panggilan sebelumnya atau edit
+ * manual) tidak disentuh lagi pada panggilan berikutnya.
+ */
+export function computeOmittedAsMatchEdits(
+  rows: ReadonlyArray<OmittedAsMatchRow>,
+  edits: Readonly<Record<string, OmittedAsMatchEdit>>,
+  itemsFound: number,
+): Record<string, OmittedAsMatchEdit> {
+  if (!canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed: true, itemsFound })) return { ...edits };
+  const next = { ...edits };
+  for (const row of rows) {
+    const key = `${row.productId}:${row.variantId ?? 0}`;
+    const currentPhysicalQty = next[key]?.physicalQty ?? row.physicalQty;
+    if (currentPhysicalQty === null && row.systemClosingQty !== null && !row.manualAdjust) {
+      next[key] = { physicalQty: row.systemClosingQty, note: next[key]?.note ?? row.note };
+    }
+  }
+  return next;
+}
+
 /** Finalisasi WAJIB diblok bila BA sudah upload tapi 0 item terbaca — status "Perlu Dicek", bukan lolos diam-diam. */
 export function shouldBlockFinalizeForUnreadBa(outcome: BaParseOutcome): boolean {
   return isBaParseUnread(outcome);

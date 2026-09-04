@@ -8,7 +8,7 @@ import { analyzeInventoryBaFile } from "@/lib/inventory-ba-client";
 import { normalizeInventoryBaName } from "@/lib/inventory-ba-parser";
 import {
   BA_UNREAD_MESSAGE,
-  canApplyBaOmittedAssumedMatch,
+  computeOmittedAsMatchEdits,
   evaluateBaRow,
   isBaParseUnread,
   isDateWithinPeriod,
@@ -156,7 +156,13 @@ export default function InventoryOpnamePage() {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState("");
-  const [baOnlyDifferencesConfirmed, setBaOnlyDifferencesConfirmed] = useState(false);
+  // Menggantikan checkbox baOnlyDifferencesConfirmed lama (state persisten
+  // reaktif yang bisa desync dari baItemsFound lewat cancelBaRead — lihat
+  // investigasi "checkbox BA hanya selisih") — sekarang latch sekali-arah:
+  // false sampai tombol "Tandai Item Tanpa Selisih sebagai Cocok" diklik,
+  // di-reset ke false di titik reset yang SAMA dengan baItemsFound (awal
+  // uploadBa() & cancelBaRead()) supaya tidak pernah tertinggal "true" basi.
+  const [omittedAsMatchApplied, setOmittedAsMatchApplied] = useState(false);
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [uploading, setUploading] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -235,6 +241,7 @@ export default function InventoryOpnamePage() {
     setFinalizeError("");
     setReadingBa(true);
     setBaItemsFound(null);
+    setOmittedAsMatchApplied(false);
     setBaSourcedKeys(new Set());
     try {
       const form = new FormData();
@@ -350,6 +357,7 @@ export default function InventoryOpnamePage() {
     setAttachment(null);
     setBaReadSummary(null);
     setBaItemsFound(null);
+    setOmittedAsMatchApplied(false);
     setBaSourcedKeys(new Set());
     setBaRows([]);
     setBaPeriod(null);
@@ -358,8 +366,18 @@ export default function InventoryOpnamePage() {
     if (data) seedEdits(data.rows);
   };
 
+  // Tombol aksi "Tandai Item Tanpa Selisih sebagai Cocok" — SEKALI-KLIK,
+  // menulis langsung ke edits (bukan kondisi reaktif yang terus dievaluasi
+  // ulang tiap render seperti checkbox lama). Idempotent: klik ulang hanya
+  // mengisi baris yang MASIH physicalQty null, tidak menimpa yang sudah terisi.
+  const applyOmittedAsMatch = () => {
+    if (!data) return;
+    setEdits((prev) => computeOmittedAsMatchEdits(data.rows, prev, baItemsFound ?? 0));
+    setOmittedAsMatchApplied(true);
+  };
+
   const finalize = async () => {
-    if (!data || !attachment || !cutoffDate || !baOnlyDifferencesConfirmed) return;
+    if (!data || !attachment || !cutoffDate || !omittedAsMatchApplied) return;
     if (shouldBlockFinalizeForUnreadBa({ uploadSucceeded: true, itemsFound: baItemsFound ?? 0 }) && baItemsFound !== null) {
       setFinalizeError(BA_UNREAD_MESSAGE);
       return;
@@ -391,7 +409,12 @@ export default function InventoryOpnamePage() {
       const response = await fetch("/api/reconciliation/inventory-opname", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "finalize", year: Number(year), month: Number(month), cutoff: cutoffDate, cutoffDate, ...(startDate.trim() !== "" ? { startDate: startDate.trim() } : {}), cutoffConfirmed: true, baOnlyDifferencesConfirmed, attachment }),
+        // baOnlyDifferencesConfirmed: kontrak API finalize TIDAK berubah (server
+        // tetap butuh boolean ini — gate wajib di finalizeInventoryStockOpname
+        // DAN fallback auto-fill-nya sendiri di titik tulis, independen dari
+        // apa pun yang sudah di-apply di client). omittedAsMatchApplied SELALU
+        // true di titik ini (early-return di atas menjamin itu).
+        body: JSON.stringify({ action: "finalize", year: Number(year), month: Number(month), cutoff: cutoffDate, cutoffDate, ...(startDate.trim() !== "" ? { startDate: startDate.trim() } : {}), cutoffConfirmed: true, baOnlyDifferencesConfirmed: omittedAsMatchApplied, attachment }),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || "Finalisasi gagal. Periksa kembali data checker.");
@@ -503,14 +526,13 @@ export default function InventoryOpnamePage() {
     return data.rows.map((row) => {
       const edit = edits[rowKey(row.productId, row.variantId)];
       const physicalQty = edit?.physicalQty ?? row.physicalQty;
-      // BA_OMITTED_ASSUMED_MATCH HANYA aktif setelah minimal 1 baris BERHASIL
-      // diparse dari BA (lib/inventory-ba-finalize-guard.ts) — bukan sekadar
-      // checkbox dicentang. Ini mencegah bug produksi: 0 item terbaca tapi
-      // seluruh katalog diam-diam dianggap cocok.
-      const canAssumeOmitted = canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed, itemsFound: baItemsFound ?? 0 });
-      if (canAssumeOmitted && physicalQty === null && row.systemClosingQty !== null && !row.manualAdjust) {
-        return { ...row, physicalQty: row.systemClosingQty, differenceQty: 0, status: "COCOK" as OpnameStatus, evidenceSource: "BA_OMITTED_ASSUMED_MATCH" as const };
-      }
+      // Item "tanpa selisih" (tidak disebut BA) diisi lewat tombol aksi
+      // applyOmittedAsMatch() yang menulis LANGSUNG ke edits sekali klik
+      // (lihat computeOmittedAsMatchEdits di lib/inventory-ba-finalize-guard.ts)
+      // — begitu terisi, baris ini dihitung status-nya lewat jalur umum di
+      // bawah persis seperti edit manual mana pun, TIDAK ADA kondisi khusus
+      // di sini lagi (dulu: checkbox baOnlyDifferencesConfirmed reaktif, bisa
+      // desync dari baItemsFound lewat cancelBaRead tanpa indikasi visual).
       if (!edit) {
         return row.physicalQty === null && row.systemClosingQty !== null && !row.manualAdjust
           ? { ...row, status: "BELUM_DIISI" as OpnameStatus }
@@ -526,7 +548,7 @@ export default function InventoryOpnamePage() {
             : "COCOK";
       return { ...row, physicalQty, note: edit.note, differenceQty, status };
     });
-  }, [data, edits, baOnlyDifferencesConfirmed, baItemsFound]);
+  }, [data, edits]);
 
   // Checkbox "Tampilkan item tersembunyi" dihapus dari UI — perilaku
   // di-default-kan ke "tampilkan semua" supaya tidak ada baris yang diam-diam
@@ -741,9 +763,17 @@ export default function InventoryOpnamePage() {
             skema lain, mis. "javascript:...", tidak pernah berakhir jadi <a href> yang
             bisa dieksekusi saat diklik). */}
         {data?.uploadHistory?.length ? <details className="recon-history"><summary>Riwayat BA ({data.uploadHistory.length})</summary><ul>{data.uploadHistory.map((entry, index) => <li key={`${entry.url}-${index}`}>{isSafeAttachmentUrl(entry.url) ? <a href={entry.url} target="_blank" rel="noreferrer" className="recon-link"><Paperclip size={12} /> {entry.fileName}</a> : <span><Paperclip size={12} /> {entry.fileName}</span>} · {entry.uploadedAt ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.uploadedAt)) : "—"} · {entry.uploadedBy ?? "—"}</li>)}</ul></details> : null}
-        <label className="recon-check">
-          <input type="checkbox" checked={baOnlyDifferencesConfirmed} disabled={!supervisor || data?.lock?.status === "LOCKED"} onChange={(e) => setBaOnlyDifferencesConfirmed(e.target.checked)} /> Berita Acara hanya mencantumkan item yang memiliki selisih
-        </label>
+        {/* Tombol aksi sekali-klik — menggantikan checkbox baOnlyDifferencesConfirmed
+            lama (state persisten yang bisa desync dari baItemsFound lewat
+            cancelBaRead tanpa indikasi visual apa pun). Disabled saat
+            baItemsFound null/0 sama seperti "0 item terbaca" memblokir alur
+            BA lain di halaman ini (lihat baUnread). */}
+        <div className="recon-finalization">
+          <button type="button" className="recon-button secondary" disabled={!supervisor || !baItemsFound || data?.lock?.status === "LOCKED"} onClick={() => applyOmittedAsMatch()}>
+            <CheckCircle2 /> Tandai Item Tanpa Selisih sebagai Cocok
+          </button>
+          {omittedAsMatchApplied ? <p className="recon-readonly">Diterapkan — item yang tidak disebut Berita Acara sudah ditandai Cocok. Klik lagi bila ada item baru.</p> : <p className="recon-readonly">Item yang TIDAK disebut di Berita Acara akan ditandai Cocok (stok fisik = stok sistem).</p>}
+        </div>
         <div className="recon-finalization">
           {data?.lock?.status === "LOCKED" ? <>
             <p className="recon-lock-summary"><LockKeyhole /> Stock Opname Terkunci</p>
@@ -751,7 +781,7 @@ export default function InventoryOpnamePage() {
             <p className="recon-readonly">File BA: {data.lock.attachment?.fileName ?? attachment?.fileName ?? "—"}</p>
             <p className="recon-readonly">Data pemeriksaan pada tanggal cutoff sudah dikunci. Transaksi inventori setelah tanggal tersebut tetap berjalan normal.</p>
             {supervisor && <><input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Alasan buka kunci" /><button className="recon-button danger" onClick={() => void unlock()} disabled={unlocking}>{unlocking ? <Loader2 className="spin" /> : <Unlock />} Buka Kunci</button></>}
-          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !baOnlyDifferencesConfirmed || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
+          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !omittedAsMatchApplied || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
         </div>
       </section>}
       {baUnread && <p className="recon-draft"><AlertTriangle /> {BA_UNREAD_MESSAGE}</p>}
