@@ -10,6 +10,7 @@ import {
   dateRangeList,
   flattenOlseraProduct,
   inventoryValueFor,
+  isActiveOrUnknownProduct,
   isInventorySyncStale,
   normalizeItemName,
   planMovementReconciliation,
@@ -643,4 +644,11 @@ test("planMovementReconciliation: idempotent — input sama menghasilkan output 
   const first = planMovementReconciliation(input);
   const second = planMovementReconciliation(input);
   assert.deepEqual(first, second);
+});
+
+test("isActiveOrUnknownProduct: active true -> true, active false -> false, katalog tidak ditemukan (null/undefined) -> true (fail-safe)", () => {
+  assert.equal(isActiveOrUnknownProduct({ active: true }), true);
+  assert.equal(isActiveOrUnknownProduct({ active: false }), false);
+  assert.equal(isActiveOrUnknownProduct(null), true);
+  assert.equal(isActiveOrUnknownProduct(undefined), true);
 });

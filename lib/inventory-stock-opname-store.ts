@@ -27,7 +27,7 @@ import {
   type StockOpnameBaEntry,
 } from "./inventory-stock-opname.ts";
 import { attachMovementsToProducts, type UnmatchedMovementEntry } from "./olsera-inventory-monthly-core.ts";
-import { productKey } from "./olsera-inventory-core.ts";
+import { isActiveOrUnknownProduct, productKey } from "./olsera-inventory-core.ts";
 import { visibleMonthlyInventoryRows } from "./olsera-inventory-ui.ts";
 import { previousMonth, type MatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchMatchingContext } from "./olsera-inventory-monthly-snapshot-store.ts";
@@ -539,7 +539,7 @@ export async function loadInventoryOpnameCutoff(
   // ditampilkan (fail-safe, bukan fail-closed — tidak cukup bukti untuk
   // menyembunyikan baris).
   const isActiveOrUnknown = (snap: { productId: number; variantId: number | null }) =>
-    deps.matchingContext.catalogById.get(productKey(storeId, snap.productId, snap.variantId))?.active !== false;
+    isActiveOrUnknownProduct(deps.matchingContext.catalogById.get(productKey(storeId, snap.productId, snap.variantId)));
   const stagnant = visibleMonthlyInventoryRows(
     snapshotRows.map((snap) => ({ ...snap, category: snap.groupName })),
     false,

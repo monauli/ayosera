@@ -144,6 +144,19 @@ export type InventoryProductInput = {
   stockSyncTime: string | null;
 };
 
+/**
+ * true bila entri katalog TIDAK diketahui (undefined — fail-safe, jangan
+ * pernah menyembunyikan tanpa bukti) ATAU `active` bukan false. Satu sumber
+ * kebenaran dipakai di 2 titik: jalur stagnant rekonsiliasi BA
+ * (lib/inventory-stock-opname-store.ts, komit 2c2a36d) dan filter tab
+ * panel bulanan Inventori Olsera (lib/olsera-inventory-monthly-ui.ts) —
+ * keduanya perlu keputusan yang sama "produk ini masih relevan ditampilkan
+ * berdasarkan status aktif katalognya".
+ */
+export function isActiveOrUnknownProduct(product: { active: boolean } | null | undefined): boolean {
+  return product?.active !== false;
+}
+
 /** Angka Olsera pada payload produk memakai desimal titik ("78585.42") atau string "0". */
 export function toInventoryNumber(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;

@@ -5,7 +5,7 @@ import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument } f
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/olsera-inventory-core";
 import { isHiddenInventoryCategory } from "@/lib/olsera-inventory-ui";
-import { monthlyPeriodStatus, monthlyStockStatus, summarizeMonthlyInventory, type MonthlyInventoryUiRow } from "@/lib/olsera-inventory-monthly-ui";
+import { filterRelevantMonthlyRows, monthlyPeriodStatus, monthlyStockStatus, summarizeMonthlyInventory, type MonthlyInventoryUiRow } from "@/lib/olsera-inventory-monthly-ui";
 import { getInventorySyncStatus } from "@/lib/olsera-inventory";
 import { getInventoryMonthlyPeriodLock } from "@/lib/inventory-monthly-period-lock";
 import { currentStoreId } from "@/lib/olsera-store-id";
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
     ]);
 
     const productByKey = new Map(raw.products.map((product) => [rowKey(product.storeId ?? 0, product.productId, product.variantId), product]));
-    const rows = raw.snapshots.map((snapshot: OlseraInventoryMonthlySnapshotDocument) => {
+    const allRows = raw.snapshots.map((snapshot: OlseraInventoryMonthlySnapshotDocument) => {
       const product = productByKey.get(rowKey(snapshot.storeId, snapshot.productId, snapshot.variantId));
       const category = snapshot.groupName ?? "";
       const minimumStock = product?.lowStockAlert ?? DEFAULT_LOW_STOCK_THRESHOLD;
@@ -97,6 +97,10 @@ export async function GET(request: Request) {
         identityResolved: snapshot.status !== "incomplete",
       };
     });
+    // Produk active:false yang tidak punya pergerakan riil periode ini
+    // dikecualikan di sini SEKALI, sebelum summary/tabCounts/categories/data
+    // dihitung — supaya semuanya konsisten (lihat filterRelevantMonthlyRows).
+    const rows = filterRelevantMonthlyRows(allRows);
 
     const summary = summarizeMonthlyInventory(rows);
     const tabCounts = {
