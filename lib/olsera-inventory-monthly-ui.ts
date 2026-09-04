@@ -1,5 +1,5 @@
 import { DEFAULT_LOW_STOCK_THRESHOLD, isActiveOrUnknownProduct } from "./olsera-inventory-core.ts";
-import { visibleMonthlyInventoryRows, type InventoryActivityRow } from "./olsera-inventory-ui.ts";
+import { hasInventoryActivity, visibleMonthlyInventoryRows, type InventoryActivityRow } from "./olsera-inventory-ui.ts";
 
 export type MonthlyInventoryUiRow = {
   closingQty: number | null;
@@ -128,4 +128,33 @@ export function filterRelevantMonthlyRows<T extends MonthlyRelevanceRow & Invent
     rows.filter((row) => !isStagnantInactiveMonthlyRow(row)),
     false,
   );
+}
+
+export type MonthlyTabRow = MonthlyRelevanceRow & InventoryActivityRow & { category: unknown; id: string };
+
+/**
+ * Pecah baris snapshot bulanan jadi 3 himpunan tab UI panel bulanan:
+ * - `moved` ("Pergerakan Stok") — filterRelevantMonthlyRows apa adanya
+ *   (komit 7828bd9), TIDAK diduplikasi ulang di sini.
+ * - `stagnant` ("Tidak Ada Pergerakan") — lolos hasInventoryActivity (masih
+ *   bersaldo) TAPI dikecualikan dari `moved` (active:false + tak bergerak).
+ *   Dihitung sebagai selisih himpunan (grandTotal - moved), BUKAN kondisi
+ *   terpisah yang bisa drift dari 2 filter di atas.
+ * - `grandTotal` ("Total Keseluruhan") — filter TUNGGAL hasInventoryActivity,
+ *   fungsi yang SAMA PERSIS dipakai buildMonthlyRowsFromMonthlySnapshots
+ *   (lib/olsera-inventory-monthly-export.ts, export "Laporan Stock Opname
+ *   Bulanan") — satu sumber kebenaran, dua titik pakai, supaya tab UI dan
+ *   file export TIDAK PERNAH menghasilkan angka berbeda untuk konsep yang
+ *   sama.
+ * `moved` SELALU himpunan bagian `grandTotal` (hasInventoryActivity adalah
+ * salah satu syarat filterRelevantMonthlyRows), jadi
+ * `stagnant.length + moved.length === grandTotal.length` terjamin oleh
+ * konstruksi (partisi himpunan), tidak perlu dites terpisah per hitungan.
+ */
+export function computeMonthlyTabRowSets<T extends MonthlyTabRow>(rows: readonly T[]): { moved: T[]; stagnant: T[]; grandTotal: T[] } {
+  const grandTotal = rows.filter(hasInventoryActivity);
+  const moved = filterRelevantMonthlyRows(rows);
+  const movedIds = new Set(moved.map((row) => row.id));
+  const stagnant = grandTotal.filter((row) => !movedIds.has(row.id));
+  return { moved, stagnant, grandTotal };
 }

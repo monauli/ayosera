@@ -286,7 +286,7 @@ export function universeCounts(rows: readonly InventoryUniverseRow[]) {
   };
 }
 
-export type InventoryTabKey = "sold" | "unsold" | "overall" | "movements";
+export type InventoryTabKey = "sold" | "unsold" | "overall" | "stagnant" | "grandTotal" | "movements";
 
 export const INVENTORY_TABS: {
   key: InventoryTabKey;
@@ -295,7 +295,20 @@ export const INVENTORY_TABS: {
 }[] = [
   { key: "sold", label: "Stok Terjual", supervisorOnly: false },
   { key: "unsold", label: "Stok Tidak Terjual", supervisorOnly: false },
-  { key: "overall", label: "Stok Keseluruhan", supervisorOnly: false },
+  // Label diganti dari "Stok Keseluruhan" — angkanya sudah difilter
+  // isActiveOrUnknownProduct+hasNoPeriodMovement sejak komit 7828bd9, jadi
+  // "Pergerakan Stok" lebih jujur menggambarkan definisinya (cocok dengan
+  // menu "Pergerakan Stok" Olsera sendiri). Key "overall" TIDAK diganti —
+  // satu-satunya konsumer field ini adalah komponen ini sendiri, rename key
+  // hanya menambah risiko tanpa manfaat.
+  { key: "overall", label: "Pergerakan Stok", supervisorOnly: false },
+  // Produk active:false, TIDAK ada pergerakan riil periode ini, TAPI masih
+  // bersaldo (opening/closing != 0) — dikecualikan dari "Pergerakan Stok"
+  // tapi tetap relevan diketahui (masih ada stok fisik di gudang).
+  { key: "stagnant", label: "Tidak Ada Pergerakan", supervisorOnly: false },
+  // Pergerakan Stok + Tidak Ada Pergerakan — filter TUNGGAL hasInventoryActivity,
+  // SAMA PERSIS dengan export "Laporan Stock Opname Bulanan" (lib/olsera-inventory-monthly-export.ts).
+  { key: "grandTotal", label: "Total Keseluruhan", supervisorOnly: false },
   { key: "movements", label: "Riwayat Mutasi", supervisorOnly: false },
 ];
 

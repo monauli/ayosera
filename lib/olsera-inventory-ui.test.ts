@@ -245,9 +245,9 @@ test("tabel Riwayat Mutasi mempertahankan kolom penting", () => {
 
 // ---- 6. Tab Konsistensi per-role -----------------------------------------
 
-test("visibleInventoryTabs: UI utama menampilkan empat tab operasional", () => {
+test("visibleInventoryTabs: UI utama menampilkan enam tab operasional", () => {
   const keys = visibleInventoryTabs(false).map((t) => t.key);
-  assert.deepEqual(keys, ["sold", "unsold", "overall", "movements"]);
+  assert.deepEqual(keys, ["sold", "unsold", "overall", "stagnant", "grandTotal", "movements"]);
 });
 
 test("inventory universe membagi sold/unsold/overall tanpa duplikasi dan mempertahankan source", () => {
@@ -261,13 +261,13 @@ test("inventory universe membagi sold/unsold/overall tanpa duplikasi dan mempert
   assert.equal(rows.find((row) => row.key === "1:11:0")?.source, "USER_HISTORICAL_INVENTORY");
 });
 
-test("visibleInventoryTabs exposes the four operational inventory tabs", () => {
-  assert.deepEqual(visibleInventoryTabs(false).map((tab) => tab.label), ["Stok Terjual", "Stok Tidak Terjual", "Stok Keseluruhan", "Riwayat Mutasi"]);
+test("visibleInventoryTabs exposes the six operational inventory tabs", () => {
+  assert.deepEqual(visibleInventoryTabs(false).map((tab) => tab.label), ["Stok Terjual", "Stok Tidak Terjual", "Pergerakan Stok", "Tidak Ada Pergerakan", "Total Keseluruhan", "Riwayat Mutasi"]);
 });
 
 test("visibleInventoryTabs: supervisor juga tidak melihat tab teknis Konsistensi", () => {
   const keys = visibleInventoryTabs(true).map((t) => t.key);
-  assert.deepEqual(keys, ["sold", "unsold", "overall", "movements"]);
+  assert.deepEqual(keys, ["sold", "unsold", "overall", "stagnant", "grandTotal", "movements"]);
 });
 
 test("panel: satu periode YYYY-MM menjadi sumber data bulanan dan URL", () => {

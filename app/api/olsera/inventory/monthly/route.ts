@@ -5,7 +5,7 @@ import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument } f
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/olsera-inventory-core";
 import { isHiddenInventoryCategory } from "@/lib/olsera-inventory-ui";
-import { filterRelevantMonthlyRows, monthlyPeriodStatus, monthlyStockStatus, summarizeMonthlyInventory, type MonthlyInventoryUiRow } from "@/lib/olsera-inventory-monthly-ui";
+import { computeMonthlyTabRowSets, monthlyPeriodStatus, monthlyStockStatus, summarizeMonthlyInventory, type MonthlyInventoryUiRow } from "@/lib/olsera-inventory-monthly-ui";
 import { getInventorySyncStatus } from "@/lib/olsera-inventory";
 import { getInventoryMonthlyPeriodLock } from "@/lib/inventory-monthly-period-lock";
 import { currentStoreId } from "@/lib/olsera-store-id";
@@ -23,7 +23,7 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   sort: z.enum(["stock", "value", "name"]).default("name"),
   dir: z.enum(["asc", "desc"]).default("asc"),
-  tab: z.enum(["sold", "unsold", "overall"]).default("overall"),
+  tab: z.enum(["sold", "unsold", "overall", "stagnant", "grandTotal"]).default("overall"),
 });
 
 function jakartaPeriod() {
@@ -97,18 +97,31 @@ export async function GET(request: Request) {
         identityResolved: snapshot.status !== "incomplete",
       };
     });
-    // Produk active:false yang tidak punya pergerakan riil periode ini
-    // dikecualikan di sini SEKALI, sebelum summary/tabCounts/categories/data
-    // dihitung — supaya semuanya konsisten (lihat filterRelevantMonthlyRows).
-    const rows = filterRelevantMonthlyRows(allRows);
+    // "moved" (dulu "rows") dikecualikan dari produk active:false tak
+    // bergerak; "stagnant" adalah selisihnya; "grandTotal" filter TUNGGAL
+    // hasInventoryActivity sama persis dengan export "Laporan Stock Opname
+    // Bulanan" — satu sumber, tiga tab, lihat computeMonthlyTabRowSets.
+    const { moved: rows, stagnant: stagnantRows, grandTotal: grandTotalRows } = computeMonthlyTabRowSets(allRows);
 
     const summary = summarizeMonthlyInventory(rows);
     const tabCounts = {
       sold: rows.filter((row) => (row.salesQty ?? 0) > 0).length,
       unsold: rows.filter((row) => (row.salesQty ?? 0) <= 0).length,
       overall: rows.length,
+      stagnant: stagnantRows.length,
+      grandTotal: grandTotalRows.length,
     };
-    const filtered = rows.filter((row) => {
+    // Baris yang benar-benar dirender HARUS diambil dari himpunan yang sama
+    // dengan badge count di atas untuk tab yang sama — supaya tidak berulang
+    // masalah badge-vs-baris (lihat komit 7828bd9).
+    const baseRowsByTab: Record<typeof params.tab, typeof rows> = {
+      sold: rows,
+      unsold: rows,
+      overall: rows,
+      stagnant: stagnantRows,
+      grandTotal: grandTotalRows,
+    };
+    const filtered = baseRowsByTab[params.tab].filter((row) => {
       if (params.tab === "sold" && (row.salesQty ?? 0) <= 0) return false;
       if (params.tab === "unsold" && (row.salesQty ?? 0) > 0) return false;
       if (params.q) {
@@ -125,7 +138,10 @@ export async function GET(request: Request) {
       if (params.sort === "value") return ((a.value ?? 0) - (b.value ?? 0)) * direction;
       return (a.category.localeCompare(b.category, "id") || a.name.localeCompare(b.name, "id")) * direction;
     });
-    const categories = [...new Set(rows.map((row) => row.category))].sort((a, b) => a.localeCompare(b, "id"));
+    // Superset grandTotalRows (bukan rows/moved saja) — supaya filter
+    // kategori tetap bisa dipakai di tab "Tidak Ada Pergerakan"/"Total
+    // Keseluruhan" yang berisi kategori di luar himpunan "moved".
+    const categories = [...new Set(grandTotalRows.map((row) => row.category))].sort((a, b) => a.localeCompare(b, "id"));
     const start = (params.page - 1) * params.limit;
     const currentPeriod = jakartaPeriod();
     return NextResponse.json({

@@ -196,7 +196,7 @@ export function OlseraInventoryPanel({ isSupervisor = false }: { isSupervisor?: 
   useEffect(() => subscribeOlseraSyncLock(setExternallyLocked), []);
 
   const [tab, setTab] = useState<InventoryTabKey>("overall");
-  const [tabCounts, setTabCounts] = useState({ sold: 0, unsold: 0, overall: 0 });
+  const [tabCounts, setTabCounts] = useState({ sold: 0, unsold: 0, overall: 0, stagnant: 0, grandTotal: 0 });
   const [period, setPeriod] = useState(() => {
     if (typeof window === "undefined") return today.slice(0, 7);
     const value = new URLSearchParams(window.location.search).get("inventoryPeriod");
