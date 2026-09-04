@@ -370,9 +370,13 @@ export default function InventoryOpnamePage() {
   // menulis langsung ke edits (bukan kondisi reaktif yang terus dievaluasi
   // ulang tiap render seperti checkbox lama). Idempotent: klik ulang hanya
   // mengisi baris yang MASIH physicalQty null, tidak menimpa yang sudah terisi.
+  // Sengaja TIDAK bergantung pada baItemsFound: klik tombol ini ADALAH
+  // konfirmasi eksplisit supervisor, tetap valid dipakai saat BA gagal
+  // dibaca otomatis (itemsFound 0) dan supervisor memverifikasi BA fisik
+  // secara manual sendiri (lihat computeOmittedAsMatchEdits).
   const applyOmittedAsMatch = () => {
     if (!data) return;
-    setEdits((prev) => computeOmittedAsMatchEdits(data.rows, prev, baItemsFound ?? 0));
+    setEdits((prev) => computeOmittedAsMatchEdits(data.rows, prev));
     setOmittedAsMatchApplied(true);
   };
 
@@ -765,11 +769,14 @@ export default function InventoryOpnamePage() {
         {data?.uploadHistory?.length ? <details className="recon-history"><summary>Riwayat BA ({data.uploadHistory.length})</summary><ul>{data.uploadHistory.map((entry, index) => <li key={`${entry.url}-${index}`}>{isSafeAttachmentUrl(entry.url) ? <a href={entry.url} target="_blank" rel="noreferrer" className="recon-link"><Paperclip size={12} /> {entry.fileName}</a> : <span><Paperclip size={12} /> {entry.fileName}</span>} · {entry.uploadedAt ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.uploadedAt)) : "—"} · {entry.uploadedBy ?? "—"}</li>)}</ul></details> : null}
         {/* Tombol aksi sekali-klik — menggantikan checkbox baOnlyDifferencesConfirmed
             lama (state persisten yang bisa desync dari baItemsFound lewat
-            cancelBaRead tanpa indikasi visual apa pun). Disabled saat
-            baItemsFound null/0 sama seperti "0 item terbaca" memblokir alur
-            BA lain di halaman ini (lihat baUnread). */}
+            cancelBaRead tanpa indikasi visual apa pun). Sengaja TIDAK disabled
+            saat baItemsFound null/0: supervisor bisa memverifikasi BA
+            fisik/PDF secara manual sendiri lalu pakai tombol ini walau BA
+            gagal terbaca otomatis (lihat computeOmittedAsMatchEdits). Tombol
+            Finalisasi tetap terpisah diblokir oleh baUnread selama BA belum
+            terbaca ATAU status BA masih perlu ditinjau. */}
         <div className="recon-finalization">
-          <button type="button" className="recon-button secondary" disabled={!supervisor || !baItemsFound || data?.lock?.status === "LOCKED"} onClick={() => applyOmittedAsMatch()}>
+          <button type="button" className="recon-button secondary" disabled={!supervisor || data?.lock?.status === "LOCKED"} onClick={() => applyOmittedAsMatch()}>
             <CheckCircle2 /> Tandai Item Tanpa Selisih sebagai Cocok
           </button>
           {omittedAsMatchApplied ? <p className="recon-readonly">Diterapkan — item yang tidak disebut Berita Acara sudah ditandai Cocok. Klik lagi bila ada item baru.</p> : <p className="recon-readonly">Item yang TIDAK disebut di Berita Acara akan ditandai Cocok (stok fisik = stok sistem).</p>}

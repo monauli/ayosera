@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BA_UNREAD_MESSAGE,
-  canApplyBaOmittedAssumedMatch,
   computeOmittedAsMatchEdits,
   evaluateBaRow,
   isBaParseUnread,
@@ -36,19 +35,6 @@ test("pesan block sesuai spesifikasi produk", () => {
   assert.equal(BA_UNREAD_MESSAGE, "Item pada Berita Acara belum berhasil dibaca. Periksa file atau isi secara manual.");
 });
 
-test("BA_OMITTED_ASSUMED_MATCH TIDAK aktif ketika 0 item terbaca, WALAU checkbox 'BA hanya memuat item selisih' sudah dicentang", () => {
-  assert.equal(canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed: true, itemsFound: 0 }), false);
-});
-
-test("BA_OMITTED_ASSUMED_MATCH TIDAK aktif ketika checkbox belum dicentang, walau item terbaca", () => {
-  assert.equal(canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed: false, itemsFound: 7 }), false);
-});
-
-test("BA_OMITTED_ASSUMED_MATCH aktif HANYA ketika checkbox dicentang DAN minimal 1 item berhasil diparse", () => {
-  assert.equal(canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed: true, itemsFound: 7 }), true);
-  assert.equal(canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed: true, itemsFound: 1 }), true);
-});
-
 // computeOmittedAsMatchEdits — pengganti checkbox baOnlyDifferencesConfirmed
 // (state persisten yang bisa desync dari baItemsFound lewat cancelBaRead,
 // lihat app/reconciliation/inventory/page.tsx) jadi aksi sekali-klik.
@@ -59,45 +45,47 @@ function omittedRow(overrides: Partial<OmittedAsMatchRow> & { productId: number 
 
 test("computeOmittedAsMatchEdits: baris eligible (physicalQty null, systemClosingQty ada, bukan manualAdjust) diisi Cocok", () => {
   const rows = [omittedRow({ productId: 1, systemClosingQty: 15 })];
-  const next = computeOmittedAsMatchEdits(rows, {}, 7);
+  const next = computeOmittedAsMatchEdits(rows, {});
   assert.deepEqual(next["1:0"], { physicalQty: 15, note: null });
 });
 
 test("computeOmittedAsMatchEdits: baris manualAdjust TIDAK disentuh", () => {
   const rows = [omittedRow({ productId: 1, manualAdjust: true })];
-  const next = computeOmittedAsMatchEdits(rows, {}, 7);
+  const next = computeOmittedAsMatchEdits(rows, {});
   assert.equal(next["1:0"], undefined);
 });
 
 test("computeOmittedAsMatchEdits: baris systemClosingQty null TIDAK disentuh (tidak ada angka sistem untuk diasumsikan)", () => {
   const rows = [omittedRow({ productId: 1, systemClosingQty: null })];
-  const next = computeOmittedAsMatchEdits(rows, {}, 7);
+  const next = computeOmittedAsMatchEdits(rows, {});
   assert.equal(next["1:0"], undefined);
 });
 
 test("computeOmittedAsMatchEdits: baris yang SUDAH ada physicalQty (edit manual atau dari BA) TIDAK ditimpa", () => {
   const rows = [omittedRow({ productId: 1, systemClosingQty: 15 })];
   const existing = { "1:0": { physicalQty: 8, note: "Dibaca dari BA" } };
-  const next = computeOmittedAsMatchEdits(rows, existing, 7);
+  const next = computeOmittedAsMatchEdits(rows, existing);
   assert.deepEqual(next["1:0"], { physicalQty: 8, note: "Dibaca dari BA" });
 });
 
-test("computeOmittedAsMatchEdits: itemsFound 0 -> no-op (0 item terbaca tidak boleh diam-diam menganggap semua cocok)", () => {
-  const rows = [omittedRow({ productId: 1, systemClosingQty: 15 })];
-  const next = computeOmittedAsMatchEdits(rows, {}, 0);
-  assert.equal(next["1:0"], undefined);
+test("computeOmittedAsMatchEdits: BA gagal terbaca (itemsFound 0) TETAP mengisi baris eligible — tombol adalah konfirmasi manual supervisor, bukan hasil parsing BA", () => {
+  const rows = [omittedRow({ productId: 1, systemClosingQty: 15 }), omittedRow({ productId: 2, manualAdjust: true }), omittedRow({ productId: 3, systemClosingQty: null })];
+  const next = computeOmittedAsMatchEdits(rows, {});
+  assert.deepEqual(next["1:0"], { physicalQty: 15, note: null });
+  assert.equal(next["2:0"], undefined);
+  assert.equal(next["3:0"], undefined);
 });
 
 test("computeOmittedAsMatchEdits: dipanggil 2x (klik tombol dua kali) idempotent — hasil kedua identik dengan hasil pertama", () => {
   const rows = [omittedRow({ productId: 1, systemClosingQty: 15 }), omittedRow({ productId: 2, systemClosingQty: null }), omittedRow({ productId: 3, manualAdjust: true })];
-  const first = computeOmittedAsMatchEdits(rows, {}, 7);
-  const second = computeOmittedAsMatchEdits(rows, first, 7);
+  const first = computeOmittedAsMatchEdits(rows, {});
+  const second = computeOmittedAsMatchEdits(rows, first);
   assert.deepEqual(second, first);
 });
 
 test("computeOmittedAsMatchEdits: baris lain yang tidak eligible TIDAK ikut membuat entri kosong di edits", () => {
   const rows = [omittedRow({ productId: 1, systemClosingQty: null }), omittedRow({ productId: 2, manualAdjust: true })];
-  const next = computeOmittedAsMatchEdits(rows, {}, 7);
+  const next = computeOmittedAsMatchEdits(rows, {});
   assert.deepEqual(next, {});
 });
 

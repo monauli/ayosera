@@ -1,10 +1,12 @@
 // Rule murni (tanpa DOM/React/MongoDB) untuk mencegah bug produksi: BA PDF
-// berhasil diupload tapi parser menghasilkan 0 item -> UI TIDAK BOLEH
-// mengasumsikan seluruh katalog "cocok" (BA_OMITTED_ASSUMED_MATCH) karena itu
-// membuat tombol Finalisasi terlihat aman padahal BA belum benar-benar
-// terbaca. BA_OMITTED_ASSUMED_MATCH HANYA boleh aktif setelah minimal SATU
-// baris berhasil diparse DARI BA itu sendiri (bukan sekadar checkbox
-// baOnlyDifferencesConfirmed dicentang).
+// berhasil diupload tapi parser menghasilkan 0 item -> tombol Finalisasi
+// TETAP diblokir (shouldBlockFinalizeForUnreadBa, lihat baUnread di
+// page.tsx) selama BA belum benar-benar terbaca ATAU diverifikasi manual.
+// BA_OMITTED_ASSUMED_MATCH sendiri (computeOmittedAsMatchEdits di bawah)
+// TIDAK bergantung pada hasil parsing BA — dipicu oleh klik eksplisit
+// supervisor pada tombol "Tandai Item Tanpa Selisih sebagai Cocok", yang
+// tetap valid dipakai saat OCR/parsing BA gagal total (itemsFound: 0) dan
+// supervisor memverifikasi BA fisik/PDF secara manual sendiri.
 
 export const BA_UNREAD_MESSAGE = "Item pada Berita Acara belum berhasil dibaca. Periksa file atau isi secara manual.";
 
@@ -20,16 +22,6 @@ export function isBaParseUnread(outcome: BaParseOutcome): boolean {
   return outcome.uploadSucceeded && outcome.itemsFound === 0;
 }
 
-/**
- * BA_OMITTED_ASSUMED_MATCH (produk katalog yang TIDAK muncul di BA dianggap
- * cocok/tidak ada selisih) HANYA boleh aktif ketika:
- * 1. User sudah mencentang konfirmasi "BA hanya memuat item yang selisih" (flow existing, TIDAK diubah).
- * 2. Minimal satu baris BERHASIL diparse dari BA (mencegah 0-row silently mengunci seluruh katalog).
- */
-export function canApplyBaOmittedAssumedMatch(input: { baOnlyDifferencesConfirmed: boolean; itemsFound: number }): boolean {
-  return input.baOnlyDifferencesConfirmed && input.itemsFound > 0;
-}
-
 export type OmittedAsMatchRow = { productId: number; variantId: number | null; physicalQty: number | null; systemClosingQty: number | null; manualAdjust: boolean; note: string | null };
 export type OmittedAsMatchEdit = { physicalQty: number | null; note: string | null };
 
@@ -38,24 +30,25 @@ export type OmittedAsMatchEdit = { physicalQty: number | null; note: string | nu
  * sebagai Cocok" — BUKAN kondisi reaktif yang dievaluasi ulang tiap render
  * (itu bug lama: checkbox baOnlyDifferencesConfirmed bisa tetap tercentang
  * padahal baItemsFound sudah direset null oleh cancelBaRead(), membuat
- * canApplyBaOmittedAssumedMatch diam-diam jadi false tanpa indikasi visual).
+ * kondisi lama diam-diam jadi false tanpa indikasi visual).
+ * Sengaja TIDAK menerima/mengecek itemsFound: klik tombol ini sendiri ADALAH
+ * konfirmasi eksplisit supervisor, valid juga saat BA gagal terbaca sama
+ * sekali (itemsFound: 0) dan supervisor memverifikasi BA fisik/PDF secara
+ * manual. (Blokir terpisah untuk BA yang gagal terbaca tetap ada di
+ * shouldBlockFinalizeForUnreadBa — itu mengunci tombol Finalisasi, bukan
+ * tombol aksi ini.)
  * Untuk tiap baris yang efektif BELUM terisi (physicalQty null — termasuk
  * edit yang sudah ada) DAN punya stok sistem yang diketahui (systemClosingQty
- * bukan null) DAN bukan manualAdjust, isi edits-nya dengan physicalQty =
- * systemClosingQty (dianggap Cocok tanpa selisih). Reuse canApplyBaOmittedAssumedMatch
- * apa adanya (baOnlyDifferencesConfirmed selalu true di sini — konfirmasi
- * SEKARANG melekat pada aksi klik tombolnya sendiri, bukan state terpisah)
- * supaya syarat "0 item terbaca -> jangan diam-diam anggap semua cocok"
- * tetap satu sumber kebenaran, tidak diduplikasi.
+ * bukan null, dari snapshot Olsera — tidak terkait BA) DAN bukan
+ * manualAdjust, isi edits-nya dengan physicalQty = systemClosingQty
+ * (dianggap Cocok tanpa selisih).
  * Idempotent: baris yang sudah terisi (dari panggilan sebelumnya atau edit
  * manual) tidak disentuh lagi pada panggilan berikutnya.
  */
 export function computeOmittedAsMatchEdits(
   rows: ReadonlyArray<OmittedAsMatchRow>,
   edits: Readonly<Record<string, OmittedAsMatchEdit>>,
-  itemsFound: number,
 ): Record<string, OmittedAsMatchEdit> {
-  if (!canApplyBaOmittedAssumedMatch({ baOnlyDifferencesConfirmed: true, itemsFound })) return { ...edits };
   const next = { ...edits };
   for (const row of rows) {
     const key = `${row.productId}:${row.variantId ?? 0}`;
