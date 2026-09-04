@@ -27,6 +27,7 @@ import {
   type StockOpnameBaEntry,
 } from "./inventory-stock-opname.ts";
 import { attachMovementsToProducts, type UnmatchedMovementEntry } from "./olsera-inventory-monthly-core.ts";
+import { productKey } from "./olsera-inventory-core.ts";
 import { visibleMonthlyInventoryRows } from "./olsera-inventory-ui.ts";
 import { previousMonth, type MatchingContext } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { fetchMatchingContext } from "./olsera-inventory-monthly-snapshot-store.ts";
@@ -526,10 +527,25 @@ export async function loadInventoryOpnameCutoff(
   // === null` yang SUDAH ADA, jadi TIDAK PERNAH ikut BA_OMITTED_ASSUMED_MATCH.
   // Perlakuannya sama persis dengan baris closing-null di jalur bulanan.
   const apiKeys = new Set(rows.map((row) => opnameKey(row.productId, row.variantId)));
+  // Produk active:false di olsera_inventory_products (dinonaktifkan/dihapus di
+  // Olsera) TIDAK ikut ditambahkan lewat jalur stagnant — sudah tidak relevan
+  // untuk direkonsiliasi bulan berjalan, preseden sama seperti
+  // getInventoryPeriodCompleteness (lib/inventory-monthly-period-lock.ts) yang
+  // juga mensyaratkan active:true. HANYA berlaku di sini: baris yang datang
+  // dari API Olsera live (fetchCutoffSystemRows di atas) TIDAK disentuh sama
+  // sekali — kalau Olsera masih mengembalikan pergerakan untuk produk itu di
+  // rentang cutoff ini, produk itu baru saja nonaktif SETELAH bertransaksi,
+  // jadi tetap relevan. Katalog tidak ditemukan (undefined) -> tetap
+  // ditampilkan (fail-safe, bukan fail-closed — tidak cukup bukti untuk
+  // menyembunyikan baris).
+  const isActiveOrUnknown = (snap: { productId: number; variantId: number | null }) =>
+    deps.matchingContext.catalogById.get(productKey(storeId, snap.productId, snap.variantId))?.active !== false;
   const stagnant = visibleMonthlyInventoryRows(
     snapshotRows.map((snap) => ({ ...snap, category: snap.groupName })),
     false,
-  ).filter((snap) => !apiKeys.has(opnameKey(snap.productId, snap.variantId)));
+  )
+    .filter((snap) => !apiKeys.has(opnameKey(snap.productId, snap.variantId)))
+    .filter(isActiveOrUnknown);
 
   for (const snap of stagnant) {
     const opnameDoc = opnameByKey.get(opnameKey(snap.productId, snap.variantId)) ?? null;

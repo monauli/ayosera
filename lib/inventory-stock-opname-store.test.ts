@@ -288,6 +288,75 @@ test("Opsi A: finalisasi TETAP TERBLOKIR selama ada baris stok diam (tidak ikut 
   assert.equal(opname.updateCalls, 0, "tidak boleh ada dokumen BA yang ditulis saat finalisasi diblokir");
 });
 
+// --- Filter aktif: produk active:false TIDAK ikut jadi baris stagnant ---
+// (temuan investigasi: KAOS KAKI NOX SOCKS SHORT & YONEX SHORTS MEN ...
+// duplicate muncul dengan systemClosingQty null tanpa pernah bisa
+// diselesaikan, karena keduanya sudah active:false di olsera_inventory_products
+// tapi masih tercatat di snapshot bulanan. Preseden: lib/inventory-monthly-period-lock.ts
+// getInventoryPeriodCompleteness sudah mensyaratkan active:true untuk hal serupa.)
+
+function inactiveCatalogProduct(overrides: Partial<InventoryProductInput> & { productId: number }): InventoryProductInput {
+  return cutoffProduct({ _id: `${CUTOFF_STORE_ID}:${overrides.productId}:0`, active: false, ...overrides });
+}
+
+test("Filter aktif: produk active:false yang HANYA ada di snapshot (tidak di API live) TIDAK muncul sebagai baris", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, [stagnantSnapshot()]);
+  const inactiveCtx = { ...ctx, matchingContext: cutoffMatchingContext([cutoffProduct(), inactiveCatalogProduct({ productId: STAGNANT_PRODUCT_ID })]) };
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, inactiveCtx);
+  assert.equal(result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID), undefined, "produk nonaktif tidak boleh muncul sebagai baris stagnant");
+  assert.equal(result.rows.length, 1, "hanya baris API yang tersisa");
+});
+
+test("Filter aktif: produk active:true di katalog TETAP muncul sebagai baris stagnant (tidak ada regresi)", async () => {
+  const opname = fakeOpnameCollection();
+  const ctx = cutoffContextWithSnapshots(opname, { "2026-03-04": 12 }, [stagnantSnapshot()]);
+  const activeCtx = { ...ctx, matchingContext: cutoffMatchingContext([cutoffProduct(), cutoffProduct({ _id: `${CUTOFF_STORE_ID}:${STAGNANT_PRODUCT_ID}:0`, productId: STAGNANT_PRODUCT_ID, active: true })]) };
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, activeCtx);
+  assert.ok(result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID), "produk aktif tetap muncul sebagai baris stagnant seperti sebelumnya");
+});
+
+test("Filter aktif: produk active:false yang MUNCUL di API live (ada transaksi di rentang ini) TETAP muncul sebagai baris (tidak difilter tambahan)", async () => {
+  const opname = fakeOpnameCollection();
+  const impl = async (): Promise<FetchStockMovementResult> => ({
+    ok: true,
+    rows: [stockMovementRow({ sisa: 12 }), stockMovementRow({ productId: STAGNANT_PRODUCT_ID, productName: "RAKET DIAM", productSku: "SKU-DIAM", sisa: 5 })],
+    skippedRawRows: 0,
+  });
+  const ctx: InventoryStockOpnameContext = {
+    snapshots: fakeRead<OlseraInventoryMonthlySnapshotDocument>([]),
+    opname,
+    fetchStockMovementRangeImpl: impl,
+    matchingContext: cutoffMatchingContext([cutoffProduct(), inactiveCatalogProduct({ productId: STAGNANT_PRODUCT_ID, name: "RAKET DIAM", sku: "SKU-DIAM" })]),
+    aliases: fakeRead<OlseraProductAliasDocument>([]),
+  };
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  const row = result.rows.find((r) => r.productId === STAGNANT_PRODUCT_ID);
+  assert.ok(row, "produk nonaktif yang punya transaksi live di rentang cutoff ini tetap harus muncul — baris API tidak difilter tambahan");
+  assert.equal(row!.systemClosingQty, 5);
+});
+
+test("Regresi nyata: KAOS KAKI NOX SOCKS SHORT & YONEX SHORTS MEN ... duplicate (nonaktif di Olsera) HILANG dari tabel Juni 2026 setelah filter aktif", async () => {
+  const KAOS_KAKI_ID = 117136467;
+  const YONEX_DUP_ID = 118420650;
+  const opname = fakeOpnameCollection();
+  const snaps = [
+    stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:06:${KAOS_KAKI_ID}:0`, year: 2026, month: 6, productId: KAOS_KAKI_ID, productName: "KAOS KAKI NOX SOCKS SHORT", productSku: null, groupName: "KAOS KAKI", openingQty: 0, closingQty: 2 }),
+    stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:06:${YONEX_DUP_ID}:0`, year: 2026, month: 6, productId: YONEX_DUP_ID, productName: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", productSku: null, groupName: "CELANA PRIA", openingQty: 4, closingQty: 1 }),
+  ];
+  const ctx = {
+    ...cutoffContextWithSnapshots(opname, { "2026-06-30": 12 }, snaps),
+    matchingContext: cutoffMatchingContext([
+      cutoffProduct(),
+      inactiveCatalogProduct({ productId: KAOS_KAKI_ID, name: "KAOS KAKI NOX SOCKS SHORT", sku: null }),
+      inactiveCatalogProduct({ productId: YONEX_DUP_ID, name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", sku: null }),
+    ]),
+  };
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 6, cutoffDate: "2026-06-30", startDate: "2026-06-17" }, ctx);
+  assert.equal(result.rows.find((r) => r.productId === KAOS_KAKI_ID), undefined, "KAOS KAKI NOX SOCKS SHORT (nonaktif) harus hilang dari tabel");
+  assert.equal(result.rows.find((r) => r.productId === YONEX_DUP_ID), undefined, "YONEX SHORTS MEN ... duplicate (nonaktif) harus hilang dari tabel");
+});
+
 // --- Opsi B: referensi pembanding (closing snapshot bulan sebelumnya) untuk baris stok diam ---
 
 function previousMonthSnapshot(overrides: Partial<OlseraInventoryMonthlySnapshotDocument> = {}) {
