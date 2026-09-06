@@ -1007,6 +1007,13 @@ th[scope],
    print di bawah memunculkannya kembali sebagai judul + periode BA + cutoff
    halaman cetak. */
 .recon-print-header { display:none; }
+/* Tabel detail format BA resmi (No/Kelompok Barang/Deskripsi Barang/Satuan/
+   Stock Sistem Olsera/Stock Fisik Aktual/Selisih/Keterangan) — sama seperti
+   .recon-print-header, dirender di DOM tapi disembunyikan di layar, dan
+   dimunculkan @media print di bawah. Terpisah dari .recon-inventory-table
+   (tabel interaktif layar) yang justru DISEMBUNYIKAN saat cetak supaya
+   tidak duplikat — lihat aturan .recon-table-wrap:has(...) di bawah. */
+.recon-print-detail-table { display:none; }
 @media print {
   @page { margin:1.2cm; }
   body * { visibility:hidden; }
@@ -1033,6 +1040,14 @@ th[scope],
      page.pdf() + ekstraksi teks: header terpotong jadi "...ACA", kolom
      Selisih & Status hilang total dari cetakan. Selector di sini
      disamakan (:has(...)) supaya spesifisitasnya menang tanpa !important. */
+  /* Tabel interaktif layar disembunyikan SEPENUHNYA saat cetak — digantikan
+     .recon-print-detail-table (format BA resmi) di bawah supaya cetakan
+     tidak menampilkan 2 tabel yang tumpang tindih. Aturan overflow/lebar
+     kolom di bawah jadi tidak lagi berpengaruh saat cetak (elemen ini
+     display:none), sengaja TIDAK dihapus — riwayat bug e7563c7 di
+     komentarnya tetap relevan bila tabel ini pernah ditampilkan lagi saat
+     cetak di masa depan. */
+  .recon-table-wrap:has(.recon-inventory-table) { display:none; }
   .recon-table-wrap:has(.recon-inventory-table) { border:none; overflow:visible; }
   /* table-layout:fixed + lebar persen supaya total lebar tabel PASTI muat
      di lebar halaman cetak berapa pun (tidak bergantung tebakan lebar
@@ -1069,4 +1084,20 @@ th[scope],
   .recon-link { color:#000; text-decoration:none; }
   .recon-opname-input { border:none; background:transparent; color:#000; padding:0; width:auto; }
   .recon-opname-clear { display:none; }
+  /* Tabel detail format BA resmi — table-layout:fixed + lebar persen (total
+     100%) supaya pasti muat di lebar halaman cetak, pola sama seperti
+     .recon-inventory-table di atas. Semua 8 kolom tampil (tidak ada yang
+     disembunyikan seperti tabel interaktif). */
+  .recon-print-detail-table { display:table; width:100%; table-layout:fixed; font-size:.72rem; border-collapse:collapse; margin-top:.5rem; }
+  .recon-print-detail-table th, .recon-print-detail-table td { padding:.3rem .35rem; color:#000; border:1px solid #999; overflow-wrap:anywhere; text-align:left; }
+  .recon-print-detail-table th:nth-child(1) { width:5%; }  /* No */
+  .recon-print-detail-table th:nth-child(2) { width:13%; } /* Kelompok Barang */
+  .recon-print-detail-table th:nth-child(3) { width:27%; } /* Deskripsi Barang */
+  .recon-print-detail-table th:nth-child(4) { width:7%; }  /* Satuan */
+  .recon-print-detail-table th:nth-child(5) { width:13%; } /* Stock Sistem Olsera */
+  .recon-print-detail-table th:nth-child(6) { width:13%; } /* Stock Fisik Aktual */
+  .recon-print-detail-table th:nth-child(7) { width:8%; }  /* Selisih */
+  .recon-print-detail-table th:nth-child(8) { width:14%; } /* Keterangan */
+  .recon-print-detail-table thead { display:table-header-group; }
+  .recon-print-detail-table tr { page-break-inside:avoid; break-inside:avoid; }
 }

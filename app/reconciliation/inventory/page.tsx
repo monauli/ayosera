@@ -153,6 +153,16 @@ export default function InventoryOpnamePage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | OpnameStatus>("ALL");
   const [selected, setSelected] = useState<Row | null>(null);
+  // Tabel detail cetak (format Berita Acara) — independen dari search/status
+  // filter di layar (bukan filteredRows), supaya "Semua Item" benar-benar
+  // berarti seluruh produk, bukan sisa hasil filter yang kebetulan aktif.
+  // printToken naik tiap tombol Cetak diklik (termasuk klik ulang mode yang
+  // sama) supaya useEffect di bawah SELALU memicu window.print() setelah
+  // React commit printMode yang baru — window.print() tidak boleh dipanggil
+  // langsung di handler klik karena setState di React tidak sinkron,
+  // sehingga printRows yang tercetak bisa dari mode SEBELUMNYA.
+  const [printMode, setPrintMode] = useState<"SELISIH" | "SEMUA">("SEMUA");
+  const [printToken, setPrintToken] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -198,6 +208,16 @@ export default function InventoryOpnamePage() {
     document.documentElement.setAttribute("data-mode", initialMode);
     window.localStorage.setItem(THEME_MODE_STORAGE_KEY, initialMode);
   }, []);
+  // window.print() TIDAK dipanggil langsung di handler tombol Cetak — setState
+  // (printMode) di React tidak sinkron, jadi printRows yang dibaca window.print()
+  // saat itu juga bisa masih dari mode SEBELUMNYA. Menunggu effect ini (setelah
+  // React commit printMode yang baru) menjamin tabel cetak sudah sesuai mode
+  // yang baru diklik. printToken (bukan printMode) sebagai dependency supaya
+  // klik ulang mode YANG SAMA tetap memicu cetak lagi.
+  useEffect(() => {
+    if (printToken === 0) return;
+    window.print();
+  }, [printToken]);
 
   const supervisor = Boolean(user);
 
@@ -568,6 +588,15 @@ export default function InventoryOpnamePage() {
     });
   }, [visibleRows, statusFilter, search]);
 
+  // Tabel detail cetak — SENGAJA dari rowsWithEdits (basis yang sama dengan
+  // liveSummary di bawah, bukan filteredRows), supaya "Semua Item" konsisten
+  // dengan angka ringkasan cetak (mis. "Total Produk") dan tidak diam-diam
+  // terpengaruh search/status filter yang sedang aktif di layar.
+  const printRows = useMemo(() => {
+    if (printMode === "SELISIH") return rowsWithEdits.filter((row) => row.status === "PERLU_DICEK" || row.status === "BUTUH_ADJUST_MANUAL");
+    return rowsWithEdits;
+  }, [rowsWithEdits, printMode]);
+
   const liveSummary: Summary = useMemo(() => {
     const summary: Summary = { totalProduk: rowsWithEdits.length, cocok: 0, perluDicek: 0, belumDiisi: 0, butuhAdjustManual: 0, totalSelisihPositif: 0, totalSelisihNegatif: 0 };
     for (const row of rowsWithEdits) {
@@ -650,9 +679,28 @@ export default function InventoryOpnamePage() {
             </button>
           )}
           {data && (
-            <button className="recon-button secondary" onClick={() => window.print()}>
-              <Printer /> Cetak
-            </button>
+            <>
+              <button
+                className="recon-button secondary"
+                title="Cetak tabel detail berisi HANYA item yang punya selisih (Perlu Dicek/Butuh Adjust Manual), format sama seperti Berita Acara"
+                onClick={() => {
+                  setPrintMode("SELISIH");
+                  setPrintToken((t) => t + 1);
+                }}
+              >
+                <Printer /> Cetak (Selisih Saja)
+              </button>
+              <button
+                className="recon-button secondary"
+                title="Cetak tabel detail berisi SELURUH produk, termasuk yang sudah Cocok"
+                onClick={() => {
+                  setPrintMode("SEMUA");
+                  setPrintToken((t) => t + 1);
+                }}
+              >
+                <Printer /> Cetak (Semua Item)
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -859,6 +907,7 @@ export default function InventoryOpnamePage() {
                 {data.cutoffDate ? ` · Cutoff: ${formatIsoDateID(data.cutoffDate)}` : ""}
               </p>
               <p>Dicetak {new Intl.DateTimeFormat("id-ID", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date())}</p>
+              <p>Tampilan: {printMode === "SELISIH" ? "Sesuai BA (Hanya Item Selisih)" : "Semua Item"}</p>
             </div>
           <section className="recon-cards">
             {([
@@ -876,6 +925,47 @@ export default function InventoryOpnamePage() {
               </div>
             ))}
           </section>
+
+          {/* Tabel detail KHUSUS cetak, format Berita Acara resmi — TERPISAH
+              dari tabel interaktif di layar (recon-inventory-table) supaya
+              kolom/urutan bisa persis mengikuti format BA tanpa mengganggu
+              tabel kerja di layar (input fisik, badge, dsb). Disembunyikan
+              di layar, dimunculkan di @media print (globals.css) — tabel
+              interaktif di bawah sebaliknya disembunyikan saat cetak supaya
+              tidak duplikat. Independen dari search/status filter layar,
+              lihat printRows. */}
+          <table className="recon-print-detail-table">
+            <thead>
+              <tr>
+                <th>No</th>
+                <th>Kelompok Barang</th>
+                <th>Deskripsi Barang</th>
+                <th>Satuan</th>
+                <th>Stock Sistem Olsera</th>
+                <th>Stock Fisik Aktual</th>
+                <th>Selisih</th>
+                <th>Keterangan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {printRows.map((row, index) => (
+                <tr key={rowKey(row.productId, row.variantId)}>
+                  <td>{index + 1}</td>
+                  <td>{row.category}</td>
+                  <td>{row.productName}</td>
+                  {/* Satuan (uom) belum tersedia di data rekonsiliasi ini —
+                      Row/InventoryOpnameRow tidak menyimpan field ini (beda
+                      dari katalog olsera_inventory_products). Dikosongkan
+                      apa adanya, bukan ditebak. */}
+                  <td>—</td>
+                  <td>{formatQty(row.systemClosingQty)}</td>
+                  <td>{formatQty(row.physicalQty)}</td>
+                  <td>{formatSignedQty(row.differenceQty)}</td>
+                  <td>{row.note?.trim() || STATUS_LABEL[row.status]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
           <section className="recon-filters" aria-label="Filter produk">
             <label className="recon-keyword">
