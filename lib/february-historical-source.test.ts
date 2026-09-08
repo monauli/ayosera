@@ -12,7 +12,14 @@ test("built-in February source is 31/17/48 and preserves required evidence", () 
   assert.equal(overall.length, 48);
   assert.equal(new Set(overall.map((row) => row.product)).size, 48);
   assert.deepEqual(overall.find((row) => row.product === "BOLA PADEL ODEA")?.opening, 96);
-  assert.deepEqual(overall.find((row) => row.product.includes("SM-J035"))?.closing, 15);
+  // SM-J035 dinolkan 2026-09-08: baris ini riwayat produk asli yang sudah
+  // dihapus dari katalog Olsera, sementara entri katalog yang tersisa
+  // ("... duplicate", productId 118420650) terbukti nol transaksi Feb-Jun 2026.
+  // Yang dijaga tes ini sekarang: barisnya TETAP ADA (jumlah 31/17/48 tidak
+  // boleh berubah) dan seluruh angkanya nol.
+  const smJ035 = overall.find((row) => row.product.includes("SM-J035"));
+  assert.deepEqual([smJ035?.opening, smJ035?.incoming, smJ035?.returnQty, smJ035?.salesQty, smJ035?.outgoingQty, smJ035?.closing], [0, 0, 0, 0, 0, 0]);
+  assert.equal(historicalDiagnostics(diagnosticRow(smJ035!, 3)).length, 0);
   assert.ok(overall.some((row) => row.product.includes("XPLO COMFORT")));
   assert.ok(overall.some((row) => row.product.includes("ODEA")));
   const sniper = overall.find((row) => row.product === "Bullpadel Sniper 2.0 Power Light Blue 2026");

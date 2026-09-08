@@ -133,16 +133,26 @@ export const FEBRUARY_HISTORICAL_SOURCE = {
       "outgoingQty": 0,
       "closing": 26
     },
+    // Dinolkan 2026-09-08 (USER_CONFIRMED_YONEX_SM_J035_FEB_MAY_2026_09_08).
+    // Angka lama (opening 24, jual 9, closing 15) adalah riwayat produk ASLI
+    // dengan nama ini, yang sudah dihapus dari katalog Olsera. Satu-satunya
+    // entri katalog yang tersisa dengan nama ini adalah "... duplicate"
+    // (productId 118420650), dan audit langsung ke Olsera Backoffice
+    // membuktikan produk itu NOL transaksi Februari s/d Juni 2026 — barang
+    // pertama baru masuk 3 Juli 2026. Baris TIDAK dihapus: jumlah baris
+    // dikunci 31/17/48 oleh buildHistoricalImportPlan, dan menghapusnya akan
+    // menolak seluruh batch. Dinolkan supaya koreksi snapshot Februari tidak
+    // tertimpa balik bila FEBRUARY_HISTORICAL_SOURCE_REVISION dinaikkan.
     {
       "product": "YONEX SHORTS MEN # SM-J035-2906-RW1-S",
       "group": "CELANA PRIA",
       "sku": null,
-      "opening": 24,
+      "opening": 0,
       "incoming": 0,
       "returnQty": 0,
-      "salesQty": 9,
+      "salesQty": 0,
       "outgoingQty": 0,
-      "closing": 15
+      "closing": 0
     },
     {
       "product": "YONEX MEN SOCKS SSM-1285ID-MP6-S",
@@ -432,16 +442,26 @@ export const FEBRUARY_HISTORICAL_SOURCE = {
       "outgoingQty": 0,
       "closing": 20
     },
+    // Dinolkan 2026-09-08 (USER_CONFIRMED_YONEX_SM_J035_FEB_MAY_2026_09_08).
+    // Angka lama (opening 24, jual 9, closing 15) adalah riwayat produk ASLI
+    // dengan nama ini, yang sudah dihapus dari katalog Olsera. Satu-satunya
+    // entri katalog yang tersisa dengan nama ini adalah "... duplicate"
+    // (productId 118420650), dan audit langsung ke Olsera Backoffice
+    // membuktikan produk itu NOL transaksi Februari s/d Juni 2026 — barang
+    // pertama baru masuk 3 Juli 2026. Baris TIDAK dihapus: jumlah baris
+    // dikunci 31/17/48 oleh buildHistoricalImportPlan, dan menghapusnya akan
+    // menolak seluruh batch. Dinolkan supaya koreksi snapshot Februari tidak
+    // tertimpa balik bila FEBRUARY_HISTORICAL_SOURCE_REVISION dinaikkan.
     {
       "product": "YONEX SHORTS MEN # SM-J035-2906-RW1-S",
       "group": "CELANA PRIA",
       "sku": null,
-      "opening": 24,
+      "opening": 0,
       "incoming": 0,
       "returnQty": 0,
-      "salesQty": 9,
+      "salesQty": 0,
       "outgoingQty": 0,
-      "closing": 15
+      "closing": 0
     },
     {
       "product": "YONEX MENS SHORTS # SM-P061-3085-RW2-S",
