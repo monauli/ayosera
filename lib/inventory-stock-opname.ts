@@ -251,13 +251,21 @@ export type BaPeriodConflict = { ok: boolean; reason: string | null };
  * jadi data lama hanya memblokir bila BA baru memang periodenya berbeda.
  */
 export function checkBaPeriodConflict(input: {
-  existing: ReadonlyArray<{ startDate?: string | null; cutoffDate?: string | null }>;
+  existing: ReadonlyArray<{ startDate?: string | null; cutoffDate?: string | null; productId?: number }>;
   year: number;
   month: number;
   incomingStartDate?: string | null;
 }): BaPeriodConflict {
   const incoming = effectiveBaStartDate({ startDate: input.incomingStartDate, year: input.year, month: input.month });
   for (const doc of input.existing) {
+    // Dokumen event (productId 0) BUKAN baris BA — ia cuma wadah riwayat
+    // unggahan + status lock, dan `$setOnInsert` yang membuatnya tidak pernah
+    // mengisi startDate. Tanpa pengecualian ini effectiveBaStartDate
+    // menerjemahkan startDate kosong itu jadi tanggal 1, sehingga bulan yang
+    // BA-nya berentang selain tanggal 1 jadi BUNTU PERMANEN: kirim rentang
+    // yang benar bentrok dengan dokumen event, kirim tanggal 1 bentrok dengan
+    // baris produknya (kasus nyata BA Juli 2026, rentang 17-31).
+    if (doc.productId === 0) continue;
     const docStart = effectiveBaStartDate({ startDate: doc.startDate, year: input.year, month: input.month });
     if (docStart === incoming) continue;
     return {

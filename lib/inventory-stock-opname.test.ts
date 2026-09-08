@@ -260,6 +260,40 @@ test("checkBaPeriodConflict: dokumen LAMA tanpa startDate + simpan BA Februari 4
   assert.match(result.reason ?? "", /sudah memuat BA mulai 2026-02-01/);
 });
 
+// Kasus nyata BA Juli 2026: 30 baris produk rentang 17-31 Juli + 1 dokumen
+// event (productId 0, tanpa startDate) dari unggahan lampiran. Dokumen event
+// yang ikut diperiksa membuat bulan itu buntu permanen — tidak ada nilai
+// startDate mana pun yang bisa lolos.
+test("checkBaPeriodConflict: dokumen event (productId 0, tanpa startDate) TIDAK memicu konflik — BA 17-31 Juli tetap bisa disimpan ulang", () => {
+  const existing = [
+    { startDate: "2026-07-17", cutoffDate: "2026-07-31", productId: 106743895 },
+    { startDate: "2026-07-17", cutoffDate: "2026-07-31", productId: 109534279 },
+    { startDate: null, cutoffDate: null, productId: 0 },
+  ];
+  const result = checkBaPeriodConflict({ existing, year: 2026, month: 7, incomingStartDate: "2026-07-17" });
+  assert.equal(result.ok, true, "dokumen event bukan baris BA — jangan diperlakukan sebagai BA periode berbeda");
+});
+
+test("checkBaPeriodConflict: dokumen event ADA tapi baris produknya beda rentang -> TETAP DITOLAK (regresi, celah tidak terbuka)", () => {
+  const existing = [
+    { startDate: "2026-07-01", cutoffDate: "2026-07-16", productId: 106743895 },
+    { startDate: null, cutoffDate: null, productId: 0 },
+  ];
+  const result = checkBaPeriodConflict({ existing, year: 2026, month: 7, incomingStartDate: "2026-07-17" });
+  assert.equal(result.ok, false, "konflik antar-baris-produk yang benar-benar beda rentang wajib tetap ditolak");
+  assert.match(result.reason ?? "", /sudah memuat BA 2026-07-01 s\/d 2026-07-16/);
+});
+
+test("checkBaPeriodConflict: baris produk tanpa startDate TETAP diperiksa (hanya productId 0 yang dikecualikan)", () => {
+  const result = checkBaPeriodConflict({
+    existing: [{ startDate: null, cutoffDate: null, productId: 106743895 }],
+    year: 2026,
+    month: 7,
+    incomingStartDate: "2026-07-17",
+  });
+  assert.equal(result.ok, false, "pengecualian hanya untuk dokumen event, bukan untuk semua dokumen tanpa startDate");
+});
+
 // --- Tahap 2: mode rentang bebas (startDate diisi) ---
 
 test("validateCutoffPlausibility rentang bebas: BA Februari 2026 (04 Feb s/d 04 Mar) LOLOS walau cutoff jatuh di bulan Maret", () => {
