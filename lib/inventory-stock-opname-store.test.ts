@@ -1235,6 +1235,63 @@ test("kondisi normal (bulan unlocked di level periode): save + finalize + unlock
   assert.equal(unlocked.status, "UNLOCKED");
 });
 
+// --- Periode terkunci di jalur cutoff: angka BEKU, bukan tarik live lagi ---
+
+test("cutoff locked: baris yang SUDAH punya BA tersimpan pakai angka BEKU dari dokumen, TIDAK memanggil API live", async () => {
+  const opname = fakeOpnameCollection([
+    {
+      _id: buildOpnameId({ storeId: CUTOFF_STORE_ID, year: 2026, month: 7, productId: CUTOFF_PRODUCT_ID, variantId: null }),
+      storeId: CUTOFF_STORE_ID, year: 2026, month: 7,
+      productId: CUTOFF_PRODUCT_ID, variantId: null,
+      physicalQty: 99, systemClosingQty: 99, differenceQty: 0, status: "COCOK",
+      systemClosingSource: "API_CUTOFF", systemClosingSourcePeriod: null,
+      note: "Dihitung ulang fisik", updatedBy: SUPERVISOR.email, updatedAt: new Date("2026-07-20T00:00:00Z"),
+      startDate: "2026-07-17", cutoffDate: "2026-07-31",
+    },
+  ]);
+  // Fetch live (kalau dipanggil) akan mengembalikan 36 — SENGAJA beda dari
+  // angka beku (99) supaya kelihatan jelas kalau override gagal jalan.
+  const ctx = cutoffContext(opname, { "2026-07-31": 36 });
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock("locked");
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 7, cutoffDate: "2026-07-31", startDate: "2026-07-17" }, ctx);
+  assert.equal(ctx.calls.length, 0, "periode locked TIDAK BOLEH memanggil fetchStockMovementRange sama sekali");
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].systemClosingQty, 99, "harus pakai angka beku dari dokumen BA, BUKAN 36 dari live");
+  assert.equal(result.rows[0].differenceQty, 0);
+  assert.equal(result.rows[0].status, "COCOK");
+  assert.equal(result.rows[0].physicalQty, 99);
+});
+
+test("cutoff BELUM locked: tetap menarik live seperti sekarang (regresi, perilaku tidak berubah)", async () => {
+  const opname = fakeOpnameCollection([
+    {
+      _id: buildOpnameId({ storeId: CUTOFF_STORE_ID, year: 2026, month: 7, productId: CUTOFF_PRODUCT_ID, variantId: null }),
+      storeId: CUTOFF_STORE_ID, year: 2026, month: 7,
+      productId: CUTOFF_PRODUCT_ID, variantId: null,
+      physicalQty: 99, systemClosingQty: 99, differenceQty: 0, status: "COCOK",
+      updatedBy: SUPERVISOR.email, updatedAt: new Date("2026-07-20T00:00:00Z"),
+    },
+  ]);
+  const ctx = cutoffContext(opname, { "2026-07-31": 36 });
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock("unlocked");
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 7, cutoffDate: "2026-07-31", startDate: "2026-07-17" }, ctx);
+  assert.equal(ctx.calls.length, 1, "belum locked -> tetap menarik live seperti sebelumnya");
+  assert.equal(result.rows[0].systemClosingQty, 36, "belum locked -> angka live (36), bukan angka BA tersimpan (99)");
+  assert.equal(result.rows[0].differenceQty, 99 - 36);
+});
+
+test("cutoff locked + baris BELUM punya BA tersimpan: tampil tanpa data (null), bukan fabrikasi, dan TETAP tidak memanggil API live", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-03-04": 12 }, [stagnantSnapshot()]);
+  ctx.monthlyPeriodLock = fakeMonthlyPeriodLock("locked");
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  assert.equal(ctx.calls.length, 0, "periode locked TIDAK BOLEH memanggil fetchStockMovementRange sama sekali, walau baris ini belum punya BA");
+  const diam = result.rows.find((row) => row.productId === STAGNANT_PRODUCT_ID)!;
+  assert.ok(diam, "produk tanpa BA tersimpan tetap harus muncul sebagai baris (identitas dari snapshot)");
+  assert.equal(diam.systemClosingQty, null, "tidak ada salinan beku untuk baris ini -> jangan fabrikasi angka");
+  assert.equal(diam.differenceQty, null);
+  assert.equal(diam.physicalQty, null);
+});
+
 test("BA-only: item kosong dianggap Cocok dan disimpan sebagai evidence assumed match", async () => {
   const opname = fakeOpnameCollection();
   const ctx = context([snapshotDoc({ productId: 7, closingQty: 69 })], opname);

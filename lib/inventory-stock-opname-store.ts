@@ -434,8 +434,23 @@ export async function loadInventoryOpnameCutoff(
   const deps = await resolveCutoffDeps(context);
   const previousPeriod = previousMonth({ year, month });
 
+  // Periode terkunci ("Kunci Periode Inventori") harus dicek DULU, SEBELUM
+  // menarik apa pun dari Olsera — begitu locked, jalur ini tidak boleh lagi
+  // bergantung pada API live sama sekali (yang bisa mengembalikan angka
+  // berbeda di kemudian hari untuk rentang tanggal historis yang sama).
+  // Lihat blok "isPeriodLocked" di bawah untuk sumber pengganti.
+  const monthlyLock = await getInventoryMonthlyPeriodLock(storeId, year, month, resolveMonthlyPeriodLockContext(context));
+  const isPeriodLocked = monthlyLock?.status === "locked";
+
   const [fetched, opnameRows, snapshotRows, previousSnapshotRows, aliasDocs, periodOrderItems] = await Promise.all([
-    fetchCutoffSystemRows(input.cutoffDate, deps, startDate),
+    // Locked: JANGAN panggil fetchCutoffSystemRows (tidak ada request ke
+    // Olsera sama sekali) — stub kosong, baris untuk produk yang sudah
+    // punya BA dibangun dari salinan beku di bawah; startDate/endDate tetap
+    // dihitung (murni tanggal, resolveCutoffQueryRange, bukan panggilan API)
+    // supaya nilai balik fungsi ini tidak berubah bentuk.
+    isPeriodLocked
+      ? Promise.resolve({ ok: true as const, rows: [] as CutoffSystemRow[], ...resolveCutoffQueryRange(input.cutoffDate, startDate), unmatchedOrAmbiguous: [] as UnmatchedMovementEntry[] })
+      : fetchCutoffSystemRows(input.cutoffDate, deps, startDate),
     opname.find({ storeId, year, month }).toArray(),
     // Dipakai HANYA untuk mengetahui produk apa saja yang punya stok di periode
     // ini. Angkanya TIDAK pernah jadi Stok Akhir Sistem — lihat blok di bawah.
@@ -508,6 +523,57 @@ export async function loadInventoryOpnameCutoff(
       evidenceSource: opnameDoc?.evidenceSource ?? null,
     };
   });
+
+  // --- Periode terkunci: baris dari BA yang SUDAH tersimpan (angka beku) ----
+  // Tidak ada panggilan API live di atas (fetched.rows = [] untuk periode
+  // locked, lihat blok isPeriodLocked), jadi baris untuk produk yang SUDAH
+  // punya dokumen BA dibangun langsung dari salinan beku itu — systemClosingQty/
+  // differenceQty/status TIDAK PERNAH dihitung ulang dari live, persis nilai
+  // yang tersimpan saat Simpan/Finalisasi (lihat komentar
+  // InventoryStockOpnameDocument.systemClosingQty: "snapshot sumber tidak
+  // pernah ditulis ulang"). Identitas produk (nama/SKU/kategori) TIDAK
+  // tersimpan di dokumen BA itu sendiri — diambil dari snapshot bulanan
+  // (Mongo, bukan live) lalu fallback katalog, TIDAK PERNAH ditebak. Arus
+  // (opening/incoming/dst) untuk rentang cutoff spesifik ini juga tidak
+  // tersedia tanpa API live — dikosongkan (null), pola SAMA seperti baris
+  // stok diam di bawah, BUKAN fabrikasi.
+  if (isPeriodLocked) {
+    const snapshotByKey = new Map(snapshotRows.map((snap) => [opnameKey(snap.productId, snap.variantId), snap]));
+    for (const doc of opnameRows) {
+      if (doc.productId === 0) continue; // dokumen event (riwayat upload/lock), bukan baris produk.
+      const snap = snapshotByKey.get(opnameKey(doc.productId, doc.variantId));
+      const catalogProduct = deps.matchingContext.catalogById.get(productKey(storeId, doc.productId, doc.variantId));
+      const productName = snap?.productName ?? (catalogProduct ? (catalogProduct.variantName ? `${catalogProduct.name} - ${catalogProduct.variantName}` : catalogProduct.name) : `Produk ${doc.productId}`);
+      rows.push({
+        productId: doc.productId,
+        variantId: doc.variantId,
+        productName,
+        productSku: snap?.productSku ?? catalogProduct?.sku ?? null,
+        category: snap?.groupName ?? catalogProduct?.category ?? "",
+        openingQty: null,
+        incomingQty: null,
+        returnQty: null,
+        salesQty: null,
+        outgoingQty: null,
+        snapshotClosingQty: null,
+        formulaClosingQty: null,
+        systemClosingQty: doc.systemClosingQty,
+        systemClosingSource: doc.systemClosingSource ?? "API_CUTOFF",
+        systemClosingSourcePeriod: doc.systemClosingSourcePeriod ?? null,
+        formulaMismatch: false,
+        snapshotStatus: "complete",
+        snapshotDiagnostics: ["Periode terkunci — Stock Sistem Olsera diambil dari salinan beku Berita Acara (bukan tarik live), tidak akan berubah lagi."],
+        manualAdjust: false,
+        physicalQty: doc.physicalQty,
+        differenceQty: doc.differenceQty,
+        status: doc.status,
+        note: doc.note ?? null,
+        updatedBy: doc.updatedBy ?? null,
+        updatedAt: doc.updatedAt ? new Date(doc.updatedAt).toISOString() : null,
+        evidenceSource: doc.evidenceSource ?? null,
+      });
+    }
+  }
 
   // --- Produk stok diam (tidak dikembalikan API stockmovement) ---------------
   // API Olsera hanya mengembalikan produk yang PUNYA pergerakan di rentang.
@@ -595,6 +661,7 @@ export async function loadInventoryOpnameCutoff(
       evidenceSource: opnameDoc?.evidenceSource ?? null,
     });
   }
+
   rows.sort((a, b) => a.productName.localeCompare(b.productName, "id"));
 
   const event = opnameRows.find((doc) => doc._id === `${storeId}:${year}:${String(month).padStart(2, "0")}:event`);
