@@ -38,7 +38,40 @@ export async function getInventoryPeriodCompleteness(input: { storeId: number; y
   const snapshotKeys = new Set(snapshots.map((row) => `${row.productId}:${row.variantId ?? 0}`));
   const movementProducts = new Set(snapshots.filter((row) => row.source !== "catalog").map((row) => `${row.productId}:${row.variantId ?? 0}`));
   const products = c.products ? await c.products.find({ storeId: { $in: [input.storeId, null] }, active: true, stockQty: { $gt: 0 } }).toArray() : [];
-  const catalogOnlyCandidates = products.filter((product) => !snapshotKeys.has(`${product.productId}:${product.variantId ?? 0}`));
+  // Katalog yang dibandingkan adalah katalog HARI INI, sedangkan bulan yang
+  // diperiksa historis — produk yang baru lahir SETELAH bulan itu karena itu
+  // memblokir penguncian selamanya, dan mustahil dipenuhi dari sisi data
+  // (membuat snapshot untuk bulan saat produknya belum ada = mengarang angka).
+  // Kasus nyata: NESTLE PURE LIFE 1500ML Duplikate (productId 120601602),
+  // transaksi pertama 10 Agustus 2026, memblokir Feb s/d Juli 2026.
+  //
+  // Bulan snapshot PERTAMA dipakai sebagai penanda kelahiran: rantai snapshot
+  // bulanan dibangun dari pergerakan Olsera, jadi bulan pertama sebuah produk
+  // punya snapshot = bulan pertama ia terlihat di ledger. Dipilih ketimbang
+  // tanggal pergerakan pertama karena olsera_inventory_movements hanya memuat
+  // penjualan (produk yang masuk stok tapi belum pernah terjual tidak punya
+  // jejak di sana), sementara snapshot juga mencakup stok non-penjualan.
+  //
+  // Produk TANPA jejak snapshot sama sekali TETAP dihitung belum diverifikasi:
+  // tidak ada bukti kapan ia lahir, jadi jangan diloloskan (fail-closed,
+  // perilakunya sama persis seperti sebelum perubahan ini).
+  const period = input.year * 12 + input.month;
+  const storeSnapshots = await c.snapshots.find({ storeId: input.storeId }).toArray();
+  const firstPeriodByKey = new Map<string, number>();
+  for (const row of storeSnapshots) {
+    const key = `${row.productId}:${row.variantId ?? 0}`;
+    const rowPeriod = row.year * 12 + row.month;
+    const seen = firstPeriodByKey.get(key);
+    if (seen === undefined || rowPeriod < seen) firstPeriodByKey.set(key, rowPeriod);
+  }
+  const bornAfterPeriod = (key: string) => {
+    const first = firstPeriodByKey.get(key);
+    return first !== undefined && first > period;
+  };
+  const catalogOnlyCandidates = products.filter((product) => {
+    const key = `${product.productId}:${product.variantId ?? 0}`;
+    return !snapshotKeys.has(key) && !bornAfterPeriod(key);
+  });
   const verifiedForPeriod = snapshotKeys.size;
   const unverified = catalogOnlyCandidates.length;
   return { movementProducts: movementProducts.size, catalogOnlyCandidates: catalogOnlyCandidates.length, verifiedForPeriod, unverified, totalUniverse: movementProducts.size + catalogOnlyCandidates.length, pass: unverified === 0 };
