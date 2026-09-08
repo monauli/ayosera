@@ -36,7 +36,7 @@ type Row = {
   snapshotClosingQty: number | null;
   formulaClosingQty: number | null;
   systemClosingQty: number | null;
-  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD" | null;
+  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD" | "SNAPSHOT_MONTH_END" | null;
   systemClosingSourcePeriod?: string | null;
   formulaMismatch: boolean;
   snapshotStatus: "complete" | "boundary-only" | "incomplete";

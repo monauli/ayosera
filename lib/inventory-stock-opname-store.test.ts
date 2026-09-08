@@ -383,6 +383,50 @@ test("Produk nonaktif yang transaksinya DI LUAR rentang cutoff tetap tampil lewa
   assert.ok(result.rows.find((r) => r.productId === BOLA_HEAD_ID), "staf menghitung produk ini secara fisik — barisnya wajib ada walau transaksinya di luar rentang cutoff");
 });
 
+// --- Sumber angka baris stagnant: closing bulan ini vs carry-forward ---
+
+test("Baris stagnant: snapshotDate PERSIS di cutoff -> pakai closing bulan ini, BUKAN carry-forward bulan lalu (kasus BOLA HEAD: 1, bukan 3)", async () => {
+  const BOLA_HEAD_ID = 109632001;
+  const ctx = {
+    ...cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-07-31": 12 }, [
+      stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:07:${BOLA_HEAD_ID}:0`, year: 2026, month: 7, snapshotDate: "2026-07-31", productId: BOLA_HEAD_ID, productName: "BOLA HEAD PRO ISI 3", openingQty: 3, salesQty: 1, outgoingQty: 1, closingQty: 1 }),
+      // closing bulan lalu = 3 dan cocok dengan opening bulan ini -> carry-forward SAH, tapi tidak boleh dipakai
+      previousMonthSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:06:${BOLA_HEAD_ID}:0`, year: 2026, month: 6, productId: BOLA_HEAD_ID, productName: "BOLA HEAD PRO ISI 3", openingQty: 3, closingQty: 3 }),
+    ]),
+    matchingContext: cutoffMatchingContext([cutoffProduct(), inactiveCatalogProduct({ productId: BOLA_HEAD_ID, name: "BOLA HEAD PRO ISI 3", sku: null })]),
+  };
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 7, cutoffDate: "2026-07-31", startDate: "2026-07-17" }, ctx);
+  const row = result.rows.find((r) => r.productId === BOLA_HEAD_ID)!;
+  assert.equal(row.systemClosingQty, 1, "harus closing Juli (1) — sesuai dokumen BA fisik, bukan stok awal 3 dari carry-forward");
+  assert.equal(row.systemClosingSource, "SNAPSHOT_MONTH_END");
+  assert.equal(row.systemClosingSourcePeriod, "2026-07", "periode sumber = bulan yang direkonsiliasi, bukan bulan lalu");
+  assert.match(row.snapshotDiagnostics.join(" "), /snapshot bulanan 2026-07-31/i, "wajib menjelaskan asal angkanya");
+});
+
+test("Baris stagnant: cutoff TIDAK jatuh di tanggal snapshot -> tetap pakai carry-forward lama (regresi; kasus BA Feb 2026 = 04 Feb s/d 04 Mar)", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-03-04": 12 }, [
+    // snapshot Feb merepresentasikan 28 Feb, sedangkan cutoff BA 04 Mar -> angka akhir-bulan TIDAK boleh dipakai
+    stagnantSnapshot({ snapshotDate: "2026-02-28", closingQty: 999 }),
+    previousMonthSnapshot({ closingQty: 1 }),
+  ]);
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-03-04", startDate: "2026-02-04" }, ctx);
+  const row = result.rows.find((r) => r.productId === STAGNANT_PRODUCT_ID)!;
+  assert.equal(row.systemClosingQty, 1, "cutoff di luar tanggal snapshot -> mekanisme carry-forward lama tetap berlaku");
+  assert.equal(row.systemClosingSource, "CARRY_FORWARD");
+  assert.notEqual(row.systemClosingQty, 999, "angka akhir-bulan tidak boleh bocor jadi angka cutoff");
+});
+
+test("Baris stagnant: snapshot bulan ini belum complete -> jangan pakai closingQty-nya, jatuh ke carry-forward", async () => {
+  const ctx = cutoffContextWithSnapshots(fakeOpnameCollection(), { "2026-02-28": 12 }, [
+    stagnantSnapshot({ snapshotDate: "2026-02-28", status: "incomplete", closingQty: 999 }),
+    previousMonthSnapshot({ closingQty: 1 }),
+  ]);
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 2, cutoffDate: "2026-02-28", startDate: "2026-02-01" }, ctx);
+  const row = result.rows.find((r) => r.productId === STAGNANT_PRODUCT_ID)!;
+  assert.equal(row.systemClosingQty, 1, "snapshot belum complete -> angkanya belum bisa dipercaya sebagai Stok Akhir Sistem");
+  assert.equal(row.systemClosingSource, "CARRY_FORWARD");
+});
+
 // --- Opsi B: referensi pembanding (closing snapshot bulan sebelumnya) untuk baris stok diam ---
 
 function previousMonthSnapshot(overrides: Partial<OlseraInventoryMonthlySnapshotDocument> = {}) {

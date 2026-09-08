@@ -248,7 +248,7 @@ export type InventoryOpnameRow = {
   formulaClosingQty: number | null;
   /** Angka yang benar-benar dipakai sebagai "Stok Akhir Sistem" (closingQty snapshot, fallback ke rumus bila snapshot kosong). */
   systemClosingQty: number | null;
-  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD" | null;
+  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD" | "SNAPSHOT_MONTH_END" | null;
   systemClosingSourcePeriod?: string | null;
   formulaMismatch: boolean;
   snapshotStatus: "complete" | "boundary-only" | "incomplete";
@@ -636,7 +636,20 @@ export async function loadInventoryOpnameCutoff(
     const carryForwardEligible = !hasPeriodOrder && !hasUnverifiedAlias && previous?.closingQty !== null && previous?.closingQty !== undefined && previous.closingQty >= 0 && previous.status === "complete" && snap.openingQty === previous.closingQty;
     const reference = resolveStagnantReference(stagnantKey, aliasOldKeys, previousClosingByKey, previousPeriod.month);
     const carryForwardReason = hasPeriodOrder ? "Ada transaksi produk ini pada periode yang diperiksa." : hasUnverifiedAlias ? "Identitas produk belum dipastikan." : !previous || previous.closingQty === null ? "Stok akhir bulan sebelumnya tidak tersedia." : previous.closingQty < 0 ? "Stok akhir bulan sebelumnya bernilai negatif." : previous.status !== "complete" ? "Data stok bulan sebelumnya belum lengkap." : snap.openingQty !== previous.closingQty ? "Stok akhir bulan sebelumnya tidak sama dengan stok awal bulan ini." : null;
-    const systemClosingQty = carryForwardEligible ? previous!.closingQty : null;
+    // Snapshot bulanan merepresentasikan posisi stok pada snap.snapshotDate.
+    // Angkanya dipakai sebagai Stok Akhir Sistem HANYA bila tanggal itu PERSIS
+    // sama dengan cutoff BA. Kalau cutoff jatuh di tanggal lain (BA Feb 2026 =
+    // 04 Feb s/d 04 Mar, sedangkan snapshot Feb = posisi 28 Feb), memakainya
+    // berarti menyajikan angka akhir-bulan sebagai angka cutoff di dokumen yang
+    // justru berfungsi sebagai bukti audit — lihat blok komentar di atas.
+    //
+    // Kalau cocok, closing bulan ini LEBIH TEPAT daripada carry-forward: carry-
+    // forward memakai closing bulan LALU (= stok awal bulan ini) sehingga
+    // mengabaikan seluruh pergerakan bulan berjalan. Kasus nyata BOLA HEAD PRO
+    // ISI 3 pada BA 17-31 Juli 2026: carry-forward menampilkan 3 (stok awal),
+    // padahal closing Juli = 1 dan dokumen BA fisik juga mencatat 1.
+    const closingAtCutoff = snap.status === "complete" && snap.closingQty !== null && snap.snapshotDate === input.cutoffDate;
+    const systemClosingQty = closingAtCutoff ? snap.closingQty : carryForwardEligible ? previous!.closingQty : null;
     rows.push({
       productId: snap.productId,
       variantId: snap.variantId,
@@ -654,14 +667,21 @@ export async function loadInventoryOpnameCutoff(
       snapshotClosingQty: null,
       formulaClosingQty: null,
       systemClosingQty,
-      systemClosingSource: carryForwardEligible ? "CARRY_FORWARD" : null,
-      systemClosingSourcePeriod: carryForwardEligible ? `${previousPeriod.year}-${String(previousPeriod.month).padStart(2, "0")}` : null,
+      systemClosingSource: closingAtCutoff ? "SNAPSHOT_MONTH_END" : carryForwardEligible ? "CARRY_FORWARD" : null,
+      systemClosingSourcePeriod: closingAtCutoff
+        ? `${year}-${String(month).padStart(2, "0")}`
+        : carryForwardEligible ? `${previousPeriod.year}-${String(previousPeriod.month).padStart(2, "0")}` : null,
       formulaMismatch: false,
       snapshotStatus: "boundary-only",
-      snapshotDiagnostics: [
-        `Stok Akhir Sistem tidak tersedia untuk cutoff ${input.cutoffDate}: produk ini tidak punya pergerakan pada ${fetched.startDate} s/d ${fetched.endDate}, sehingga API Olsera tidak mengembalikan posisi stoknya pada tanggal itu.`,
-        carryForwardEligible ? `Stok diam terverifikasi; memakai closing ${previousPeriod.year}-${String(previousPeriod.month).padStart(2, "0")} sebagai carry-forward.` : `Carry-forward tidak diizinkan: ${carryForwardReason}`,
-      ],
+      snapshotDiagnostics: closingAtCutoff
+        ? [
+            `Produk ini tidak punya pergerakan pada ${fetched.startDate} s/d ${fetched.endDate}, sehingga API Olsera tidak mengembalikan posisi stoknya.`,
+            `Stok Akhir Sistem diambil dari snapshot bulanan ${snap.snapshotDate}, yang jatuh persis pada cutoff ${input.cutoffDate}.`,
+          ]
+        : [
+            `Stok Akhir Sistem tidak tersedia untuk cutoff ${input.cutoffDate}: produk ini tidak punya pergerakan pada ${fetched.startDate} s/d ${fetched.endDate}, sehingga API Olsera tidak mengembalikan posisi stoknya pada tanggal itu.`,
+            carryForwardEligible ? `Stok diam terverifikasi; memakai closing ${previousPeriod.year}-${String(previousPeriod.month).padStart(2, "0")} sebagai carry-forward.` : `Carry-forward tidak diizinkan: ${carryForwardReason}`,
+          ],
       reference,
       manualAdjust: false,
       physicalQty,
@@ -736,7 +756,7 @@ type SaveSystemRow = {
   /** closingQty efektif (snapshot: closingQty ?? formula; cutoff: "sisa" API). */
   systemClosingQty: number | null;
   manualAdjust: boolean;
-  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD";
+  systemClosingSource?: "API_CUTOFF" | "CARRY_FORWARD" | "SNAPSHOT_MONTH_END";
   systemClosingSourcePeriod?: string | null;
 };
 
