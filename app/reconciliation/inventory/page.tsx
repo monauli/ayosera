@@ -829,7 +829,11 @@ export default function InventoryOpnamePage() {
           </button>
           {omittedAsMatchApplied ? <p className="recon-readonly">Diterapkan — item yang tidak disebut Berita Acara sudah ditandai Cocok. Klik lagi bila ada item baru.</p> : <p className="recon-readonly">Item yang TIDAK disebut di Berita Acara akan ditandai Cocok (stok fisik = stok sistem).</p>}
         </div>
-        <div className="recon-finalization">
+        {/* Baris aksi — sengaja membentang penuh di bawah grid 4 kolom. Section
+            ini punya 5 anak sementara gridnya 4 kolom, jadi tanpa span blok ini
+            jatuh sendirian ke baris 2 kolom 1 dan tombol Finalisasi tampak
+            menggantung di bawah kolom pertama. */}
+        <div className="recon-finalization recon-finalization-actions">
           {data?.lock?.status === "LOCKED" ? <>
             <p className="recon-lock-summary"><LockKeyhole /> Stock Opname Terkunci</p>
             <p className="recon-readonly">Cutoff: {data.lock.cutoffDate ?? data.lock.cutoff ?? "—"} · Difinalisasi oleh: {data.lock.lockedBy ?? "—"}{data.lock.lockedAt ? ` · ${new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(data.lock.lockedAt))}` : ""}</p>

@@ -866,6 +866,12 @@ th[scope],
 .recon-page { min-height: 100vh; background: rgb(var(--rd-bg)); color: rgb(var(--rd-text-secondary)); padding: 1.5rem; }
 .recon-page > .recon-filters,.recon-page > .recon-readonly { margin-left:auto; margin-right:auto; }
 .recon-page > .recon-finalization { margin:0 auto 1rem; }
+/* Banner peringatan/info di level halaman ikut dipusatkan pada lebar yang sama
+   dengan kartu & tabel di sekitarnya, plus jarak bawah. Tanpa ini aturan
+   .recon-draft{margin:0} (dibuat untuk konteks drawer, tapi tidak berscope)
+   menang atas margin auto bawaannya: banner menempel ke kiri saat layar lebih
+   lebar dari 1500px, dan dua banner bertumpuk tanpa jarak sama sekali. */
+.recon-page > .recon-draft,.recon-page > .recon-special,.recon-page > .recon-readonly { margin:0 auto 1rem; }
 .recon-header,.recon-filters,.recon-cards,.recon-readiness,.recon-table-wrap,.recon-skeleton,.recon-empty,.recon-ba-results,.recon-draft,.recon-special,.recon-readonly { width:100%; box-sizing:border-box; }
 .recon-header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; max-width:1500px; margin:0 auto 1.25rem; }
 .recon-header h1 { margin:.25rem 0; color:rgb(var(--rd-text)); font-size:1.75rem; font-weight:700; letter-spacing:-.02em; }
@@ -1101,3 +1107,38 @@ th[scope],
   .recon-print-detail-table thead { display:table-header-group; }
   .recon-print-detail-table tr { page-break-inside:avoid; break-inside:avoid; }
 }
+
+/* ---------------------------------------------------------------------------
+   Kartu "Berita Acara Stock Opname" (app/reconciliation/inventory/page.tsx).
+   Semua aturan di bawah SENGAJA di-scope ke selektor gabungan
+   .recon-filters.recon-finalization — .recon-finalization dan .recon-history
+   juga dipakai app/reconciliation/page.tsx, jadi jangan diubah di kelas dasar.
+   Murni tampilan: tidak ada elemen yang dihapus atau fungsinya berubah.
+   --------------------------------------------------------------------------- */
+
+/* Kolom tidak diregangkan: kotak berisi sedikit (mis. "Riwayat BA") berhenti
+   setinggi isinya, jadi tidak menyisakan ruang kosong besar; semua kolom rata
+   atas. Kartunya sendiri memakai treatment netral yang SAMA dengan .recon-filters
+   (token --rd-card-*) supaya sejajar dengan kartu ringkasan di atasnya dan
+   tidak menambah satu warna lagi ke area ini. */
+.recon-filters.recon-finalization { align-items:start; border-color:rgb(var(--rd-card-border)); background:linear-gradient(180deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); }
+
+/* Blok aksi (Finalisasi / status terkunci) membentang penuh sebagai baris
+   terakhir — lihat komentar di JSX-nya. justify-items:start supaya tombol
+   selebar isinya, bukan melar 4 kolom. */
+.recon-filters.recon-finalization > .recon-finalization-actions { grid-column:1 / -1; justify-items:start; }
+
+/* Kotak biru bersarang di dalam kartu (border + latar biru di dalam kartu yang
+   juga berlatar biru) dihilangkan — pembungkusnya cukup jadi wadah tata letak. */
+.recon-filters.recon-finalization > .recon-finalization { border:0; background:transparent; padding:0; }
+
+/* Teks bantuan & riwayat diturunkan ke token netral: sebelumnya kotak info biru
+   dan garis merah "Riwayat BA" bersaing dengan tombol merah Finalisasi dan
+   banner kuning di bawahnya, sehingga tombol sekunder tenggelam. Penekanan
+   warna kini tersisa untuk tombol aksi utama dan peringatan saja. */
+.recon-filters.recon-finalization .recon-readonly { border-color:rgb(var(--rd-border) / var(--rd-border-alpha)); background:rgb(var(--rd-surface) / var(--rd-surface-alpha)); color:rgb(var(--rd-text-tertiary)); }
+.recon-filters.recon-finalization .recon-history li { border-left-color:rgb(var(--rd-border) / var(--rd-border-alpha)); }
+
+/* Tombol sekunder ("Tandai Item Tanpa Selisih sebagai Cocok") dipertegas lewat
+   border & warna teks, bukan lewat warna latar baru. */
+.recon-filters.recon-finalization .recon-button.secondary { border-color:rgb(var(--rd-border) / .55); color:rgb(var(--rd-text)); }
