@@ -593,17 +593,29 @@ export async function loadInventoryOpnameCutoff(
   // === null` yang SUDAH ADA, jadi TIDAK PERNAH ikut BA_OMITTED_ASSUMED_MATCH.
   // Perlakuannya sama persis dengan baris closing-null di jalur bulanan.
   const apiKeys = new Set(rows.map((row) => opnameKey(row.productId, row.variantId)));
-  // Produk active:false di olsera_inventory_products (dinonaktifkan/dihapus di
-  // Olsera) TIDAK ikut ditambahkan lewat jalur stagnant — sudah tidak relevan
-  // untuk direkonsiliasi bulan berjalan, preseden sama seperti
-  // getInventoryPeriodCompleteness (lib/inventory-monthly-period-lock.ts) yang
-  // juga mensyaratkan active:true. HANYA berlaku di sini: baris yang datang
-  // dari API Olsera live (fetchCutoffSystemRows di atas) TIDAK disentuh sama
-  // sekali — kalau Olsera masih mengembalikan pergerakan untuk produk itu di
-  // rentang cutoff ini, produk itu baru saja nonaktif SETELAH bertransaksi,
-  // jadi tetap relevan. Katalog tidak ditemukan (undefined) -> tetap
-  // ditampilkan (fail-safe, bukan fail-closed — tidak cukup bukti untuk
-  // menyembunyikan baris).
+  // Baris ditampilkan bila produknya masih aktif ATAU snapshot bulan itu punya
+  // AKTIVITAS RIIL (sales/outgoing/incoming != 0). Yang tersembunyi hanya
+  // produk nonaktif yang sekaligus tidak bergerak sama sekali bulan itu —
+  // katalog mati murni.
+  //
+  // Klausa aktivitas MELONGGARKAN filter active:false (commit 2c2a36d) yang
+  // ternyata terlalu ketat: filter itu menyembunyikan produk yang dihitung
+  // staf secara fisik (BOLA HEAD PRO ISI 3, YONEX SHORTS duplicate) hanya
+  // karena transaksinya jatuh di luar rentang cutoff yang dipilih, padahal
+  // opname fisik menghitung barang di rak. Investigasi lintas 59 produk
+  // (cutoff 17-31 Juli 2026): status `active` sendiri tidak informatif di
+  // katalog ini (24 dari 30 baris yang tampil benar juga active:false),
+  // sedangkan aktivitas bulanan memisahkan tajam — 21 produk mati murni tetap
+  // tersembunyi, 8 produk bergerak jadi tampil.
+  //
+  // Sengaja aditif (OR, bukan pengganti): produk aktif yang stoknya benar-benar
+  // diam sepanjang bulan TETAP tampil seperti sebelumnya (jaminan "Opsi A",
+  // lihat blok komentar di atas), jadi tidak ada baris yang bisa hilang.
+  //
+  // HANYA berlaku di sini: baris dari API Olsera live (fetchCutoffSystemRows
+  // di atas) TIDAK disentuh sama sekali.
+  const hasMonthlyActivity = (snap: { salesQty: number | null; outgoingQty: number | null; incomingQty: number | null }) =>
+    (snap.salesQty ?? 0) !== 0 || (snap.outgoingQty ?? 0) !== 0 || (snap.incomingQty ?? 0) !== 0;
   const isActiveOrUnknown = (snap: { productId: number; variantId: number | null }) =>
     isActiveOrUnknownProduct(deps.matchingContext.catalogById.get(productKey(storeId, snap.productId, snap.variantId)));
   const stagnant = visibleMonthlyInventoryRows(
@@ -611,7 +623,7 @@ export async function loadInventoryOpnameCutoff(
     false,
   )
     .filter((snap) => !apiKeys.has(opnameKey(snap.productId, snap.variantId)))
-    .filter(isActiveOrUnknown);
+    .filter((snap) => isActiveOrUnknown(snap) || hasMonthlyActivity(snap));
 
   for (const snap of stagnant) {
     const opnameDoc = opnameByKey.get(opnameKey(snap.productId, snap.variantId)) ?? null;

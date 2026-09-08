@@ -288,12 +288,14 @@ test("Opsi A: finalisasi TETAP TERBLOKIR selama ada baris stok diam (tidak ikut 
   assert.equal(opname.updateCalls, 0, "tidak boleh ada dokumen BA yang ditulis saat finalisasi diblokir");
 });
 
-// --- Filter aktif: produk active:false TIDAK ikut jadi baris stagnant ---
-// (temuan investigasi: KAOS KAKI NOX SOCKS SHORT & YONEX SHORTS MEN ...
-// duplicate muncul dengan systemClosingQty null tanpa pernah bisa
-// diselesaikan, karena keduanya sudah active:false di olsera_inventory_products
-// tapi masih tercatat di snapshot bulanan. Preseden: lib/inventory-monthly-period-lock.ts
-// getInventoryPeriodCompleteness sudah mensyaratkan active:true untuk hal serupa.)
+// --- Filter baris stagnant: active:false ATAU punya aktivitas bulan itu ---
+// Produk active:false hanya disembunyikan bila snapshot bulan itu TIDAK punya
+// aktivitas sama sekali (sales/outgoing/incoming semuanya 0) — itu katalog
+// mati murni. Begitu ada pergerakan riil di bulan tsb, baris tetap tampil
+// walau transaksinya jatuh DI LUAR rentang cutoff yang dipilih, karena opname
+// fisik menghitung barang di rak, bukan cuma yang bertransaksi di rentang itu
+// (kasus nyata: BOLA HEAD PRO ISI 3 & YONEX SHORTS duplicate, dua produk yang
+// dihitung staf tapi tidak bisa ditemukan di tabel BA).
 
 function inactiveCatalogProduct(overrides: Partial<InventoryProductInput> & { productId: number }): InventoryProductInput {
   return cutoffProduct({ _id: `${CUTOFF_STORE_ID}:${overrides.productId}:0`, active: false, ...overrides });
@@ -336,13 +338,21 @@ test("Filter aktif: produk active:false yang MUNCUL di API live (ada transaksi d
   assert.equal(row!.systemClosingQty, 5);
 });
 
-test("Regresi nyata: KAOS KAKI NOX SOCKS SHORT & YONEX SHORTS MEN ... duplicate (nonaktif di Olsera) HILANG dari tabel Juni 2026 setelah filter aktif", async () => {
+// Angka snapshot di bawah disalin PERSIS dari data produksi Juni 2026 —
+// fixture lama memakai arus nol untuk ketiganya, yang tidak setia pada data
+// nyata dan menyembunyikan produk yang justru dicari staf untuk mengisi BA.
+test("Produk nonaktif dengan aktivitas riil bulan itu TETAP tampil, yang tanpa aktivitas tetap sembunyi (data nyata Juni 2026)", async () => {
   const KAOS_KAKI_ID = 117136467;
   const YONEX_DUP_ID = 118420650;
+  const BULLPADEL_MATI_ID = 106778873;
   const opname = fakeOpnameCollection();
   const snaps = [
-    stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:06:${KAOS_KAKI_ID}:0`, year: 2026, month: 6, productId: KAOS_KAKI_ID, productName: "KAOS KAKI NOX SOCKS SHORT", productSku: null, groupName: "KAOS KAKI", openingQty: 0, closingQty: 2 }),
-    stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:06:${YONEX_DUP_ID}:0`, year: 2026, month: 6, productId: YONEX_DUP_ID, productName: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", productSku: null, groupName: "CELANA PRIA", openingQty: 4, closingQty: 1 }),
+    // incoming 2 -> ada aktivitas
+    stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:06:${KAOS_KAKI_ID}:0`, year: 2026, month: 6, productId: KAOS_KAKI_ID, productName: "KAOS KAKI NOX SOCKS SHORT", productSku: null, groupName: "KAOS KAKI", openingQty: 0, incomingQty: 2, closingQty: 2 }),
+    // sales 3 -> ada aktivitas (transaksinya di luar rentang 17-30 Juni)
+    stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:06:${YONEX_DUP_ID}:0`, year: 2026, month: 6, productId: YONEX_DUP_ID, productName: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", productSku: null, groupName: "CELANA PRIA", openingQty: 4, salesQty: 3, closingQty: 1 }),
+    // nol semua arus, cuma sisa stok carry-forward -> katalog mati murni
+    stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:06:${BULLPADEL_MATI_ID}:0`, year: 2026, month: 6, productId: BULLPADEL_MATI_ID, productName: "BULLPADEL BP10 EVO 25-360-370G GREY", productSku: null, groupName: "RAKET", openingQty: 1, closingQty: 1 }),
   ];
   const ctx = {
     ...cutoffContextWithSnapshots(opname, { "2026-06-30": 12 }, snaps),
@@ -350,11 +360,27 @@ test("Regresi nyata: KAOS KAKI NOX SOCKS SHORT & YONEX SHORTS MEN ... duplicate 
       cutoffProduct(),
       inactiveCatalogProduct({ productId: KAOS_KAKI_ID, name: "KAOS KAKI NOX SOCKS SHORT", sku: null }),
       inactiveCatalogProduct({ productId: YONEX_DUP_ID, name: "YONEX SHORTS MEN # SM-J035-2906-RW1-S duplicate", sku: null }),
+      inactiveCatalogProduct({ productId: BULLPADEL_MATI_ID, name: "BULLPADEL BP10 EVO 25-360-370G GREY", sku: null }),
     ]),
   };
   const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 6, cutoffDate: "2026-06-30", startDate: "2026-06-17" }, ctx);
-  assert.equal(result.rows.find((r) => r.productId === KAOS_KAKI_ID), undefined, "KAOS KAKI NOX SOCKS SHORT (nonaktif) harus hilang dari tabel");
-  assert.equal(result.rows.find((r) => r.productId === YONEX_DUP_ID), undefined, "YONEX SHORTS MEN ... duplicate (nonaktif) harus hilang dari tabel");
+  assert.ok(result.rows.find((r) => r.productId === YONEX_DUP_ID), "YONEX SHORTS duplicate punya sales 3 di Juni — harus tampil supaya BA-nya bisa diisi");
+  assert.ok(result.rows.find((r) => r.productId === KAOS_KAKI_ID), "KAOS KAKI NOX SOCKS SHORT punya incoming 2 di Juni — harus tampil");
+  assert.equal(result.rows.find((r) => r.productId === BULLPADEL_MATI_ID), undefined, "produk nonaktif tanpa aktivitas apa pun di bulan itu tetap disembunyikan");
+});
+
+test("Produk nonaktif yang transaksinya DI LUAR rentang cutoff tetap tampil lewat jalur stagnant (kasus BOLA HEAD PRO ISI 3, cutoff 17-31 Juli)", async () => {
+  const BOLA_HEAD_ID = 109632001;
+  const opname = fakeOpnameCollection();
+  const ctx = {
+    ...cutoffContextWithSnapshots(opname, { "2026-07-31": 12 }, [
+      // transaksi nyata 2 Juli — di luar rentang 17-31, jadi API live tidak mengembalikannya
+      stagnantSnapshot({ _id: `${CUTOFF_STORE_ID}:2026:07:${BOLA_HEAD_ID}:0`, year: 2026, month: 7, productId: BOLA_HEAD_ID, productName: "BOLA HEAD PRO ISI 3", productSku: null, groupName: "BOLA PADEL", openingQty: 3, salesQty: 1, outgoingQty: 1, closingQty: 1 }),
+    ]),
+    matchingContext: cutoffMatchingContext([cutoffProduct(), inactiveCatalogProduct({ productId: BOLA_HEAD_ID, name: "BOLA HEAD PRO ISI 3", sku: null })]),
+  };
+  const result = await loadInventoryOpnameCutoff({ storeId: CUTOFF_STORE_ID, year: 2026, month: 7, cutoffDate: "2026-07-31", startDate: "2026-07-17" }, ctx);
+  assert.ok(result.rows.find((r) => r.productId === BOLA_HEAD_ID), "staf menghitung produk ini secara fisik — barisnya wajib ada walau transaksinya di luar rentang cutoff");
 });
 
 // --- Opsi B: referensi pembanding (closing snapshot bulan sebelumnya) untuk baris stok diam ---
