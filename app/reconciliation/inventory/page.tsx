@@ -799,22 +799,23 @@ export default function InventoryOpnamePage() {
       </section>
 
       {data?.monthlyLock?.status !== "locked" && <section className="recon-filters recon-finalization" aria-label="Penyelesaian Selisih dengan Berita Acara">
-        <label>
-          Berita Acara Stock Opname
-          <input type="file" accept="application/pdf,image/jpeg,image/png" disabled={!supervisor || uploading || data?.lock?.status === "LOCKED"} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} />
-        </label>
-        <div className="recon-finalization">
-          {attachment ? <p className="recon-lock-summary"><CheckCircle2 /> {attachment.fileName} — Berhasil diupload</p> : <p className="recon-readonly">PDF/JPG/PNG, maksimal 4 MB.</p>}
-          {readingBa && <p className="recon-readonly"><Loader2 className="spin" /> Membaca Berita Acara...</p>}
-          {baReadSummary && <p className="recon-readonly">Periode BA: {baReadSummary.periodStart ?? "Perlu Dicek"} · Cutoff: {baReadSummary.cutoffDate ?? "Perlu Dicek"} · Item ditemukan: {baReadSummary.found} · Cocok otomatis: {baReadSummary.autoCocok} · Perlu Dicek: {baReadSummary.perluDicek}</p>}
-          {attachment && data?.lock?.status !== "LOCKED" && <label className="recon-button secondary">Ganti file<input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} /></label>}
-          {attachment && data?.lock?.status !== "LOCKED" && <button type="button" className="recon-button secondary" disabled={!supervisor} onClick={() => cancelBaRead()}><X /> Batal</button>}
+        {/* BARIS 1 — area upload sebagai SATU blok: label + input file, keterangan
+            format, dan status file terupload dirapatkan jadi satu kesatuan.
+            Sebelumnya label dan status berdiri sebagai dua kolom grid terpisah,
+            sehingga kolom label menyisakan ruang kosong besar di bawahnya. */}
+        <div className="recon-ba-upload">
+          <label>
+            Berita Acara Stock Opname
+            <input type="file" accept="application/pdf,image/jpeg,image/png" disabled={!supervisor || uploading || data?.lock?.status === "LOCKED"} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} />
+          </label>
+          <div className="recon-finalization">
+            {attachment ? <p className="recon-lock-summary"><CheckCircle2 /> {attachment.fileName} — Berhasil diupload</p> : <p className="recon-readonly">PDF/JPG/PNG, maksimal 4 MB.</p>}
+            {readingBa && <p className="recon-readonly"><Loader2 className="spin" /> Membaca Berita Acara...</p>}
+            {baReadSummary && <p className="recon-readonly">Periode BA: {baReadSummary.periodStart ?? "Perlu Dicek"} · Cutoff: {baReadSummary.cutoffDate ?? "Perlu Dicek"} · Item ditemukan: {baReadSummary.found} · Cocok otomatis: {baReadSummary.autoCocok} · Perlu Dicek: {baReadSummary.perluDicek}</p>}
+            {attachment && data?.lock?.status !== "LOCKED" && <label className="recon-button secondary">Ganti file<input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadBa(file); e.currentTarget.value = ""; }} /></label>}
+            {attachment && data?.lock?.status !== "LOCKED" && <button type="button" className="recon-button secondary" disabled={!supervisor} onClick={() => cancelBaRead()}><X /> Batal</button>}
+          </div>
         </div>
-        {/* href hanya dirender bila https:// (pertahanan kedua di sisi tampilan — validasi
-            utama sudah di app/api/reconciliation/inventory-opname/route.ts — supaya URL
-            skema lain, mis. "javascript:...", tidak pernah berakhir jadi <a href> yang
-            bisa dieksekusi saat diklik). */}
-        {data?.uploadHistory?.length ? <details className="recon-history"><summary>Riwayat BA ({data.uploadHistory.length})</summary><ul>{data.uploadHistory.map((entry, index) => <li key={`${entry.url}-${index}`}>{isSafeAttachmentUrl(entry.url) ? <a href={entry.url} target="_blank" rel="noreferrer" className="recon-link"><Paperclip size={12} /> {entry.fileName}</a> : <span><Paperclip size={12} /> {entry.fileName}</span>} · {entry.uploadedAt ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.uploadedAt)) : "—"} · {entry.uploadedBy ?? "—"}</li>)}</ul></details> : null}
         {/* Tombol aksi sekali-klik — menggantikan checkbox baOnlyDifferencesConfirmed
             lama (state persisten yang bisa desync dari baItemsFound lewat
             cancelBaRead tanpa indikasi visual apa pun). Sengaja TIDAK disabled
@@ -823,25 +824,33 @@ export default function InventoryOpnamePage() {
             gagal terbaca otomatis (lihat computeOmittedAsMatchEdits). Tombol
             Finalisasi tetap terpisah diblokir oleh baUnread selama BA belum
             terbaca ATAU status BA masih perlu ditinjau. */}
-        <div className="recon-finalization">
-          <button type="button" className="recon-button secondary" disabled={!supervisor || data?.lock?.status === "LOCKED"} onClick={() => applyOmittedAsMatch()}>
-            <CheckCircle2 /> Tandai Item Tanpa Selisih sebagai Cocok
-          </button>
-          {omittedAsMatchApplied ? <p className="recon-readonly">Diterapkan — item yang tidak disebut Berita Acara sudah ditandai Cocok. Klik lagi bila ada item baru.</p> : <p className="recon-readonly">Item yang TIDAK disebut di Berita Acara akan ditandai Cocok (stok fisik = stok sistem).</p>}
+        {/* BARIS 2 — area aksi: "Tandai Item Tanpa Selisih" beserta keterangannya
+            dan "Finalisasi Stock Opname" berdampingan dalam satu baris (menumpuk
+            sendiri di layar sempit lewat flex-wrap). */}
+        <div className="recon-ba-actions">
+          <div className="recon-finalization">
+            <button type="button" className="recon-button secondary" disabled={!supervisor || data?.lock?.status === "LOCKED"} onClick={() => applyOmittedAsMatch()}>
+              <CheckCircle2 /> Tandai Item Tanpa Selisih sebagai Cocok
+            </button>
+            {omittedAsMatchApplied ? <p className="recon-readonly">Diterapkan — item yang tidak disebut Berita Acara sudah ditandai Cocok. Klik lagi bila ada item baru.</p> : <p className="recon-readonly">Item yang TIDAK disebut di Berita Acara akan ditandai Cocok (stok fisik = stok sistem).</p>}
+          </div>
+          <div className="recon-finalization recon-finalization-actions">
+            {data?.lock?.status === "LOCKED" ? <>
+              <p className="recon-lock-summary"><LockKeyhole /> Stock Opname Terkunci</p>
+              <p className="recon-readonly">Cutoff: {data.lock.cutoffDate ?? data.lock.cutoff ?? "—"} · Difinalisasi oleh: {data.lock.lockedBy ?? "—"}{data.lock.lockedAt ? ` · ${new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(data.lock.lockedAt))}` : ""}</p>
+              <p className="recon-readonly">File BA: {data.lock.attachment?.fileName ?? attachment?.fileName ?? "—"}</p>
+              <p className="recon-readonly">Data pemeriksaan pada tanggal cutoff sudah dikunci. Transaksi inventori setelah tanggal tersebut tetap berjalan normal.</p>
+              {supervisor && <><input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Alasan buka kunci" /><button className="recon-button danger" onClick={() => void unlock()} disabled={unlocking}>{unlocking ? <Loader2 className="spin" /> : <Unlock />} Buka Kunci</button></>}
+            </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !omittedAsMatchApplied || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
+          </div>
         </div>
-        {/* Baris aksi — sengaja membentang penuh di bawah grid 4 kolom. Section
-            ini punya 5 anak sementara gridnya 4 kolom, jadi tanpa span blok ini
-            jatuh sendirian ke baris 2 kolom 1 dan tombol Finalisasi tampak
-            menggantung di bawah kolom pertama. */}
-        <div className="recon-finalization recon-finalization-actions">
-          {data?.lock?.status === "LOCKED" ? <>
-            <p className="recon-lock-summary"><LockKeyhole /> Stock Opname Terkunci</p>
-            <p className="recon-readonly">Cutoff: {data.lock.cutoffDate ?? data.lock.cutoff ?? "—"} · Difinalisasi oleh: {data.lock.lockedBy ?? "—"}{data.lock.lockedAt ? ` · ${new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(data.lock.lockedAt))}` : ""}</p>
-            <p className="recon-readonly">File BA: {data.lock.attachment?.fileName ?? attachment?.fileName ?? "—"}</p>
-            <p className="recon-readonly">Data pemeriksaan pada tanggal cutoff sudah dikunci. Transaksi inventori setelah tanggal tersebut tetap berjalan normal.</p>
-            {supervisor && <><input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} placeholder="Alasan buka kunci" /><button className="recon-button danger" onClick={() => void unlock()} disabled={unlocking}>{unlocking ? <Loader2 className="spin" /> : <Unlock />} Buka Kunci</button></>}
-          </> : <button className="recon-button" onClick={() => void finalize()} disabled={!supervisor || !data || !attachment || !cutoffDate || !omittedAsMatchApplied || baUnread || baBlocksFinalize || baCutoffOutOfPeriod || liveSummary.perluDicek > 0 || liveSummary.butuhAdjustManual > 0 || finalizing}>{finalizing ? <Loader2 className="spin" /> : <FileUp />} Finalisasi Stock Opname</button>}
-        </div>
+        {/* Riwayat BA — pindah ke baris terakhir sebagai disclosure tertutup
+            (sebelumnya kolom tetap yang selalu memakan ruang walau isinya sedikit).
+            href hanya dirender bila https:// (pertahanan kedua di sisi tampilan —
+            validasi utama sudah di app/api/reconciliation/inventory-opname/route.ts —
+            supaya URL skema lain, mis. "javascript:...", tidak pernah berakhir jadi
+            <a href> yang bisa dieksekusi saat diklik). */}
+        {data?.uploadHistory?.length ? <details className="recon-history"><summary>Riwayat BA ({data.uploadHistory.length})</summary><ul>{data.uploadHistory.map((entry, index) => <li key={`${entry.url}-${index}`}>{isSafeAttachmentUrl(entry.url) ? <a href={entry.url} target="_blank" rel="noreferrer" className="recon-link"><Paperclip size={12} /> {entry.fileName}</a> : <span><Paperclip size={12} /> {entry.fileName}</span>} · {entry.uploadedAt ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(entry.uploadedAt)) : "—"} · {entry.uploadedBy ?? "—"}</li>)}</ul></details> : null}
       </section>}
       {baUnread && <p className="recon-draft"><AlertTriangle /> {BA_UNREAD_MESSAGE}</p>}
       {baBlocksFinalize && <p className="recon-draft"><AlertTriangle /> Ada item Berita Acara berstatus Perlu Dicek atau Tidak Ditemukan — selesaikan review sebelum finalisasi.</p>}

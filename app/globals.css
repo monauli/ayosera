@@ -1116,21 +1116,46 @@ th[scope],
    Murni tampilan: tidak ada elemen yang dihapus atau fungsinya berubah.
    --------------------------------------------------------------------------- */
 
-/* Kolom tidak diregangkan: kotak berisi sedikit (mis. "Riwayat BA") berhenti
-   setinggi isinya, jadi tidak menyisakan ruang kosong besar; semua kolom rata
-   atas. Kartunya sendiri memakai treatment netral yang SAMA dengan .recon-filters
+/* Kartu ini BUKAN grid 4 kolom seperti .recon-filters lainnya: isinya bukan
+   field form seukuran seragam, melainkan blok dengan volume yang berbeda jauh
+   (input file, satu kotak info seuprit, riwayat, dua tombol aksi). Dipaksakan
+   ke 4 kolom, tiap kolom setinggi kolom terpanjang sehingga menyisakan ruang
+   kosong menganga. Karena itu disusun sebagai baris bertumpuk; pembagian ruang
+   di dalam tiap baris diurus flex, yang berhenti setinggi isinya sendiri.
+   Kartunya memakai treatment netral yang SAMA dengan .recon-filters
    (token --rd-card-*) supaya sejajar dengan kartu ringkasan di atasnya dan
    tidak menambah satu warna lagi ke area ini. */
-.recon-filters.recon-finalization { align-items:start; border-color:rgb(var(--rd-card-border)); background:linear-gradient(180deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); }
+.recon-filters.recon-finalization { display:flex; flex-direction:column; align-items:stretch; border-color:rgb(var(--rd-card-border)); background:linear-gradient(180deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); }
 
-/* Blok aksi (Finalisasi / status terkunci) membentang penuh sebagai baris
-   terakhir — lihat komentar di JSX-nya. justify-items:start supaya tombol
-   selebar isinya, bukan melar 4 kolom. */
-.recon-filters.recon-finalization > .recon-finalization-actions { grid-column:1 / -1; justify-items:start; }
+/* BARIS 1 — upload sebagai satu kesatuan: input file di kiri, keterangan format
+   / status file terupload / tombol Ganti file & Batal mengalir rapat di
+   kanannya, rata bawah dengan input. flex-basis memberi keduanya lebar minimum
+   yang wajar lalu membungkus ke bawah di layar sempit. */
+.recon-filters.recon-finalization > .recon-ba-upload { display:flex; align-items:flex-end; flex-wrap:wrap; gap:.5rem .75rem; }
+.recon-filters.recon-finalization > .recon-ba-upload > label { flex:1 1 17rem; margin:0; }
+.recon-filters.recon-finalization > .recon-ba-upload > .recon-finalization { display:flex; align-items:center; flex-wrap:wrap; flex:2 1 20rem; gap:.4rem .5rem; margin:0; }
+.recon-filters.recon-finalization > .recon-ba-upload > .recon-finalization > p { margin:0; }
+
+/* BARIS 2 — dua blok aksi berdampingan, membungkus ke bawah bila sempit. */
+.recon-filters.recon-finalization > .recon-ba-actions { display:flex; align-items:flex-start; flex-wrap:wrap; gap:.6rem .9rem; }
+.recon-filters.recon-finalization > .recon-ba-actions > .recon-finalization { flex:1 1 20rem; gap:.4rem; margin:0; }
+
+/* justify-items:start supaya tombol selebar isinya, bukan melar seluruh baris. */
+.recon-filters.recon-finalization .recon-finalization-actions { justify-items:start; }
+
+/* BARIS 3 — Riwayat BA sebagai disclosure tertutup. Nilai border/padding/summary
+   disalin dari pola disclosure yang sudah ada (.recon-json) memakai token yang
+   sama; di-scope ke kartu ini supaya .recon-history di app/reconciliation/page.tsx
+   tidak ikut berubah. */
+.recon-filters.recon-finalization > .recon-history { gap:0; border:1px solid rgb(var(--rd-border) / var(--rd-border-alpha)); border-radius:.5rem; padding:.55rem .65rem; }
+.recon-filters.recon-finalization > .recon-history > summary { cursor:pointer; color:rgb(var(--rd-text-secondary)); font-size:.78rem; }
+.recon-filters.recon-finalization > .recon-history > ul { display:grid; gap:.45rem; margin:.55rem 0 0; padding:0; list-style:none; }
 
 /* Kotak biru bersarang di dalam kartu (border + latar biru di dalam kartu yang
-   juga berlatar biru) dihilangkan — pembungkusnya cukup jadi wadah tata letak. */
-.recon-filters.recon-finalization > .recon-finalization { border:0; background:transparent; padding:0; }
+   juga berlatar biru) dihilangkan — pembungkusnya cukup jadi wadah tata letak.
+   Selektor keturunan (bukan anak langsung): setelah penataan ulang, blok-blok
+   ini bersarang di dalam .recon-ba-upload / .recon-ba-actions. */
+.recon-filters.recon-finalization .recon-finalization { border:0; background:transparent; padding:0; margin-top:0; }
 
 /* Teks bantuan & riwayat diturunkan ke token netral: sebelumnya kotak info biru
    dan garis merah "Riwayat BA" bersaing dengan tombol merah Finalisasi dan
