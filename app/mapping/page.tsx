@@ -97,15 +97,20 @@ function pdfResultToView(result: MappingParseResult, note: string): ReportView {
   // menampilkannya sebagai "Ditolak" akan terbaca seolah ada yang salah.
   if (result.notFound) return { state: "unsupported", note: result.reason };
   // Parser PDF mencoba dua offset layout; yang ditampilkan adalah kegagalan
-  // percobaan TERAKHIR supaya daftarnya tidak berisi dua set selisih untuk
-  // masalah yang sama. Alasan lengkapnya tetap memuat keduanya.
-  return { state: "rejected", reason: result.reason, failedChecks: result.attempts.at(-1)?.failedChecks ?? [] };
+  // percobaan TERBAIK — bukan yang terakhir. Percobaan terakhir kebetulan
+  // yang paling ngawur, dan menampilkannya membuat diagnosa menunjuk ke
+  // angka yang tidak ada hubungannya dengan masalah sebenarnya.
+  return { state: "rejected", reason: result.reason, failedChecks: result.bestAttempt?.failedChecks ?? [] };
 }
 
 function checkSummary(check: ReconciliationCheck): string {
   if (Number.isNaN(check.difference)) return `${check.label}: tidak bisa diperiksa.`;
   const arah = check.difference > 0 ? "lebih besar" : "lebih kecil";
-  return `${check.label}: jumlah baris detail ${formatAmount(check.actual)} — ${arah} ${formatAmount(Math.abs(check.difference))} dari angka tercetak ${formatAmount(check.expected)}.`;
+  // Cek section memang menjumlah baris detail; cek identitas TIDAK — dulu
+  // keduanya memakai kalimat "jumlah baris detail", yang menyesatkan untuk
+  // identitas Neraca dan Arus Kas.
+  const asal = check.kind === "section" ? `jumlah ${check.contributors.length} baris detail` : "hasil hitung";
+  return `${check.label}: ${asal} ${formatAmount(check.actual)} — ${arah} ${formatAmount(Math.abs(check.difference))} dari angka tercetak ${formatAmount(check.expected)}.`;
 }
 
 function ReportBox({
@@ -151,7 +156,18 @@ function ReportBox({
             {view.failedChecks.length > 0 && (
               <ul>
                 {view.failedChecks.map((check, index) => (
-                  <li key={`${check.label}-${index}`}>{checkSummary(check)}</li>
+                  <li key={`${check.label}-${index}`}>
+                    {checkSummary(check)}
+                    {/* Baris yang ikut dijumlah ditampilkan apa adanya. Tanpa
+                        ini penolakan cuma memberi selisih, dan menemukan baris
+                        mana yang salah baca butuh menebak. */}
+                    {check.contributors.length > 0 && (
+                      <div className="mapping-note">
+                        Baris yang dijumlah:{" "}
+                        {check.contributors.map((line) => `${line.code ? `${line.code} ` : ""}${line.label} ${formatAmount(line.value)}`).join(" · ")}
+                      </div>
+                    )}
+                  </li>
                 ))}
               </ul>
             )}

@@ -300,6 +300,58 @@ describe("Arus Kas — fixture Feb-2026 halaman 3 (PDF hasil scan, OCR)", () => 
   });
 });
 
+describe("diagnosa penolakan menunjuk baris, bukan cuma selisih", () => {
+  const fixture = loadFixture("mapping-laba-rugi-feb-2026-scan");
+
+  /**
+   * Reproduksi persis kegagalan production: satu token "Total" pada baris
+   * "Total Modal" terbaca "Totai". Baris itu lalu lolos TOTAL_PREFIX, dihitung
+   * sebagai baris detail, dan section Modal terjumlah DUA KALI —
+   * 2 x 1.996.708.281,78 = 3.993.416.563,56, angka yang benar-benar muncul di
+   * layar pengguna.
+   */
+  const index = fixture.tokens.findIndex((t, i) => t.page === 2 && t.text === "Total" && fixture.tokens[i + 1]?.text === "Modal");
+  const tokens = fixture.tokens.map((token, i) => (i === index ? { ...token, text: "Totai" } : token));
+  const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "balance-sheet" });
+
+  test("yang dilaporkan adalah percobaan TERBAIK, bukan yang terakhir dicoba", () => {
+    assert.ok(result.status === "rejected");
+    // offset 0 gagal 1 cek, offset 1 gagal 3. Sebelum perbaikan ini yang tampil
+    // di layar adalah offset 1 — tiga selisih raksasa yang tidak satu pun
+    // menunjuk ke sebab sebenarnya.
+    assert.deepEqual(result.attempts.map((a) => [a.rowOffset, a.failedChecks.length]), [[0, 1], [1, 3]]);
+    assert.equal(result.bestAttempt?.rowOffset, 0);
+    assert.equal(result.bestAttempt?.failedChecks.length, 1);
+  });
+
+  test("baris biang keladinya ikut disebut, lengkap dengan nilainya", () => {
+    assert.ok(result.status === "rejected");
+    const check = result.bestAttempt?.failedChecks[0];
+    assert.ok(check);
+    assert.equal(check.label, "Total Kewajiban dan Modal");
+    assertAmount(check.actual, 3993416563.56, "jumlah detail section Modal");
+    // Inilah yang dulu tidak ada: nama baris yang membuat jumlahnya dobel.
+    const culprit = check.contributors.find((line) => /Totai Modal/.test(line.label));
+    assert.ok(culprit, `baris penyebab tidak disebut: ${JSON.stringify(check.contributors)}`);
+    assertAmount(culprit.value, 1996708281.78, "Totai Modal");
+    assert.match(result.reason, /Totai Modal/);
+    assert.match(result.reason, /nominal sebaris dengan label/);
+  });
+
+  test("dokumen yang lolos pun membawa daftar baris tiap ceknya", () => {
+    for (const kind of ["profit-loss", "balance-sheet", "cashflow"] as const) {
+      const ok = parseFinancialReport(fixture.tokens, { rowTolerance: fixture.rowTolerance, kind });
+      assert.ok(ok.status === "ok");
+      assert.equal(ok.checks.every((c) => c.contributors.length > 0), true, `${kind}: ada cek tanpa daftar baris`);
+      // Daftarnya harus benar-benar menjumlah ke `actual`, bukan sekadar hiasan.
+      for (const check of ok.checks) {
+        const sum = check.contributors.reduce((total, line) => total + line.value, 0);
+        assert.ok(Math.abs(sum - check.actual) < 0.005, `${kind} / ${check.label}: ${sum} != ${check.actual}`);
+      }
+    }
+  });
+});
+
 describe("laporan yang tidak ada di berkas dibedakan dari yang ditolak", () => {
   const fixture = loadFixture("mapping-laba-rugi-mei-2026-digital");
 

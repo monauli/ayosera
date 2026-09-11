@@ -80,6 +80,15 @@ export type FinancialLine = {
 /** Baris hasil parsing PDF: FinancialLine plus halaman asalnya. */
 export type MappingLine = FinancialLine & { page: number };
 
+/**
+ * Satu baris yang ikut membentuk angka `actual` sebuah cek.
+ *
+ * `value` adalah KONTRIBUSI baris itu terhadap `actual`, bukan selalu nilai
+ * tercetaknya: pada rantai laba bersih baris biaya menyumbang negatif. Jadi
+ * daftar ini selalu bisa dijumlah dengan mata dan mendarat tepat di `actual`.
+ */
+export type ReconciliationContributor = { code: string | null; label: string; value: number };
+
 export type ReconciliationCheck = {
   kind: "section" | "final";
   label: string;
@@ -88,6 +97,17 @@ export type ReconciliationCheck = {
   difference: number;
   tolerance: number;
   passed: boolean;
+  /**
+   * Baris yang ikut dijumlah jadi `actual`.
+   *
+   * Ada HANYA untuk diagnosis — tidak pernah dipakai menghitung apa pun.
+   * Tanpa ini sebuah penolakan cuma memberi selisih tanpa menunjuk baris
+   * mana yang salah, dan itu terbukti mahal: satu label "Total Modal" yang
+   * terbaca "Totai Modal" membuat baris itu terhitung sebagai detail
+   * sehingga section Modal terjumlah DUA KALI, dan yang terlihat di layar
+   * hanya angka selisih raksasa tanpa petunjuk asalnya.
+   */
+  contributors: readonly ReconciliationContributor[];
 };
 
 export type MappingParseResult =
@@ -112,6 +132,16 @@ export type MappingParseResult =
       reason: string;
       /** Hasil rekonsiliasi tiap offset yang dicoba, untuk diagnosis. */
       attempts: { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] }[];
+      /**
+       * Percobaan yang PALING DEKAT benar — paling sedikit cek gagal, lalu
+       * selisih terbesarnya paling kecil.
+       *
+       * Inilah yang harus ditampilkan, bukan percobaan terakhir. Terbukti di
+       * production: Neraca gagal 1 cek pada offset 0 dan 3 cek pada offset 1,
+       * dan yang tampil di layar justru diagnosa offset 1 — angka-angka yang
+       * sama sekali tidak menunjuk ke masalah sebenarnya.
+       */
+      bestAttempt?: { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] };
       /**
        * true bila laporan ini memang TIDAK ADA di berkas — bukan ada tapi
        * angkanya tidak bisa dipercaya. Dibedakan supaya PDF yang hanya
@@ -680,6 +710,7 @@ export function reconcileSubtotals(
       difference: sum - subtotal,
       tolerance,
       passed: Math.abs(sum - subtotal) <= tolerance,
+      contributors: sectionDetails.map((detail) => ({ code: detail.code, label: detail.label, value: detail.value ?? 0 })),
     });
     sectionDetails = [];
   }
@@ -697,12 +728,13 @@ export function reconcileSubtotals(
  * lib/mapping-excel-parser.ts.
  */
 export function reconcileNetProfitChain(lines: readonly FinancialLine[]): ReconciliationCheck {
-  const runningBalance = lines
+  const contributors = lines
     .filter((line) => line.kind === "subtotal")
-    .reduce((balance, line) => balance + (EXPENSE_LABEL.test(line.label) ? -(line.value ?? 0) : line.value ?? 0), 0);
+    .map((line) => ({ code: line.code, label: line.label, value: EXPENSE_LABEL.test(line.label) ? -(line.value ?? 0) : line.value ?? 0 }));
+  const runningBalance = contributors.reduce((balance, line) => balance + line.value, 0);
   const netProfit = lines.find((line) => NET_PROFIT_LABEL.test(line.label));
   if (!netProfit) {
-    return { kind: "final", label: "Laba Bersih (tidak ditemukan)", expected: Number.NaN, actual: runningBalance, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false };
+    return { kind: "final", label: "Laba Bersih (tidak ditemukan)", expected: Number.NaN, actual: runningBalance, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false, contributors };
   }
   const printed = netProfit.value ?? 0;
   return {
@@ -713,6 +745,7 @@ export function reconcileNetProfitChain(lines: readonly FinancialLine[]): Reconc
     difference: runningBalance - printed,
     tolerance: FINAL_TOLERANCE,
     passed: Math.abs(runningBalance - printed) <= FINAL_TOLERANCE,
+    contributors,
   };
 }
 
@@ -728,9 +761,14 @@ function findLineByLabel(lines: readonly FinancialLine[], pattern: RegExp): Fina
  * periode 2025-11 tidak punya Saldo Kas Awal (bulan pertama, belum ada saldo
  * sebelumnya), jadi periode itu ditolak alih-alih diterima tanpa verifikasi.
  */
-function identityCheck(label: string, expected: number | undefined, actual: number | undefined): ReconciliationCheck {
+function identityCheck(
+  label: string,
+  expected: number | undefined,
+  actual: number | undefined,
+  contributors: readonly ReconciliationContributor[] = [],
+): ReconciliationCheck {
   if (expected === undefined || actual === undefined) {
-    return { kind: "final", label: `${label} (nilai tidak lengkap untuk periode ini)`, expected: Number.NaN, actual: Number.NaN, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false };
+    return { kind: "final", label: `${label} (nilai tidak lengkap untuk periode ini)`, expected: Number.NaN, actual: Number.NaN, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false, contributors };
   }
   return {
     kind: "final",
@@ -740,7 +778,12 @@ function identityCheck(label: string, expected: number | undefined, actual: numb
     difference: actual - expected,
     tolerance: FINAL_TOLERANCE,
     passed: Math.abs(actual - expected) <= FINAL_TOLERANCE,
+    contributors,
   };
+}
+
+function asContributor(line: FinancialLine | undefined): ReconciliationContributor[] {
+  return line ? [{ code: line.code, label: line.label, value: line.value ?? 0 }] : [];
 }
 
 /**
@@ -761,24 +804,65 @@ function identityCheck(label: string, expected: number | undefined, actual: numb
 export function reconcileFinalIdentity(kind: FinancialSheetKind, lines: readonly FinancialLine[]): ReconciliationCheck {
   if (kind === "profit-loss") return reconcileNetProfitChain(lines);
   if (kind === "balance-sheet") {
+    const liabilitiesAndEquity = findLineByLabel(lines, /^total\s+kewajiban\s+dan\s+modal$/i);
     return identityCheck(
       "Total Aset = Total Kewajiban dan Modal",
       findLineByLabel(lines, /^total\s+aset$/i)?.value ?? undefined,
-      findLineByLabel(lines, /^total\s+kewajiban\s+dan\s+modal$/i)?.value ?? undefined,
+      liabilitiesAndEquity?.value ?? undefined,
+      asContributor(liabilitiesAndEquity),
     );
   }
-  const opening = findLineByLabel(lines, /^saldo\s+kas\s+awal$/i)?.value;
+  const openingLine = findLineByLabel(lines, /^saldo\s+kas\s+awal$/i);
+  const opening = openingLine?.value;
   const closing = findLineByLabel(lines, /^saldo\s+kas\s+akhir$/i)?.value;
-  const activities = lines.filter((line) => line.kind === "subtotal").reduce((sum, line) => sum + (line.value ?? 0), 0);
+  const activityLines = lines.filter((line) => line.kind === "subtotal");
+  const activities = activityLines.reduce((sum, line) => sum + (line.value ?? 0), 0);
   return identityCheck(
     "Saldo Kas Awal + aktivitas = Saldo Kas Akhir",
     closing ?? undefined,
     opening === null || opening === undefined ? undefined : opening + activities,
+    [...asContributor(openingLine), ...activityLines.map((line) => ({ code: line.code, label: line.label, value: line.value ?? 0 }))],
   );
 }
 
 function reconcile(lines: readonly MappingLine[], kind: FinancialSheetKind): ReconciliationCheck[] {
   return [...reconcileSubtotals(lines), reconcileFinalIdentity(kind, lines)];
+}
+
+/** Batas panjang daftar baris di pesan penolakan — cukup untuk menunjuk, tidak sampai jadi dump. */
+const MAX_REPORTED_CONTRIBUTORS = 12;
+
+/** Layout baris dalam bahasa manusia, dipakai di pesan penolakan. */
+function describeRowOffset(rowOffset: 0 | 1): string {
+  return rowOffset === 0 ? "nominal sebaris dengan label" : "nominal tercetak 1 baris di atas label";
+}
+
+type ParseAttempt = { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] };
+
+/**
+ * Percobaan yang paling dekat benar: paling sedikit cek gagal, lalu selisih
+ * terbesarnya paling kecil. Selisih NaN (cek yang tidak bisa dijalankan sama
+ * sekali) dihitung paling buruk.
+ */
+function pickBestAttempt(attempts: readonly ParseAttempt[]): ParseAttempt | undefined {
+  const worstDifference = (attempt: ParseAttempt): number =>
+    attempt.failedChecks.reduce(
+      (worst, check) => Math.max(worst, Number.isNaN(check.difference) ? Number.POSITIVE_INFINITY : Math.abs(check.difference)),
+      0,
+    );
+  return [...attempts].sort((a, b) => a.failedChecks.length - b.failedChecks.length || worstDifference(a) - worstDifference(b))[0];
+}
+
+/** Satu kalimat per cek gagal, lengkap dengan baris yang ikut dijumlah. */
+function describeFailedCheck(check: ReconciliationCheck): string {
+  const head = Number.isNaN(check.difference)
+    ? `${check.label}: tidak bisa diperiksa`
+    : `${check.label}: hasil hitung ${check.actual} vs tercetak ${check.expected} (selisih ${check.difference})`;
+  if (check.contributors.length === 0) return head;
+  const shown = check.contributors.slice(0, MAX_REPORTED_CONTRIBUTORS);
+  const rest = check.contributors.length - shown.length;
+  const list = shown.map((line) => `${line.code ? `${line.code} ` : ""}${line.label} ${line.value}`).join("; ");
+  return `${head}; baris yang dijumlah: ${list}${rest > 0 ? `; dan ${rest} baris lain` : ""}`;
 }
 
 /**
@@ -814,20 +898,39 @@ export function parseFinancialReport(
     // jadi diperlakukan sebagai kegagalan — bukan diloloskan diam-diam.
     const lastLine = lines[lines.length - 1];
     if (lastLine?.kind === "detail") {
-      failedChecks.push({ kind: "section", label: "(baris detail tanpa subtotal penutup)", expected: Number.NaN, actual: Number.NaN, difference: Number.NaN, tolerance: 0, passed: false });
+      // Baris detail yang menggantung setelah subtotal terakhir — semuanya
+      // ikut disebut, karena justru merekalah yang tidak pernah terperiksa.
+      const closed = lines.findLastIndex((line) => line.kind === "subtotal");
+      const dangling = lines.slice(closed + 1).filter((line) => line.kind === "detail");
+      failedChecks.push({
+        kind: "section",
+        label: "(baris detail tanpa subtotal penutup)",
+        expected: Number.NaN,
+        actual: Number.NaN,
+        difference: Number.NaN,
+        tolerance: 0,
+        passed: false,
+        contributors: dangling.map((line) => ({ code: line.code, label: line.label, value: line.value ?? 0 })),
+      });
     }
     if (failedChecks.length === 0) {
       return { status: "ok", rowOffsetApplied: rowOffset, period, lines, checks };
     }
     attempts.push({ rowOffset, failedChecks });
   }
-  const summary = attempts
-    .map((attempt) => `offset ${attempt.rowOffset}: ${attempt.failedChecks.map((c) => `${c.label} selisih ${c.difference}`).join("; ")}`)
-    .join(" | ");
+  const best = pickBestAttempt(attempts);
+  const others = attempts
+    .filter((attempt) => attempt !== best)
+    .map((attempt) => `${describeRowOffset(attempt.rowOffset)} — ${attempt.failedChecks.length} cek gagal`)
+    .join("; ");
+  const diagnosis = best
+    ? `Layout yang paling mendekati: ${describeRowOffset(best.rowOffset)}, ${best.failedChecks.length} cek gagal. ${best.failedChecks.map(describeFailedCheck).join(" | ")}.`
+    : "Tidak ada satu pun percobaan layout yang bisa dijalankan.";
   return {
     status: "rejected",
-    reason: `${REPORT_TITLES[kind]} tidak rekonsiliasi terhadap total yang tercetak, jadi hasil bacanya tidak bisa dipercaya. ${summary}`,
+    reason: `${REPORT_TITLES[kind]} tidak rekonsiliasi terhadap total yang tercetak, jadi hasil bacanya tidak bisa dipercaya. ${diagnosis}${others ? ` Layout lain yang dicoba: ${others}.` : ""}`,
     attempts,
+    bestAttempt: best,
   };
 }
 
