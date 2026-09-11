@@ -16,6 +16,7 @@
 // Jalankan: node --no-warnings --experimental-strip-types --import ./scripts/alias-register.mjs scripts/bootstrap-monthly-snapshot-baseline.ts
 import path from "path";
 import ExcelJS from "exceljs";
+import { cellValue } from "../lib/xlsx-cell.ts";
 import { normalizeItemName, stripGenericCategoryPrefix, type InventoryProductInput } from "../lib/olsera-inventory-monthly-core.ts";
 import { dominantStoreId, lastDayOfMonth, monthlySnapshotDocId, stripDuplicateSuffix } from "../lib/olsera-inventory-monthly-snapshot-core.ts";
 import { fetchMatchingContext, getMongoMonthlySnapshotRepo } from "../lib/olsera-inventory-monthly-snapshot-store.ts";
@@ -52,21 +53,6 @@ type BaselineRow = {
   stockAkhir: number;
 };
 
-/**
- * Nilai sel apa adanya; sel formula (jarang di file baseline ini) memakai
- * hasil terhitungnya. Sel merge yang BUKAN sel jangkar (master) dianggap
- * kosong — exceljs mengisi nilai master ke seluruh sel dalam rentang merge
- * saat dibaca, sedangkan `xlsx` (library lama) hanya menyimpan nilai di sel
- * jangkar. Tanpa ini, baris judul bertitel "Laporan Stock Opname" (merge
- * lebar di baris 1) ikut lolos filter group/name karena kolom B (name) jadi
- * berisi teks judul, bukan kosong seperti pada `xlsx`.
- */
-function cellValue(cell: ExcelJS.Cell): unknown {
-  if (cell.isMerged && cell.master !== cell) return null;
-  const v = cell.value;
-  if (v && typeof v === "object" && "result" in (v as unknown as Record<string, unknown>)) return (v as unknown as { result: unknown }).result;
-  return v;
-}
 
 async function readBaselineRows(): Promise<BaselineRow[]> {
   const workbook = new ExcelJS.Workbook();

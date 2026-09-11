@@ -40,14 +40,22 @@ export type MappingToken = {
 
 export type MappingLineKind = "detail" | "subtotal" | "derived" | "header";
 
-export type MappingLine = {
+/**
+ * Satu baris laporan keuangan, LEPAS dari sumbernya (PDF atau Excel).
+ *
+ * Dipisah dari MappingLine supaya parser Excel (lib/mapping-excel-parser.ts)
+ * bisa memakai pengaman aritmatika yang SAMA PERSIS — lihat
+ * reconcileSubtotals() dan reconcileNetProfitChain() di bawah — tanpa perlu
+ * membawa `page` yang tidak punya arti di spreadsheet, dan tanpa menduplikasi
+ * logic rekonsiliasinya.
+ */
+export type FinancialLine = {
   /** Kode akun 4-6 digit, atau null untuk header/subtotal/baris turunan. */
   code: string | null;
   label: string;
   /** null hanya untuk header tanpa nominal. */
   value: number | null;
   kind: MappingLineKind;
-  page: number;
   /**
    * true bila baris detail punya kode akun tapi nominalnya tidak terbaca
    * sama sekali lalu diasumsikan 0. Terjadi nyata pada fixture Feb-2026:
@@ -57,6 +65,9 @@ export type MappingLine = {
    */
   assumedZero: boolean;
 };
+
+/** Baris hasil parsing PDF: FinancialLine plus halaman asalnya. */
+export type MappingLine = FinancialLine & { page: number };
 
 export type ReconciliationCheck = {
   kind: "section" | "final";
@@ -119,13 +130,20 @@ export const SCAN_RENDER_SCALE = 4.2;
 const TRUNCATION_TOLERANCE_PER_LINE = 1;
 
 /** Subtotal membawa desimal penuh, jadi rantai subtotal -> laba bersih harus eksak. */
-const FINAL_TOLERANCE = 0.05;
+export const FINAL_TOLERANCE = 0.05;
 
 const ACCOUNT_CODE = /^\d{4,6}$/;
 const DASH = /^[-–—]$/;
-const TOTAL_PREFIX = /^total\b/i;
+// "Jumlah" dipakai sheet Neraca di fixture Excel ("Jumlah Aset Lancar");
+// PDF laba rugi selalu "Total". Satu regex untuk kedua sumber.
+const TOTAL_PREFIX = /^(total|jumlah)\b/i;
 const EXPENSE_LABEL = /\b(biaya|beban)\b/i;
 const NET_PROFIT_LABEL = /^laba\s*bersih$/i;
+
+/** Label penutup section (subtotal), dipakai juga parser Excel. */
+export function isSubtotalLabel(label: string): boolean {
+  return TOTAL_PREFIX.test(label.trim());
+}
 
 /**
  * Baca nominal keuangan dari satu token, menangani kedua locale yang dipakai
@@ -379,10 +397,20 @@ function scopeToProfitAndLoss(lines: readonly MappingLine[]): MappingLine[] {
  * Cek 2 yang membuat kesalahan di satu section tidak bisa saling meniadakan
  * dengan kesalahan di section lain.
  */
-function reconcile(lines: readonly MappingLine[]): ReconciliationCheck[] {
+export function reconcileSubtotals(
+  lines: readonly FinancialLine[],
+  /**
+   * Toleransi per baris detail. Default-nya untuk sumber PDF, yang memotong
+   * desimal di baris detail — lihat TRUNCATION_TOLERANCE_PER_LINE.
+   *
+   * Sumber Excel WAJIB mengirim 0: spreadsheet menyimpan nilai presisi penuh,
+   * jadi tidak ada galat pemotongan yang perlu dimaafkan, dan toleransi
+   * warisan PDF di sana hanya membutakan pengaman terhadap selisih kecil.
+   */
+  tolerancePerLine: number = TRUNCATION_TOLERANCE_PER_LINE,
+): ReconciliationCheck[] {
   const checks: ReconciliationCheck[] = [];
-  let sectionDetails: MappingLine[] = [];
-  let runningBalance = 0;
+  let sectionDetails: FinancialLine[] = [];
   for (const line of lines) {
     if (line.kind === "detail") {
       sectionDetails.push(line);
@@ -391,7 +419,7 @@ function reconcile(lines: readonly MappingLine[]): ReconciliationCheck[] {
     if (line.kind !== "subtotal") continue;
     const sum = sectionDetails.reduce((total, detail) => total + (detail.value ?? 0), 0);
     const subtotal = line.value ?? 0;
-    const tolerance = Math.max(FINAL_TOLERANCE, sectionDetails.length * TRUNCATION_TOLERANCE_PER_LINE);
+    const tolerance = Math.max(FINAL_TOLERANCE, sectionDetails.length * tolerancePerLine);
     checks.push({
       kind: "section",
       label: line.label,
@@ -401,29 +429,43 @@ function reconcile(lines: readonly MappingLine[]): ReconciliationCheck[] {
       tolerance,
       passed: Math.abs(sum - subtotal) <= tolerance,
     });
-    runningBalance += EXPENSE_LABEL.test(line.label) ? -subtotal : subtotal;
     sectionDetails = [];
   }
+  return checks;
+}
+
+/**
+ * Cek 2 untuk laporan LABA RUGI: rantai subtotal (pendapatan positif, biaya
+ * negatif) harus mendarat tepat di angka "Laba Bersih" yang tercetak. Ini yang
+ * membuat kesalahan di satu section tidak bisa saling meniadakan dengan
+ * kesalahan di section lain.
+ *
+ * Neraca dan Arus Kas punya identitas aritmatikanya sendiri (Total Aset =
+ * Total Kewajiban dan Modal; saldo awal + arus = saldo akhir) — lihat
+ * lib/mapping-excel-parser.ts.
+ */
+export function reconcileNetProfitChain(lines: readonly FinancialLine[]): ReconciliationCheck {
+  const runningBalance = lines
+    .filter((line) => line.kind === "subtotal")
+    .reduce((balance, line) => balance + (EXPENSE_LABEL.test(line.label) ? -(line.value ?? 0) : line.value ?? 0), 0);
   const netProfit = lines.find((line) => NET_PROFIT_LABEL.test(line.label));
   if (!netProfit) {
-    return [
-      ...checks,
-      { kind: "final", label: "Laba Bersih (tidak ditemukan)", expected: Number.NaN, actual: runningBalance, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false },
-    ];
+    return { kind: "final", label: "Laba Bersih (tidak ditemukan)", expected: Number.NaN, actual: runningBalance, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false };
   }
   const printed = netProfit.value ?? 0;
-  return [
-    ...checks,
-    {
-      kind: "final",
-      label: netProfit.label,
-      expected: printed,
-      actual: runningBalance,
-      difference: runningBalance - printed,
-      tolerance: FINAL_TOLERANCE,
-      passed: Math.abs(runningBalance - printed) <= FINAL_TOLERANCE,
-    },
-  ];
+  return {
+    kind: "final",
+    label: netProfit.label,
+    expected: printed,
+    actual: runningBalance,
+    difference: runningBalance - printed,
+    tolerance: FINAL_TOLERANCE,
+    passed: Math.abs(runningBalance - printed) <= FINAL_TOLERANCE,
+  };
+}
+
+function reconcile(lines: readonly MappingLine[]): ReconciliationCheck[] {
+  return [...reconcileSubtotals(lines), reconcileNetProfitChain(lines)];
 }
 
 /**

@@ -1,0 +1,2564 @@
+{
+ "source": "tmp/fixtures/NEW - Laporan Keuangan Batam City Padel.xlsx",
+ "sheets": [
+  {
+   "name": "Balance Sheet fokus neraca",
+   "kind": "balance-sheet",
+   "rows": [
+    {
+     "row": 1,
+     "label": "PROJECT : BATAM CITY PADEL CLUB",
+     "bold": true,
+     "cells": [
+      "PROJECT : BATAM CITY PADEL CLUB",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 2,
+     "label": "PADEL OPERATIONS",
+     "bold": true,
+     "cells": [
+      "PADEL OPERATIONS",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 3,
+     "label": "STATEMENT OF PROFIT OR LOSS AND OTHER COMPREHENSIVE INCOME",
+     "bold": true,
+     "cells": [
+      "STATEMENT OF PROFIT OR LOSS AND OTHER COMPREHENSIVE INCOME",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 4,
+     "label": "November 2025 through Juli 2026",
+     "bold": true,
+     "cells": [
+      "November 2025 through Juli 2026",
+      2025,
+      null,
+      2026,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 5,
+     "label": "In Rp.",
+     "bold": true,
+     "cells": [
+      "In Rp.",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 6,
+     "label": "Keterangan",
+     "bold": true,
+     "cells": [
+      "Keterangan",
+      "2025-11-30T00:00:00.000Z",
+      "2025-12-31T00:00:00.000Z",
+      "2026-01-31T00:00:00.000Z",
+      "2026-02-28T00:00:00.000Z",
+      "2026-03-31T00:00:00.000Z",
+      "2026-04-30T00:00:00.000Z",
+      "2026-05-31T00:00:00.000Z",
+      "2026-06-30T00:00:00.000Z",
+      "2026-07-31T00:00:00.000Z",
+      null
+     ]
+    },
+    {
+     "row": 7,
+     "label": "ASET",
+     "bold": true,
+     "cells": [
+      "ASET",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 9,
+     "label": "ASET LANCAR",
+     "bold": true,
+     "cells": [
+      "ASET LANCAR",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 10,
+     "label": "Kas dan Bank",
+     "bold": false,
+     "cells": [
+      "Kas dan Bank",
+      627364614.35,
+      514984631.59,
+      448625339.61,
+      300755160.64,
+      238664331.31,
+      346987623.54,
+      594209800.29,
+      571006178.62,
+      693694820.92,
+      null
+     ]
+    },
+    {
+     "row": 11,
+     "label": "Piutang Sewa Lapangan",
+     "bold": false,
+     "cells": [
+      "Piutang Sewa Lapangan",
+      null,
+      null,
+      null,
+      4250000,
+      4600000,
+      8930000,
+      24110000,
+      9163000,
+      5165000,
+      null
+     ]
+    },
+    {
+     "row": 12,
+     "label": "Persedian barang dagang",
+     "bold": false,
+     "cells": [
+      "Persedian barang dagang",
+      null,
+      72994375,
+      79537067,
+      80812643.14,
+      96173621.39,
+      92121480.83,
+      91408341.32,
+      91143322.39,
+      101205059.04,
+      null
+     ]
+    },
+    {
+     "row": 13,
+     "label": "Peralatan",
+     "bold": false,
+     "cells": [
+      "Peralatan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 14,
+     "label": "Akumulasi penyusutan peralatan",
+     "bold": false,
+     "cells": [
+      "Akumulasi penyusutan peralatan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 15,
+     "label": "Beban dibayar dimuka",
+     "bold": false,
+     "cells": [
+      "Beban dibayar dimuka",
+      null,
+      5000000,
+      5000000,
+      5000000,
+      4444448,
+      4305560,
+      10166672,
+      7027784,
+      3888896,
+      null
+     ]
+    },
+    {
+     "row": 16,
+     "label": "Sewa dibayar dimuka",
+     "bold": false,
+     "cells": [
+      "Sewa dibayar dimuka",
+      null,
+      null,
+      null,
+      154000000,
+      119000000,
+      84000000,
+      70000000,
+      35000000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 17,
+     "label": "Biaya Pra Operasional",
+     "bold": false,
+     "cells": [
+      "Biaya Pra Operasional",
+      372490350,
+      906409370,
+      1466216464,
+      1572107617,
+      1745855817,
+      1752074352,
+      1699574352,
+      1668074352,
+      1636574352,
+      null
+     ]
+    },
+    {
+     "row": 18,
+     "label": "PPN Masukan",
+     "bold": false,
+     "cells": [
+      "PPN Masukan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 19,
+     "label": "Jumlah Aset Lancar",
+     "bold": true,
+     "cells": [
+      "Jumlah Aset Lancar",
+      999854964.35,
+      1499388376.59,
+      1999378870.6100001,
+      2116925420.78,
+      2208738217.7,
+      2288419016.37,
+      2489469165.6099997,
+      2381414637.01,
+      2440528127.96,
+      null
+     ]
+    },
+    {
+     "row": 21,
+     "label": "ASET TETAP",
+     "bold": true,
+     "cells": [
+      "ASET TETAP",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 22,
+     "label": "Aset Tetap",
+     "bold": false,
+     "cells": [
+      "Aset Tetap",
+      null,
+      null,
+      null,
+      null,
+      null,
+      25263364,
+      30613364,
+      65532884,
+      73132884,
+      null
+     ]
+    },
+    {
+     "row": 23,
+     "label": "Aset tak berwujud",
+     "bold": false,
+     "cells": [
+      "Aset tak berwujud",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 24,
+     "label": "Akumulasi Penyusutan Aset Tetap",
+     "bold": false,
+     "cells": [
+      "Akumulasi Penyusutan Aset Tetap",
+      null,
+      null,
+      null,
+      null,
+      null,
+      -472698,
+      -1056854,
+      -2368500,
+      -3838479,
+      null
+     ]
+    },
+    {
+     "row": 25,
+     "label": "Akumulasi Penyusutan Aset Tetap",
+     "bold": false,
+     "cells": [
+      "Akumulasi Penyusutan Aset Tetap",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 26,
+     "label": "Jumlah Aset Tidak Lancar",
+     "bold": true,
+     "cells": [
+      "Jumlah Aset Tidak Lancar",
+      null,
+      null,
+      null,
+      null,
+      null,
+      24790666,
+      29556510,
+      63164384,
+      69294405,
+      null
+     ]
+    },
+    {
+     "row": 28,
+     "label": "TOTAL ASET",
+     "bold": true,
+     "cells": [
+      "TOTAL ASET",
+      999854964.35,
+      1499388376.59,
+      1999378870.6100001,
+      2116925420.78,
+      2208738217.7,
+      2313209682.37,
+      2519025675.6099997,
+      2444579021.01,
+      2509822532.96,
+      null
+     ]
+    },
+    {
+     "row": 30,
+     "label": "KEWAJIBAN",
+     "bold": true,
+     "cells": [
+      "KEWAJIBAN",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 31,
+     "label": "Hutang dagang",
+     "bold": false,
+     "cells": [
+      "Hutang dagang",
+      null,
+      null,
+      null,
+      17188500,
+      20315548,
+      12936548,
+      12944548,
+      14250136,
+      4665662,
+      null
+     ]
+    },
+    {
+     "row": 32,
+     "label": "Pendapatan Pickleball",
+     "bold": false,
+     "cells": [
+      "Pendapatan Pickleball",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 33,
+     "label": "Biaya YMH Dibayar",
+     "bold": false,
+     "cells": [
+      "Biaya YMH Dibayar",
+      null,
+      22278300,
+      null,
+      93886639,
+      91217838,
+      80187325,
+      87126320,
+      91181160,
+      91782722,
+      null
+     ]
+    },
+    {
+     "row": 34,
+     "label": "Hutang Pickleball AMP",
+     "bold": false,
+     "cells": [
+      "Hutang Pickleball AMP",
+      null,
+      null,
+      null,
+      9140000,
+      22567000,
+      16493400,
+      30492611,
+      38297000,
+      29000801,
+      null
+     ]
+    },
+    {
+     "row": 35,
+     "label": "Hutang Management Fee",
+     "bold": false,
+     "cells": [
+      "Hutang Management Fee",
+      null,
+      null,
+      null,
+      null,
+      7198583,
+      19381541,
+      33764655,
+      24772861,
+      24772861,
+      null
+     ]
+    },
+    {
+     "row": 36,
+     "label": "Hutang Pajak",
+     "bold": false,
+     "cells": [
+      "Hutang Pajak",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      24723646,
+      27145246,
+      14604000,
+      null
+     ]
+    },
+    {
+     "row": 37,
+     "label": "Hutang Bank",
+     "bold": false,
+     "cells": [
+      "Hutang Bank",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 38,
+     "label": "Pendapatan diterima dimuka",
+     "bold": false,
+     "cells": [
+      "Pendapatan diterima dimuka",
+      null,
+      null,
+      null,
+      null,
+      2650000,
+      9770000,
+      26085000,
+      11536000,
+      21280000,
+      null
+     ]
+    },
+    {
+     "row": 39,
+     "label": "PPN Keluaran",
+     "bold": false,
+     "cells": [
+      "PPN Keluaran",
+      null,
+      null,
+      null,
+      2000,
+      2000,
+      7000,
+      7000,
+      7000,
+      7000,
+      null
+     ]
+    },
+    {
+     "row": 40,
+     "label": "TOTAL KEWAJIBAN",
+     "bold": true,
+     "cells": [
+      "TOTAL KEWAJIBAN",
+      null,
+      22278300,
+      null,
+      120217139,
+      143950969,
+      138775814,
+      215143780,
+      207189403,
+      186113046,
+      null
+     ]
+    },
+    {
+     "row": 42,
+     "label": "MODAL",
+     "bold": true,
+     "cells": [
+      "MODAL",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 43,
+     "label": "Modal",
+     "bold": false,
+     "cells": [
+      "Modal",
+      1000000000,
+      1500000000,
+      2000000000,
+      2000000000,
+      2000000000,
+      2000000000,
+      2000000000,
+      2000000000,
+      2000000000,
+      null
+     ]
+    },
+    {
+     "row": 44,
+     "label": "Prive",
+     "bold": false,
+     "cells": [
+      "Prive",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      -160000000,
+      -160000000,
+      null
+     ]
+    },
+    {
+     "row": 45,
+     "label": "Laba rugi ditahan",
+     "bold": false,
+     "cells": [
+      "Laba rugi ditahan",
+      -145035.65,
+      -611623.41,
+      -621129.39,
+      -3291718.22,
+      64787248.7,
+      174433868.37,
+      303881895.61,
+      303881895.61,
+      397389618.01,
+      null
+     ]
+    },
+    {
+     "row": 46,
+     "label": "Pendapatan periode ini",
+     "bold": false,
+     "cells": [
+      "Pendapatan periode ini",
+      null,
+      -22278300,
+      null,
+      null,
+      null,
+      null,
+      null,
+      93507722.4,
+      86319868.95,
+      null
+     ]
+    },
+    {
+     "row": 47,
+     "label": "TOTAL MODAL",
+     "bold": true,
+     "cells": [
+      "TOTAL MODAL",
+      999854964.35,
+      1477110076.59,
+      1999378870.61,
+      1996708281.78,
+      2064787248.7,
+      2174433868.37,
+      2303881895.61,
+      2237389618.01,
+      2323709486.96,
+      null
+     ]
+    },
+    {
+     "row": 49,
+     "label": "TOTAL KEWAJIBAN DAN MODAL",
+     "bold": true,
+     "cells": [
+      "TOTAL KEWAJIBAN DAN MODAL",
+      999854964.35,
+      1499388376.59,
+      1999378870.61,
+      2116925420.78,
+      2208738217.7,
+      2313209682.37,
+      2519025675.61,
+      2444579021.01,
+      2509822532.96,
+      null
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Profit & Loss fokus laba rugi",
+   "kind": "profit-loss",
+   "rows": [
+    {
+     "row": 1,
+     "label": "PROJECT : BATAM CITY PADEL CLUB",
+     "bold": true,
+     "cells": [
+      "PROJECT : BATAM CITY PADEL CLUB",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 2,
+     "label": "PADEL OPERATIONS",
+     "bold": true,
+     "cells": [
+      "PADEL OPERATIONS",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 3,
+     "label": "STATEMENT OF PROFIT OR LOSS AND OTHER COMPREHENSIVE INCOME",
+     "bold": true,
+     "cells": [
+      "STATEMENT OF PROFIT OR LOSS AND OTHER COMPREHENSIVE INCOME",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 4,
+     "label": "November 2025 through Juli 2026",
+     "bold": true,
+     "cells": [
+      "November 2025 through Juli 2026",
+      2025,
+      null,
+      2026,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 5,
+     "label": "In Rp.",
+     "bold": true,
+     "cells": [
+      "In Rp.",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 6,
+     "label": "Description",
+     "bold": true,
+     "cells": [
+      "Description",
+      "2025-11-30T00:00:00.000Z",
+      "2025-12-31T00:00:00.000Z",
+      "2026-01-31T00:00:00.000Z",
+      "2026-02-28T00:00:00.000Z",
+      "2026-03-31T00:00:00.000Z",
+      "2026-04-30T00:00:00.000Z",
+      "2026-05-31T00:00:00.000Z",
+      "2026-06-30T00:00:00.000Z",
+      "2026-07-31T00:00:00.000Z",
+      null,
+      null
+     ]
+    },
+    {
+     "row": 7,
+     "label": "PENDAPATAN",
+     "bold": true,
+     "cells": [
+      "PENDAPATAN",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 8,
+     "label": "Penjualan",
+     "bold": false,
+     "cells": [
+      "Penjualan",
+      null,
+      null,
+      null,
+      39781000,
+      23837000,
+      31082000,
+      33230000,
+      31878000,
+      31131000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 9,
+     "label": "Pendapatan Courts Fees",
+     "bold": false,
+     "cells": [
+      "Pendapatan Courts Fees",
+      null,
+      null,
+      null,
+      98453500,
+      184835000,
+      227120000,
+      258357500,
+      221835500,
+      211291000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 10,
+     "label": "Penjualan produk LABERS",
+     "bold": false,
+     "cells": [
+      "Penjualan produk LABERS",
+      null,
+      null,
+      null,
+      15033000,
+      13975000,
+      25601000,
+      29720000,
+      27004000,
+      25353000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 11,
+     "label": "Pendapatan Sewa Raket Padel",
+     "bold": false,
+     "cells": [
+      "Pendapatan Sewa Raket Padel",
+      null,
+      null,
+      null,
+      200000,
+      12450000,
+      24220000,
+      28470000,
+      24370000,
+      23490000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 12,
+     "label": "Pendapatan Pickleball AMP",
+     "bold": false,
+     "cells": [
+      "Pendapatan Pickleball AMP",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 13,
+     "label": "Pendapatan Hairwash dan Manicure",
+     "bold": false,
+     "cells": [
+      "Pendapatan Hairwash dan Manicure",
+      null,
+      null,
+      null,
+      40000,
+      320000,
+      240000,
+      330000,
+      80000,
+      240000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 14,
+     "label": "Pendapatan sewa bola + keranjang",
+     "bold": false,
+     "cells": [
+      "Pendapatan sewa bola + keranjang",
+      null,
+      null,
+      null,
+      null,
+      null,
+      1100000,
+      1600000,
+      2100000,
+      1700000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 15,
+     "label": "Penjualan antar cabang",
+     "bold": false,
+     "cells": [
+      "Penjualan antar cabang",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 16,
+     "label": "Layanan biaya penjualan",
+     "bold": false,
+     "cells": [
+      "Layanan biaya penjualan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 17,
+     "label": "Pengiriman penjualan",
+     "bold": false,
+     "cells": [
+      "Pengiriman penjualan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 18,
+     "label": "Potongan penjualan",
+     "bold": false,
+     "cells": [
+      "Potongan penjualan",
+      null,
+      null,
+      null,
+      -584600,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 19,
+     "label": "Loyalitas penjualan",
+     "bold": false,
+     "cells": [
+      "Loyalitas penjualan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 20,
+     "label": "Return penjualan",
+     "bold": false,
+     "cells": [
+      "Return penjualan",
+      null,
+      null,
+      null,
+      -60000,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 21,
+     "label": "Total Pendapatan",
+     "bold": true,
+     "cells": [
+      "Total Pendapatan",
+      null,
+      null,
+      null,
+      152862900,
+      235417000,
+      309363000,
+      351707500,
+      307267500,
+      293205000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 23,
+     "label": "BIAYA POKOK PENJUALAN",
+     "bold": true,
+     "cells": [
+      "BIAYA POKOK PENJUALAN",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 24,
+     "label": "Pembelian",
+     "bold": false,
+     "cells": [
+      "Pembelian",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 25,
+     "label": "Bagi Hasil LABERS",
+     "bold": false,
+     "cells": [
+      "Bagi Hasil LABERS",
+      null,
+      null,
+      null,
+      11955240,
+      11529375,
+      21120825,
+      24519000,
+      22278300,
+      20916225,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 26,
+     "label": "Pembelian antar cabang",
+     "bold": false,
+     "cells": [
+      "Pembelian antar cabang",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 27,
+     "label": "Biaya pengiriman",
+     "bold": false,
+     "cells": [
+      "Biaya pengiriman",
+      null,
+      580000,
+      null,
+      null,
+      142048,
+      100000,
+      120000,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 28,
+     "label": "Return pembelian",
+     "bold": false,
+     "cells": [
+      "Return pembelian",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 29,
+     "label": "Potongan pembelian",
+     "bold": false,
+     "cells": [
+      "Potongan pembelian",
+      null,
+      -90000,
+      null,
+      -142000,
+      -130000,
+      -68000,
+      -162000,
+      -147000,
+      -234000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 30,
+     "label": "Harga pokok penjualan",
+     "bold": false,
+     "cells": [
+      "Harga pokok penjualan",
+      null,
+      null,
+      null,
+      20614923.86,
+      11724102.75,
+      18031081.56,
+      17685139.51,
+      17076971.93,
+      19114065.35,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 31,
+     "label": "Total Biaya Pokok Penjualan",
+     "bold": true,
+     "cells": [
+      "Total Biaya Pokok Penjualan",
+      null,
+      490000,
+      null,
+      32428163.86,
+      23265525.75,
+      39183906.56,
+      42162139.510000005,
+      39208271.93,
+      39796290.35,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 33,
+     "label": "LABA KOTOR",
+     "bold": true,
+     "cells": [
+      "LABA KOTOR",
+      null,
+      -490000,
+      null,
+      120434736.14,
+      212151474.25,
+      270179093.44,
+      309545360.49,
+      268059228.07,
+      253408709.65,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 35,
+     "label": "Biaya Operasional",
+     "bold": true,
+     "cells": [
+      "Biaya Operasional",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 36,
+     "label": "Biaya Seragam Staff",
+     "bold": false,
+     "cells": [
+      "Biaya Seragam Staff",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 37,
+     "label": "Biaya keamanan - Security",
+     "bold": false,
+     "cells": [
+      "Biaya keamanan - Security",
+      null,
+      null,
+      null,
+      8000000,
+      4000000,
+      4000000,
+      4000000,
+      4000000,
+      4000000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 38,
+     "label": "Biaya Sewa",
+     "bold": false,
+     "cells": [
+      "Biaya Sewa",
+      null,
+      null,
+      null,
+      35000000,
+      40000000,
+      45000000,
+      45000000,
+      45300000,
+      45300000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 39,
+     "label": "Amortisasi By Pra Operasional",
+     "bold": false,
+     "cells": [
+      "Amortisasi By Pra Operasional",
+      null,
+      null,
+      null,
+      31500000,
+      31500000,
+      31500000,
+      31500000,
+      31500000,
+      31500000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 40,
+     "label": "Management fee",
+     "bold": false,
+     "cells": [
+      "Management fee",
+      null,
+      null,
+      null,
+      null,
+      7198583,
+      12182958,
+      14383114,
+      10389747,
+      9591097,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 41,
+     "label": "Biaya Listrik",
+     "bold": false,
+     "cells": [
+      "Biaya Listrik",
+      null,
+      null,
+      null,
+      null,
+      null,
+      14782000,
+      15071000,
+      15889000,
+      17225000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 42,
+     "label": "Biaya Air",
+     "bold": false,
+     "cells": [
+      "Biaya Air",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      0,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 43,
+     "label": "Biaya Telpon/Internet",
+     "bold": false,
+     "cells": [
+      "Biaya Telpon/Internet",
+      null,
+      null,
+      null,
+      null,
+      null,
+      1014000,
+      335000,
+      675681,
+      380625,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 44,
+     "label": "Biaya Pajak Daerah",
+     "bold": false,
+     "cells": [
+      "Biaya Pajak Daerah",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      17085857,
+      8872600,
+      8028400,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 45,
+     "label": "Biaya perlengkapan kebersihan",
+     "bold": false,
+     "cells": [
+      "Biaya perlengkapan kebersihan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      1769620,
+      1217500,
+      4640800,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 46,
+     "label": "Biaya perlengkapan salon",
+     "bold": false,
+     "cells": [
+      "Biaya perlengkapan salon",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      657400,
+      917400,
+      531600,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 47,
+     "label": "Biaya Promosi",
+     "bold": false,
+     "cells": [
+      "Biaya Promosi",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      3000000,
+      3000000,
+      3000000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 48,
+     "label": "Biaya Gaji",
+     "bold": false,
+     "cells": [
+      "Biaya Gaji",
+      null,
+      null,
+      null,
+      22689000,
+      22459000,
+      27482995,
+      23834996,
+      28285454,
+      27669305,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 49,
+     "label": "Biaya perlengkapan",
+     "bold": false,
+     "cells": [
+      "Biaya perlengkapan",
+      null,
+      null,
+      null,
+      17059300,
+      13545000,
+      16514010,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 50,
+     "label": "Biaya penyusutan",
+     "bold": false,
+     "cells": [
+      "Biaya penyusutan",
+      null,
+      null,
+      null,
+      8336399,
+      19150670,
+      472698,
+      10793100,
+      14979178,
+      4890368,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 51,
+     "label": "Biaya Transfer",
+     "bold": false,
+     "cells": [
+      "Biaya Transfer",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      584156,
+      1311646,
+      1469979,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 52,
+     "label": "Biaya perbaikan & Renovasi",
+     "bold": false,
+     "cells": [
+      "Biaya perbaikan & Renovasi",
+      null,
+      null,
+      null,
+      null,
+      4952750,
+      199920,
+      6593000,
+      2519529,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 53,
+     "label": "Biaya Maintenance",
+     "bold": false,
+     "cells": [
+      "Biaya Maintenance",
+      null,
+      null,
+      null,
+      null,
+      null,
+      1925000,
+      null,
+      null,
+      2140374,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 54,
+     "label": "Biaya Pengurusan perizinan",
+     "bold": false,
+     "cells": [
+      "Biaya Pengurusan perizinan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 55,
+     "label": "Biaya Konsumsi",
+     "bold": false,
+     "cells": [
+      "Biaya Konsumsi",
+      null,
+      null,
+      null,
+      null,
+      546500,
+      4370200,
+      4245600,
+      4620770,
+      5185800,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 56,
+     "label": "Total Biaya Opersional",
+     "bold": true,
+     "cells": [
+      "Total Biaya Opersional",
+      null,
+      null,
+      null,
+      122584699,
+      143352503,
+      159443781,
+      178852843,
+      173478505,
+      165553348,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 58,
+     "label": "PENDAPATAN BERSIH OPERASIONAL",
+     "bold": true,
+     "cells": [
+      "PENDAPATAN BERSIH OPERASIONAL",
+      null,
+      -490000,
+      null,
+      -2149962.8599999994,
+      68798971.25,
+      110735312.44,
+      130692517.49000001,
+      94580723.07,
+      87855361.65,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 60,
+     "label": "Pendapatan Non Operasional",
+     "bold": true,
+     "cells": [
+      "Pendapatan Non Operasional",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 61,
+     "label": "Pendapatan Lain Lain",
+     "bold": false,
+     "cells": [
+      "Pendapatan Lain Lain",
+      14954.35,
+      60912.24,
+      60494.02,
+      42653.48,
+      43602.17,
+      47505.23,
+      77522.77,
+      80518.33,
+      141580.3,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 62,
+     "label": "Pembulatan",
+     "bold": false,
+     "cells": [
+      "Pembulatan",
+      null,
+      null,
+      null,
+      -2600,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 63,
+     "label": "Code Uniq Penjualan",
+     "bold": false,
+     "cells": [
+      "Code Uniq Penjualan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 64,
+     "label": "Layanan Penjualan",
+     "bold": false,
+     "cells": [
+      "Layanan Penjualan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 65,
+     "label": "Total Pendapatan Non Operasional",
+     "bold": true,
+     "cells": [
+      "Total Pendapatan Non Operasional",
+      14954.35,
+      60912.24,
+      60494.02,
+      40053.48,
+      43602.17,
+      47505.23,
+      77522.77,
+      80518.33,
+      141580.3,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 67,
+     "label": "Biaya Non Operasional",
+     "bold": true,
+     "cells": [
+      "Biaya Non Operasional",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 68,
+     "label": "Pengeluaran Lain Lain",
+     "bold": false,
+     "cells": [
+      "Pengeluaran Lain Lain",
+      160000,
+      37500,
+      70000,
+      560679.45,
+      557701.5,
+      4000,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 69,
+     "label": "Biaya Administrasi Bank",
+     "bold": false,
+     "cells": [
+      "Biaya Administrasi Bank",
+      null,
+      null,
+      null,
+      null,
+      205905,
+      1132198,
+      1322013.02,
+      1153519,
+      1677073,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 70,
+     "label": "Penyesuaian barang",
+     "bold": false,
+     "cells": [
+      "Penyesuaian barang",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 71,
+     "label": "Total Biaya non operasional",
+     "bold": true,
+     "cells": [
+      "Total Biaya non operasional",
+      160000,
+      37500,
+      70000,
+      560679.45,
+      763606.5,
+      1136198,
+      1322013.02,
+      1153519,
+      1677073,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 73,
+     "label": "TOTAL PENDAPATAN NON OPERASIONAL",
+     "bold": true,
+     "cells": [
+      "TOTAL PENDAPATAN NON OPERASIONAL",
+      -145045.65,
+      23412.239999999998,
+      -9505.980000000003,
+      -520625.97,
+      -720004.33,
+      -1088692.77,
+      -1244490.25,
+      -1073000.67,
+      -1535492.7,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 75,
+     "label": "LABA BERSIH",
+     "bold": true,
+     "cells": [
+      "LABA BERSIH",
+      -145045.65,
+      -466587.76,
+      -9505.980000000003,
+      -2670588.829999999,
+      68078966.92,
+      109646619.67,
+      129448027.24000001,
+      93507722.39999999,
+      86319868.95,
+      null,
+      null
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Cashflow Arus kas",
+   "kind": "cashflow",
+   "rows": [
+    {
+     "row": 1,
+     "label": "PROJECT : BATAM CITY PADEL CLUB",
+     "bold": true,
+     "cells": [
+      "PROJECT : BATAM CITY PADEL CLUB",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 2,
+     "label": "PADEL OPERATIONS",
+     "bold": true,
+     "cells": [
+      "PADEL OPERATIONS",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 3,
+     "label": "STATEMENT OF CASHFLOW",
+     "bold": true,
+     "cells": [
+      "STATEMENT OF CASHFLOW ",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 4,
+     "label": "November 2025 through Juli 2026",
+     "bold": true,
+     "cells": [
+      "November 2025 through Juli 2026",
+      2025,
+      null,
+      2026,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 5,
+     "label": "In Rp.",
+     "bold": true,
+     "cells": [
+      "In Rp.",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 6,
+     "label": "Description",
+     "bold": true,
+     "cells": [
+      "Description",
+      "2025-11-30T00:00:00.000Z",
+      "2025-12-31T00:00:00.000Z",
+      "2026-01-31T00:00:00.000Z",
+      "2026-02-28T00:00:00.000Z",
+      "2026-03-31T00:00:00.000Z",
+      "2026-04-30T00:00:00.000Z",
+      "2026-05-31T00:00:00.000Z",
+      "2026-06-30T00:00:00.000Z",
+      "2026-07-31T00:00:00.000Z",
+      null,
+      null
+     ]
+    },
+    {
+     "row": 8,
+     "label": "Aktivitas operasional",
+     "bold": true,
+     "cells": [
+      "Aktivitas operasional",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 9,
+     "label": "Penerimaan dari pelanggan",
+     "bold": false,
+     "cells": [
+      "Penerimaan dari pelanggan",
+      null,
+      null,
+      null,
+      157752250,
+      251482000,
+      326428000,
+      371942500,
+      328725500,
+      333147000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 10,
+     "label": "Penerimaan/penjualan aset lancar lainnya",
+     "bold": false,
+     "cells": [
+      "Penerimaan/penjualan aset lancar lainnya",
+      -372490350,
+      -538919020,
+      -559807094,
+      -295011153,
+      -205248200,
+      -37718535,
+      -6000000,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 11,
+     "label": "Pembayaran ke pemasok",
+     "bold": false,
+     "cells": [
+      "Pembayaran ke pemasok",
+      null,
+      -73484375,
+      -6542692,
+      -4560000,
+      -106234480,
+      -128893379,
+      -92014325,
+      -137350837,
+      -186773281,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 12,
+     "label": "Biaya operasional",
+     "bold": false,
+     "cells": [
+      "Biaya operasional",
+      null,
+      null,
+      null,
+      -5533300,
+      -1365145,
+      -25140737,
+      -20111508,
+      -18585764,
+      -14549584,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 13,
+     "label": "Pendapatan lain",
+     "bold": false,
+     "cells": [
+      "Pendapatan lain",
+      14964.35,
+      60912.24,
+      60494.02,
+      42703.48,
+      38602.17,
+      47505.23,
+      77522.77,
+      80518.33,
+      141580.3,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 14,
+     "label": "Pengeluaran lain",
+     "bold": false,
+     "cells": [
+      "Pengeluaran lain",
+      -160000,
+      -37500,
+      -70000,
+      -560679.45,
+      -763606.5,
+      -1136198,
+      -1322013.02,
+      -1153519,
+      -1677073,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 15,
+     "label": "Total Aktivasi opersional",
+     "bold": true,
+     "cells": [
+      "Total Aktivasi opersional",
+      -372635385.65,
+      -612379982.76,
+      -566359291.98,
+      -147870178.97,
+      -62090829.33,
+      133586656.22999999,
+      252572176.75,
+      171715898.33,
+      130288642.3,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 17,
+     "label": "Aktiviasi Investasi",
+     "bold": true,
+     "cells": [
+      "Aktiviasi Investasi",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 18,
+     "label": "Pendapatan/pembelian aset tetap",
+     "bold": false,
+     "cells": [
+      "Pendapatan/pembelian aset tetap",
+      null,
+      null,
+      null,
+      null,
+      null,
+      -25263364,
+      -5350000,
+      -34919520,
+      -7600000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 19,
+     "label": "Pendapatan/pembelian aset tidak tetap",
+     "bold": false,
+     "cells": [
+      "Pendapatan/pembelian aset tidak tetap",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 20,
+     "label": "Aktivasi Investivasi lain",
+     "bold": false,
+     "cells": [
+      "Aktivasi Investivasi lain",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 21,
+     "label": "Total Aktivitas Investasi",
+     "bold": true,
+     "cells": [
+      "Total Aktivitas Investasi",
+      null,
+      null,
+      null,
+      null,
+      null,
+      -25263364,
+      -5350000,
+      -34919520,
+      -7600000,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 23,
+     "label": "Aktivitas Pendanaan",
+     "bold": true,
+     "cells": [
+      "Aktivitas Pendanaan",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 24,
+     "label": "Pembayaran/penerimaan pinjaman",
+     "bold": false,
+     "cells": [
+      "Pembayaran/penerimaan pinjaman",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 25,
+     "label": "Penambahan/pengambilan modal",
+     "bold": false,
+     "cells": [
+      "Penambahan/pengambilan modal",
+      1000000000,
+      500000000,
+      500000000,
+      null,
+      null,
+      null,
+      null,
+      -160000000,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 26,
+     "label": "Total Aktivitas Pendanaan",
+     "bold": true,
+     "cells": [
+      "Total Aktivitas Pendanaan",
+      1000000000,
+      500000000,
+      500000000,
+      null,
+      null,
+      null,
+      null,
+      -160000000,
+      null,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 27,
+     "label": "Kenaikan/penuruan kas",
+     "bold": true,
+     "cells": [
+      "Kenaikan/penuruan kas",
+      627364614.35,
+      -112379982.75999999,
+      -66359291.98000002,
+      -147870178.97,
+      -62090829.33,
+      108323292.22999999,
+      247222176.75,
+      -23203621.669999987,
+      122688642.3,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 28,
+     "label": "SALDO KAS AWAL",
+     "bold": true,
+     "cells": [
+      "SALDO KAS AWAL",
+      null,
+      627364614.35,
+      514984631.59000003,
+      448625339.61,
+      300755160.64,
+      238664331.31,
+      346987623.53999996,
+      594209800.29,
+      571006178.62,
+      null,
+      null
+     ]
+    },
+    {
+     "row": 29,
+     "label": "SALDO KAS AKHIR",
+     "bold": true,
+     "cells": [
+      "SALDO KAS AKHIR",
+      627364614.35,
+      514984631.59000003,
+      448625339.61,
+      300755160.64,
+      238664331.31,
+      346987623.53999996,
+      594209800.29,
+      571006178.62,
+      693694820.92,
+      null,
+      null
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -74,9 +74,19 @@ async function fromScannedPdf(path: string, name: string): Promise<void> {
   }
 }
 
+/** Model sheet Excel (label + tebal + nilai per kolom), lewat pembaca produksi. */
+async function fromWorkbook(path: string, name: string): Promise<void> {
+  const { readFinancialWorkbook } = await import("../lib/mapping-excel-parser");
+  const sheets = await readFinancialWorkbook(readFileSync(path));
+  mkdirSync(OUT_DIR, { recursive: true });
+  writeFileSync(`${OUT_DIR}/${name}.json`, `${JSON.stringify({ source: path, sheets }, null, 1)}\n`);
+  console.log(`${OUT_DIR}/${name}.json  sheets=${sheets.map((s) => `${s.name} (${s.kind}, ${s.rows.length} baris)`).join(", ")}`);
+}
+
 async function main(): Promise<void> {
   await fromScannedPdf("tmp/fixtures/Laporan Keuangan 0226.pdf", "mapping-laba-rugi-feb-2026-scan");
   await fromDigitalPdf("doc export/Laporan Laba Rugi-Mei-2026.pdf", "mapping-laba-rugi-mei-2026-digital");
+  await fromWorkbook("tmp/fixtures/NEW - Laporan Keuangan Batam City Padel.xlsx", "mapping-laporan-keuangan-excel");
 }
 
 void main();
