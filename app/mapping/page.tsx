@@ -14,7 +14,7 @@
 // terlihat masuk akal. Penolakan itu ditampilkan lengkap dengan selisih tiap
 // cek, bukan sekadar "gagal".
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Moon, Sun } from "lucide-react";
 import { analyzeFinancialPdf, type MappingParseResult, type FinancialLine, type ReconciliationCheck } from "@/lib/mapping-parser";
@@ -284,6 +284,9 @@ export default function MappingPage() {
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; result: MappingParseResult } | null>(null);
   const [showEmptyRows, setShowEmptyRows] = useState(false);
+  // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
+  const excelInputId = useId();
+  const pdfInputId = useId();
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -507,8 +510,17 @@ export default function MappingPage() {
             <p>Satu berkas berisi semua bulan. Pilih periode di atas untuk berpindah bulan tanpa unggah ulang.</p>
           </div>
           <div className="mapping-upload">
+            {/* Input asli disembunyikan (tetap fokusable via keyboard) dan
+                dipicu lewat <label htmlFor> bergaya tombol — pola yang sama
+                dengan app/reconciliation/page.tsx. Menampilkan input file
+                native apa adanya TIDAK bisa dipakai di sini: Preflight
+                Tailwind v4 menghapus padding, border, dan background
+                ::file-selector-button, sehingga area klik yang benar-benar
+                membuka dialog mengecil jadi sebatas teksnya saja. */}
             <input
+              id={excelInputId}
               type="file"
+              className="recon-file-input-hidden"
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               disabled={excelBusy}
               onChange={(event) => {
@@ -517,6 +529,9 @@ export default function MappingPage() {
                 event.currentTarget.value = "";
               }}
             />
+            <label htmlFor={excelInputId} className={`recon-button secondary recon-file-trigger${excelBusy ? " is-disabled" : ""}`}>
+              <FileSpreadsheet size={14} /> Pilih File Excel
+            </label>
             {excelBusy && (
               <span className="mapping-note">
                 <Loader2 className="spin" style={{ width: ".9rem", verticalAlign: "-.15rem" }} /> Mengunggah dan membaca...
@@ -544,7 +559,9 @@ export default function MappingPage() {
           </div>
           <div className="mapping-upload">
             <input
+              id={pdfInputId}
               type="file"
+              className="recon-file-input-hidden"
               accept="application/pdf"
               disabled={pdfBusy}
               onChange={(event) => {
@@ -553,6 +570,9 @@ export default function MappingPage() {
                 event.currentTarget.value = "";
               }}
             />
+            <label htmlFor={pdfInputId} className={`recon-button secondary recon-file-trigger${pdfBusy ? " is-disabled" : ""}`}>
+              <FileText size={14} /> Pilih File PDF
+            </label>
             {pdfBusy && (
               <span className="mapping-note">
                 <Loader2 className="spin" style={{ width: ".9rem", verticalAlign: "-.15rem" }} /> {pdfStatus || "Membaca..."}

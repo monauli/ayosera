@@ -1198,7 +1198,6 @@ th[scope],
 .mapping-reject li { border-left:2px solid rgb(225 29 72 / .55); background:rgb(var(--rd-surface) / var(--rd-surface-alpha)); padding:.4rem .5rem; font-size:.72rem; color:rgb(var(--rd-text-secondary)); overflow-wrap:anywhere; }
 .mapping-note { margin:0; color:rgb(var(--rd-text-tertiary)); font-size:.73rem; overflow-wrap:anywhere; }
 .mapping-upload { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
-.mapping-upload input[type="file"] { min-width:0; max-width:100%; color:rgb(var(--rd-text-secondary)); font-size:.75rem; }
 @media (max-width:1100px){ .mapping-panels{grid-template-columns:1fr} }
 @media (max-width:720px){ .mapping-panel{padding:.7rem} .mapping-lines{max-height:16rem} }
 

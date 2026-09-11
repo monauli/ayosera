@@ -201,7 +201,7 @@ const navItems = [
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
   { label: "Rekonsiliasi", display: "Rekonsiliasi", icon: ShieldCheck, module: "rekonsiliasi" },
   { label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "audit" },
-  { label: "Mapping", display: "Mapping Laporan Keuangan", icon: Columns2, module: "mapping" },
+  { label: "Mapping", display: "Mapping Keuangan", icon: Columns2, module: "mapping" },
 ];
 
 type SessionUserInfo = {
