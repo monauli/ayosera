@@ -11,15 +11,15 @@ import {
 } from "./mapping-excel-parser.ts";
 
 /**
- * JSON tidak punya tipe tanggal, jadi sel tanggal di fixture tersimpan sebagai
- * string ISO dan dihidupkan lagi di sini. Di produksi ExcelJS langsung
- * mengembalikan Date — reviver ini murni artefak round-trip fixture.
+ * Fixture dimuat APA ADANYA dari JSON, tanpa menghidupkan kembali sel tanggal
+ * jadi Date. Ini disengaja: bentuk itulah yang benar-benar dipakai produksi —
+ * app/api/mapping/upload/route.ts memparse workbook di server lalu mengirim
+ * model barisnya sebagai JSON ke browser, dan JSON mengubah Date jadi string
+ * ISO. Test ini karena itu menguji jalur kawat yang sesungguhnya.
  */
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
-
 function loadSheets(): ExcelReportSheet[] {
   const raw = readFileSync(new URL("./__fixtures__/mapping-laporan-keuangan-excel.json", import.meta.url), "utf8");
-  return (JSON.parse(raw, (_key, value) => (typeof value === "string" && ISO_DATE.test(value) ? new Date(value) : value)) as { sheets: ExcelReportSheet[] }).sheets;
+  return (JSON.parse(raw) as { sheets: ExcelReportSheet[] }).sheets;
 }
 
 const SHEETS = loadSheets();
@@ -67,6 +67,21 @@ describe("deteksi kolom bulan", () => {
     assert.equal(columns.get("2025-11"), 1);
     assert.equal(columns.get("2026-07"), 9);
     assert.equal(columns.size, 9);
+  });
+
+  test("sel tanggal terbaca baik sebagai Date maupun string ISO", () => {
+    // ExcelJS memberi Date; JSON dari route memberi string ISO. Keduanya harus
+    // menghasilkan pemetaan kolom yang sama persis.
+    const asDates: ExcelReportSheet = {
+      ...sheetOf("profit-loss"),
+      rows: sheetOf("profit-loss").rows.map((row) => ({
+        ...row,
+        cells: row.cells.map((cell) => (typeof cell === "string" && /^\d{4}-\d{2}-\d{2}T/.test(cell) ? new Date(cell) : cell)),
+      })),
+    };
+    const fromDates = detectMonthColumns(asDates.rows);
+    assert.equal(fromDates.headerRow, headerRow);
+    assert.deepEqual([...fromDates.columns.entries()].sort(), [...columns.entries()].sort());
   });
 
   test("baris berisi angka tahun telanjang tidak disalahkira sebagai header", () => {

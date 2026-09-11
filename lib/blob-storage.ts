@@ -35,3 +35,19 @@ export async function uploadOmzetPeriodLockAttachment(input: UploadOmzetAttachme
   const result = await put(pathname, input.file, { access: "public", addRandomSuffix: true, contentType: input.file.type });
   return { url: result.url };
 }
+
+export type UploadMappingSourceInput = { storeId: number; kind: "excel" | "pdf"; file: File };
+
+/**
+ * Simpan berkas sumber Modul Mapping (workbook Excel atau laporan PDF).
+ *
+ * Dipisah per `kind` supaya kedua sumber satu periode tidak pernah saling
+ * menimpa, dan TIDAK memakai periode di pathname: workbook Excel berisi
+ * SELURUH bulan sekaligus, jadi periode bukan bagian identitas berkasnya.
+ * Validasi tipe/ukuran sudah dilakukan route pemanggil — fungsi ini murni I/O.
+ */
+export async function uploadMappingSource(input: UploadMappingSourceInput): Promise<UploadOmzetAttachmentResult> {
+  const pathname = `mapping/${input.kind}/${input.storeId}/${Date.now()}-${sanitizePathnameSegment(input.file.name)}`;
+  const result = await put(pathname, input.file, { access: "public", addRandomSuffix: true, contentType: input.file.type });
+  return { url: result.url };
+}

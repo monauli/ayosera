@@ -105,6 +105,28 @@ function monthKey(date: Date): string {
 }
 
 /**
+ * Sel tanggal, menerima Date MAUPUN string ISO.
+ *
+ * ExcelJS mengembalikan Date sungguhan, tapi model sheet ini melintasi
+ * jaringan: app/api/mapping/upload/route.ts memparse workbook di server lalu
+ * mengirim barisnya sebagai JSON ke browser, dan JSON tidak punya tipe
+ * tanggal — Date berubah jadi string ISO di perjalanan. Menerima keduanya di
+ * sini membuat model tetap JSON-safe tanpa perlu reviver khusus di setiap
+ * pemanggil. Pola ISO cukup spesifik untuk tidak pernah cocok dengan label
+ * akun mana pun.
+ */
+const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+
+function asDateCell(cell: number | string | Date | null): Date | null {
+  if (cell instanceof Date) return cell;
+  if (typeof cell === "string" && ISO_DATE_TIME.test(cell)) {
+    const parsed = new Date(cell);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
+/**
  * Petakan "YYYY-MM" -> index kolom, DARI ISI baris header, bukan dari indeks
  * kolom yang di-hardcode.
  *
@@ -117,10 +139,10 @@ function monthKey(date: Date): string {
 export function detectMonthColumns(rows: readonly ExcelReportRow[]): { headerRow: number; columns: Map<string, number> } {
   for (const row of rows.slice(0, HEADER_SEARCH_DEPTH)) {
     const dated = row.cells
-      .map((cell, index) => ({ cell, index }))
-      .filter((entry): entry is { cell: Date; index: number } => entry.cell instanceof Date);
+      .map((cell, index) => ({ date: asDateCell(cell), index }))
+      .filter((entry): entry is { date: Date; index: number } => entry.date !== null);
     if (dated.length >= 2) {
-      return { headerRow: row.row, columns: new Map(dated.map((entry) => [monthKey(entry.cell), entry.index])) };
+      return { headerRow: row.row, columns: new Map(dated.map((entry) => [monthKey(entry.date), entry.index])) };
     }
   }
   return { headerRow: 0, columns: new Map() };

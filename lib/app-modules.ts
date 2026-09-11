@@ -48,6 +48,13 @@ export function resolveAppRole(email: string, role: unknown): AppRole {
 // dicentang/dicabut lewat menu Pengguna seperti modul lain, TIDAK auto-granted
 // via modul lain (beda dari "rekonsiliasi") — default tetap tidak memiliki akses.
 //
+// "mapping" (Modul Mapping Laporan Keuangan) membandingkan laporan keuangan
+// versi Excel dengan versi PDF Olsera. Ditambahkan PALING AKHIR dengan alasan
+// yang sama seperti modul-modul di atas: urutan/nilai module yang sudah
+// dipakai user existing tidak boleh bergeser. TIDAK auto-granted lewat modul
+// lain (beda dari "rekonsiliasi") — hanya supervisor yang otomatis
+// mendapatkannya, user biasa harus diberi eksplisit lewat Manajemen Pengguna.
+//
 // "kunci-rekonsiliasi-omset" mengatur akses ke aksi Kunci/Buka Kunci Periode
 // Rekonsiliasi Omset (app/api/reconciliation/court-revenue/[period]/finalization/lock
 // & unlock), sebelumnya wajib supervisor — sekarang bisa didelegasikan lewat modul ini.
@@ -59,6 +66,7 @@ export const APP_MODULES = [
   "rekonsiliasi",
   "audit",
   "kunci-rekonsiliasi-omset",
+  "mapping",
 ] as const;
 export type AppModule = (typeof APP_MODULES)[number];
 

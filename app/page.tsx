@@ -14,6 +14,7 @@ import {
   CalendarRange,
   CheckCircle2,
   ChevronDown,
+  Columns2,
   DatabaseZap,
   FileSpreadsheet,
   LayoutDashboard,
@@ -200,6 +201,7 @@ const navItems = [
   { label: "Webhook", display: "Webhook", icon: Webhook, module: "webhook" },
   { label: "Rekonsiliasi", display: "Rekonsiliasi", icon: ShieldCheck, module: "rekonsiliasi" },
   { label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "audit" },
+  { label: "Mapping", display: "Mapping Laporan Keuangan", icon: Columns2, module: "mapping" },
 ];
 
 type SessionUserInfo = {
@@ -2160,6 +2162,9 @@ export default function DashboardPage() {
           activeNav={activeNav}
           onSelect={(nav) => {
             if (nav === "Rekonsiliasi") { window.location.assign("/reconciliation"); return; }
+            // Mapping punya halaman sendiri (2 panel, butuh lebar penuh),
+            // bukan tab di dalam shell ini — sama seperti Rekonsiliasi.
+            if (nav === "Mapping") { window.location.assign("/mapping"); return; }
             setActiveNav(nav);
             if (!window.matchMedia("(min-width: 1024px)").matches) setDrawerOpen(false);
           }}

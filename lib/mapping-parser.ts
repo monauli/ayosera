@@ -509,9 +509,61 @@ export function parseFinancialReport(
 }
 
 // --- Jalur I/O (browser). Tidak pernah dieksekusi oleh test node. ---
+//
+// Tipe pdf.js diambil lewat `typeof import()` supaya tetap type-only dan
+// terhapus saat runtime — inti murni di atas tidak ikut menarik pdfjs-dist.
+// Pola sama dengan lib/reconciliation-berita-acara-client-ocr.ts.
+type PdfjsModule = typeof import("pdfjs-dist");
+type PdfDocumentProxy = Awaited<ReturnType<PdfjsModule["getDocument"]>>["promise"] extends Promise<infer T> ? T : never;
 
 /** Toleransi baris untuk text layer pdf.js — sama dengan groupPdfTextItemsIntoLines. */
 export const DIGITAL_ROW_TOLERANCE = 2.5;
+
+/** Text layer di bawah panjang ini dianggap tidak ada (PDF hasil scan). */
+const MIN_TEXT_LAYER_LENGTH = 20;
+
+export type PdfAnalysisSource = "pdf-text-layer" | "pdf-scanned-ocr";
+
+/**
+ * Entry point BROWSER untuk membaca satu berkas PDF laporan keuangan.
+ *
+ * Pola sama dengan lib/inventory-ba-client.ts: coba text layer dulu, jatuh ke
+ * OCR hanya kalau text layer benar-benar tidak ada. Bedanya, di sini jalur OCR
+ * BUKAN fail-safe kosong melainkan jalur penuh — rekonstruksi baris dari
+ * bounding box sudah ada (lihat groupTokensIntoRows), dan hasilnya tetap
+ * dijaga rekonsiliasi aritmatika yang sama.
+ *
+ * Dipanggil hanya dari browser: jalur scan merender halaman ke
+ * HTMLCanvasElement, yang tidak ada di serverless Vercel tanpa binary native.
+ */
+export async function analyzeFinancialPdf(
+  file: File,
+  onStatus: (status: string) => void = () => {},
+): Promise<{ source: PdfAnalysisSource; result: MappingParseResult }> {
+  onStatus("Membuka berkas PDF...");
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+  try {
+    const doc = await loadingTask.promise;
+    const digital = await extractDigitalTokens(doc);
+    const digitalLength = digital?.reduce((total, token) => total + token.text.length, 0) ?? 0;
+    if (digital && digitalLength >= MIN_TEXT_LAYER_LENGTH) {
+      onStatus("Membaca text layer PDF...");
+      return { source: "pdf-text-layer", result: parseFinancialReport(digital, { rowTolerance: DIGITAL_ROW_TOLERANCE }) };
+    }
+    const scanned = await extractScanTokens(doc, onStatus);
+    if (!scanned) {
+      return {
+        source: "pdf-scanned-ocr",
+        result: { status: "rejected", reason: "Halaman PDF tidak menghasilkan teks apa pun, baik dari text layer maupun OCR.", attempts: [] },
+      };
+    }
+    return { source: "pdf-scanned-ocr", result: parseFinancialReport(scanned.tokens, { rowTolerance: scanned.rowTolerance }) };
+  } finally {
+    await loadingTask.destroy();
+  }
+}
 
 /**
  * Ambil token dari PDF DIGITAL lewat text layer.
@@ -522,9 +574,9 @@ export const DIGITAL_ROW_TOLERANCE = 2.5;
  * cocok, dan dokumen DITOLAK, bukan diterima separuh. Naikkan batas itu kalau
  * ketemu laporan >3 halaman.
  */
-export async function extractDigitalTokens(pdfDocument: unknown): Promise<MappingToken[] | null> {
+export async function extractDigitalTokens(pdfDocument: PdfDocumentProxy): Promise<MappingToken[] | null> {
   const { extractPdfTextLayerItems } = await import("./reconciliation-berita-acara-client-ocr");
-  const items = await extractPdfTextLayerItems(pdfDocument as Parameters<typeof extractPdfTextLayerItems>[0]);
+  const items = await extractPdfTextLayerItems(pdfDocument);
   if (!items) return null;
   // pdf.js: Y membesar KE ATAS. Dibalik supaya sumbu baris seragam dengan OCR.
   return items.map((item) => ({ text: item.str, x: item.x, y: -item.y, page: item.page }));
@@ -535,13 +587,7 @@ export async function extractDigitalTokens(pdfDocument: unknown): Promise<Mappin
  * SCAN_RENDER_SCALE lalu OCR dengan bounding box per kata.
  */
 export async function extractScanTokens(
-  pdfDocument: {
-    numPages: number;
-    getPage: (n: number) => Promise<{
-      getViewport: (o: { scale: number }) => { width: number; height: number };
-      render: (o: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<void> };
-    }>;
-  },
+  pdfDocument: PdfDocumentProxy,
   onStatus: (status: string) => void = () => {},
 ): Promise<{ tokens: MappingToken[]; rowTolerance: number } | null> {
   const [{ createWorker }, { TESSERACT_ASSET_OPTIONS }] = await Promise.all([
@@ -561,7 +607,13 @@ export async function extractScanTokens(
       canvas.height = Math.ceil(viewport.height);
       const context = canvas.getContext("2d");
       if (!context) return null;
-      await page.render({ canvasContext: context, viewport }).promise;
+      // `canvas` WAJIB ikut dikirim di pdfjs-dist 6, bukan hanya canvasContext.
+      // Versi pertama fungsi ini menghilangkannya dan tidak pernah ketahuan
+      // karena jalur scan belum pernah dieksekusi — baru terbongkar saat
+      // halaman Mapping memanggilnya dan tsc memeriksa tipenya. Bentuk
+      // panggilan ini disamakan dengan ocrScannedPdf di
+      // lib/reconciliation-berita-acara-client-ocr.ts yang sudah jalan di produksi.
+      await page.render({ canvas, canvasContext: context, viewport }).promise;
       const { data } = await worker.recognize(canvas, {}, { text: false, blocks: true });
       const blocks = data.blocks as TesseractBlockLike[] | null;
       tokens.push(...flattenOcrWords(blocks, pageNumber));
