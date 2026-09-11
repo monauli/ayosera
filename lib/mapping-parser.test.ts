@@ -2,8 +2,10 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  detectReportPeriod,
   parseFinancialAmount,
   parseFinancialReport,
+  stripLetterhead,
   type MappingLine,
   type MappingToken,
 } from "./mapping-parser.ts";
@@ -137,6 +139,27 @@ describe("parseFinancialReport — fixture Feb-2026 (PDF hasil scan, OCR)", () =
     assert.equal(result.checks.every((c) => c.passed), true);
     assert.equal(result.checks.filter((c) => c.kind === "section").length, 5);
   });
+
+  test("periode terbaca dari kop surat: Feb-26", () => {
+    assert.ok(result.status === "ok");
+    assert.equal(result.period, "2026-02");
+  });
+
+  test("kop surat tidak ikut jadi baris data, dan isi laporan utuh", () => {
+    assert.ok(result.status === "ok");
+    // Nama perusahaan, judul laporan, dan baris periode terbaca OCR sebagai
+    // baris tersendiri ("Li I= BC PADEL CLUB", "La Laporan Laba Rugi", "Ea",
+    // "Feb-26"). Semuanya kop, bukan data.
+    for (const junk of [/BC PADEL CLUB/i, /Laporan Laba Rugi/i, /^Feb-?26$/i, /^Ea$/]) {
+      assert.equal(result.lines.some((l) => junk.test(l.label)), false, `kop ${junk} masih ikut terbaca`);
+    }
+    // Judul section tepat di atas akun pertama BUKAN kop dan harus bertahan.
+    assert.equal(result.lines[0]?.label, "Pendapatan");
+    // Pembersihan tidak boleh mengurangi isi: angka acuan Februari 2026.
+    assert.equal(result.lines.filter((l) => l.kind === "detail").length, 19);
+    assert.equal(result.checks.length, 6);
+    assert.equal(result.checks.every((c) => c.passed), true);
+  });
 });
 
 describe("parseFinancialReport — fixture Mei-2026 (PDF digital, text layer)", () => {
@@ -163,6 +186,11 @@ describe("parseFinancialReport — fixture Mei-2026 (PDF digital, text layer)", 
     const pickleball = findLine(result.lines, "40004");
     assert.equal(pickleball.value, 0);
     assert.equal(pickleball.assumedZero, false);
+  });
+
+  test("periode terbaca dari kop surat: Mei 2026", () => {
+    assert.ok(result.status === "ok");
+    assert.equal(result.period, "2026-05");
   });
 
   test("laporan lintas halaman tersambung dan seluruh cek lulus", () => {
@@ -229,5 +257,69 @@ describe("pengaman aritmatika — dokumen yang tidak rekonsiliasi DITOLAK", () =
     const tokens = fixture.tokens.filter((t) => !/^(Laba|Bersih)$/.test(t.text));
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance });
     assert.equal(result.status, "rejected");
+  });
+});
+
+describe("detectReportPeriod — periode dari kop surat", () => {
+  test("format kop yang benar-benar dipakai kedua fixture", () => {
+    assert.equal(detectReportPeriod(["Feb-26"]), "2026-02");
+    assert.equal(detectReportPeriod(["Mei 2026"]), "2026-05");
+  });
+
+  test("variasi bulan Indonesia dan Inggris, panjang maupun singkat", () => {
+    assert.equal(detectReportPeriod(["Januari 2026"]), "2026-01");
+    assert.equal(detectReportPeriod(["Mar-26"]), "2026-03");
+    assert.equal(detectReportPeriod(["Agt 2026"]), "2026-08");
+    assert.equal(detectReportPeriod(["August 2026"]), "2026-08");
+    assert.equal(detectReportPeriod(["Okt/25"]), "2025-10");
+    // Ejaan lama yang masih muncul di dokumen Indonesia.
+    assert.equal(detectReportPeriod(["Nop-25"]), "2025-11");
+    assert.equal(detectReportPeriod(["Des 2026"]), "2026-12");
+  });
+
+  test("baris kop lain tidak pernah ditebak jadi periode", () => {
+    assert.equal(detectReportPeriod(["Li I= BC PADEL CLUB", "La Laporan Laba Rugi", "Ea"]), null);
+    assert.equal(detectReportPeriod(["bi - BC PADEL CLUB"]), null);
+    assert.equal(detectReportPeriod([]), null);
+  });
+
+  test("tahun di luar 2000-2100 ditolak, bukan dipakai", () => {
+    assert.equal(detectReportPeriod(["Jan 1999"]), null);
+    assert.equal(detectReportPeriod(["Jan 2101"]), null);
+  });
+
+  test("baris pertama yang cocok yang dipakai", () => {
+    assert.equal(detectReportPeriod(["BC PADEL CLUB", "Feb-26", "Mar-26"]), "2026-02");
+  });
+});
+
+describe("stripLetterhead — kop dibuang, data tidak", () => {
+  const line = (over: Partial<MappingLine>): MappingLine => ({ code: null, label: "", value: null, kind: "header", page: 1, assumedZero: false, ...over });
+
+  test("baris sebelum akun pertama dibuang, kecuali judul section tepat di atasnya", () => {
+    const cleaned = stripLetterhead([
+      line({ label: "BC PADEL CLUB", value: 1, kind: "derived" }),
+      line({ label: "Feb-26", value: 8, kind: "derived" }),
+      line({ label: "Pendapatan" }),
+      line({ label: "Penjualan", code: "40000", value: 100, kind: "detail" }),
+      line({ label: "Total Pendapatan", value: 100, kind: "subtotal" }),
+    ]);
+    assert.deepEqual(cleaned.map((l) => l.label), ["Pendapatan", "Penjualan", "Total Pendapatan"]);
+  });
+
+  test("serpihan 1-2 karakter dibuang di mana pun, baris data tidak pernah", () => {
+    const cleaned = stripLetterhead([
+      line({ label: "Pendapatan" }),
+      line({ label: "Penjualan", code: "40000", value: 100, kind: "detail" }),
+      line({ label: "WO", value: 3, kind: "derived" }),
+      line({ label: "Total Pendapatan", value: 100, kind: "subtotal" }),
+      line({ label: "Laba Kotor", value: 100, kind: "derived" }),
+    ]);
+    assert.deepEqual(cleaned.map((l) => l.label), ["Pendapatan", "Penjualan", "Total Pendapatan", "Laba Kotor"]);
+  });
+
+  test("dokumen tanpa baris akun dibiarkan apa adanya, bukan dikosongkan", () => {
+    const lines = [line({ label: "BC PADEL CLUB" }), line({ label: "Laporan Laba Rugi" })];
+    assert.equal(stripLetterhead(lines).length, 2);
   });
 });

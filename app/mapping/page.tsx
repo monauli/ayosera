@@ -198,27 +198,24 @@ function ReportBox({
   );
 }
 
-function ComparisonSection({
-  comparison,
-  showEmptyRows,
-  onToggleEmptyRows,
-}: {
-  comparison: ReturnType<typeof compareFinancialReports>;
-  showEmptyRows: boolean;
-  onToggleEmptyRows: (next: boolean) => void;
-}) {
+function ComparisonSection({ comparison }: { comparison: ReturnType<typeof compareFinancialReports> }) {
   const { summary, rows, appliedRules, skippedRules } = comparison;
-  const visible = showEmptyRows ? rows : rows.filter((row) => !row.emptyOnOneSide);
   return (
     <section className="mapping-compare" aria-label="Hasil perbandingan Laba Rugi">
       <header>
         <h2>Perbandingan Laba Rugi — Excel vs PDF</h2>
+        {/* "hanya di PDF" DIPERTAHANKAN: setelah akun nihil sebelah dibuang
+            dari hasil (lihat isEmptyOnOneSide di lib/mapping-compare.ts) dan
+            kop surat dibersihkan dari hasil baca PDF (stripLetterhead di
+            lib/mapping-parser.ts), sisanya adalah akun yang benar-benar
+            tercetak di PDF tapi tidak ada di Excel — persis cara akun 60200
+            "Biaya air listrik telephone" yang hilang dari Excel ketahuan.
+            "hanya di Excel" tidak ikut ditampilkan karena sisanya tinggal
+            baris bergeser yang sudah terlihat sendiri di tabel. */}
         <div className="mapping-summary">
           <span className="recon-badge recon-badge-ok">{summary.cocok} cocok</span>
           <span className={`recon-badge recon-badge-${summary.beda > 0 ? "danger" : "neutral"}`}>{summary.beda} beda</span>
-          <span className="recon-badge recon-badge-warn">{summary.hanyaExcel} hanya di Excel</span>
-          <span className="recon-badge recon-badge-warn">{summary.hanyaPdf} hanya di PDF</span>
-          <span className="recon-badge recon-badge-neutral">{summary.nihilSebelah} di antaranya nihil</span>
+          <span className={`recon-badge recon-badge-${summary.hanyaPdf > 0 ? "warn" : "neutral"}`}>{summary.hanyaPdf} hanya di PDF</span>
         </div>
       </header>
 
@@ -245,11 +242,6 @@ function ComparisonSection({
         </ul>
       )}
 
-      <label className="mapping-toggle">
-        <input type="checkbox" checked={showEmptyRows} onChange={(event) => onToggleEmptyRows(event.target.checked)} />
-        Tampilkan juga {summary.nihilSebelah} akun nihil yang hanya ada di satu sisi
-      </label>
-
       <div className="mapping-compare-wrap">
         <table className="recon-table">
           <thead>
@@ -263,15 +255,16 @@ function ComparisonSection({
             </tr>
           </thead>
           <tbody>
-            {visible.map((row: ComparisonRow, index: number) => (
+            {rows.map((row: ComparisonRow, index: number) => (
               <tr key={`${row.label}-${index}`}>
                 <td>{row.code ?? ""}</td>
                 <td>
                   {row.label}
+                  {/* Keterangan aturan pengelompokan TETAP tampil — penggabungan
+                      tidak boleh terjadi diam-diam. Keterangan penjodohan
+                      longgar sengaja TIDAK: penjodohannya tetap berjalan sama,
+                      cuma tidak perlu diumumkan per baris. */}
                   {row.rule && <small className="mapping-rule-tag">{row.rule.note}</small>}
-                  {row.matchedBy === "fuzzy" && row.excelLabel !== row.pdfLabel && (
-                    <small>Dijodohkan walau label beda tipis: Excel &quot;{row.excelLabel}&quot; / PDF &quot;{row.pdfLabel}&quot;.</small>
-                  )}
                 </td>
                 <td>{formatAmount(row.excelValue)}</td>
                 <td>{formatAmount(row.pdfValue)}</td>
@@ -284,7 +277,7 @@ function ComparisonSection({
           </tbody>
         </table>
       </div>
-      {visible.length === 0 && <p className="mapping-note">Tidak ada baris untuk ditampilkan.</p>}
+      {rows.length === 0 && <p className="mapping-note">Tidak ada baris untuk ditampilkan.</p>}
     </section>
   );
 }
@@ -304,7 +297,6 @@ export default function MappingPage() {
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; result: MappingParseResult } | null>(null);
-  const [showEmptyRows, setShowEmptyRows] = useState(false);
   // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
   const excelInputId = useId();
   const pdfInputId = useId();
@@ -435,19 +427,54 @@ export default function MappingPage() {
   }, [sheets, period, excelBusy, excelResults]);
 
   /**
+   * Apakah PDF yang sedang dipegang memang periode yang sedang dilihat.
+   *
+   * BUG NYATA yang ditutup di sini: mengganti bulan di pemilih periode hanya
+   * mengubah sisi Excel. PDF-nya tidak ikut berganti, jadi Laba Rugi Februari
+   * diadu dengan Excel Maret dan hampir setiap baris berubah jadi "beda" —
+   * 25 selisih palsu yang tidak satu pun nyata. Periodenya sekarang dibaca
+   * dari kop surat PDF (detectReportPeriod di lib/mapping-parser.ts) dan
+   * ketidakcocokannya MENGHENTIKAN perbandingan, bukan sekadar diberi
+   * catatan kecil.
+   *
+   * Periode yang tidak terbaca juga menghentikan perbandingan. Sikapnya
+   * sama dengan pengaman aritmatika di modul ini: yang tidak bisa dipastikan
+   * tidak dipakai, karena diam-diam salah lebih mahal daripada tidak tampil.
+   */
+  const periodGuard = useMemo((): { state: "idle" | "ok" | "unknown" } | { state: "mismatch"; pdfPeriod: string } => {
+    if (!pdfResult || pdfResult.result.status !== "ok" || !period) return { state: "idle" };
+    const pdfPeriod = pdfResult.result.period;
+    if (pdfPeriod === null) return { state: "unknown" };
+    return pdfPeriod === period ? { state: "ok" } : { state: "mismatch", pdfPeriod };
+  }, [pdfResult, period]);
+
+  /** Kalimat peringatan periode, atau null bila tidak ada yang perlu diperingatkan. */
+  const periodWarning = useMemo((): string | null => {
+    if (periodGuard.state === "mismatch") {
+      return `PDF ini untuk ${periodLabel(periodGuard.pdfPeriod)}, sedangkan periode yang dipilih ${periodLabel(period)}. Unggah PDF periode yang sesuai — hasil baca PDF ini tidak dipakai untuk periode lain.`;
+    }
+    if (periodGuard.state === "unknown") {
+      return `Periode PDF tidak terbaca dari kop suratnya, jadi tidak bisa dipastikan berkas ini memang ${periodLabel(period)}. Perbandingan tidak ditampilkan.`;
+    }
+    return null;
+  }, [periodGuard, period]);
+
+  /**
    * Perbandingan hanya untuk LABA RUGI — keputusan pengguna di Tahap 4. Neraca
    * dan Arus Kas dari PDF belum punya parser, jadi tidak ada sisi kanannya
    * untuk dibandingkan.
    *
-   * Dua-duanya WAJIB lolos pengaman aritmatika dulu. Membandingkan hasil baca
-   * yang sudah ditolak hanya menghasilkan selisih palsu.
+   * Dua-duanya WAJIB lolos pengaman aritmatika dulu, DAN periodenya harus
+   * sama. Membandingkan hasil baca yang sudah ditolak — atau bulan yang
+   * berbeda — hanya menghasilkan selisih palsu.
    */
   const comparison = useMemo(() => {
     const excel = excelResults["profit-loss"];
     if (!excel || excel.status !== "ok") return null;
     if (!pdfResult || pdfResult.result.status !== "ok") return null;
+    if (periodGuard.state !== "ok") return null;
     return compareFinancialReports(excel.lines, pdfResult.result.lines, "profit-loss");
-  }, [excelResults, pdfResult]);
+  }, [excelResults, pdfResult, periodGuard]);
 
   const pdfViews = useMemo((): Record<FinancialSheetKind, ReportView> => {
     // Parser PDF Tahap 1 HANYA membaca Laba Rugi. Neraca dan Arus Kas dari PDF
@@ -488,8 +515,8 @@ export default function MappingPage() {
           </Link>
           <h1>Mapping Laporan Keuangan</h1>
           <p>
-            Menampilkan laporan keuangan versi Excel dan versi PDF berdampingan. Perbandingan otomatis, aturan pengelompokan, dan penyimpanan belum aktif di
-            tahap ini.
+            Menampilkan laporan keuangan versi Excel dan versi PDF berdampingan, lalu membandingkan Laba Rugi keduanya. Periode PDF diperiksa terhadap periode
+            yang dipilih — PDF bulan lain tidak pernah dibandingkan.
           </p>
         </div>
         <div style={{ display: "flex", gap: ".5rem" }}>
@@ -527,12 +554,20 @@ export default function MappingPage() {
       </section>
 
       {comparison ? (
-        <ComparisonSection comparison={comparison} showEmptyRows={showEmptyRows} onToggleEmptyRows={setShowEmptyRows} />
+        <ComparisonSection comparison={comparison} />
       ) : (
         <section className="mapping-compare" aria-label="Hasil perbandingan Laba Rugi">
           <header>
             <h2>Perbandingan Laba Rugi — Excel vs PDF</h2>
           </header>
+          {periodWarning && (
+            <div className="mapping-reject" role="alert">
+              <h4>
+                <AlertTriangle /> {periodGuard.state === "unknown" ? "Periode PDF tidak terbaca" : "Periode PDF tidak cocok"}
+              </h4>
+              <p>{periodWarning}</p>
+            </div>
+          )}
           <p className="mapping-note">
             {/* Perbandingan sengaja tidak jalan kalau salah satu sisi ditolak
                 pengaman aritmatika — membandingkan angka yang sudah diketahui
@@ -623,6 +658,7 @@ export default function MappingPage() {
             )}
           </div>
           {pdfError && <p className="recon-error">{pdfError}</p>}
+          {periodWarning && <p className="recon-error">{periodWarning}</p>}
           {pdfFile && (
             <p className="mapping-note">
               {pdfFile.fileName} · {(pdfFile.size / 1024 / 1024).toFixed(1)} MB

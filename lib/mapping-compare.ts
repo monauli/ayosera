@@ -45,13 +45,6 @@ export type ComparisonRow = {
   matchedBy: MatchTier;
   /** Terisi bila baris ini hasil penerapan aturan pengelompokan. */
   rule: { note: string; parts: readonly string[]; verified: boolean } | null;
-  /**
-   * true bila baris hanya ada di satu sisi DAN nilainya nol. Bukan selisih:
-   * PDF Olsera tidak mencetak akun yang nihil, sedangkan Excel mencetak
-   * seluruh bagan akun. Dipisah supaya ringkasan tidak tenggelam oleh baris
-   * nol yang tidak berarti apa-apa.
-   */
-  emptyOnOneSide: boolean;
 };
 
 export type ComparisonSummary = {
@@ -59,8 +52,6 @@ export type ComparisonSummary = {
   beda: number;
   hanyaExcel: number;
   hanyaPdf: number;
-  /** Bagian dari hanyaExcel + hanyaPdf yang nilainya nol. */
-  nihilSebelah: number;
 };
 
 export type ComparisonResult = {
@@ -215,7 +206,6 @@ function toRow(excel: Side | null, pdf: Side | null, matchedBy: MatchTier): Comp
   const excelValue = excel?.line.value ?? null;
   const pdfValue = pdf?.line.value ?? null;
   const status = statusOf(excelValue, pdfValue);
-  const oneSided = status === "HANYA_EXCEL" || status === "HANYA_PDF";
   return {
     label: excel?.line.label ?? pdf?.line.label ?? "",
     excelLabel: excel?.line.label ?? null,
@@ -228,8 +218,21 @@ function toRow(excel: Side | null, pdf: Side | null, matchedBy: MatchTier): Comp
     status,
     matchedBy,
     rule: excel?.rule ?? pdf?.rule ?? null,
-    emptyOnOneSide: oneSided && (excelValue ?? pdfValue ?? 0) === 0,
   };
+}
+
+/**
+ * Baris yang hanya ada di satu sisi DAN nilainya nol.
+ *
+ * BUKAN selisih: PDF Olsera tidak mencetak akun yang nihil sedangkan Excel
+ * mencetak seluruh bagan akun, jadi 27 dari 28 baris "hanya di Excel" pada
+ * Februari 2026 semata-mata akun kosong. Baris seperti ini dibuang dari hasil,
+ * bukan disembunyikan di UI, supaya angka ringkasan selalu menghitung persis
+ * baris yang kelihatan di tabel.
+ */
+function isEmptyOnOneSide(row: ComparisonRow): boolean {
+  const oneSided = row.status === "HANYA_EXCEL" || row.status === "HANYA_PDF";
+  return oneSided && (row.excelValue ?? row.pdfValue ?? 0) === 0;
 }
 
 /**
@@ -291,15 +294,15 @@ export function compareFinancialReports(
   }
   for (const pdf of remaining) rows.push(toRow(null, pdf, null));
 
+  const visible = rows.filter((row) => !isEmptyOnOneSide(row));
   const summary: ComparisonSummary = {
-    cocok: rows.filter((row) => row.status === "COCOK").length,
-    beda: rows.filter((row) => row.status === "BEDA").length,
-    hanyaExcel: rows.filter((row) => row.status === "HANYA_EXCEL").length,
-    hanyaPdf: rows.filter((row) => row.status === "HANYA_PDF").length,
-    nihilSebelah: rows.filter((row) => row.emptyOnOneSide).length,
+    cocok: visible.filter((row) => row.status === "COCOK").length,
+    beda: visible.filter((row) => row.status === "BEDA").length,
+    hanyaExcel: visible.filter((row) => row.status === "HANYA_EXCEL").length,
+    hanyaPdf: visible.filter((row) => row.status === "HANYA_PDF").length,
   };
   return {
-    rows,
+    rows: visible,
     summary,
     appliedRules: [...excelApplied.applied, ...pdfApplied.applied],
     skippedRules: [...excelApplied.skipped, ...pdfApplied.skipped],

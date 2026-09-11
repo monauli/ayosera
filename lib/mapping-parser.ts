@@ -84,6 +84,15 @@ export type MappingParseResult =
       status: "ok";
       /** 0 = nominal sebaris label; 1 = nominal tercetak 1 baris di atas label. */
       rowOffsetApplied: 0 | 1;
+      /**
+       * Periode laporan "YYYY-MM" yang dibaca dari kop surat, atau null bila
+       * kop-nya tidak memuat bulan+tahun yang bisa dikenali.
+       *
+       * WAJIB dipakai pemanggil untuk memastikan PDF yang dibaca memang
+       * periode yang sedang dilihat. Tanpa ini, mengganti bulan di UI tidak
+       * mengubah sisi PDF dan setiap baris berubah jadi "beda" palsu.
+       */
+      period: string | null;
       lines: MappingLine[];
       checks: ReconciliationCheck[];
     }
@@ -139,6 +148,47 @@ const DASH = /^[-–—]$/;
 const TOTAL_PREFIX = /^(total|jumlah)\b/i;
 const EXPENSE_LABEL = /\b(biaya|beban)\b/i;
 const NET_PROFIT_LABEL = /^laba\s*bersih$/i;
+
+/**
+ * Singkatan bulan Indonesia DAN Inggris, karena exporter yang sama mencetak
+ * "Feb-26" pada berkas scan dan "Mei 2026" pada berkas digital. Dicocokkan
+ * lewat 3 huruf pertama, jadi bentuk panjang ("Februari", "February") ikut
+ * tertangkap tanpa entri sendiri. "peb"/"nop"/"agt" ikut karena ejaan lama
+ * itu masih muncul di dokumen Indonesia.
+ */
+const MONTH_ABBREVIATIONS: Record<string, number> = {
+  jan: 1, feb: 2, peb: 2, mar: 3, apr: 4, mei: 5, may: 5, jun: 6,
+  jul: 7, agu: 8, ags: 8, agt: 8, aug: 8, sep: 9, okt: 10, oct: 10,
+  nov: 11, nop: 11, des: 12, dec: 12,
+};
+
+/** "Feb-26", "Mei 2026", "Februari 2026", "Okt/25" — bulan lalu tahun 2 atau 4 digit. */
+const PERIOD_PATTERN = /\b([a-z]{3})[a-z]*\.?\s*[-/]?\s*(\d{2,4})\b/gi;
+
+/**
+ * Baca periode laporan dari label kop surat, hasilnya "YYYY-MM".
+ *
+ * Sengaja hanya diberi makan label KOP (baris sebelum baris akun pertama),
+ * bukan seluruh dokumen: angka tahun bisa muncul di mana saja dan mencocokkan
+ * di seluruh laporan akan menebak periode dari baris yang bukan periode.
+ *
+ * ponytail: tahun 2 digit dipetakan ke 20xx. Laporan keuangan abad lain bukan
+ * masalah yang perlu dipecahkan hari ini; tahun di luar 2000-2100 ditolak
+ * supaya angka nyasar tidak lolos jadi periode.
+ */
+export function detectReportPeriod(labels: readonly string[]): string | null {
+  for (const label of labels) {
+    for (const match of label.matchAll(PERIOD_PATTERN)) {
+      const month = MONTH_ABBREVIATIONS[match[1].toLowerCase()];
+      if (!month) continue;
+      const digits = match[2];
+      const year = digits.length === 4 ? Number(digits) : 2000 + Number(digits);
+      if (year < 2000 || year > 2100) continue;
+      return `${year}-${String(month).padStart(2, "0")}`;
+    }
+  }
+  return null;
+}
 
 /** Label penutup section (subtotal), dipakai juga parser Excel. */
 export function isSubtotalLabel(label: string): boolean {
@@ -386,6 +436,47 @@ function scopeToProfitAndLoss(lines: readonly MappingLine[]): MappingLine[] {
   return end === -1 ? [...lines] : lines.slice(0, end + 1);
 }
 
+/** Indeks baris akun pertama; batas antara kop surat dan isi laporan. */
+function firstDetailIndex(lines: readonly MappingLine[]): number {
+  return lines.findIndex((line) => line.kind === "detail");
+}
+
+/**
+ * Serpihan kop surat yang lolos sebagai baris: sisa logo/judul sepanjang 1-2
+ * karakter ("Ea", "FR", "WO"). Tidak pernah menyentuh baris akun atau
+ * subtotal, jadi pengaman aritmatika tidak bisa terpengaruh — label laporan
+ * sungguhan di dokumen ini tidak ada yang sependek itu.
+ */
+function isLetterheadFragment(line: MappingLine): boolean {
+  if (line.kind === "detail" || line.kind === "subtotal") return false;
+  return line.label.replace(/[^a-z0-9]/gi, "").length <= 2;
+}
+
+/**
+ * Buang kop surat dari hasil baca.
+ *
+ * Potongan awal ini KEMBARAN scopeToProfitAndLoss yang memotong akhir: nama
+ * perusahaan, judul laporan, dan baris periode terbaca sebagai baris data —
+ * pada jalur OCR bahkan sempat membawa nominal palsu ("bi - BC PADEL CLUB"
+ * bernilai 1, "Feb-26" bernilai 8) sehingga muncul di perbandingan sebagai
+ * akun yang cuma ada di PDF.
+ *
+ * Batasnya adalah baris akun PERTAMA, dengan satu baris di atasnya
+ * dipertahankan bila itu header tanpa nominal — di kedua fixture baris itu
+ * adalah judul section ("Pendapatan"), bukan kop.
+ *
+ * AMAN terhadap pengaman aritmatika menurut konstruksinya: yang dibuang hanya
+ * baris SEBELUM baris akun pertama, dan di posisi itu classify() tidak pernah
+ * menghasilkan subtotal (butuh pendingDetails > 0) maupun detail (butuh kode
+ * akun). Jadi tidak ada angka yang ikut hilang dari penjumlahan mana pun.
+ */
+export function stripLetterhead(lines: readonly MappingLine[]): MappingLine[] {
+  const firstDetail = firstDetailIndex(lines);
+  if (firstDetail === -1) return [...lines];
+  const start = lines[firstDetail - 1]?.kind === "header" ? firstDetail - 1 : firstDetail;
+  return lines.slice(start).filter((line) => !isLetterheadFragment(line));
+}
+
 /**
  * Pengaman aritmatika. Dua cek, keduanya terhadap angka yang TERCETAK di
  * dokumen — bukan terhadap ekspektasi yang di-hardcode:
@@ -484,7 +575,11 @@ export function parseFinancialReport(
   const rows = groupTokensIntoRows(tokens, options.rowTolerance);
   const attempts: { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] }[] = [];
   for (const rowOffset of [0, 1] as const) {
-    const lines = scopeToProfitAndLoss(classify(rows, rowOffset));
+    const scoped = scopeToProfitAndLoss(classify(rows, rowOffset));
+    // Periode dibaca SEBELUM kop dibuang — kop itu satu-satunya tempat
+    // periodenya tercetak.
+    const period = detectReportPeriod(scoped.slice(0, Math.max(firstDetailIndex(scoped), 0)).map((line) => line.label));
+    const lines = stripLetterhead(scoped);
     const checks = reconcile(lines);
     const failedChecks = checks.filter((check) => !check.passed);
     // Baris detail yang tidak ditutup subtotal tidak pernah ikut terperiksa,
@@ -494,7 +589,7 @@ export function parseFinancialReport(
       failedChecks.push({ kind: "section", label: "(baris detail tanpa subtotal penutup)", expected: Number.NaN, actual: Number.NaN, difference: Number.NaN, tolerance: 0, passed: false });
     }
     if (failedChecks.length === 0) {
-      return { status: "ok", rowOffsetApplied: rowOffset, lines, checks };
+      return { status: "ok", rowOffsetApplied: rowOffset, period, lines, checks };
     }
     attempts.push({ rowOffset, failedChecks });
   }

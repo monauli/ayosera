@@ -146,20 +146,25 @@ describe("perbandingan Februari 2026 (Excel vs PDF hasil scan)", () => {
     assert.equal(airListrik.pdfValue, 17059300);
   });
 
-  test("akun nihil yang tidak dicetak PDF ditandai, bukan dihitung sebagai selisih", () => {
-    const row = findRow(result.rows, /^Loyalitas penjualan$/);
-    assert.equal(row.status, "HANYA_EXCEL");
-    assert.equal(row.excelValue, 0);
-    assert.equal(row.emptyOnOneSide, true);
+  test("akun nihil yang hanya ada di satu sisi dibuang dari hasil, bukan sekadar ditandai", () => {
+    // "Loyalitas penjualan" ada di bagan akun Excel dengan nilai 0 dan tidak
+    // dicetak PDF sama sekali. Itu bukan selisih, jadi barisnya tidak boleh
+    // muncul — dan karena dibuang di sumbernya, angka ringkasan menghitung
+    // persis baris yang kelihatan di tabel.
+    assert.equal(result.rows.some((row) => /^Loyalitas penjualan$/.test(row.label)), false);
+    const oneSidedZero = result.rows.filter(
+      (row) => (row.status === "HANYA_EXCEL" || row.status === "HANYA_PDF") && (row.excelValue ?? row.pdfValue ?? 0) === 0,
+    );
+    assert.deepEqual(oneSidedZero, []);
   });
 
-  test("ringkasan: hanya 1 selisih sungguhan di luar baris nihil sebelah", () => {
+  test("ringkasan: hanya 1 selisih sungguhan, dan hanya-Excel tinggal baris yang berisi", () => {
     assert.equal(result.summary.beda, 1);
     assert.equal(result.summary.cocok, 26);
-    // 28 hanya-Excel, 27 di antaranya akun nihil yang tidak dicetak PDF.
-    assert.equal(result.summary.hanyaExcel, 28);
+    // Dulu 28 hanya-Excel; 27 di antaranya akun nihil yang tidak dicetak PDF
+    // dan sekarang tidak ikut keluar sama sekali.
+    assert.equal(result.summary.hanyaExcel, 1);
     assert.equal(result.summary.hanyaPdf, 1);
-    assert.equal(result.summary.nihilSebelah, 27);
   });
 });
 

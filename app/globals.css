@@ -1222,5 +1222,4 @@ th[scope],
 .mapping-compare-wrap .recon-table th:nth-child(2),.mapping-compare-wrap .recon-table td:nth-child(2) { min-width:14rem; }
 .mapping-rule-tag { display:block; margin-top:.2rem; color:rgb(59 130 246); font-size:.68rem; overflow-wrap:anywhere; }
 [data-mode="dark"] .mapping-rule-tag { color:rgb(147 197 253); }
-.mapping-toggle { display:inline-flex; align-items:center; gap:.35rem; color:rgb(var(--rd-text-tertiary)); font-size:.75rem; cursor:pointer; }
 @media (max-width:720px){ .mapping-compare{padding:.7rem} .mapping-compare-wrap .recon-table{font-size:.72rem} }
