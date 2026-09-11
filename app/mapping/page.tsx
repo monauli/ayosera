@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Moon, Sun } from "lucide-react";
-import { analyzeFinancialPdf, type MappingParseResult, type FinancialLine, type ReconciliationCheck } from "@/lib/mapping-parser";
+import { analyzeFinancialPdf, REPORT_TITLES, type MappingParseResult, type FinancialLine, type ReconciliationCheck } from "@/lib/mapping-parser";
 import { compareFinancialReports, type ComparisonRow, type ComparisonStatus } from "@/lib/mapping-compare";
 import {
   detectMonthColumns,
@@ -33,11 +33,8 @@ type UploadedFile = { url: string; fileName: string; size: number; uploadedAt: s
 /** PDF tidak diunggah ke mana pun — hanya dibaca di browser ini. */
 type PickedFile = { fileName: string; size: number };
 
-const REPORT_TITLES: Record<FinancialSheetKind, string> = {
-  "profit-loss": "Laba Rugi",
-  "balance-sheet": "Neraca",
-  cashflow: "Arus Kas",
-};
+// Nama laporan dipakai dari parser — pesan penolakannya menyebut nama yang
+// sama, jadi tidak boleh ada dua daftar yang bisa menyimpang.
 const REPORT_ORDER: FinancialSheetKind[] = ["profit-loss", "balance-sheet", "cashflow"];
 
 const STATUS_LABEL: Record<ComparisonStatus, string> = {
@@ -96,6 +93,9 @@ function pdfResultToView(result: MappingParseResult, note: string): ReportView {
   if (result.status === "ok") {
     return { state: "ok", lines: result.lines, checks: result.checks, note };
   }
+  // Laporan yang memang tidak ada di berkas BUKAN dokumen bermasalah —
+  // menampilkannya sebagai "Ditolak" akan terbaca seolah ada yang salah.
+  if (result.notFound) return { state: "unsupported", note: result.reason };
   // Parser PDF mencoba dua offset layout; yang ditampilkan adalah kegagalan
   // percobaan TERAKHIR supaya daftarnya tidak berisi dua set selisih untuk
   // masalah yang sama. Alasan lengkapnya tetap memuat keduanya.
@@ -198,12 +198,12 @@ function ReportBox({
   );
 }
 
-function ComparisonSection({ comparison }: { comparison: ReturnType<typeof compareFinancialReports> }) {
+function ComparisonSection({ title, comparison }: { title: string; comparison: ReturnType<typeof compareFinancialReports> }) {
   const { summary, rows, appliedRules, skippedRules } = comparison;
   return (
-    <section className="mapping-compare" aria-label="Hasil perbandingan Laba Rugi">
+    <section className="mapping-compare" aria-label={`Hasil perbandingan ${title}`}>
       <header>
-        <h2>Perbandingan Laba Rugi — Excel vs PDF</h2>
+        <h2>Perbandingan {title} — Excel vs PDF</h2>
         {/* "hanya di PDF" DIPERTAHANKAN: setelah akun nihil sebelah dibuang
             dari hasil (lihat isEmptyOnOneSide di lib/mapping-compare.ts) dan
             kop surat dibersihkan dari hasil baca PDF (stripLetterhead di
@@ -296,7 +296,7 @@ export default function MappingPage() {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
-  const [pdfResult, setPdfResult] = useState<{ source: string; result: MappingParseResult } | null>(null);
+  const [pdfResult, setPdfResult] = useState<{ source: string; reports: Record<FinancialSheetKind, MappingParseResult> } | null>(null);
   // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
   const excelInputId = useId();
   const pdfInputId = useId();
@@ -442,8 +442,13 @@ export default function MappingPage() {
    * tidak dipakai, karena diam-diam salah lebih mahal daripada tidak tampil.
    */
   const periodGuard = useMemo((): { state: "idle" | "ok" | "unknown" } | { state: "mismatch"; pdfPeriod: string } => {
-    if (!pdfResult || pdfResult.result.status !== "ok" || !period) return { state: "idle" };
-    const pdfPeriod = pdfResult.result.period;
+    if (!pdfResult || !period) return { state: "idle" };
+    // Ketiga laporan berasal dari SATU berkas, jadi periodenya satu. Diambil
+    // dari laporan mana pun yang lolos — kalau tidak ada yang lolos, tidak
+    // ada perbandingan untuk dijaga.
+    const parsed = REPORT_ORDER.map((kind) => pdfResult.reports[kind]).filter((result) => result.status === "ok");
+    if (parsed.length === 0) return { state: "idle" };
+    const pdfPeriod = parsed.map((result) => result.period).find((value) => value !== null) ?? null;
     if (pdfPeriod === null) return { state: "unknown" };
     return pdfPeriod === period ? { state: "ok" } : { state: "mismatch", pdfPeriod };
   }, [pdfResult, period]);
@@ -460,42 +465,41 @@ export default function MappingPage() {
   }, [periodGuard, period]);
 
   /**
-   * Perbandingan hanya untuk LABA RUGI — keputusan pengguna di Tahap 4. Neraca
-   * dan Arus Kas dari PDF belum punya parser, jadi tidak ada sisi kanannya
-   * untuk dibandingkan.
+   * Perbandingan untuk KETIGA laporan.
    *
-   * Dua-duanya WAJIB lolos pengaman aritmatika dulu, DAN periodenya harus
-   * sama. Membandingkan hasil baca yang sudah ditolak — atau bulan yang
-   * berbeda — hanya menghasilkan selisih palsu.
+   * Tiap laporan dibandingkan sendiri-sendiri, dan syaratnya sama: kedua sisi
+   * WAJIB lolos pengaman aritmatika dulu, DAN periodenya harus sama.
+   * Membandingkan hasil baca yang sudah ditolak — atau bulan yang berbeda —
+   * hanya menghasilkan selisih palsu. Laporan yang salah satu sisinya belum
+   * ada cukup tidak muncul, tidak menghalangi dua yang lain.
    */
-  const comparison = useMemo(() => {
-    const excel = excelResults["profit-loss"];
-    if (!excel || excel.status !== "ok") return null;
-    if (!pdfResult || pdfResult.result.status !== "ok") return null;
-    if (periodGuard.state !== "ok") return null;
-    return compareFinancialReports(excel.lines, pdfResult.result.lines, "profit-loss");
+  const comparisons = useMemo((): Partial<Record<FinancialSheetKind, ReturnType<typeof compareFinancialReports>>> => {
+    if (!pdfResult || periodGuard.state !== "ok") return {};
+    const result: Partial<Record<FinancialSheetKind, ReturnType<typeof compareFinancialReports>>> = {};
+    for (const kind of REPORT_ORDER) {
+      const excel = excelResults[kind];
+      const pdf = pdfResult.reports[kind];
+      if (!excel || excel.status !== "ok" || pdf.status !== "ok") continue;
+      result[kind] = compareFinancialReports(excel.lines, pdf.lines, kind);
+    }
+    return result;
   }, [excelResults, pdfResult, periodGuard]);
 
   const pdfViews = useMemo((): Record<FinancialSheetKind, ReportView> => {
-    // Parser PDF Tahap 1 HANYA membaca Laba Rugi. Neraca dan Arus Kas dari PDF
-    // belum punya parser sendiri — ditampilkan apa adanya sebagai belum
-    // didukung, BUKAN sebagai kotak kosong yang menyesatkan.
     const pending: ReportView = { state: "empty", note: "Unggah PDF laporan keuangan untuk melihat hasil bacanya." };
-    const unsupported: ReportView = {
-      state: "unsupported",
-      note: "Parser PDF saat ini baru membaca Laba Rugi. Neraca dan Arus Kas dari PDF belum punya parser sendiri, jadi sisi kanan untuk kedua laporan ini masih kosong.",
-    };
-    const labaRugi: ReportView = pdfBusy
-      ? { state: "loading", note: pdfStatus || "Membaca PDF..." }
-      : pdfResult
-        ? pdfResultToView(
-            pdfResult.result,
-            pdfResult.source === "pdf-scanned-ocr"
-              ? "Dibaca lewat OCR (PDF hasil scan). Nominal diverifikasi ulang terhadap total yang tercetak."
-              : "Dibaca dari text layer PDF (bukan OCR).",
-          )
-        : pending;
-    return { "profit-loss": labaRugi, "balance-sheet": unsupported, cashflow: unsupported };
+    const note =
+      pdfResult?.source === "pdf-scanned-ocr"
+        ? "Dibaca lewat OCR (PDF hasil scan). Nominal diverifikasi ulang terhadap total yang tercetak."
+        : "Dibaca dari text layer PDF (bukan OCR).";
+    const views = {} as Record<FinancialSheetKind, ReportView>;
+    for (const kind of REPORT_ORDER) {
+      views[kind] = pdfBusy
+        ? { state: "loading", note: pdfStatus || "Membaca PDF..." }
+        : pdfResult
+          ? pdfResultToView(pdfResult.reports[kind], note)
+          : pending;
+    }
+    return views;
   }, [pdfResult, pdfBusy, pdfStatus]);
 
   if (user && !user.allowedModules.includes("mapping") && user.role !== "supervisor") {
@@ -515,8 +519,8 @@ export default function MappingPage() {
           </Link>
           <h1>Mapping Laporan Keuangan</h1>
           <p>
-            Menampilkan laporan keuangan versi Excel dan versi PDF berdampingan, lalu membandingkan Laba Rugi keduanya. Periode PDF diperiksa terhadap periode
-            yang dipilih — PDF bulan lain tidak pernah dibandingkan.
+            Menampilkan laporan keuangan versi Excel dan versi PDF berdampingan, lalu membandingkan Laba Rugi, Neraca, dan Arus Kas keduanya. Periode PDF
+            diperiksa terhadap periode yang dipilih — PDF bulan lain tidak pernah dibandingkan.
           </p>
         </div>
         <div style={{ display: "flex", gap: ".5rem" }}>
@@ -553,12 +557,14 @@ export default function MappingPage() {
         </label>
       </section>
 
-      {comparison ? (
-        <ComparisonSection comparison={comparison} />
-      ) : (
-        <section className="mapping-compare" aria-label="Hasil perbandingan Laba Rugi">
+      {REPORT_ORDER.filter((kind) => comparisons[kind]).map((kind) => (
+        <ComparisonSection key={kind} title={REPORT_TITLES[kind]} comparison={comparisons[kind]!} />
+      ))}
+
+      {Object.keys(comparisons).length === 0 && (
+        <section className="mapping-compare" aria-label="Hasil perbandingan">
           <header>
-            <h2>Perbandingan Laba Rugi — Excel vs PDF</h2>
+            <h2>Perbandingan Excel vs PDF</h2>
           </header>
           {periodWarning && (
             <div className="mapping-reject" role="alert">
@@ -572,8 +578,8 @@ export default function MappingPage() {
             {/* Perbandingan sengaja tidak jalan kalau salah satu sisi ditolak
                 pengaman aritmatika — membandingkan angka yang sudah diketahui
                 tidak bisa dipercaya hanya menghasilkan selisih palsu. */}
-            Perbandingan tampil setelah Laba Rugi di KEDUA sisi terbaca dan lolos pengaman aritmatika. Neraca dan Arus Kas belum dibandingkan karena PDF-nya
-            belum punya parser.
+            Perbandingan tiap laporan tampil setelah KEDUA sisinya terbaca, lolos pengaman aritmatika, dan periodenya sama. Laporan yang tidak ada di PDF yang
+            diunggah cukup tidak muncul.
           </p>
         </section>
       )}
@@ -633,7 +639,7 @@ export default function MappingPage() {
               <FileText style={{ width: "1rem", verticalAlign: "-.15rem", marginRight: ".35rem" }} />
               PDF laporan keuangan{period ? ` — ${periodLabel(period)}` : ""}
             </h2>
-            <p>Pilih PDF untuk periode yang dipilih. Berkasnya tidak dikirim ke mana pun — dibaca sepenuhnya di browser ini, termasuk OCR untuk PDF hasil scan.</p>
+            <p>Pilih PDF untuk periode yang dipilih; satu berkas boleh memuat ketiga laporan. Berkasnya tidak dikirim ke mana pun — dibaca sepenuhnya di browser ini, termasuk OCR untuk PDF hasil scan.</p>
           </div>
           <div className="mapping-upload">
             <input

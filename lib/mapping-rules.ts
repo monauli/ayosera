@@ -9,7 +9,10 @@
 // Menambah aturan = menambah satu entri di sini. Tidak ada tempat lain yang
 // perlu disentuh.
 
-export type MappingReportKind = "profit-loss" | "balance-sheet";
+// Jenis laporan dipakai apa adanya dari parser — satu daftar, bukan dua yang
+// bisa menyimpang.
+export type { FinancialSheetKind as MappingReportKind } from "./mapping-parser.ts";
+import type { FinancialSheetKind as MappingReportKind } from "./mapping-parser.ts";
 
 export type MappingGroupingRule = {
   report: MappingReportKind;
@@ -41,17 +44,18 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
     // persis dengan "Penjualan" di PDF. TAPI lihat catatan lingkup di bawah.
     verified: true,
   },
-  // --- Neraca: ditulis sekarang, BELUM dipakai ---------------------------
-  // Perbandingan Neraca belum jalan karena PDF-nya belum punya parser (lihat
-  // app/mapping/page.tsx). Kedua aturan di bawah disimpan di sini supaya tidak
-  // hilang, dan akan langsung terpakai begitu parser Neraca ada.
+  // --- Neraca ------------------------------------------------------------
+  // Keduanya AKTIF sejak parser PDF Neraca ada, dan keduanya sudah dibuktikan
+  // angkanya terhadap Februari 2026 — lihat komentar verified masing-masing.
   {
     report: "balance-sheet",
     combine: "pdf",
     target: "Kas dan Bank",
     parts: ["BANK BCA 7195-332266", "BANK BCA 719-5538808", "kas ayat silang QRIS/EDC"],
     note: "Gabungan dari: BANK BCA 7195-332266 + BANK BCA 719-5538808 + kas ayat silang QRIS/EDC",
-    verified: false,
+    // Februari 2026: 255.454.187,17 + 43.305.973,47 + 1.995.000,00
+    // = 300.755.160,64 — sama persis dengan "Kas dan Bank" di Excel.
+    verified: true,
   },
   {
     report: "balance-sheet",
@@ -59,7 +63,11 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
     target: "Laba rugi ditahan",
     parts: ["Laba rugi ditahan", "Pendapatan Periode ini"],
     note: "Gabungan dari: Laba rugi ditahan + Pendapatan Periode ini",
-    verified: false,
+    // Februari 2026: -611.623,41 + -2.680.094,81 = -3.291.718,22 — sama
+    // persis dengan "Laba rugi ditahan" di Excel. Excel juga punya baris
+    // "Pendapatan periode ini" tersendiri bernilai 0, yang setelah aturan ini
+    // jadi baris nihil sebelah dan tidak ditampilkan.
+    verified: true,
   },
 ];
 

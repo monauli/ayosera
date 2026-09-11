@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseFinancialReport, type FinancialLine } from "./mapping-parser.ts";
+import { parseFinancialReport, type FinancialLine, type FinancialSheetKind } from "./mapping-parser.ts";
 import { parseFinancialSheet, type ExcelReportSheet } from "./mapping-excel-parser.ts";
 import { compareFinancialReports, isNearLabel, normalizeFinancialLabel, type ComparisonRow } from "./mapping-compare.ts";
 import { MAPPING_GROUPING_RULES, rulesForReport } from "./mapping-rules.ts";
@@ -13,17 +13,18 @@ function fixture<T>(name: string): T {
 const EXCEL_SHEETS = fixture<{ sheets: ExcelReportSheet[] }>("mapping-laporan-keuangan-excel").sheets;
 const PROFIT_LOSS_SHEET = EXCEL_SHEETS.find((sheet) => sheet.kind === "profit-loss")!;
 
-function pdfLines(name: string): FinancialLine[] {
+function pdfLines(name: string, kind: FinancialSheetKind = "profit-loss"): FinancialLine[] {
   const parsed = fixture<{ rowTolerance: number; tokens: Parameters<typeof parseFinancialReport>[0] }>(name);
-  const result = parseFinancialReport(parsed.tokens, { rowTolerance: parsed.rowTolerance });
-  assert.equal(result.status, "ok", `fixture PDF ${name} gagal diparse`);
+  const result = parseFinancialReport(parsed.tokens, { rowTolerance: parsed.rowTolerance, kind });
+  assert.equal(result.status, "ok", `fixture PDF ${name} (${kind}) gagal diparse`);
   assert.ok(result.status === "ok");
   return result.lines;
 }
 
-function excelLines(period: string): FinancialLine[] {
-  const result = parseFinancialSheet(PROFIT_LOSS_SHEET, period);
-  assert.equal(result.status, "ok", `sheet Excel periode ${period} gagal diparse`);
+function excelLines(period: string, kind: FinancialSheetKind = "profit-loss"): FinancialLine[] {
+  const sheet = kind === "profit-loss" ? PROFIT_LOSS_SHEET : EXCEL_SHEETS.find((candidate) => candidate.kind === kind)!;
+  const result = parseFinancialSheet(sheet, period);
+  assert.equal(result.status, "ok", `sheet Excel ${kind} periode ${period} gagal diparse`);
   assert.ok(result.status === "ok");
   return result.lines;
 }
@@ -83,10 +84,12 @@ describe("aturan pengelompokan tersedia sebagai data", () => {
     assert.match(rules[0].note, /Gabungan dari/);
   });
 
-  test("aturan Neraca sudah tercatat walau belum dipakai", () => {
+  test("kedua aturan Neraca aktif dan sudah terverifikasi angkanya", () => {
     const rules = rulesForReport("balance-sheet");
     assert.equal(rules.length, 2);
-    assert.equal(rules.every((rule) => rule.verified === false), true);
+    // verified:true di sini bukan klaim kosong — dibuktikan terhadap Februari
+    // 2026 di suite "Neraca Februari 2026" di bawah.
+    assert.equal(rules.every((rule) => rule.verified === true), true);
   });
 
   test("setiap aturan punya keterangan yang menyebut seluruh bagiannya", () => {
@@ -244,5 +247,71 @@ describe("penjodohan tidak pernah menebak", () => {
     const excel = [{ ...base, label: "PENDAPATAN", value: null, kind: "header" as const }];
     const result = compareFinancialReports(excel, []);
     assert.equal(result.rows.length, 0);
+  });
+});
+
+describe("Neraca Februari 2026 — aturan pengelompokan yang terverifikasi", () => {
+  const result = compareFinancialReports(excelLines("2026-02", "balance-sheet"), pdfLines("mapping-laba-rugi-feb-2026-scan", "balance-sheet"), "balance-sheet");
+
+  test("tiga rekening kas PDF digabung jadi satu baris Excel", () => {
+    // Excel mencatat satu baris "Kas dan Bank"; PDF memecahnya jadi dua
+    // rekening bank plus kas ayat silang. Angkanya HARUS mendarat sama persis.
+    const row = findRow(result.rows, /^Kas dan Bank$/);
+    assert.equal(row.status, "COCOK");
+    assert.equal(row.excelValue, 300755160.64);
+    assert.equal(row.pdfValue, 300755160.64);
+    assert.ok(row.rule, "baris gabungan harus membawa keterangan aturannya");
+    assert.equal(row.rule.parts.length, 3);
+  });
+
+  test("laba ditahan digabung dengan pendapatan periode berjalan", () => {
+    const row = findRow(result.rows, /^Laba rugi ditahan$/);
+    assert.equal(row.status, "COCOK");
+    assert.equal(row.excelValue, -3291718.22);
+    assert.equal(row.pdfValue, -3291718.22);
+    assert.ok(row.rule);
+  });
+
+  test("kedua aturan benar-benar terpakai, tidak ada yang dilewati", () => {
+    assert.deepEqual(result.appliedRules.map((rule) => rule.target).sort(), ["Kas dan Bank", "Laba rugi ditahan"]);
+    assert.deepEqual(result.skippedRules, []);
+    assert.equal(result.appliedRules.every((rule) => rule.verified), true);
+  });
+
+  test("tidak ada satu pun selisih angka; yang tersisa hanya beda penamaan", () => {
+    assert.equal(result.summary.beda, 0);
+    assert.equal(result.summary.cocok, 15);
+    // "Piutang Sewa Lapangan" vs "Piutang Court Fee", "Persedian" vs
+    // "Persediaan", "Jumlah Aset Lancar" vs "Total Aset Lancar" — beda label,
+    // bukan beda angka. Dibiarkan tampil apa adanya, tidak dijodohkan paksa.
+    assert.equal(result.summary.hanyaExcel, 3);
+    assert.equal(result.summary.hanyaPdf, 3);
+  });
+
+  test("identitas neraca ikut terbandingkan di kedua sisi", () => {
+    const row = findRow(result.rows, /^TOTAL KEWAJIBAN DAN MODAL$/i);
+    assert.equal(row.status, "COCOK");
+    assert.equal(row.excelValue, 2116925420.78);
+  });
+});
+
+describe("Arus Kas Februari 2026", () => {
+  const result = compareFinancialReports(excelLines("2026-02", "cashflow"), pdfLines("mapping-laba-rugi-feb-2026-scan", "cashflow"), "cashflow");
+
+  test("seluruh baris aktivitas cocok tanpa aturan pengelompokan apa pun", () => {
+    assert.equal(result.summary.beda, 0);
+    assert.equal(result.summary.cocok, 9);
+    assert.deepEqual(result.appliedRules, []);
+  });
+
+  test("saldo kas awal dan akhir cocok", () => {
+    assert.equal(findRow(result.rows, /^SALDO KAS AWAL$/i).pdfValue, 448625339.61);
+    assert.equal(findRow(result.rows, /^SALDO KAS AKHIR$/i).pdfValue, 300755160.64);
+  });
+
+  test("section Investasi dan Pendanaan yang nihil di Excel tidak ikut tampil", () => {
+    // PDF Olsera tidak mencetak section yang seluruhnya nol. Subtotalnya di
+    // Excel bernilai 0, jadi baris itu nihil sebelah dan sudah dibuang.
+    assert.equal(result.rows.some((row) => /Investasi|Pendanaan/i.test(row.label)), false);
   });
 });

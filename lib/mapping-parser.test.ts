@@ -204,6 +204,121 @@ describe("parseFinancialReport — fixture Mei-2026 (PDF digital, text layer)", 
   });
 });
 
+describe("Neraca — fixture Feb-2026 halaman 2 (PDF hasil scan, OCR)", () => {
+  const fixture = loadFixture("mapping-laba-rugi-feb-2026-scan");
+  const result = parseFinancialReport(fixture.tokens, { rowTolerance: fixture.rowTolerance, kind: "balance-sheet" });
+
+  test("diterima, dengan offset layoutnya SENDIRI", () => {
+    assert.ok(result.status === "ok", result.status === "rejected" ? result.reason : "");
+    // Berkas yang SAMA: Laba Rugi di halaman 1 mencetak nominal satu baris di
+    // atas labelnya (offset 1), Neraca di halaman 2 sebaris (offset 0). Tiap
+    // laporan mendeteksi offsetnya sendiri, bukan mewarisi milik tetangganya.
+    assert.equal(result.rowOffsetApplied, 0);
+    assert.equal(result.period, "2026-02");
+  });
+
+  test("angka terverifikasi Februari 2026", () => {
+    assert.ok(result.status === "ok");
+    assertAmount(findLabel(result.lines, /^Total Aset$/i).value, 2116925420.78, "Total Aset");
+    assertAmount(findLabel(result.lines, /^Total Kewajiban$/i).value, 120217139, "Total Kewajiban");
+    assertAmount(findLabel(result.lines, /^Total Modal$/i).value, 1996708281.78, "Total Modal");
+    assertAmount(findLabel(result.lines, /^Total Kewajiban dan Modal$/i).value, 2116925420.78, "Total Kewajiban dan Modal");
+  });
+
+  test("nominal yang terdorong ke dalam label oleh derau OCR tetap terbaca", () => {
+    assert.ok(result.status === "ok");
+    // Baris ini terbaca OCR sebagai "11702 Biaya Pra Operasional
+    // 1,572,107,617.00 beluw Tut Ponloayor" — nominalnya di tengah, derau di
+    // kanannya. Ini nominal TERBESAR di laporan; kalau hilang, Neraca ditolak.
+    const line = findLine(result.lines, "11702");
+    assertAmount(line.value, 1572107617, "11702 Biaya Pra Operasional");
+    assert.equal(line.label, "Biaya Pra Operasional");
+  });
+
+  test("baris tanpa kode akun tetap terhitung sebagai detail bila section-nya ditutup subtotal", () => {
+    assert.ok(result.status === "ok");
+    // "Pendapatan Periode ini" dicetak TANPA kode akun. Kalau ia dianggap
+    // baris turunan, Total Modal meleset persis sebesar nilainya.
+    const line = findLabel(result.lines, /^Pendapatan Periode ini$/i);
+    assert.equal(line.kind, "detail");
+    assertAmount(line.value, -2680094.81, "Pendapatan Periode ini");
+  });
+
+  test("token simbol di kiri label dibuang supaya baris penutup tetap dikenali", () => {
+    assert.ok(result.status === "ok");
+    // OCR membaca baris ini sebagai "/™ Total Aset Lancar". Dengan awalan itu
+    // ia bukan subtotal, dan section Aset tidak pernah tertutup.
+    assert.equal(findLabel(result.lines, /^Total Aset Lancar$/i).kind, "subtotal");
+  });
+
+  test("identitas Neraca diperiksa, dan halaman tetangga tidak ikut terbawa", () => {
+    assert.ok(result.status === "ok");
+    assert.equal(result.checks.every((c) => c.passed), true);
+    assert.ok(result.checks.some((c) => c.kind === "final" && /Total Aset = Total Kewajiban dan Modal/.test(c.label)));
+    // Laba Rugi (halaman 1) dan Arus Kas (halaman 3) tidak boleh ikut.
+    assert.equal(result.lines.some((l) => l.code?.startsWith("40")), false);
+    assert.equal(result.lines.some((l) => /^Saldo Kas/i.test(l.label)), false);
+  });
+});
+
+describe("Arus Kas — fixture Feb-2026 halaman 3 (PDF hasil scan, OCR)", () => {
+  const fixture = loadFixture("mapping-laba-rugi-feb-2026-scan");
+  const result = parseFinancialReport(fixture.tokens, { rowTolerance: fixture.rowTolerance, kind: "cashflow" });
+
+  test("diterima walau TIDAK ADA kode akun sama sekali", () => {
+    assert.ok(result.status === "ok", result.status === "rejected" ? result.reason : "");
+    assert.equal(result.period, "2026-02");
+    // Laporan ini tidak mencetak kode akun, jadi "detail = punya kode akun"
+    // tidak berlaku di sini. Keenam baris aktivitas tetap harus jadi detail.
+    assert.equal(result.lines.filter((l) => l.kind === "detail").length, 6);
+    assert.equal(result.lines.every((l) => l.code === null), true);
+  });
+
+  test("angka terverifikasi Februari 2026", () => {
+    assert.ok(result.status === "ok");
+    assertAmount(findLabel(result.lines, /^Total Aktivitas Operasional$/i).value, -147870178.97, "Total Aktivitas Operasional");
+    assertAmount(findLabel(result.lines, /^Saldo Kas Awal$/i).value, 448625339.61, "Saldo Kas Awal");
+    assertAmount(findLabel(result.lines, /^Saldo Kas Akhir$/i).value, 300755160.64, "Saldo Kas Akhir");
+  });
+
+  test("baris turunan di bawah subtotal TIDAK ikut jadi detail", () => {
+    assert.ok(result.status === "ok");
+    // Ketiganya bernilai dan tanpa kode akun, sama seperti baris aktivitas di
+    // atasnya. Yang membedakan: tidak ada baris "Total ..." sesudahnya.
+    for (const pattern of [/Penurunan Kas$/i, /^Saldo Kas Awal$/i, /^Saldo Kas Akhir$/i]) {
+      assert.equal(findLabel(result.lines, pattern).kind, "derived", `${pattern} seharusnya baris turunan`);
+    }
+  });
+
+  test("identitas Arus Kas diperiksa: saldo awal + aktivitas = saldo akhir", () => {
+    assert.ok(result.status === "ok");
+    assert.equal(result.checks.every((c) => c.passed), true);
+    const final = result.checks.find((c) => c.kind === "final");
+    assert.ok(final);
+    assert.match(final.label, /Saldo Kas Awal \+ aktivitas = Saldo Kas Akhir/);
+    assertAmount(final.actual, 300755160.64, "saldo awal + aktivitas");
+  });
+});
+
+describe("laporan yang tidak ada di berkas dibedakan dari yang ditolak", () => {
+  const fixture = loadFixture("mapping-laba-rugi-mei-2026-digital");
+
+  test("PDF Laba Rugi saja: Neraca dan Arus Kas ditandai tidak ada, bukan ditolak", () => {
+    for (const kind of ["balance-sheet", "cashflow"] as const) {
+      const result = parseFinancialReport(fixture.tokens, { rowTolerance: fixture.rowTolerance, kind });
+      assert.ok(result.status === "rejected");
+      assert.equal(result.notFound, true);
+      assert.match(result.reason, /tidak ada di berkas PDF ini/);
+    }
+  });
+
+  test("Laba Rugi di berkas yang sama tetap terbaca utuh", () => {
+    const result = parseFinancialReport(fixture.tokens, { rowTolerance: fixture.rowTolerance, kind: "profit-loss" });
+    assert.ok(result.status === "ok");
+    assert.equal(result.lines.filter((l) => l.kind === "detail").length, 48);
+  });
+});
+
 describe("pengaman aritmatika — dokumen yang tidak rekonsiliasi DITOLAK", () => {
   const fixture = loadFixture("mapping-laba-rugi-feb-2026-scan");
 
@@ -236,6 +351,35 @@ describe("pengaman aritmatika — dokumen yang tidak rekonsiliasi DITOLAK", () =
   test("satu baris detail terlewat ditolak", () => {
     const tokens = withoutToken((t) => t.text === "17,059,300");
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance });
+    assert.equal(result.status, "rejected");
+  });
+
+  test("Neraca yang tidak seimbang DITOLAK, bukan ditampilkan apa adanya", () => {
+    // Satu baris aset hilang: Total Aset Lancar tidak lagi sama dengan jumlah
+    // detailnya, DAN Total Aset tidak lagi sama dengan Total Kewajiban dan
+    // Modal. Neraca yang tidak seimbang tidak boleh pernah lolos.
+    const tokens = withoutToken((t) => t.text === "4,250,000.00");
+    const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "balance-sheet" });
+    assert.equal(result.status, "rejected");
+    assert.ok(result.status === "rejected");
+    assert.equal(result.notFound, undefined, "ini dokumen bermasalah, bukan laporan yang tidak ada");
+    assert.match(result.reason, /Neraca tidak rekonsiliasi/);
+  });
+
+  test("Arus Kas yang saldo awalnya salah baca DITOLAK", () => {
+    // Identitas saldo awal + aktivitas = saldo akhir langsung meleset, walau
+    // subtotal aktivitasnya sendiri masih benar — persis kelas kesalahan yang
+    // tidak akan tertangkap cek subtotal saja.
+    const tokens = fixture.tokens.map((token) => (token.text === "448,625,339.61" ? { ...token, text: "448,625,449.61" } : token));
+    const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "cashflow" });
+    assert.equal(result.status, "rejected");
+    assert.ok(result.status === "rejected");
+    assert.match(result.reason, /Arus Kas tidak rekonsiliasi/);
+  });
+
+  test("Arus Kas yang satu baris aktivitasnya hilang DITOLAK", () => {
+    const tokens = withoutToken((t) => t.text === "4,560,000.00");
+    const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "cashflow" });
     assert.equal(result.status, "rejected");
   });
 

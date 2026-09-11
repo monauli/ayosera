@@ -22,15 +22,18 @@
 // "Pendapatan Sewa Raket Padel" di Excel. Parser ini mengeluarkan baris APA
 // ADANYA seperti tercetak di sheet.
 import {
-  FINAL_TOLERANCE,
   isSubtotalLabel,
-  reconcileNetProfitChain,
+  reconcileFinalIdentity,
   reconcileSubtotals,
   type FinancialLine,
+  type FinancialSheetKind,
   type ReconciliationCheck,
 } from "./mapping-parser.ts";
 
-export type FinancialSheetKind = "profit-loss" | "balance-sheet" | "cashflow";
+// Tipe jenis laporan lahir di file ini, lalu pindah ke mapping-parser.ts saat
+// identitas aritmatika per laporan mulai dipakai kedua sisi. Diekspor ulang
+// dari sini supaya pemanggil lama tidak perlu diubah.
+export type { FinancialSheetKind };
 
 export type ExcelReportRow = {
   /** Nomor baris spreadsheet (1-based), untuk diagnosis. */
@@ -179,61 +182,6 @@ function classify(sheet: ExcelReportSheet, column: number, headerRow: number): E
   return lines;
 }
 
-function findLine(lines: readonly ExcelFinancialLine[], pattern: RegExp): ExcelFinancialLine | undefined {
-  return lines.find((line) => pattern.test(line.label.trim()));
-}
-
-/**
- * Bandingkan dua angka yang secara aritmatika HARUS sama.
- *
- * Salah satu sisi tidak ada atau kosong = identitasnya tidak bisa diuji, dan
- * itu dihitung GAGAL, bukan dilewati. Nyata di fixture: sheet Arus Kas
- * periode 2025-11 tidak punya Saldo Kas Awal (bulan pertama, belum ada saldo
- * sebelumnya), jadi periode itu ditolak alih-alih diterima tanpa verifikasi.
- */
-function identityCheck(label: string, expected: number | undefined, actual: number | undefined): ReconciliationCheck {
-  if (expected === undefined || actual === undefined) {
-    return { kind: "final", label: `${label} (nilai tidak lengkap untuk periode ini)`, expected: Number.NaN, actual: Number.NaN, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false };
-  }
-  return {
-    kind: "final",
-    label,
-    expected,
-    actual,
-    difference: actual - expected,
-    tolerance: FINAL_TOLERANCE,
-    passed: Math.abs(actual - expected) <= FINAL_TOLERANCE,
-  };
-}
-
-/**
- * Cek akhir per jenis laporan. Cek subtotal-vs-detail sama untuk ketiganya
- * (reconcileSubtotals), tapi "rantai subtotal vs total akhir" punya bentuk
- * yang berbeda-beda karena identitas aritmatikanya memang berbeda:
- *
- *   Laba Rugi | rantai subtotal (pendapatan + / biaya -) = Laba Bersih
- *   Neraca    | Total Aset = Total Kewajiban dan Modal
- *   Arus Kas  | Saldo Kas Awal + jumlah subtotal aktivitas = Saldo Kas Akhir
- */
-function finalCheck(kind: FinancialSheetKind, lines: readonly ExcelFinancialLine[]): ReconciliationCheck {
-  if (kind === "profit-loss") return reconcileNetProfitChain(lines);
-  if (kind === "balance-sheet") {
-    return identityCheck(
-      "Total Aset = Total Kewajiban dan Modal",
-      findLine(lines, /^total\s+aset$/i)?.value ?? undefined,
-      findLine(lines, /^total\s+kewajiban\s+dan\s+modal$/i)?.value ?? undefined,
-    );
-  }
-  const opening = findLine(lines, /^saldo\s+kas\s+awal$/i)?.value;
-  const closing = findLine(lines, /^saldo\s+kas\s+akhir$/i)?.value;
-  const activities = lines.filter((line) => line.kind === "subtotal").reduce((sum, line) => sum + (line.value ?? 0), 0);
-  return identityCheck(
-    "Saldo Kas Awal + aktivitas = Saldo Kas Akhir",
-    closing ?? undefined,
-    opening === null || opening === undefined ? undefined : opening + activities,
-  );
-}
-
 /**
  * Parse satu sheet untuk satu bulan.
  *
@@ -260,7 +208,9 @@ export function parseFinancialSheet(sheet: ExcelReportSheet, period: string): Ex
   // Toleransi per baris 0: beda dengan PDF, spreadsheet menyimpan nilai
   // presisi penuh sehingga tidak ada galat pemotongan desimal yang perlu
   // dimaafkan. Yang tersisa hanya FINAL_TOLERANCE untuk derau float.
-  const checks = [...reconcileSubtotals(lines, 0), finalCheck(sheet.kind, lines)];
+  // Identitas akhirnya SAMA PERSIS dengan yang dipakai sisi PDF — satu fungsi
+  // di lib/mapping-parser.ts, bukan dua salinan yang bisa menyimpang.
+  const checks = [...reconcileSubtotals(lines, 0), reconcileFinalIdentity(sheet.kind, lines)];
   const failedChecks = checks.filter((check) => !check.passed);
   if (failedChecks.length > 0) {
     const summary = failedChecks.map((check) => `${check.label}: selisih ${check.difference}`).join("; ");

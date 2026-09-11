@@ -41,6 +41,17 @@ export type MappingToken = {
 export type MappingLineKind = "detail" | "subtotal" | "derived" | "header";
 
 /**
+ * Ketiga laporan yang ditangani modul ini.
+ *
+ * Tinggal di sini, BUKAN di lib/mapping-excel-parser.ts tempat ia lahir,
+ * karena identitas aritmatika per laporan (reconcileFinalIdentity di bawah)
+ * sekarang dipakai kedua sisi — PDF dan Excel — dan file ini adalah rumah
+ * bersama pengaman aritmatika. mapping-excel-parser.ts mengekspor ulang
+ * namanya supaya pemanggil lama tidak perlu diubah.
+ */
+export type FinancialSheetKind = "profit-loss" | "balance-sheet" | "cashflow";
+
+/**
  * Satu baris laporan keuangan, LEPAS dari sumbernya (PDF atau Excel).
  *
  * Dipisah dari MappingLine supaya parser Excel (lib/mapping-excel-parser.ts)
@@ -101,6 +112,13 @@ export type MappingParseResult =
       reason: string;
       /** Hasil rekonsiliasi tiap offset yang dicoba, untuk diagnosis. */
       attempts: { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] }[];
+      /**
+       * true bila laporan ini memang TIDAK ADA di berkas — bukan ada tapi
+       * angkanya tidak bisa dipercaya. Dibedakan supaya PDF yang hanya
+       * memuat Laba Rugi tidak menampilkan Neraca sebagai "Ditolak", yang
+       * akan terbaca seolah ada yang salah dengan dokumennya.
+       */
+      notFound?: boolean;
     };
 
 /**
@@ -315,6 +333,21 @@ function isNoiseToken(text: string): boolean {
 }
 
 /**
+ * Nominal BERFORMAT: ada pemisah ribuan/desimal, bukan kode akun.
+ *
+ * Lebih ketat daripada isAmountToken — tanda hubung telanjang dan angka polos
+ * tidak dihitung. Dipakai HANYA untuk menyelamatkan nominal yang terdorong ke
+ * dalam kolom label (lihat groupTokensIntoRows), jadi syaratnya harus cukup
+ * khas untuk tidak pernah mengira potongan label sebagai angka: "BANK BCA
+ * 7195-332266" dan "Feb-26" tidak punya pemisah desimal, "40000" kode akun.
+ */
+function isFormattedAmount(text: string): boolean {
+  if (!/[.,]/.test(text)) return false;
+  if (ACCOUNT_CODE.test(text)) return false;
+  return parseFinancialAmount(text) !== null;
+}
+
+/**
  * Kelompokkan token jadi baris per halaman, lalu pisahkan label dari nominal.
  *
  * Pemisahan dilakukan PER BARIS dari kanan ke kiri — kumpulkan token nominal
@@ -348,6 +381,24 @@ export function groupTokensIntoRows(tokens: readonly MappingToken[], rowToleranc
       const amountTokens: MappingToken[] = [];
       let index = ordered.length - 1;
       for (; index >= 0 && isAmountToken(ordered[index].text); index--) amountTokens.unshift(ordered[index]);
+      if (amountTokens.length === 0) {
+        // Sel nominal kosong TAPI ada angka berformat di tengah label: OCR
+        // menempelkan derau di KANAN angkanya sehingga pemindaian dari kanan
+        // berhenti sebelum sampai ke sana. Nyata di fixture Neraca Feb-2026,
+        // baris 11702 terbaca "11702 Biaya Pra Operasional 1,572,107,617.00
+        // beluw Tut Ponloayor" — tanpa penyelamatan ini satu nominal terbesar
+        // di laporan itu hilang dan Neraca ditolak.
+        //
+        // Segala yang ada di KANAN angka itu dibuang: di laporan keuangan
+        // tidak ada isi sah di sebelah kanan nominal. Indeks 0 tidak pernah
+        // diambil supaya kode akun tidak ikut terbaca sebagai nominal.
+        for (let candidate = ordered.length - 1; candidate >= 1; candidate--) {
+          if (!isFormattedAmount(ordered[candidate].text)) continue;
+          amountTokens.push(ordered[candidate]);
+          index = candidate - 1;
+          break;
+        }
+      }
       rows.push({ page, labelTokens: ordered.slice(0, index + 1), amountTokens });
       current = [];
     };
@@ -385,55 +436,165 @@ function readAmountCell(amountTokens: readonly MappingToken[]): number | null {
   return hasLeadingMinus ? -Math.abs(best.value) : best.value;
 }
 
+/**
+ * Buang token simbol murni di KIRI label.
+ *
+ * OCR menempelkan sisa garis/logo sebagai token tersendiri di awal baris —
+ * "/™ Total Aset Lancar", "“™ Saldo Kas Awal". Keduanya baris penting: yang
+ * pertama penutup section Neraca, yang kedua landasan identitas Arus Kas.
+ * Dengan awalan itu keduanya tidak cocok pola mana pun dan laporannya gagal
+ * rekonsiliasi padahal angkanya benar.
+ *
+ * Hanya token yang SAMA SEKALI tidak punya huruf/angka yang dibuang, jadi
+ * awalan huruf seperti "Mm Biaya Pokok Penjualan" dibiarkan apa adanya —
+ * itu urusan normalisasi label saat penjodohan (lib/mapping-compare.ts),
+ * bukan urusan parser.
+ */
+function dropLeadingSymbolTokens(tokens: readonly MappingToken[]): readonly MappingToken[] {
+  let start = 0;
+  while (start < tokens.length && !/[a-z0-9]/i.test(tokens[start].text)) start += 1;
+  return start === 0 ? tokens : tokens.slice(start);
+}
+
+/** Baris siap klasifikasi: label sudah bersih, nominal sudah diambil. */
+type Cell = { page: number; label: string; code: string | null; value: number | null; empty: boolean };
+
+/**
+ * Apakah baris bernilai TANPA kode akun ini bagian dari sebuah section yang
+ * ditutup subtotal — jadi baris detail — atau baris turunan?
+ *
+ * Pertanyaan ini tidak bisa dijawab dari barisnya sendiri, dan kode akun tidak
+ * bisa dipakai sebagai jawaban karena ketiga laporan berbeda kebiasaan:
+ *
+ *   Laba Rugi | semua detail berkode; "Laba Kotor"/"Laba Bersih" tidak
+ *   Neraca    | hampir semua berkode, KECUALI "Pendapatan Periode ini"
+ *   Arus Kas  | TIDAK ADA kode akun sama sekali
+ *
+ * Jadi yang dipakai adalah bentuk laporannya: baris detail selalu diikuti —
+ * tanpa diselingi judul section baru — oleh baris "Total ..." yang
+ * menjumlahkannya. Baris turunan seperti "Laba Kotor", "Kenaikan/Penurunan
+ * Kas", dan "Saldo Kas Akhir" tidak pernah punya penutup seperti itu:
+ * sesudahnya judul section baru, atau habis.
+ *
+ * Salah tebak ke arah mana pun membuat sebuah subtotal tidak cocok dengan
+ * jumlah detailnya, jadi dokumennya DITOLAK — bukan diterima dengan angka
+ * yang diam-diam salah kategori.
+ */
+function closesIntoSubtotal(cells: readonly Cell[], from: number): boolean {
+  for (let index = from + 1; index < cells.length; index += 1) {
+    const cell = cells[index];
+    if (cell.empty) continue;
+    if (cell.value === null) return false;
+    if (TOTAL_PREFIX.test(cell.label)) return true;
+  }
+  return false;
+}
+
 function classify(rows: readonly Row[], rowOffset: 0 | 1): MappingLine[] {
-  const lines: MappingLine[] = [];
-  let pendingDetails = 0;
-  rows.forEach((row, index) => {
-    if (row.labelTokens.length === 0) return;
-    const source = rows[index - rowOffset];
+  // Label dan nominal dihitung DULU untuk seluruh baris: klasifikasi butuh
+  // melihat ke depan (closesIntoSubtotal), dan keduanya tidak bergantung pada
+  // hasil klasifikasi baris mana pun.
+  const cells: Cell[] = rows.map((row, index) => {
+    const labelTokens = dropLeadingSymbolTokens(row.labelTokens);
     // Pergeseran tidak pernah melompati batas halaman — koordinat Y tiap
     // halaman independen, jadi baris terakhir halaman sebelumnya bukan
     // tetangga visual baris pertama halaman ini.
+    const source = rows[index - rowOffset];
     const amountTokens = source && source.page === row.page ? source.amountTokens : [];
-    const value = readAmountCell(amountTokens);
-    const [first, ...rest] = row.labelTokens;
-    const isDetail = ACCOUNT_CODE.test(first.text) && rest.length > 0;
-    const label = (isDetail ? rest : row.labelTokens).map((t) => t.text).join(" ").trim();
-    if (isDetail) {
+    const [first, ...rest] = labelTokens;
+    const hasCode = first !== undefined && ACCOUNT_CODE.test(first.text) && rest.length > 0;
+    return {
+      page: row.page,
+      label: (hasCode ? rest : labelTokens).map((token) => token.text).join(" ").trim(),
+      code: hasCode ? first.text : null,
+      value: readAmountCell(amountTokens),
+      empty: labelTokens.length === 0,
+    };
+  });
+
+  const lines: MappingLine[] = [];
+  let pendingDetails = 0;
+  cells.forEach((cell, index) => {
+    if (cell.empty) return;
+    const base = { label: cell.label, page: cell.page };
+    if (cell.code !== null) {
       pendingDetails += 1;
-      lines.push({ code: first.text, label, value: value ?? 0, kind: "detail", page: row.page, assumedZero: value === null });
+      lines.push({ ...base, code: cell.code, value: cell.value ?? 0, kind: "detail", assumedZero: cell.value === null });
       return;
     }
-    if (value === null) {
-      lines.push({ code: null, label, value: null, kind: "header", page: row.page, assumedZero: false });
+    if (cell.value === null) {
+      lines.push({ ...base, code: null, value: null, kind: "header", assumedZero: false });
       return;
     }
     // Baris "Total ..." yang didahului baris detail menutup satu section.
-    // Yang tidak (mis. "Total pendapatan non operasional" kedua di fixture
-    // Mei, nilainya netto) adalah baris turunan, sama seperti "Laba Kotor".
-    const isSubtotal = TOTAL_PREFIX.test(label) && pendingDetails > 0;
-    if (isSubtotal) pendingDetails = 0;
-    lines.push({ code: null, label, value, kind: isSubtotal ? "subtotal" : "derived", page: row.page, assumedZero: false });
+    // Yang tidak (mis. "Total Aset" di Neraca, atau "Total pendapatan non
+    // operasional" kedua di fixture Mei) adalah baris turunan.
+    if (TOTAL_PREFIX.test(cell.label)) {
+      const isSubtotal = pendingDetails > 0;
+      if (isSubtotal) pendingDetails = 0;
+      lines.push({ ...base, code: null, value: cell.value, kind: isSubtotal ? "subtotal" : "derived", assumedZero: false });
+      return;
+    }
+    if (closesIntoSubtotal(cells, index)) {
+      pendingDetails += 1;
+      lines.push({ ...base, code: null, value: cell.value, kind: "detail", assumedZero: false });
+      return;
+    }
+    lines.push({ ...base, code: null, value: cell.value, kind: "derived", assumedZero: false });
   });
   return lines;
 }
 
 /**
- * Potong di baris "Laba Bersih", baris penutup sebuah laporan laba rugi.
+ * Baris PENUTUP tiap laporan. Dipakai untuk memotong bundel 3-laporan jadi
+ * tiga, dan sekaligus sebagai bukti bahwa laporan itu memang ada di berkas.
+ *
+ * Dipilih baris penutup, bukan judul laporan di kop, karena judulnya melewati
+ * OCR dengan kondisi bermacam-macam ("La Laporan Laba Rugi", "Neraca") sedang
+ * baris penutup adalah baris angka yang justru dijaga pengaman aritmatika.
+ */
+const REPORT_END_MARKERS: Record<FinancialSheetKind, RegExp> = {
+  "profit-loss": /^laba\s*bersih$/i,
+  "balance-sheet": /^total\s+kewajiban\s+dan\s+modal$/i,
+  cashflow: /^saldo\s+kas\s+akhir$/i,
+};
+
+/** Nama laporan untuk pesan ke pengguna. */
+export const REPORT_TITLES: Record<FinancialSheetKind, string> = {
+  "profit-loss": "Laba Rugi",
+  "balance-sheet": "Neraca",
+  cashflow: "Arus Kas",
+};
+
+/** Urutan cetak Olsera dalam satu bundel. */
+const BUNDLE_ORDER: readonly FinancialSheetKind[] = ["profit-loss", "balance-sheet", "cashflow"];
+
+/**
+ * Potong satu laporan dari bundel, atau null bila laporannya tidak ada.
  *
  * Fixture Feb-2026 bukan laporan tunggal melainkan BUNDEL: halaman 1 Laba
- * Rugi, halaman 2 Neraca, halaman 3 Arus Kas. Neraca dan Arus Kas juga punya
- * kode akun dan baris "Total ...", jadi tanpa pemotongan ini keduanya ikut
- * terhitung ke dalam rekonsiliasi laba rugi.
+ * Rugi, 2 Neraca, 3 Arus Kas. Ketiganya punya kode akun dan baris "Total ...",
+ * jadi tanpa pemotongan ini isi laporan tetangga ikut terhitung ke dalam
+ * rekonsiliasi yang salah.
  *
- * ponytail: mengasumsikan laba rugi ada di awal berkas (benar untuk kedua
- * fixture). Bundel yang menaruh Neraca lebih dulu akan gagal rekonsiliasi dan
- * DITOLAK — bukan salah baca diam-diam. Kalau urutan lain ternyata muncul,
- * tambahkan deteksi judul laporan di sini.
+ * Batas awalnya adalah penutup laporan sebelumnya yang BENAR-BENAR ADA di
+ * berkas ini, jadi PDF yang hanya memuat Neraca tetap terbaca utuh dari baris
+ * pertamanya.
+ *
+ * ponytail: mengasumsikan urutan cetak Olsera (BUNDLE_ORDER) — benar untuk
+ * kedua fixture. Bundel dengan urutan lain akan gagal rekonsiliasi dan
+ * DITOLAK, bukan salah baca diam-diam.
  */
-function scopeToProfitAndLoss(lines: readonly MappingLine[]): MappingLine[] {
-  const end = lines.findIndex((line) => NET_PROFIT_LABEL.test(line.label));
-  return end === -1 ? [...lines] : lines.slice(0, end + 1);
+function scopeToReport(lines: readonly MappingLine[], kind: FinancialSheetKind): MappingLine[] | null {
+  const end = lines.findIndex((line) => REPORT_END_MARKERS[kind].test(line.label.trim()));
+  if (end === -1) return null;
+  let start = 0;
+  for (const previous of BUNDLE_ORDER) {
+    if (previous === kind) break;
+    const boundary = lines.findIndex((line) => REPORT_END_MARKERS[previous].test(line.label.trim()));
+    if (boundary !== -1 && boundary < end) start = Math.max(start, boundary + 1);
+  }
+  return lines.slice(start, end + 1);
 }
 
 /** Indeks baris akun pertama; batas antara kop surat dan isi laporan. */
@@ -555,8 +716,69 @@ export function reconcileNetProfitChain(lines: readonly FinancialLine[]): Reconc
   };
 }
 
-function reconcile(lines: readonly MappingLine[]): ReconciliationCheck[] {
-  return [...reconcileSubtotals(lines), reconcileNetProfitChain(lines)];
+function findLineByLabel(lines: readonly FinancialLine[], pattern: RegExp): FinancialLine | undefined {
+  return lines.find((line) => pattern.test(line.label.trim()));
+}
+
+/**
+ * Bandingkan dua angka yang secara aritmatika HARUS sama.
+ *
+ * Salah satu sisi tidak ada atau kosong = identitasnya tidak bisa diuji, dan
+ * itu dihitung GAGAL, bukan dilewati. Nyata di fixture: sheet Arus Kas Excel
+ * periode 2025-11 tidak punya Saldo Kas Awal (bulan pertama, belum ada saldo
+ * sebelumnya), jadi periode itu ditolak alih-alih diterima tanpa verifikasi.
+ */
+function identityCheck(label: string, expected: number | undefined, actual: number | undefined): ReconciliationCheck {
+  if (expected === undefined || actual === undefined) {
+    return { kind: "final", label: `${label} (nilai tidak lengkap untuk periode ini)`, expected: Number.NaN, actual: Number.NaN, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false };
+  }
+  return {
+    kind: "final",
+    label,
+    expected,
+    actual,
+    difference: actual - expected,
+    tolerance: FINAL_TOLERANCE,
+    passed: Math.abs(actual - expected) <= FINAL_TOLERANCE,
+  };
+}
+
+/**
+ * Cek akhir per jenis laporan, dipakai SISI PDF MAUPUN SISI EXCEL.
+ *
+ * Cek subtotal-vs-detail sama untuk ketiganya (reconcileSubtotals), tapi
+ * "rantai subtotal vs total akhir" berbeda bentuk karena identitas
+ * aritmatikanya memang berbeda:
+ *
+ *   Laba Rugi | rantai subtotal (pendapatan + / biaya -) = Laba Bersih
+ *   Neraca    | Total Aset = Total Kewajiban dan Modal
+ *   Arus Kas  | Saldo Kas Awal + jumlah subtotal aktivitas = Saldo Kas Akhir
+ *
+ * Fungsi ini lahir di lib/mapping-excel-parser.ts dan dipindah ke sini saat
+ * sisi PDF menyusul — supaya kedua sisi diuji identitas yang SAMA PERSIS,
+ * bukan dua salinan yang bisa menyimpang diam-diam.
+ */
+export function reconcileFinalIdentity(kind: FinancialSheetKind, lines: readonly FinancialLine[]): ReconciliationCheck {
+  if (kind === "profit-loss") return reconcileNetProfitChain(lines);
+  if (kind === "balance-sheet") {
+    return identityCheck(
+      "Total Aset = Total Kewajiban dan Modal",
+      findLineByLabel(lines, /^total\s+aset$/i)?.value ?? undefined,
+      findLineByLabel(lines, /^total\s+kewajiban\s+dan\s+modal$/i)?.value ?? undefined,
+    );
+  }
+  const opening = findLineByLabel(lines, /^saldo\s+kas\s+awal$/i)?.value;
+  const closing = findLineByLabel(lines, /^saldo\s+kas\s+akhir$/i)?.value;
+  const activities = lines.filter((line) => line.kind === "subtotal").reduce((sum, line) => sum + (line.value ?? 0), 0);
+  return identityCheck(
+    "Saldo Kas Awal + aktivitas = Saldo Kas Akhir",
+    closing ?? undefined,
+    opening === null || opening === undefined ? undefined : opening + activities,
+  );
+}
+
+function reconcile(lines: readonly MappingLine[], kind: FinancialSheetKind): ReconciliationCheck[] {
+  return [...reconcileSubtotals(lines), reconcileFinalIdentity(kind, lines)];
 }
 
 /**
@@ -570,17 +792,23 @@ function reconcile(lines: readonly MappingLine[]): ReconciliationCheck[] {
  */
 export function parseFinancialReport(
   tokens: readonly MappingToken[],
-  options: { rowTolerance: number },
+  options: { rowTolerance: number; kind?: FinancialSheetKind },
 ): MappingParseResult {
+  const kind = options.kind ?? "profit-loss";
   const rows = groupTokensIntoRows(tokens, options.rowTolerance);
   const attempts: { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] }[] = [];
   for (const rowOffset of [0, 1] as const) {
-    const scoped = scopeToProfitAndLoss(classify(rows, rowOffset));
+    const scoped = scopeToReport(classify(rows, rowOffset), kind);
+    if (scoped === null) {
+      // Offset tidak mengubah label, jadi laporan yang tidak ketemu pada
+      // offset 0 juga tidak akan ketemu pada offset 1.
+      return { status: "rejected", reason: `${REPORT_TITLES[kind]} tidak ada di berkas PDF ini.`, attempts: [], notFound: true };
+    }
     // Periode dibaca SEBELUM kop dibuang — kop itu satu-satunya tempat
     // periodenya tercetak.
     const period = detectReportPeriod(scoped.slice(0, Math.max(firstDetailIndex(scoped), 0)).map((line) => line.label));
     const lines = stripLetterhead(scoped);
-    const checks = reconcile(lines);
+    const checks = reconcile(lines, kind);
     const failedChecks = checks.filter((check) => !check.passed);
     // Baris detail yang tidak ditutup subtotal tidak pernah ikut terperiksa,
     // jadi diperlakukan sebagai kegagalan — bukan diloloskan diam-diam.
@@ -598,7 +826,7 @@ export function parseFinancialReport(
     .join(" | ");
   return {
     status: "rejected",
-    reason: `Laporan tidak rekonsiliasi terhadap total yang tercetak, jadi hasil bacanya tidak bisa dipercaya. ${summary}`,
+    reason: `${REPORT_TITLES[kind]} tidak rekonsiliasi terhadap total yang tercetak, jadi hasil bacanya tidak bisa dipercaya. ${summary}`,
     attempts,
   };
 }
@@ -634,7 +862,7 @@ export type PdfAnalysisSource = "pdf-text-layer" | "pdf-scanned-ocr";
 export async function analyzeFinancialPdf(
   file: File,
   onStatus: (status: string) => void = () => {},
-): Promise<{ source: PdfAnalysisSource; result: MappingParseResult }> {
+): Promise<{ source: PdfAnalysisSource; reports: Record<FinancialSheetKind, MappingParseResult> }> {
   onStatus("Membuka berkas PDF...");
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -645,19 +873,35 @@ export async function analyzeFinancialPdf(
     const digitalLength = digital?.reduce((total, token) => total + token.text.length, 0) ?? 0;
     if (digital && digitalLength >= MIN_TEXT_LAYER_LENGTH) {
       onStatus("Membaca text layer PDF...");
-      return { source: "pdf-text-layer", result: parseFinancialReport(digital, { rowTolerance: DIGITAL_ROW_TOLERANCE }) };
+      return { source: "pdf-text-layer", reports: parseAllReports(digital, DIGITAL_ROW_TOLERANCE) };
     }
     const scanned = await extractScanTokens(doc, onStatus);
     if (!scanned) {
-      return {
-        source: "pdf-scanned-ocr",
-        result: { status: "rejected", reason: "Halaman PDF tidak menghasilkan teks apa pun, baik dari text layer maupun OCR.", attempts: [] },
-      };
+      const blank: MappingParseResult = { status: "rejected", reason: "Halaman PDF tidak menghasilkan teks apa pun, baik dari text layer maupun OCR.", attempts: [] };
+      return { source: "pdf-scanned-ocr", reports: { "profit-loss": blank, "balance-sheet": blank, cashflow: blank } };
     }
-    return { source: "pdf-scanned-ocr", result: parseFinancialReport(scanned.tokens, { rowTolerance: scanned.rowTolerance }) };
+    return { source: "pdf-scanned-ocr", reports: parseAllReports(scanned.tokens, scanned.rowTolerance) };
   } finally {
     await loadingTask.destroy();
   }
+}
+
+/**
+ * Parse KETIGA laporan dari satu set token.
+ *
+ * Token diekstrak sekali (OCR berkas scan memakan waktu paling lama di
+ * seluruh alur), lalu tiap laporan dipotong, dideteksi offset barisnya, dan
+ * direkonsiliasi sendiri-sendiri — perlu, karena dalam berkas yang SAMA
+ * layout-nya bisa berbeda: pada fixture Feb-2026 Laba Rugi mencetak nominal
+ * satu baris di atas labelnya (offset 1) sedangkan Neraca dan Arus Kas
+ * sebaris (offset 0).
+ */
+function parseAllReports(tokens: readonly MappingToken[], rowTolerance: number): Record<FinancialSheetKind, MappingParseResult> {
+  return {
+    "profit-loss": parseFinancialReport(tokens, { rowTolerance, kind: "profit-loss" }),
+    "balance-sheet": parseFinancialReport(tokens, { rowTolerance, kind: "balance-sheet" }),
+    cashflow: parseFinancialReport(tokens, { rowTolerance, kind: "cashflow" }),
+  };
 }
 
 /**
