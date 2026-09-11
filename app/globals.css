@@ -1183,7 +1183,12 @@ th[scope],
 .mapping-report-body { padding:0 .65rem .65rem; display:grid; gap:.5rem; }
 /* Tabel baris laporan bisa panjang; digulung sendiri, tidak pernah melebarkan panel. */
 .mapping-lines { max-height:22rem; overflow:auto; border:1px solid rgb(var(--rd-border) / calc(var(--rd-border-alpha) / 2)); border-radius:.45rem; }
-.mapping-lines .recon-table th { position:sticky; top:0; z-index:1; }
+/* Header menempel saat digulung. Latar WAJIB opaque: latar .recon-table th
+   bawaan cuma rgb(... / .04), jadi tanpa ini baris yang lewat di belakangnya
+   tembus dan terlihat menimpa judul kolom. Garis bawahnya pakai inset
+   box-shadow, bukan border — border-collapse:collapse menempelkan border ke
+   tabel sehingga ikut tergulung. */
+.mapping-lines .recon-table th { position:sticky; top:0; z-index:1; background:rgb(var(--rd-card-from)); box-shadow:inset 0 -1px 0 rgb(var(--rd-border) / var(--rd-border-alpha)); }
 .mapping-lines .recon-table td:last-child, .mapping-lines .recon-table th:last-child { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .mapping-line-total > td { font-weight:700; background:rgb(var(--rd-surface) / var(--rd-surface-alpha)); }
 .mapping-line-header > td { color:rgb(var(--rd-text-tertiary)); font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; }

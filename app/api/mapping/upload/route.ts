@@ -79,7 +79,12 @@ export async function POST(request: Request) {
       { data: { url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, uploadedAt: new Date().toISOString(), sheets } },
       { status: 201, headers: NO_CACHE_HEADERS },
     );
-  } catch {
-    return NextResponse.json({ error: "Gagal mengunggah berkas." }, { status: 500, headers: NO_CACHE_HEADERS });
+  } catch (error) {
+    // Alasannya ikut dikirim: "Gagal mengunggah berkas." tanpa keterangan
+    // tidak bisa dibedakan dari penolakan platform (413 body >4,5 MB) yang
+    // bahkan tidak pernah sampai ke sini, dan itu persis yang membuat
+    // kegagalan unggah PDF dulu tidak bisa didiagnosis dari layar.
+    const reason = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: `Gagal mengunggah berkas: ${reason}` }, { status: 500, headers: NO_CACHE_HEADERS });
   }
 }

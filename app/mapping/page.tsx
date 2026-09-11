@@ -30,6 +30,8 @@ import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/
 
 type SessionUser = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 type UploadedFile = { url: string; fileName: string; size: number; uploadedAt: string };
+/** PDF tidak diunggah ke mana pun — hanya dibaca di browser ini. */
+type PickedFile = { fileName: string; size: number };
 
 const REPORT_TITLES: Record<FinancialSheetKind, string> = {
   "profit-loss": "Laba Rugi",
@@ -50,6 +52,14 @@ const STATUS_TONE: Record<ComparisonStatus, "ok" | "warn" | "danger" | "neutral"
   HANYA_EXCEL: "warn",
   HANYA_PDF: "warn",
 };
+
+/**
+ * Periode paling awal yang boleh tampil. Kolom bulan sebelum ini memang ada di
+ * workbook (November 2025 dst.) tapi bukan data yang dipakai — keputusan
+ * pengguna, bukan tebakan parser, jadi disaring di UI dan BUKAN di
+ * detectMonthColumns.
+ */
+const EARLIEST_PERIOD = "2026-02";
 
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
@@ -98,7 +108,18 @@ function checkSummary(check: ReconciliationCheck): string {
   return `${check.label}: jumlah baris detail ${formatAmount(check.actual)} — ${arah} ${formatAmount(Math.abs(check.difference))} dari angka tercetak ${formatAmount(check.expected)}.`;
 }
 
-function ReportBox({ title, view, open }: { title: string; view: ReportView; open: boolean }) {
+function ReportBox({
+  title,
+  view,
+  open,
+  showCode,
+}: {
+  title: string;
+  view: ReportView;
+  open: boolean;
+  /** Panel Excel mematikannya: workbook tidak punya nomor akun sama sekali (temuan Tahap 2 — `code` selalu null). */
+  showCode: boolean;
+}) {
   const badge =
     view.state === "ok" ? (
       <span className="recon-badge recon-badge-ok">
@@ -145,7 +166,7 @@ function ReportBox({ title, view, open }: { title: string; view: ReportView; ope
               <table className="recon-table">
                 <thead>
                   <tr>
-                    <th>Akun</th>
+                    {showCode && <th>Akun</th>}
                     <th>Keterangan</th>
                     <th>Nominal</th>
                   </tr>
@@ -156,7 +177,7 @@ function ReportBox({ title, view, open }: { title: string; view: ReportView; ope
                       key={`${line.label}-${index}`}
                       className={line.kind === "header" ? "mapping-line-header" : line.kind === "detail" ? undefined : "mapping-line-total"}
                     >
-                      <td>{line.code ?? ""}</td>
+                      {showCode && <td>{line.code ?? ""}</td>}
                       <td>
                         {line.label}
                         {line.assumedZero && <small>Nominal tidak terbaca, diasumsikan 0 — tetap lolos rekonsiliasi.</small>}
@@ -278,7 +299,7 @@ export default function MappingPage() {
   const [excelError, setExcelError] = useState<string | null>(null);
   const [period, setPeriod] = useState<string>("");
 
-  const [pdfFile, setPdfFile] = useState<UploadedFile | null>(null);
+  const [pdfFile, setPdfFile] = useState<PickedFile | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
@@ -304,12 +325,14 @@ export default function MappingPage() {
   /** Bulan yang tersedia diambil dari kolom bertanggal di sheet, bukan daftar tetap. */
   const availablePeriods = useMemo(() => {
     if (!sheets || sheets.length === 0) return [];
-    return [...detectMonthColumns(sheets[0].rows).columns.keys()].sort();
+    return [...detectMonthColumns(sheets[0].rows).columns.keys()].filter((key) => key >= EARLIEST_PERIOD).sort();
   }, [sheets]);
 
   useEffect(() => {
     if (availablePeriods.length > 0 && !availablePeriods.includes(period)) {
-      setPeriod(availablePeriods[availablePeriods.length - 1]);
+      // Yang terawal, bukan yang terakhir: setelah disaring EARLIEST_PERIOD
+      // elemen pertama adalah Februari 2026 — default yang diminta.
+      setPeriod(availablePeriods[0]);
     }
   }, [availablePeriods, period]);
 
@@ -319,7 +342,17 @@ export default function MappingPage() {
     body.append("kind", kind);
     const response = await fetch("/api/mapping/upload", { method: "POST", body });
     const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.error ?? "Gagal mengunggah berkas.");
+    if (!response.ok) {
+      if (payload?.error) throw new Error(payload.error);
+      // Tanpa cabang ini pesannya jadi generik tanpa sebab: penolakan yang
+      // datang dari platform (bukan dari route) menjawab HTML/teks, bukan
+      // JSON, sehingga response.json() gagal dan payload jadi null.
+      throw new Error(
+        response.status === 413
+          ? `Berkas terlalu besar (${(file.size / 1024 / 1024).toFixed(1)} MB). Batas body request serverless Vercel 4,5 MB — berkas sebesar ini ditolak sebelum sampai ke server.`
+          : `Unggah gagal (HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}), server tidak mengirim alasan.`,
+      );
+    }
     return payload.data as UploadedFile & { sheets?: ExcelReportSheet[] };
   }, []);
 
@@ -347,12 +380,22 @@ export default function MappingPage() {
       setPdfBusy(true);
       setPdfError(null);
       setPdfResult(null);
-      setPdfStatus("Mengunggah...");
+      setPdfStatus("Membaca berkas...");
       try {
-        const data = await upload(file, "pdf");
-        setPdfFile({ url: data.url, fileName: data.fileName, size: data.size, uploadedAt: data.uploadedAt });
-        // Parsing PDF terjadi di BROWSER: halaman hasil scan dirender ke canvas
-        // lalu di-OCR, dan Canvas API tidak tersedia di serverless Vercel.
+        setPdfFile({ fileName: file.name, size: file.size });
+        // PDF SENGAJA tidak dikirim ke server sama sekali. Parsingnya memang
+        // sudah terjadi di BROWSER (halaman scan dirender ke canvas lalu
+        // di-OCR; Canvas API tidak ada di serverless Vercel), jadi satu-satunya
+        // guna unggahannya adalah arsip — dan arsip itu belum dibaca siapa pun.
+        // Menukarnya dengan kegagalan pasti pada berkas >4,5 MB (batas body
+        // request serverless Vercel; laporan scan bertanda tangan berukuran
+        // 4,6 MB) jelas tidak sepadan.
+        //
+        // Kalau arsip PDF dibutuhkan nanti (Tahap 5), jalurnya adalah client
+        // upload @vercel/blob (browser -> Blob, tidak lewat function). Itu
+        // menuntut connect-src di lib/csp.ts dibuka ke https://vercel.com
+        // (endpoint unggah SDK-nya) — perubahan keamanan yang harus diputuskan
+        // terpisah, bukan efek samping perbaikan bug ini.
         const analysed = await analyzeFinancialPdf(file, setPdfStatus);
         setPdfResult(analysed);
       } catch (error) {
@@ -362,7 +405,7 @@ export default function MappingPage() {
         setPdfStatus("");
       }
     },
-    [upload],
+    [],
   );
 
   /** Hasil parse tiap sheet untuk periode terpilih; dipakai panel DAN perbandingan. */
@@ -545,7 +588,7 @@ export default function MappingPage() {
             </p>
           )}
           {REPORT_ORDER.map((kind) => (
-            <ReportBox key={kind} title={REPORT_TITLES[kind]} view={excelViews[kind]} open={kind === "profit-loss"} />
+            <ReportBox key={kind} title={REPORT_TITLES[kind]} view={excelViews[kind]} open={kind === "profit-loss"} showCode={false} />
           ))}
         </section>
 
@@ -555,7 +598,7 @@ export default function MappingPage() {
               <FileText style={{ width: "1rem", verticalAlign: "-.15rem", marginRight: ".35rem" }} />
               PDF laporan keuangan{period ? ` — ${periodLabel(period)}` : ""}
             </h2>
-            <p>Unggah PDF untuk periode yang dipilih. PDF hasil scan dibaca lewat OCR di browser ini, bukan di server.</p>
+            <p>Pilih PDF untuk periode yang dipilih. Berkasnya tidak dikirim ke mana pun — dibaca sepenuhnya di browser ini, termasuk OCR untuk PDF hasil scan.</p>
           </div>
           <div className="mapping-upload">
             <input
@@ -586,7 +629,7 @@ export default function MappingPage() {
             </p>
           )}
           {REPORT_ORDER.map((kind) => (
-            <ReportBox key={kind} title={REPORT_TITLES[kind]} view={pdfViews[kind]} open={kind === "profit-loss"} />
+            <ReportBox key={kind} title={REPORT_TITLES[kind]} view={pdfViews[kind]} open={kind === "profit-loss"} showCode />
           ))}
         </section>
       </div>
