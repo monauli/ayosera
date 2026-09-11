@@ -1201,3 +1201,22 @@ th[scope],
 .mapping-upload input[type="file"] { min-width:0; max-width:100%; color:rgb(var(--rd-text-secondary)); font-size:.75rem; }
 @media (max-width:1100px){ .mapping-panels{grid-template-columns:1fr} }
 @media (max-width:720px){ .mapping-panel{padding:.7rem} .mapping-lines{max-height:16rem} }
+
+/* Tahap 4 — hasil perbandingan kiri-kanan. Lebar penuh di atas kedua panel
+   karena isinya menyatukan keduanya. Tetap memakai .recon-table dan
+   .recon-badge-* yang sudah ada; yang baru hanya wadah dan ringkasannya. */
+.mapping-compare { max-width:1500px; margin:0 auto 1rem; display:grid; gap:.6rem; border:1px solid rgb(var(--rd-card-border)); border-radius:.875rem; background:linear-gradient(180deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); padding:.9rem; }
+.mapping-compare > header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.6rem; }
+.mapping-compare > header h2 { margin:0; color:rgb(var(--rd-text)); font-size:.95rem; }
+.mapping-summary { display:flex; flex-wrap:wrap; gap:.4rem; }
+.mapping-rules { display:grid; gap:.3rem; margin:0; padding:0; list-style:none; }
+.mapping-rules li { border-left:2px solid rgb(59 130 246 / .55); background:rgb(59 130 246 / .06); padding:.4rem .55rem; font-size:.73rem; color:rgb(var(--rd-text-secondary)); overflow-wrap:anywhere; }
+.mapping-compare-wrap { overflow-x:auto; border:1px solid rgb(var(--rd-border) / calc(var(--rd-border-alpha) / 2)); border-radius:.5rem; }
+.mapping-compare-wrap .recon-table td:nth-child(3),.mapping-compare-wrap .recon-table th:nth-child(3),
+.mapping-compare-wrap .recon-table td:nth-child(4),.mapping-compare-wrap .recon-table th:nth-child(4),
+.mapping-compare-wrap .recon-table td:nth-child(5),.mapping-compare-wrap .recon-table th:nth-child(5) { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.mapping-compare-wrap .recon-table th:nth-child(2),.mapping-compare-wrap .recon-table td:nth-child(2) { min-width:14rem; }
+.mapping-rule-tag { display:block; margin-top:.2rem; color:rgb(59 130 246); font-size:.68rem; overflow-wrap:anywhere; }
+[data-mode="dark"] .mapping-rule-tag { color:rgb(147 197 253); }
+.mapping-toggle { display:inline-flex; align-items:center; gap:.35rem; color:rgb(var(--rd-text-tertiary)); font-size:.75rem; cursor:pointer; }
+@media (max-width:720px){ .mapping-compare{padding:.7rem} .mapping-compare-wrap .recon-table{font-size:.72rem} }

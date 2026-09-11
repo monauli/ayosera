@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Moon, Sun } from "lucide-react";
 import { analyzeFinancialPdf, type MappingParseResult, type FinancialLine, type ReconciliationCheck } from "@/lib/mapping-parser";
+import { compareFinancialReports, type ComparisonRow, type ComparisonStatus } from "@/lib/mapping-compare";
 import {
   detectMonthColumns,
   parseFinancialSheet,
@@ -36,6 +37,19 @@ const REPORT_TITLES: Record<FinancialSheetKind, string> = {
   cashflow: "Arus Kas",
 };
 const REPORT_ORDER: FinancialSheetKind[] = ["profit-loss", "balance-sheet", "cashflow"];
+
+const STATUS_LABEL: Record<ComparisonStatus, string> = {
+  COCOK: "Cocok",
+  BEDA: "Beda",
+  HANYA_EXCEL: "Hanya di Excel",
+  HANYA_PDF: "Hanya di PDF",
+};
+const STATUS_TONE: Record<ComparisonStatus, "ok" | "warn" | "danger" | "neutral"> = {
+  COCOK: "ok",
+  BEDA: "danger",
+  HANYA_EXCEL: "warn",
+  HANYA_PDF: "warn",
+};
 
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
@@ -163,6 +177,97 @@ function ReportBox({ title, view, open }: { title: string; view: ReportView; ope
   );
 }
 
+function ComparisonSection({
+  comparison,
+  showEmptyRows,
+  onToggleEmptyRows,
+}: {
+  comparison: ReturnType<typeof compareFinancialReports>;
+  showEmptyRows: boolean;
+  onToggleEmptyRows: (next: boolean) => void;
+}) {
+  const { summary, rows, appliedRules, skippedRules } = comparison;
+  const visible = showEmptyRows ? rows : rows.filter((row) => !row.emptyOnOneSide);
+  return (
+    <section className="mapping-compare" aria-label="Hasil perbandingan Laba Rugi">
+      <header>
+        <h2>Perbandingan Laba Rugi — Excel vs PDF</h2>
+        <div className="mapping-summary">
+          <span className="recon-badge recon-badge-ok">{summary.cocok} cocok</span>
+          <span className={`recon-badge recon-badge-${summary.beda > 0 ? "danger" : "neutral"}`}>{summary.beda} beda</span>
+          <span className="recon-badge recon-badge-warn">{summary.hanyaExcel} hanya di Excel</span>
+          <span className="recon-badge recon-badge-warn">{summary.hanyaPdf} hanya di PDF</span>
+          <span className="recon-badge recon-badge-neutral">{summary.nihilSebelah} di antaranya nihil</span>
+        </div>
+      </header>
+
+      {/* Aturan pengelompokan ditampilkan sebagai keterangan, bukan disembunyikan
+          di dalam kode — lihat lib/mapping-rules.ts. */}
+      {appliedRules.length > 0 && (
+        <ul className="mapping-rules">
+          {appliedRules.map((rule) => (
+            <li key={rule.target}>
+              Aturan pengelompokan dipakai pada <strong>{rule.target}</strong>: {rule.note} (dijumlahkan di sisi {rule.combine === "excel" ? "Excel" : "PDF"}).
+              {!rule.verified && " Aturan ini belum diverifikasi terhadap periode nyata."}
+            </li>
+          ))}
+        </ul>
+      )}
+      {skippedRules.length > 0 && (
+        <ul className="mapping-rules">
+          {skippedRules.map(({ rule, missing }) => (
+            <li key={rule.target}>
+              Aturan <strong>{rule.target}</strong> dilewati karena baris ini tidak ada di periode terpilih: {missing.join(", ")}. Baris terkait ditampilkan
+              tanpa penggabungan.
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <label className="mapping-toggle">
+        <input type="checkbox" checked={showEmptyRows} onChange={(event) => onToggleEmptyRows(event.target.checked)} />
+        Tampilkan juga {summary.nihilSebelah} akun nihil yang hanya ada di satu sisi
+      </label>
+
+      <div className="mapping-compare-wrap">
+        <table className="recon-table">
+          <thead>
+            <tr>
+              <th>Akun</th>
+              <th>Keterangan</th>
+              <th>Excel</th>
+              <th>PDF</th>
+              <th>Selisih</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((row: ComparisonRow, index: number) => (
+              <tr key={`${row.label}-${index}`}>
+                <td>{row.code ?? ""}</td>
+                <td>
+                  {row.label}
+                  {row.rule && <small className="mapping-rule-tag">{row.rule.note}</small>}
+                  {row.matchedBy === "fuzzy" && row.excelLabel !== row.pdfLabel && (
+                    <small>Dijodohkan walau label beda tipis: Excel &quot;{row.excelLabel}&quot; / PDF &quot;{row.pdfLabel}&quot;.</small>
+                  )}
+                </td>
+                <td>{formatAmount(row.excelValue)}</td>
+                <td>{formatAmount(row.pdfValue)}</td>
+                <td>{row.difference === null ? "" : formatAmount(row.difference)}</td>
+                <td>
+                  <span className={`recon-badge recon-badge-${STATUS_TONE[row.status]}`}>{STATUS_LABEL[row.status]}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {visible.length === 0 && <p className="mapping-note">Tidak ada baris untuk ditampilkan.</p>}
+    </section>
+  );
+}
+
 export default function MappingPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [mode, setMode] = useState<ThemeMode>("dark");
@@ -178,6 +283,7 @@ export default function MappingPage() {
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; result: MappingParseResult } | null>(null);
+  const [showEmptyRows, setShowEmptyRows] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -256,6 +362,17 @@ export default function MappingPage() {
     [upload],
   );
 
+  /** Hasil parse tiap sheet untuk periode terpilih; dipakai panel DAN perbandingan. */
+  const excelResults = useMemo((): Partial<Record<FinancialSheetKind, ExcelParseResult>> => {
+    if (!sheets || !period) return {};
+    const results: Partial<Record<FinancialSheetKind, ExcelParseResult>> = {};
+    for (const kind of REPORT_ORDER) {
+      const sheet = sheets.find((s) => s.kind === kind);
+      if (sheet) results[kind] = parseFinancialSheet(sheet, period);
+    }
+    return results;
+  }, [sheets, period]);
+
   const excelViews = useMemo((): Record<FinancialSheetKind, ReportView> => {
     const empty: ReportView = { state: "empty", note: "Unggah workbook Excel untuk melihat laporan ini." };
     const views: Record<FinancialSheetKind, ReportView> = { "profit-loss": empty, "balance-sheet": empty, cashflow: empty };
@@ -265,13 +382,26 @@ export default function MappingPage() {
     }
     if (!sheets || !period) return views;
     for (const kind of REPORT_ORDER) {
-      const sheet = sheets.find((s) => s.kind === kind);
-      views[kind] = sheet
-        ? excelResultToView(parseFinancialSheet(sheet, period))
-        : { state: "unsupported", note: "Sheet ini tidak ada di workbook yang diunggah." };
+      const result = excelResults[kind];
+      views[kind] = result ? excelResultToView(result) : { state: "unsupported", note: "Sheet ini tidak ada di workbook yang diunggah." };
     }
     return views;
-  }, [sheets, period, excelBusy]);
+  }, [sheets, period, excelBusy, excelResults]);
+
+  /**
+   * Perbandingan hanya untuk LABA RUGI — keputusan pengguna di Tahap 4. Neraca
+   * dan Arus Kas dari PDF belum punya parser, jadi tidak ada sisi kanannya
+   * untuk dibandingkan.
+   *
+   * Dua-duanya WAJIB lolos pengaman aritmatika dulu. Membandingkan hasil baca
+   * yang sudah ditolak hanya menghasilkan selisih palsu.
+   */
+  const comparison = useMemo(() => {
+    const excel = excelResults["profit-loss"];
+    if (!excel || excel.status !== "ok") return null;
+    if (!pdfResult || pdfResult.result.status !== "ok") return null;
+    return compareFinancialReports(excel.lines, pdfResult.result.lines, "profit-loss");
+  }, [excelResults, pdfResult]);
 
   const pdfViews = useMemo((): Record<FinancialSheetKind, ReportView> => {
     // Parser PDF Tahap 1 HANYA membaca Laba Rugi. Neraca dan Arus Kas dari PDF
@@ -349,6 +479,23 @@ export default function MappingPage() {
           </select>
         </label>
       </section>
+
+      {comparison ? (
+        <ComparisonSection comparison={comparison} showEmptyRows={showEmptyRows} onToggleEmptyRows={setShowEmptyRows} />
+      ) : (
+        <section className="mapping-compare" aria-label="Hasil perbandingan Laba Rugi">
+          <header>
+            <h2>Perbandingan Laba Rugi — Excel vs PDF</h2>
+          </header>
+          <p className="mapping-note">
+            {/* Perbandingan sengaja tidak jalan kalau salah satu sisi ditolak
+                pengaman aritmatika — membandingkan angka yang sudah diketahui
+                tidak bisa dipercaya hanya menghasilkan selisih palsu. */}
+            Perbandingan tampil setelah Laba Rugi di KEDUA sisi terbaca dan lolos pengaman aritmatika. Neraca dan Arus Kas belum dibandingkan karena PDF-nya
+            belum punya parser.
+          </p>
+        </section>
+      )}
 
       <div className="mapping-panels">
         <section className="mapping-panel" aria-label="Sumber Excel">

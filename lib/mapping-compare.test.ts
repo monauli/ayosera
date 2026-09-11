@@ -1,0 +1,243 @@
+import { test, describe } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { parseFinancialReport, type FinancialLine } from "./mapping-parser.ts";
+import { parseFinancialSheet, type ExcelReportSheet } from "./mapping-excel-parser.ts";
+import { compareFinancialReports, isNearLabel, normalizeFinancialLabel, type ComparisonRow } from "./mapping-compare.ts";
+import { MAPPING_GROUPING_RULES, rulesForReport } from "./mapping-rules.ts";
+
+function fixture<T>(name: string): T {
+  return JSON.parse(readFileSync(new URL(`./__fixtures__/${name}.json`, import.meta.url), "utf8")) as T;
+}
+
+const EXCEL_SHEETS = fixture<{ sheets: ExcelReportSheet[] }>("mapping-laporan-keuangan-excel").sheets;
+const PROFIT_LOSS_SHEET = EXCEL_SHEETS.find((sheet) => sheet.kind === "profit-loss")!;
+
+function pdfLines(name: string): FinancialLine[] {
+  const parsed = fixture<{ rowTolerance: number; tokens: Parameters<typeof parseFinancialReport>[0] }>(name);
+  const result = parseFinancialReport(parsed.tokens, { rowTolerance: parsed.rowTolerance });
+  assert.equal(result.status, "ok", `fixture PDF ${name} gagal diparse`);
+  assert.ok(result.status === "ok");
+  return result.lines;
+}
+
+function excelLines(period: string): FinancialLine[] {
+  const result = parseFinancialSheet(PROFIT_LOSS_SHEET, period);
+  assert.equal(result.status, "ok", `sheet Excel periode ${period} gagal diparse`);
+  assert.ok(result.status === "ok");
+  return result.lines;
+}
+
+function findRow(rows: readonly ComparisonRow[], label: RegExp): ComparisonRow {
+  const row = rows.find((candidate) => label.test(candidate.label));
+  assert.ok(row, `baris ${label} tidak ada di hasil perbandingan`);
+  return row;
+}
+
+describe("normalisasi label", () => {
+  test("beda kapital, tanda baca, dan spasi ganda diabaikan", () => {
+    assert.equal(normalizeFinancialLabel("LABA KOTOR"), "laba kotor");
+    assert.equal(normalizeFinancialLabel("Biaya Telpon/Internet"), "biaya telpon internet");
+    assert.equal(normalizeFinancialLabel("Biaya Telepon / Internet"), "biaya telepon internet");
+    assert.equal(normalizeFinancialLabel("Pendapatan sewa bola + keranjang"), "pendapatan sewa bola keranjang");
+  });
+
+  test("artefak OCR 2 huruf di depan label dibuang", () => {
+    // Nyata di fixture scan Februari 2026.
+    assert.equal(normalizeFinancialLabel("Bi Pendapatan Bersih Operasional"), "pendapatan bersih operasional");
+    assert.equal(normalizeFinancialLabel("Mm Biaya Pokok Penjualan"), "biaya pokok penjualan");
+  });
+
+  test("label yang memang hanya dua kata tidak ikut terpangkas", () => {
+    assert.equal(normalizeFinancialLabel("Biaya Sewa"), "biaya sewa");
+  });
+});
+
+describe("kelonggaran penjodohan label dibatasi", () => {
+  test("typo nyata di fixture tetap berjodoh", () => {
+    assert.equal(isNearLabel("pendapatan courts fees", "pendapatan court fees"), true);
+    assert.equal(isNearLabel("total biaya opersional", "total biaya operasional"), true);
+    assert.equal(isNearLabel("biaya telpon internet", "biaya telepon internet"), true);
+  });
+
+  test("akun berbeda yang kebetulan mirip TIDAK berjodoh", () => {
+    assert.equal(isNearLabel("biaya sewa", "biaya gaji"), false);
+    assert.equal(isNearLabel("biaya air", "biaya gaji"), false);
+    assert.equal(isNearLabel("pembelian", "pembulatan"), false);
+    assert.equal(isNearLabel("biaya perlengkapan", "biaya perlengkapan salon"), false);
+    assert.equal(isNearLabel("biaya penyusutan", "biaya perlengkapan"), false);
+  });
+
+  test("kata pertama yang berbeda selalu menggagalkan penjodohan", () => {
+    // Tanpa syarat ini, kelonggaran panjang label bisa menjodohkan akun beda.
+    assert.equal(isNearLabel("pendapatan lain lain", "pengeluaran lain lain"), false);
+  });
+});
+
+describe("aturan pengelompokan tersedia sebagai data", () => {
+  test("aturan Laba Rugi bisa dibaca UI beserta keterangannya", () => {
+    const rules = rulesForReport("profit-loss");
+    assert.equal(rules.length, 1);
+    assert.equal(rules[0].target, "Penjualan");
+    assert.deepEqual([...rules[0].parts], ["Penjualan", "Pendapatan Sewa Raket Padel"]);
+    assert.match(rules[0].note, /Gabungan dari/);
+  });
+
+  test("aturan Neraca sudah tercatat walau belum dipakai", () => {
+    const rules = rulesForReport("balance-sheet");
+    assert.equal(rules.length, 2);
+    assert.equal(rules.every((rule) => rule.verified === false), true);
+  });
+
+  test("setiap aturan punya keterangan yang menyebut seluruh bagiannya", () => {
+    for (const rule of MAPPING_GROUPING_RULES) {
+      for (const part of rule.parts) assert.match(rule.note, new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    }
+  });
+});
+
+describe("perbandingan Februari 2026 (Excel vs PDF hasil scan)", () => {
+  const result = compareFinancialReports(excelLines("2026-02"), pdfLines("mapping-laba-rugi-feb-2026-scan"));
+
+  test("aturan pengelompokan membuat Penjualan cocok, dan keterangannya ikut terbawa", () => {
+    const row = findRow(result.rows, /^Penjualan$/);
+    // 39.781.000 (Penjualan) + 200.000 (Sewa Raket Padel) = 39.981.000 di PDF.
+    assert.equal(row.excelValue, 39981000);
+    assert.equal(row.pdfValue, 39981000);
+    assert.equal(row.status, "COCOK");
+    assert.match(row.rule?.note ?? "", /Penjualan \+ Pendapatan Sewa Raket Padel/);
+    assert.equal(result.appliedRules.length, 1);
+    assert.equal(result.skippedRules.length, 0);
+  });
+
+  test("subtotal dan total akhir cocok di kedua sisi", () => {
+    for (const label of [/^Total Pendapatan$/, /^Total Biaya Pokok Penjualan$/, /^LABA KOTOR$/, /^Total Biaya Opersional$/, /^LABA BERSIH$/]) {
+      assert.equal(findRow(result.rows, label).status, "COCOK", `${label} seharusnya cocok`);
+    }
+  });
+
+  test("typo label tetap berjodoh lewat tingkat longgar", () => {
+    assert.equal(findRow(result.rows, /Courts Fees/).matchedBy, "fuzzy");
+    assert.equal(findRow(result.rows, /Total Biaya Opersional/).matchedBy, "fuzzy");
+  });
+
+  test("desimal yang dipotong PDF bukan BEDA, tapi selisihnya tetap terlihat", () => {
+    const row = findRow(result.rows, /^Pendapatan Lain Lain$/);
+    assert.equal(row.excelValue, 42653.48);
+    assert.equal(row.pdfValue, 42653);
+    assert.equal(row.status, "COCOK");
+    assert.ok(Math.abs((row.difference ?? 0) - 0.48) < 0.005, "selisih harus tetap dilaporkan apa adanya");
+  });
+
+  test("label yang bergeser muncul apa adanya, TIDAK diperbaiki sendiri", () => {
+    // Keputusan pengguna: biarkan tampil sebagai beda/tidak berjodoh sampai
+    // diputuskan apakah ini salah input atau pemetaan yang disengaja.
+    const perlengkapan = findRow(result.rows, /^Biaya perlengkapan$/);
+    assert.equal(perlengkapan.status, "BEDA");
+    assert.equal(perlengkapan.excelValue, 17059300);
+    assert.equal(perlengkapan.pdfValue, 8336399);
+
+    const penyusutan = findRow(result.rows, /^Biaya penyusutan$/);
+    assert.equal(penyusutan.status, "HANYA_EXCEL");
+    assert.equal(penyusutan.excelValue, 8336399);
+
+    const airListrik = findRow(result.rows, /^Biaya air listrik telephone$/);
+    assert.equal(airListrik.status, "HANYA_PDF");
+    assert.equal(airListrik.pdfValue, 17059300);
+  });
+
+  test("akun nihil yang tidak dicetak PDF ditandai, bukan dihitung sebagai selisih", () => {
+    const row = findRow(result.rows, /^Loyalitas penjualan$/);
+    assert.equal(row.status, "HANYA_EXCEL");
+    assert.equal(row.excelValue, 0);
+    assert.equal(row.emptyOnOneSide, true);
+  });
+
+  test("ringkasan: hanya 1 selisih sungguhan di luar baris nihil sebelah", () => {
+    assert.equal(result.summary.beda, 1);
+    assert.equal(result.summary.cocok, 26);
+    // 28 hanya-Excel, 27 di antaranya akun nihil yang tidak dicetak PDF.
+    assert.equal(result.summary.hanyaExcel, 28);
+    assert.equal(result.summary.hanyaPdf, 1);
+    assert.equal(result.summary.nihilSebelah, 27);
+  });
+});
+
+describe("perbandingan Mei 2026 (Excel vs PDF digital)", () => {
+  const result = compareFinancialReports(excelLines("2026-05"), pdfLines("mapping-laba-rugi-mei-2026-digital"));
+
+  test("mayoritas baris cocok tanpa perlu kelonggaran", () => {
+    assert.ok(result.summary.cocok >= 50, `cocok=${result.summary.cocok}`);
+  });
+
+  test("aturan Penjualan JUSTRU membuat selisih di periode ini", () => {
+    // Bukti bahwa aturan itu terikat periode. Mei 2026 mencetak 40000 dan
+    // 40003 sebagai dua baris terpisah di PDF, persis seperti Excel, jadi
+    // menjumlahkan keduanya di sisi Excel menghasilkan selisih palsu sebesar
+    // nilai Sewa Raket Padel. Ditulis sebagai test supaya perilaku ini
+    // tercatat, bukan jadi kejutan saat dipakai lintas bulan.
+    const row = findRow(result.rows, /^Penjualan$/);
+    assert.equal(row.status, "BEDA");
+    assert.equal(row.excelValue, 61700000);
+    assert.equal(row.pdfValue, 33230000);
+    assert.equal(row.difference, 28470000);
+    assert.equal(findRow(result.rows, /^Pendapatan Sewa Raket Padel$/).status, "HANYA_PDF");
+  });
+
+  test("pergeseran label biaya operasional konsisten dengan Februari", () => {
+    // Excel tidak punya akun "Biaya air listrik telephone" sama sekali,
+    // sehingga seluruh akun setelah Biaya Gaji bergeser satu baris: nilai
+    // Excel pada baris N adalah nilai PDF pada baris N+1.
+    assert.equal(findRow(result.rows, /^Biaya perlengkapan$/).excelValue, 0);
+    assert.equal(findRow(result.rows, /^Biaya perlengkapan$/).pdfValue, 10793100);
+    assert.equal(findRow(result.rows, /^Biaya penyusutan$/).excelValue, 10793100);
+    assert.equal(findRow(result.rows, /^Biaya Transfer$/).excelValue, 584156);
+  });
+});
+
+describe("penjodohan tidak pernah menebak", () => {
+  const base: FinancialLine = { code: null, label: "", value: 0, kind: "detail", assumedZero: false };
+
+  test("label ganda yang tidak terpisahkan oleh kind dibiarkan tidak berjodoh", () => {
+    const excel = [{ ...base, label: "Biaya X", value: 10 }];
+    const pdf = [
+      { ...base, label: "Biaya X", value: 10 },
+      { ...base, label: "Biaya X", value: 99 },
+    ];
+    const result = compareFinancialReports(excel, pdf);
+    assert.equal(result.summary.cocok, 0);
+    assert.equal(result.summary.hanyaExcel, 1);
+    assert.equal(result.summary.hanyaPdf, 2);
+  });
+
+  test("label ganda dengan kind berbeda tetap berjodoh benar", () => {
+    // "Total Pendapatan Non Operasional" muncul dua kali di kedua fixture:
+    // sebagai subtotal section dan sebagai angka netto.
+    const excel = [
+      { ...base, label: "Total X", value: 10, kind: "subtotal" as const },
+      { ...base, label: "Total X", value: -5, kind: "derived" as const },
+    ];
+    const pdf = [
+      { ...base, label: "Total X", value: -5, kind: "derived" as const },
+      { ...base, label: "Total X", value: 10, kind: "subtotal" as const },
+    ];
+    assert.equal(compareFinancialReports(excel, pdf).summary.cocok, 2);
+  });
+
+  test("aturan dengan bagian yang tidak lengkap DILEWATI, bukan dijumlahkan separuh", () => {
+    const excel = [{ ...base, label: "Penjualan", value: 39781000 }];
+    const pdf = [{ ...base, label: "Penjualan", value: 39981000 }];
+    const result = compareFinancialReports(excel, pdf);
+    assert.equal(result.appliedRules.length, 0);
+    assert.equal(result.skippedRules.length, 1);
+    assert.deepEqual(result.skippedRules[0].missing, ["Pendapatan Sewa Raket Padel"]);
+    // Tanpa aturan, selisihnya tampil apa adanya.
+    assert.equal(findRow(result.rows, /^Penjualan$/).status, "BEDA");
+  });
+
+  test("baris header tanpa nominal tidak ikut dibandingkan", () => {
+    const excel = [{ ...base, label: "PENDAPATAN", value: null, kind: "header" as const }];
+    const result = compareFinancialReports(excel, []);
+    assert.equal(result.rows.length, 0);
+  });
+});
