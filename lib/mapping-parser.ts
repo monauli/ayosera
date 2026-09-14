@@ -169,6 +169,11 @@ export type MappingParseResult =
  * nominalnya meleset, naikkan ke skala native gambar tertanam.
  */
 export const SCAN_RENDER_SCALE = 4.2;
+// Scan PDF hasil kompresi bisa menyimpan JPEG 150 DPI. OCR langsung pada
+// ukuran itu kehilangan baris saldo yang kecil; gambar asli dibesarkan di
+// memori sebelum OCR, tanpa merender ulang halaman PDF lewat pdf.js.
+const EMBEDDED_OCR_MIN_WIDTH = 1800;
+const EMBEDDED_OCR_SCALE = 3;
 
 /**
  * Toleransi rekonsiliasi PER BARIS DETAIL, dalam rupiah.
@@ -1031,9 +1036,9 @@ export type EmbeddedJpegPage = {
  * mengembalikan null dan diproses lewat render canvas biasa.
  */
 export async function extractEmbeddedJpegPages(bytes: Uint8Array): Promise<(EmbeddedJpegPage | null)[]> {
-  const { PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFRef } = await import("pdf-lib");
+  const { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFRef } = await import("pdf-lib");
   const document = await PDFDocument.load(bytes);
-  return document.getPages().map((page) => {
+  return Promise.all(document.getPages().map(async (page) => {
     const resources = page.node.Resources();
     const xObjects = resources?.lookupMaybe(PDFName.of("XObject"), PDFDict);
     const images = (xObjects?.keys() ?? [])
@@ -1053,8 +1058,27 @@ export async function extractEmbeddedJpegPages(bytes: Uint8Array): Promise<(Embe
     const pageRatio = page.getWidth() / page.getHeight();
     const imageRatio = width / height;
     if (Math.abs(imageRatio - pageRatio) > 0.01) return null;
-    return { data: image.contents, width, height };
-  });
+    const filter = image.dict.get(PDFName.of("Filter"));
+    const filters = filter instanceof PDFArray
+      ? filter.asArray().map((item) => item instanceof PDFName ? item.asString() : "")
+      : filter instanceof PDFName
+        ? [filter.asString()]
+        : [];
+    if (filters[filters.length - 1] !== "/DCTDecode" || filters.slice(0, -1).some((item) => item !== "/FlateDecode")) return null;
+    let data = image.contents;
+    for (const item of filters.slice(0, -1)) {
+      if (item !== "/FlateDecode" || typeof DecompressionStream === "undefined") return null;
+      const copy = new Uint8Array(data.byteLength);
+      copy.set(data);
+      try {
+        const stream = new Blob([copy.buffer as ArrayBuffer]).stream().pipeThrough(new DecompressionStream("deflate"));
+        data = new Uint8Array(await new Response(stream).arrayBuffer());
+      } catch {
+        return null;
+      }
+    }
+    return data[0] === 0xff && data[1] === 0xd8 ? { data, width, height } : null;
+  }));
 }
 
 /**
@@ -1179,10 +1203,35 @@ export async function extractScanTokens(
       if (embeddedImage) {
         const imageBytes = new Uint8Array(embeddedImage.data.byteLength);
         imageBytes.set(embeddedImage.data);
-        const { data } = await worker.recognize(new Blob([imageBytes.buffer as ArrayBuffer], { type: "image/jpeg" }), {}, { text: false, blocks: true });
+        const imageBlob = new Blob([imageBytes.buffer as ArrayBuffer], { type: "image/jpeg" });
+        let imageInput: Blob | HTMLCanvasElement = imageBlob;
+        let enlargedCanvas: HTMLCanvasElement | null = null;
+        if (embeddedImage.width < EMBEDDED_OCR_MIN_WIDTH && typeof createImageBitmap === "function") {
+          try {
+            const bitmap = await createImageBitmap(imageBlob);
+            enlargedCanvas = document.createElement("canvas");
+            enlargedCanvas.width = bitmap.width * EMBEDDED_OCR_SCALE;
+            enlargedCanvas.height = bitmap.height * EMBEDDED_OCR_SCALE;
+            const imageContext = enlargedCanvas.getContext("2d");
+            if (imageContext) {
+              imageContext.imageSmoothingEnabled = true;
+              imageContext.drawImage(bitmap, 0, 0, enlargedCanvas.width, enlargedCanvas.height);
+              imageInput = enlargedCanvas;
+            }
+            bitmap.close();
+          } catch {
+            // Jika browser gagal membuat bitmap, tetap coba JPEG asli langsung.
+          }
+        }
+        const { data } = await worker.recognize(imageInput, {}, { text: false, blocks: true });
         const blocks = data.blocks as TesseractBlockLike[] | null;
         tokens.push(...flattenOcrWords(blocks, pageNumber));
         tolerances.push(ocrRowTolerance(blocks));
+        if (enlargedCanvas) {
+          enlargedCanvas.width = 0;
+          enlargedCanvas.height = 0;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
         continue;
       }
       const page = await pdfDocument.getPage(pageNumber);

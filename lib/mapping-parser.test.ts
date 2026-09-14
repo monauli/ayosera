@@ -50,6 +50,21 @@ test("PDF scan dengan satu JPEG full-page mengembalikan gambar asli per halaman"
   assert.ok(images.every((image) => image !== null && image.data.length > 1_000_000));
 });
 
+test("PDF scan compressed dengan Flate lalu JPEG juga mengembalikan gambar asli", async () => {
+  const bytes = new Uint8Array(readFileSync("tmp/fixtures/keuangan/Laporan Keuangan 0226_compressed.pdf"));
+  const images = await extractEmbeddedJpegPages(bytes);
+
+  assert.deepEqual(
+    images.map((image) => image && [image.width, image.height]),
+    [
+      [1240, 1754],
+      [1240, 1754],
+      [1240, 1754],
+    ],
+  );
+  assert.ok(images.every((image) => image !== null && image.data[0] === 0xff && image.data[1] === 0xd8));
+});
+
 describe("parseFinancialAmount", () => {
   test("format Indonesia (titik ribuan, koma desimal)", () => {
     assert.equal(parseFinancialAmount("33.230.000,00"), 33230000);
