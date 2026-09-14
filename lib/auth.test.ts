@@ -34,13 +34,13 @@ test("user dengan modul tidak valid -> difilter habis, hasil kosong", () => {
 // Gate ini membuka manajemen pengguna dan reset password akun lain, jadi
 // dikunci test: satu edit tak sengaja di daftar harus menggagalkan CI.
 
-test("resolveAppRole: keempat email di allowlist jadi supervisor bila role DB admin/supervisor", () => {
+test("email di allowlist jadi supervisor bila role DB admin/supervisor", () => {
   for (const email of SUPERVISOR_EMAILS) {
     assert.equal(resolveAppRole(email, "supervisor"), "supervisor");
     assert.equal(resolveAppRole(email, "admin"), "supervisor");
   }
-  assert.equal(SUPERVISOR_EMAILS.size, 4);
-  for (const email of ["timunemas@ayo.local", "manageramp@gmail.com", "direksi@gmail.com", "admampbatam222@gmail.com"]) {
+  assert.equal(SUPERVISOR_EMAILS.size, 7);
+  for (const email of ["timunemas@ayo.local", "manageramp@gmail.com", "direksi@gmail.com", "admampbatam222@gmail.com", "admin@ayo.local", "ariamp@gmail.com", "syela@ayo.com"]) {
     assert.ok(SUPERVISOR_EMAILS.has(email), `${email} hilang dari allowlist`);
   }
 });
@@ -52,10 +52,8 @@ test("resolveAppRole: syarat AND — ada di allowlist saja TIDAK cukup", () => {
 });
 
 test("resolveAppRole: role DB supervisor saja TIDAK cukup kalau email di luar allowlist", () => {
-  assert.equal(resolveAppRole("admin@ayo.local", "supervisor"), "user");
-  assert.equal(resolveAppRole("admin@ayo.local", "admin"), "user");
-  assert.equal(resolveAppRole("syela@ayo.com", "supervisor"), "user");
-  assert.equal(resolveAppRole("ariamp@gmail.com", "supervisor"), "user");
+  assert.equal(resolveAppRole("unknown@example.com", "supervisor"), "user");
+  assert.equal(resolveAppRole("unknown@example.com", "admin"), "user");
 });
 
 test("resolveAppRole: email dinormalisasi (case + spasi), tidak bisa ditembus lewat casing", () => {

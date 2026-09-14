@@ -19,6 +19,9 @@ export const SUPERVISOR_EMAILS: ReadonlySet<string> = new Set([
   "manageramp@gmail.com",
   "direksi@gmail.com",
   "admampbatam222@gmail.com",
+  "admin@ayo.local",
+  "ariamp@gmail.com",
+  "syela@ayo.com",
 ]);
 
 /**
