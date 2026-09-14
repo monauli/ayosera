@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   detectReportPeriod,
+  extractEmbeddedJpegPages,
   parseFinancialAmount,
   parseFinancialReport,
   stripLetterhead,
@@ -33,6 +34,21 @@ function findLabel(lines: readonly MappingLine[], pattern: RegExp): MappingLine 
   assert.ok(line, `baris dengan label ${pattern} tidak ditemukan`);
   return line;
 }
+
+test("PDF scan dengan satu JPEG full-page mengembalikan gambar asli per halaman", async () => {
+  const bytes = new Uint8Array(readFileSync("tmp/fixtures/Laporan Keuangan 0226.pdf"));
+  const images = await extractEmbeddedJpegPages(bytes);
+
+  assert.deepEqual(
+    images.map((image) => image && [image.width, image.height]),
+    [
+      [2480, 3507],
+      [2480, 3507],
+      [2480, 3507],
+    ],
+  );
+  assert.ok(images.every((image) => image !== null && image.data.length > 1_000_000));
+});
 
 describe("parseFinancialAmount", () => {
   test("format Indonesia (titik ribuan, koma desimal)", () => {
@@ -251,6 +267,17 @@ describe("Neraca — fixture Feb-2026 halaman 2 (PDF hasil scan, OCR)", () => {
     assert.equal(findLabel(result.lines, /^Total Aset Lancar$/i).kind, "subtotal");
   });
 
+  test("token OCR pendek di depan Total tidak menggandakan section Modal", () => {
+    const index = fixture.tokens.findIndex((token, i, tokens) => token.page === 2 && token.text === "Total" && tokens[i + 1]?.text === "Modal");
+    assert.notEqual(index, -1);
+    const total = fixture.tokens[index];
+    const tokens = [...fixture.tokens.slice(0, index), { ...total, text: "fs", x: total.x - 80 }, ...fixture.tokens.slice(index)];
+    const parsed = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "balance-sheet" });
+
+    assert.ok(parsed.status === "ok", parsed.status === "rejected" ? parsed.reason : "");
+    assert.equal(findLabel(parsed.lines, /^Total Modal$/i).kind, "subtotal");
+  });
+
   test("identitas Neraca diperiksa, dan halaman tetangga tidak ikut terbawa", () => {
     assert.ok(result.status === "ok");
     assert.equal(result.checks.every((c) => c.passed), true);
@@ -297,6 +324,25 @@ describe("Arus Kas — fixture Feb-2026 halaman 3 (PDF hasil scan, OCR)", () => 
     assert.ok(final);
     assert.match(final.label, /Saldo Kas Awal \+ aktivitas = Saldo Kas Akhir/);
     assertAmount(final.actual, 300755160.64, "saldo awal + aktivitas");
+  });
+
+  test("token OCR pendek di depan Saldo Kas Akhir tidak membuat Arus Kas hilang", () => {
+    const index = fixture.tokens.findIndex((token, i, tokens) => token.page === 3 && token.text === "Saldo" && tokens[i + 1]?.text === "Kas");
+    assert.notEqual(index, -1);
+    const saldo = fixture.tokens[index];
+    const tokens = [...fixture.tokens.slice(0, index), { ...saldo, text: "fs", x: saldo.x - 80 }, ...fixture.tokens.slice(index)];
+    const parsed = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "cashflow" });
+
+    assert.ok(parsed.status === "ok", parsed.status === "rejected" ? parsed.reason : "");
+    assert.equal(findLabel(parsed.lines, /^Saldo Kas Akhir$/i).value, 300755160.64);
+  });
+
+  test("typo ringan pada Saldo Kas Akhir tetap dikenali sebagai penanda laporan", () => {
+    const tokens = fixture.tokens.map((token) => (token.page === 3 && token.text === "Saldo" ? { ...token, text: "Saido" } : token));
+    const parsed = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "cashflow" });
+
+    assert.ok(parsed.status === "ok", parsed.status === "rejected" ? parsed.reason : "");
+    assert.equal(findLabel(parsed.lines, /^Saido Kas Akhir$/i).value, 300755160.64);
   });
 });
 

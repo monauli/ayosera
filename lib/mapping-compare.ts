@@ -23,8 +23,10 @@
 // lebih dari satu baris, keduanya dibiarkan tidak berjodoh dan muncul sebagai
 // "hanya ada di satu sisi" — pola yang sama dengan
 // buildCleanedCatalogNameIndex di scripts/bootstrap-monthly-snapshot-baseline.ts.
-import type { FinancialLine, MappingLineKind } from "./mapping-parser.ts";
+import { isNearLabel, normalizeFinancialLabel, type FinancialLine, type MappingLineKind } from "./mapping-parser.ts";
 import { rulesForReport, type MappingGroupingRule, type MappingReportKind } from "./mapping-rules.ts";
+
+export { isNearLabel, normalizeFinancialLabel } from "./mapping-parser.ts";
 
 export type ComparisonStatus = "COCOK" | "BEDA" | "HANYA_EXCEL" | "HANYA_PDF";
 export type MatchTier = "normalized" | "fuzzy" | null;
@@ -78,70 +80,6 @@ export type ComparisonResult = {
  * Marginnya aman, nominal terkecil di fixture adalah 2.600.
  */
 const EQUAL_TOLERANCE = 1;
-
-const MAX_EDIT_DISTANCE = 2;
-const MAX_EDIT_RATIO = 0.1;
-
-/**
- * Bentuk label yang dipakai untuk menjodohkan.
- *
- * Membuang beda kapital, tanda baca, dan spasi ganda — sumber beda paling
- * umum antara kedua sisi ("Biaya Telpon/Internet" vs "Biaya Telepon /
- * Internet", "LABA KOTOR" vs "Laba Kotor").
- *
- * Token pertama sepanjang 1-2 karakter juga dibuang bila masih tersisa minimal
- * dua kata. Ini menangani artefak OCR di tepi halaman scan yang menempel di
- * depan label — nyata di fixture: "Bi Pendapatan Bersih Operasional" dan "Mm
- * Biaya Pokok Penjualan". Parser Tahap 1 sudah membuang artefak 1 karakter
- * sebelum mengelompokkan baris, tapi yang 2 karakter lolos.
- *
- * ponytail: aman selama tidak ada akun yang namanya benar-benar dimulai kata
- * 1-2 huruf. Di kedua fixture tidak ada satu pun. Kalau suatu saat ada, akun
- * itu akan gagal berjodoh dan muncul sebagai "hanya satu sisi" — terlihat,
- * bukan salah jodoh diam-diam.
- */
-export function normalizeFinancialLabel(label: string): string {
-  const words = label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .split(" ")
-    .filter(Boolean);
-  if (words.length > 2 && words[0].length <= 2) words.shift();
-  return words.join(" ");
-}
-
-/** Jarak edit Levenshtein, dibatasi supaya tidak menghitung yang jelas jauh. */
-function editDistance(a: string, b: string): number {
-  if (Math.abs(a.length - b.length) > MAX_EDIT_DISTANCE) return MAX_EDIT_DISTANCE + 1;
-  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
-  for (let i = 1; i <= a.length; i++) {
-    const current = [i];
-    for (let j = 1; j <= b.length; j++) {
-      current[j] = Math.min(
-        previous[j] + 1,
-        current[j - 1] + 1,
-        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-    }
-    previous = current;
-  }
-  return previous[b.length];
-}
-
-/** Dua label dianggap label yang sama walau salah ketik ringan. */
-export function isNearLabel(a: string, b: string): boolean {
-  if (a === b) return true;
-  const longest = Math.max(a.length, b.length);
-  if (longest === 0) return false;
-  const firstA = a.split(" ")[0];
-  const firstB = b.split(" ")[0];
-  // Kata pertama wajib sama persis: ini yang mencegah "biaya sewa" berjodoh
-  // dengan "biaya gaji" lewat kelonggaran panjang label.
-  if (firstA !== firstB) return false;
-  const distance = editDistance(a, b);
-  return distance <= MAX_EDIT_DISTANCE && distance <= Math.floor(longest * MAX_EDIT_RATIO) + 1;
-}
 
 type Side = { line: FinancialLine; normalized: string; rule: ComparisonRow["rule"] };
 

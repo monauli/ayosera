@@ -191,11 +191,62 @@ export const FINAL_TOLERANCE = 0.05;
 
 const ACCOUNT_CODE = /^\d{4,6}$/;
 const DASH = /^[-–—]$/;
-// "Jumlah" dipakai sheet Neraca di fixture Excel ("Jumlah Aset Lancar");
-// PDF laba rugi selalu "Total". Satu regex untuk kedua sumber.
-const TOTAL_PREFIX = /^(total|jumlah)\b/i;
+// "Jumlah" dipakai sheet Neraca di fixture Excel ("Jumlah Aset Lancar").
+// OCR bisa menambahkan token pendek di depan, jadi ini sengaja bukan prefix.
+const TOTAL_PREFIX = /\b(total|jumlah)\b/i;
 const EXPENSE_LABEL = /\b(biaya|beban)\b/i;
 const NET_PROFIT_LABEL = /^laba\s*bersih$/i;
+const MAX_EDIT_DISTANCE = 2;
+const MAX_EDIT_RATIO = 0.1;
+
+/** Bentuk label bersama untuk penjodohan dan pencocokan penanda OCR. */
+export function normalizeFinancialLabel(label: string): string {
+  const words = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+  if (words.length > 2 && words[0].length <= 2) words.shift();
+  return words.join(" ");
+}
+
+function editDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > MAX_EDIT_DISTANCE) return MAX_EDIT_DISTANCE + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+function isNearWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  const longest = Math.max(a.length, b.length);
+  return longest > 0 && editDistance(a, b) <= MAX_EDIT_DISTANCE && editDistance(a, b) <= Math.floor(longest * MAX_EDIT_RATIO) + 1;
+}
+
+/** Dua label sama bila beda OCR-nya ringan; kata pembuka marker boleh typo ringan. */
+export function isNearLabel(a: string, b: string): boolean {
+  if (a === b) return true;
+  const longest = Math.max(a.length, b.length);
+  if (longest === 0) return false;
+  const firstA = a.split(" ")[0];
+  const firstB = b.split(" ")[0];
+  const markerWords = ["total", "jumlah", "saldo", "laba"];
+  const firstWordsMatch = firstA === firstB || markerWords.some((word) => isNearWord(firstA, word) && isNearWord(firstB, word));
+  if (!firstWordsMatch) return false;
+  const distance = editDistance(a, b);
+  return distance <= MAX_EDIT_DISTANCE && distance <= Math.floor(longest * MAX_EDIT_RATIO) + 1;
+}
 
 /**
  * Singkatan bulan Indonesia DAN Inggris, karena exporter yang sama mencetak
@@ -239,8 +290,21 @@ export function detectReportPeriod(labels: readonly string[]): string | null {
 }
 
 /** Label penutup section (subtotal), dipakai juga parser Excel. */
+function normalizeBoundaryLabel(label: string): string {
+  const words = label.trim().split(/\s+/).filter(Boolean);
+  const markerWords = ["total", "jumlah", "saldo", "laba"];
+  const markerIndex = words.findIndex((word) => markerWords.some((marker) => isNearWord(word.toLowerCase().replace(/[^a-z0-9]/g, ""), marker)));
+  if (markerIndex === -1) return label.trim();
+  const prefixIsNoise = words.slice(0, markerIndex).every((word) => word.replace(/[^a-z0-9]/gi, "").length <= 2);
+  const start = prefixIsNoise ? markerIndex : 0;
+  let end = words.length;
+  while (end > start + 1 && words[end - 1].replace(/[^a-z0-9]/gi, "").length <= 2) end -= 1;
+  return words.slice(start, end).join(" ");
+}
+
 export function isSubtotalLabel(label: string): boolean {
-  return TOTAL_PREFIX.test(label.trim());
+  const normalized = normalizeBoundaryLabel(label);
+  return TOTAL_PREFIX.test(normalized);
 }
 
 /**
@@ -515,7 +579,7 @@ function closesIntoSubtotal(cells: readonly Cell[], from: number): boolean {
     const cell = cells[index];
     if (cell.empty) continue;
     if (cell.value === null) return false;
-    if (TOTAL_PREFIX.test(cell.label)) return true;
+    if (isSubtotalLabel(cell.label)) return true;
   }
   return false;
 }
@@ -535,7 +599,7 @@ function classify(rows: readonly Row[], rowOffset: 0 | 1): MappingLine[] {
     const hasCode = first !== undefined && ACCOUNT_CODE.test(first.text) && rest.length > 0;
     return {
       page: row.page,
-      label: (hasCode ? rest : labelTokens).map((token) => token.text).join(" ").trim(),
+      label: normalizeBoundaryLabel((hasCode ? rest : labelTokens).map((token) => token.text).join(" ").trim()),
       code: hasCode ? first.text : null,
       value: readAmountCell(amountTokens),
       empty: labelTokens.length === 0,
@@ -559,7 +623,7 @@ function classify(rows: readonly Row[], rowOffset: 0 | 1): MappingLine[] {
     // Baris "Total ..." yang didahului baris detail menutup satu section.
     // Yang tidak (mis. "Total Aset" di Neraca, atau "Total pendapatan non
     // operasional" kedua di fixture Mei) adalah baris turunan.
-    if (TOTAL_PREFIX.test(cell.label)) {
+    if (isSubtotalLabel(cell.label)) {
       const isSubtotal = pendingDetails > 0;
       if (isSubtotal) pendingDetails = 0;
       lines.push({ ...base, code: null, value: cell.value, kind: isSubtotal ? "subtotal" : "derived", assumedZero: false });
@@ -583,11 +647,15 @@ function classify(rows: readonly Row[], rowOffset: 0 | 1): MappingLine[] {
  * OCR dengan kondisi bermacam-macam ("La Laporan Laba Rugi", "Neraca") sedang
  * baris penutup adalah baris angka yang justru dijaga pengaman aritmatika.
  */
-const REPORT_END_MARKERS: Record<FinancialSheetKind, RegExp> = {
-  "profit-loss": /^laba\s*bersih$/i,
-  "balance-sheet": /^total\s+kewajiban\s+dan\s+modal$/i,
-  cashflow: /^saldo\s+kas\s+akhir$/i,
+const REPORT_END_MARKERS: Record<FinancialSheetKind, string> = {
+  "profit-loss": "laba bersih",
+  "balance-sheet": "total kewajiban dan modal",
+  cashflow: "saldo kas akhir",
 };
+
+function matchesReportEndMarker(label: string, marker: string): boolean {
+  return isNearLabel(normalizeFinancialLabel(normalizeBoundaryLabel(label)), marker);
+}
 
 /** Nama laporan untuk pesan ke pengguna. */
 export const REPORT_TITLES: Record<FinancialSheetKind, string> = {
@@ -616,12 +684,12 @@ const BUNDLE_ORDER: readonly FinancialSheetKind[] = ["profit-loss", "balance-she
  * DITOLAK, bukan salah baca diam-diam.
  */
 function scopeToReport(lines: readonly MappingLine[], kind: FinancialSheetKind): MappingLine[] | null {
-  const end = lines.findIndex((line) => REPORT_END_MARKERS[kind].test(line.label.trim()));
+  const end = lines.findIndex((line) => matchesReportEndMarker(line.label, REPORT_END_MARKERS[kind]));
   if (end === -1) return null;
   let start = 0;
   for (const previous of BUNDLE_ORDER) {
     if (previous === kind) break;
-    const boundary = lines.findIndex((line) => REPORT_END_MARKERS[previous].test(line.label.trim()));
+    const boundary = lines.findIndex((line) => matchesReportEndMarker(line.label, REPORT_END_MARKERS[previous]));
     if (boundary !== -1 && boundary < end) start = Math.max(start, boundary + 1);
   }
   return lines.slice(start, end + 1);
@@ -812,9 +880,9 @@ export function reconcileFinalIdentity(kind: FinancialSheetKind, lines: readonly
       asContributor(liabilitiesAndEquity),
     );
   }
-  const openingLine = findLineByLabel(lines, /^saldo\s+kas\s+awal$/i);
+  const openingLine = lines.find((line) => matchesReportEndMarker(line.label, "saldo kas awal"));
   const opening = openingLine?.value;
-  const closing = findLineByLabel(lines, /^saldo\s+kas\s+akhir$/i)?.value;
+  const closing = lines.find((line) => matchesReportEndMarker(line.label, "saldo kas akhir"))?.value;
   const activityLines = lines.filter((line) => line.kind === "subtotal");
   const activities = activityLines.reduce((sum, line) => sum + (line.value ?? 0), 0);
   return identityCheck(
@@ -950,6 +1018,45 @@ const MIN_TEXT_LAYER_LENGTH = 20;
 
 export type PdfAnalysisSource = "pdf-text-layer" | "pdf-scanned-ocr";
 
+export type EmbeddedJpegPage = {
+  data: Uint8Array;
+  width: number;
+  height: number;
+};
+
+/**
+ * Ambil JPEG asli dari halaman yang hanya punya satu gambar XObject full-page.
+ *
+ * PDF lain tetap aman: halaman yang tidak memenuhi bentuk konservatif ini
+ * mengembalikan null dan diproses lewat render canvas biasa.
+ */
+export async function extractEmbeddedJpegPages(bytes: Uint8Array): Promise<(EmbeddedJpegPage | null)[]> {
+  const { PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFRef } = await import("pdf-lib");
+  const document = await PDFDocument.load(bytes);
+  return document.getPages().map((page) => {
+    const resources = page.node.Resources();
+    const xObjects = resources?.lookupMaybe(PDFName.of("XObject"), PDFDict);
+    const images = (xObjects?.keys() ?? [])
+      .map((name) => {
+        const reference = xObjects?.get(name);
+        const object = reference instanceof PDFRef ? document.context.lookup(reference) : reference;
+        return object instanceof PDFRawStream ? object : null;
+      })
+      .filter((image) => image !== null)
+      .filter((image) => String(image.dict.get(PDFName.of("Subtype"))) === "/Image")
+      .filter((image) => String(image.dict.get(PDFName.of("Filter"))).includes("DCTDecode"));
+    if (images.length !== 1) return null;
+    const image = images[0];
+    const width = image.dict.lookupMaybe(PDFName.of("Width"), PDFNumber)?.asNumber();
+    const height = image.dict.lookupMaybe(PDFName.of("Height"), PDFNumber)?.asNumber();
+    if (!width || !height) return null;
+    const pageRatio = page.getWidth() / page.getHeight();
+    const imageRatio = width / height;
+    if (Math.abs(imageRatio - pageRatio) > 0.01) return null;
+    return { data: image.contents, width, height };
+  });
+}
+
 /**
  * Entry point BROWSER untuk membaca satu berkas PDF laporan keuangan.
  *
@@ -969,7 +1076,8 @@ export async function analyzeFinancialPdf(
   onStatus("Membuka berkas PDF...");
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const loadingTask = pdfjs.getDocument({ data: bytes });
   try {
     const doc = await loadingTask.promise;
     const digital = await extractDigitalTokens(doc);
@@ -978,12 +1086,22 @@ export async function analyzeFinancialPdf(
       onStatus("Membaca text layer PDF...");
       return { source: "pdf-text-layer", reports: parseAllReports(digital, DIGITAL_ROW_TOLERANCE) };
     }
-    const scanned = await extractScanTokens(doc, onStatus);
+    let embeddedImages: (EmbeddedJpegPage | null)[] | undefined;
+    try {
+      embeddedImages = await extractEmbeddedJpegPages(bytes);
+    } catch {
+      // PDF yang tidak bisa dibaca pdf-lib tetap dicoba lewat canvas pdf.js.
+    }
+    const scanned = await extractScanTokens(doc, onStatus, embeddedImages);
     if (!scanned) {
       const blank: MappingParseResult = { status: "rejected", reason: "Halaman PDF tidak menghasilkan teks apa pun, baik dari text layer maupun OCR.", attempts: [] };
       return { source: "pdf-scanned-ocr", reports: { "profit-loss": blank, "balance-sheet": blank, cashflow: blank } };
     }
-    return { source: "pdf-scanned-ocr", reports: parseAllReports(scanned.tokens, scanned.rowTolerance) };
+    const reports = parseAllReports(scanned.tokens, scanned.rowTolerance);
+    if (reports.cashflow.status === "rejected" && reports.cashflow.notFound) {
+      logMissingCashflowMarker(scanned.tokens, scanned.rowTolerance);
+    }
+    return { source: "pdf-scanned-ocr", reports };
   } finally {
     await loadingTask.destroy();
   }
@@ -1005,6 +1123,20 @@ function parseAllReports(tokens: readonly MappingToken[], rowTolerance: number):
     "balance-sheet": parseFinancialReport(tokens, { rowTolerance, kind: "balance-sheet" }),
     cashflow: parseFinancialReport(tokens, { rowTolerance, kind: "cashflow" }),
   };
+}
+
+/** Logging sementara untuk melihat kandidat baris penutup Arus Kas di browser. */
+function logMissingCashflowMarker(tokens: readonly MappingToken[], rowTolerance: number): void {
+  const rows = groupTokensIntoRows(tokens, rowTolerance);
+  const interesting = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.labelTokens.some((token) => /sal|kas|akh/i.test(token.text)))
+    .flatMap(({ index }) => rows.slice(Math.max(0, index - 1), index + 2).map((candidate) => ({
+      page: candidate.page,
+      label: candidate.labelTokens.map((token) => token.text).join(" "),
+      amount: candidate.amountTokens.map((token) => token.text).join(" "),
+    })));
+  console.debug("[Mapping OCR] Penanda Saldo Kas Akhir tidak ditemukan; kandidat baris:", interesting);
 }
 
 /**
@@ -1031,6 +1163,7 @@ export async function extractDigitalTokens(pdfDocument: PdfDocumentProxy): Promi
 export async function extractScanTokens(
   pdfDocument: PdfDocumentProxy,
   onStatus: (status: string) => void = () => {},
+  embeddedImages: readonly (EmbeddedJpegPage | null)[] = [],
 ): Promise<{ tokens: MappingToken[]; rowTolerance: number } | null> {
   const [{ createWorker }, { TESSERACT_ASSET_OPTIONS }] = await Promise.all([
     import("tesseract.js"),
@@ -1041,7 +1174,17 @@ export async function extractScanTokens(
     const tokens: MappingToken[] = [];
     const tolerances: number[] = [];
     for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber++) {
-      onStatus(`Membaca halaman ${pageNumber} dari ${pdfDocument.numPages}...`);
+      const embeddedImage = embeddedImages[pageNumber - 1] ?? null;
+      onStatus(`Membaca halaman ${pageNumber} dari ${pdfDocument.numPages}${embeddedImage ? " (gambar asli)" : ""}...`);
+      if (embeddedImage) {
+        const imageBytes = new Uint8Array(embeddedImage.data.byteLength);
+        imageBytes.set(embeddedImage.data);
+        const { data } = await worker.recognize(new Blob([imageBytes.buffer as ArrayBuffer], { type: "image/jpeg" }), {}, { text: false, blocks: true });
+        const blocks = data.blocks as TesseractBlockLike[] | null;
+        tokens.push(...flattenOcrWords(blocks, pageNumber));
+        tolerances.push(ocrRowTolerance(blocks));
+        continue;
+      }
       const page = await pdfDocument.getPage(pageNumber);
       const viewport = page.getViewport({ scale: SCAN_RENDER_SCALE });
       const canvas = document.createElement("canvas");

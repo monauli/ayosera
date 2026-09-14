@@ -4,17 +4,15 @@
 //
 // Jalankan: npx tsx scripts/generate-mapping-fixtures.ts
 //
-// CATATAN JALUR SCAN: di browser, extractScanTokens() merender halaman PDF ke
-// canvas pada SCAN_RENDER_SCALE (≈302 DPI) lalu OCR. Node tidak punya canvas
-// (node-canvas tidak terpasang), jadi generator ini meng-OCR GAMBAR TERTANAM
-// di dalam PDF secara langsung. Untuk kelas dokumen ini keduanya setara:
-// halaman PDF hasil scan ISINYA persis satu gambar JPEG full-page beresolusi
-// 2480x3507 (A4 @300 DPI), jadi render 302 DPI mereproduksi gambar yang sama
-// tanpa penskalaan berarti. Bedanya cuma resampling pdf.js.
+// CATATAN JALUR SCAN: generator ini menjalankan OCR di Chrome sungguhan dengan
+// aset browser production yang sama (core LSTM non-SIMD, worker, dan bahasa).
+// Ini memakai playwright-core yang sudah ada di devDependencies; tidak ada
+// browser/dependency baru yang diunduh oleh generator.
+import { createServer } from "node:http";
 import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
-import { PDFDocument, PDFRawStream, PDFName } from "pdf-lib";
-import { createWorker } from "tesseract.js";
-import { flattenOcrWords, ocrRowTolerance, DIGITAL_ROW_TOLERANCE, type MappingToken, type TesseractBlockLike } from "../lib/mapping-parser";
+import { chromium } from "playwright-core";
+import { extractEmbeddedJpegPages, flattenOcrWords, ocrRowTolerance, DIGITAL_ROW_TOLERANCE, type MappingToken, type TesseractBlockLike } from "../lib/mapping-parser";
+import { TESSERACT_ASSET_OPTIONS } from "../lib/reconciliation-berita-acara-client-ocr";
 
 const OUT_DIR = "lib/__fixtures__";
 
@@ -42,36 +40,86 @@ async function fromDigitalPdf(path: string, name: string): Promise<void> {
   write(name, { source: path, rowTolerance: DIGITAL_ROW_TOLERANCE, tokens });
 }
 
-/** Tarik gambar JPEG full-page yang tertanam di PDF hasil scan, apa adanya. */
-function embeddedJpegPages(bytes: Buffer): Promise<Uint8Array[]> {
-  return PDFDocument.load(bytes, { ignoreEncryption: true }).then((doc) => {
-    const images: Uint8Array[] = [];
-    for (const [, object] of doc.context.enumerateIndirectObjects()) {
-      if (!(object instanceof PDFRawStream)) continue;
-      if (!String(object.dict.get(PDFName.of("Filter"))).includes("DCTDecode")) continue;
-      images.push(object.contents);
+type BrowserWorker = {
+  recognize: (image: Blob, params: Record<string, never>, output: { text: boolean; blocks: boolean }) => Promise<{ data: { blocks: unknown } }>;
+  terminate: () => Promise<void>;
+};
+
+type BrowserTesseract = {
+  createWorker: (langs: string, oem: undefined, options: typeof TESSERACT_ASSET_OPTIONS) => Promise<BrowserWorker>;
+};
+
+/** Jalankan OCR lewat browser production, bukan worker Node yang auto-pilih SIMD. */
+async function ocrInChrome(images: readonly Uint8Array[]): Promise<(TesseractBlockLike[] | null)[]> {
+  const assets = new Map<string, { body: Buffer; contentType: string }>([
+    ["/tesseract.js", { body: readFileSync("node_modules/tesseract.js/dist/tesseract.min.js"), contentType: "application/javascript" }],
+    ["/tesseract/worker.min.js", { body: readFileSync("public/tesseract/worker.min.js"), contentType: "application/javascript" }],
+    ["/tesseract/tesseract-core-lstm.wasm.js", { body: readFileSync("public/tesseract/tesseract-core-lstm.wasm.js"), contentType: "application/javascript" }],
+    ["/tesseract/lang/ind.traineddata", { body: readFileSync("public/tesseract/lang/ind.traineddata"), contentType: "application/octet-stream" }],
+    ["/tesseract/lang/eng.traineddata", { body: readFileSync("public/tesseract/lang/eng.traineddata"), contentType: "application/octet-stream" }],
+    ...images.map((image, index) => [`/images/${index + 1}.jpg`, { body: Buffer.from(image), contentType: "image/jpeg" }] as const),
+  ]);
+  const server = createServer((request, response) => {
+    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    if (pathname === "/") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end("<!doctype html><script src=\"/tesseract.js\"></script>");
+      return;
     }
-    return images;
+    const asset = assets.get(pathname);
+    if (!asset) {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    response.writeHead(200, { "content-type": asset.contentType, "cache-control": "no-store" });
+    response.end(asset.body);
   });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Server OCR lokal gagal mendapatkan port.");
+  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${address.port}`, { waitUntil: "load" });
+    const result = await page.evaluate(async ({ imageCount, assetOptions }) => {
+      const tesseract = (window as unknown as { Tesseract: BrowserTesseract }).Tesseract;
+      const worker = await tesseract.createWorker("ind+eng", undefined, assetOptions);
+      try {
+        const blocks: unknown[] = [];
+        for (let index = 1; index <= imageCount; index++) {
+          const response = await fetch(`/images/${index}.jpg`);
+          if (!response.ok) throw new Error(`Gambar OCR ${index} gagal dimuat (${response.status}).`);
+          const recognized = await worker.recognize(await response.blob(), {}, { text: false, blocks: true });
+          blocks.push(recognized.data.blocks);
+        }
+        return blocks;
+      } finally {
+        await worker.terminate();
+      }
+    }, { imageCount: images.length, assetOptions: TESSERACT_ASSET_OPTIONS });
+    return result as (TesseractBlockLike[] | null)[];
+  } finally {
+    await browser.close();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 }
 
 async function fromScannedPdf(path: string, name: string): Promise<void> {
-  const images = await embeddedJpegPages(readFileSync(path));
-  const worker = await createWorker("ind+eng", undefined, { langPath: "public/tesseract/lang", gzip: false });
-  try {
-    const tokens: MappingToken[] = [];
-    const tolerances: number[] = [];
-    for (const [index, image] of images.entries()) {
-      const { data } = await worker.recognize(Buffer.from(image), {}, { text: false, blocks: true });
-      const blocks = data.blocks as TesseractBlockLike[] | null;
-      tokens.push(...flattenOcrWords(blocks, index + 1));
-      tolerances.push(ocrRowTolerance(blocks));
-    }
-    tolerances.sort((a, b) => a - b);
-    write(name, { source: path, rowTolerance: tolerances[tolerances.length >> 1] ?? 1, tokens });
-  } finally {
-    await worker.terminate();
+  const pages = await extractEmbeddedJpegPages(new Uint8Array(readFileSync(path)));
+  if (pages.some((page) => page === null)) throw new Error(`${path}: tidak semua halaman berupa JPEG full-page yang bisa dipakai fixture.`);
+  const blocksByPage = await ocrInChrome(pages.map((page) => page!.data));
+  const tokens: MappingToken[] = [];
+  const tolerances: number[] = [];
+  for (const [index, blocks] of blocksByPage.entries()) {
+    tokens.push(...flattenOcrWords(blocks, index + 1));
+    tolerances.push(ocrRowTolerance(blocks));
   }
+  tolerances.sort((a, b) => a - b);
+  write(name, { source: path, rowTolerance: tolerances[tolerances.length >> 1] ?? 1, tokens });
 }
 
 /** Model sheet Excel (label + tebal + nilai per kolom), lewat pembaca produksi. */
