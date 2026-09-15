@@ -1122,6 +1122,12 @@ export async function analyzeFinancialPdf(
       return { source: "pdf-scanned-ocr", reports: { "profit-loss": blank, "balance-sheet": blank, cashflow: blank } };
     }
     const reports = parseAllReports(scanned.tokens, scanned.rowTolerance);
+    if (reports.cashflow.notFound) {
+      // Scan terkompresi kadang memberi jarak Y berbeda antar-kata pada satu
+      // baris. Coba toleransi lebih lebar; pengaman aritmatika tetap wajib lolos.
+      const wider = parseAllReports(scanned.tokens, scanned.rowTolerance * 1.5);
+      if (!wider.cashflow.notFound) reports.cashflow = wider.cashflow;
+    }
     if (reports.cashflow.status === "rejected" && reports.cashflow.notFound) {
       logMissingCashflowMarker(scanned.tokens, scanned.rowTolerance);
     }
