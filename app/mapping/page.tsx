@@ -14,7 +14,7 @@
 // terlihat masuk akal. Penolakan itu ditampilkan lengkap dengan selisih tiap
 // cek, bukan sekadar "gagal".
 
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Lock, Moon, Sun, Unlock } from "lucide-react";
 import { analyzeFinancialPdf, REPORT_TITLES, type MappingParseResult, type FinancialLine, type ReconciliationCheck } from "@/lib/mapping-parser";
@@ -310,6 +310,7 @@ export default function MappingPage() {
   const [excelBusy, setExcelBusy] = useState(false);
   const [excelError, setExcelError] = useState<string | null>(null);
   const [period, setPeriod] = useState<string>("");
+  const periodRef = useRef(period);
 
   const [pdfFile, setPdfFile] = useState<PickedFile | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -319,6 +320,10 @@ export default function MappingPage() {
   // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
   const excelInputId = useId();
   const pdfInputId = useId();
+
+  useEffect(() => {
+    periodRef.current = period;
+  }, [period]);
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -359,7 +364,7 @@ export default function MappingPage() {
     const body = new FormData();
     body.append("file", file);
     body.append("kind", kind);
-    if (kind === "pdf" && period) body.append("period", period);
+    if (kind === "pdf" && periodRef.current) body.append("period", periodRef.current);
     const response = await fetch("/api/mapping/upload", { method: "POST", body });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
@@ -374,7 +379,7 @@ export default function MappingPage() {
       );
     }
     return payload.data as UploadedFile & { sheets?: ExcelReportSheet[] };
-  }, [period]);
+  }, []);
 
   const onExcelPicked = useCallback(
     async (file: File) => {
@@ -413,7 +418,7 @@ export default function MappingPage() {
         setPdfStatus("");
       }
     },
-    [period, upload],
+    [upload],
   );
 
   useEffect(() => {
