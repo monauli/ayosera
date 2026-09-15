@@ -90,6 +90,15 @@ function comparableSides(lines: readonly FinancialLine[]): Side[] {
     .map((line) => ({ line, normalized: normalizeFinancialLabel(line.label), rule: null }));
 }
 
+function hasAllRuleParts(lines: readonly FinancialLine[], rule: MappingGroupingRule): boolean {
+  const sides = comparableSides(lines);
+  return rule.parts.every((part, index) => {
+    const code = rule.partCodes?.[index];
+    const normalized = normalizeFinancialLabel(part);
+    return sides.some((candidate) => code ? candidate.line.code === code : candidate.normalized === normalized);
+  });
+}
+
 /**
  * Terapkan aturan pengelompokan pada satu sisi: baris-baris `parts` diganti
  * SATU baris bernilai jumlahnya, berlabel `target`.
@@ -217,8 +226,9 @@ export function compareFinancialReports(
 ): ComparisonResult {
   const rules = rulesForReport(report);
   const aliases = aliasRulesForReport(report);
-  const excelApplied = applyRules(comparableSides(excelLines), rules, "excel");
-  const pdfApplied = applyRules(comparableSides(pdfLines), rules, "pdf");
+  const activeRules = rules.filter((rule) => !(hasAllRuleParts(excelLines, rule) && hasAllRuleParts(pdfLines, rule)));
+  const excelApplied = applyRules(comparableSides(excelLines), activeRules, "excel");
+  const pdfApplied = applyRules(comparableSides(pdfLines), activeRules, "pdf");
 
   const remaining = [...pdfApplied.sides];
   const rows: ComparisonRow[] = [];
