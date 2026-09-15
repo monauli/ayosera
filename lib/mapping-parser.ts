@@ -1282,13 +1282,37 @@ export async function extractScanTokens(
             } else if (fallbackBlocks?.length) {
               const fallbackTokens = flattenOcrWords(fallbackBlocks, pageNumber);
               const fallbackRows = groupTokensIntoRows(fallbackTokens, ocrRowTolerance(fallbackBlocks));
+              const embeddedScale = enlargedCanvas ? EMBEDDED_OCR_SCALE : 1;
+              const scaleFallbackRow = (row: (typeof fallbackRows)[number]) => [
+                ...row.labelTokens,
+                ...row.amountTokens,
+              ]
+                .filter((token) => /[a-z0-9-]/i.test(token.text))
+                .map((token) => ({
+                  ...token,
+                  x: token.x * (embeddedImage.width * embeddedScale / viewport.width),
+                  y: token.y * (embeddedImage.height * embeddedScale / viewport.height),
+                }));
+              const embeddedRows = groupTokensIntoRows(embeddedTokens, ocrRowTolerance(blocks));
+              const hasEmbeddedCashflowRow = (pattern: RegExp) => embeddedRows.some((row) =>
+                pattern.test(row.labelTokens.map((token) => token.text).join(" ")),
+              );
+              if (!hasCashflowMarker) {
+                for (const row of fallbackRows) {
+                  const label = row.labelTokens.map((token) => token.text).join(" ");
+                  const pattern = /saldo\s+kas\s+(awal|akhir)/i.test(label)
+                    ? /saldo\s+kas\s+(awal|akhir)/i
+                    : /kenaikan|penurunan/i.test(label)
+                      ? /kenaikan|penurunan/i
+                      : null;
+                  if (pattern && !hasEmbeddedCashflowRow(pattern)) extraTokens.push(...scaleFallbackRow(row));
+                }
+              }
               const activityRow = fallbackRows.find((row) => {
                 const label = row.labelTokens.map((token) => token.text).join(" ");
                 return /total/i.test(label) && /aktivitas/i.test(label);
               });
               if (activityRow) {
-                const scaleX = (embeddedImage.width * EMBEDDED_OCR_SCALE) / viewport.width;
-                const scaleY = (embeddedImage.height * EMBEDDED_OCR_SCALE) / viewport.height;
                 const activityLabelTokens = activityRow.labelTokens.filter((token) => /[a-z0-9]/i.test(token.text));
                 const activityText = String(fallback.data.text ?? "");
                 const isNegativeActivity = /total\s+aktivitas[^\n]*-\s*[\d,.]+/i.test(activityText);
@@ -1305,15 +1329,15 @@ export async function extractScanTokens(
                 const amountTokens = embeddedAmountIndexes.length < 2 ? activityRow.amountTokens : [];
                 const scaledActivityTokens = [...activityLabelTokens, ...amountTokens].map((token) => ({
                     ...token,
-                    x: token.x * scaleX,
-                    y: token.y * scaleY,
+                    x: token.x * (embeddedImage.width * embeddedScale / viewport.width),
+                    y: token.y * (embeddedImage.height * embeddedScale / viewport.height),
                   }));
                 extraTokens.push(...scaledActivityTokens);
                 if (isNegativeActivity && embeddedAmountIndexes.length < 2 && amount) {
                   extraTokens.push({
                     text: `-${amount.text.replace(/^[-–—]/, "")}`,
-                    x: amount.x * scaleX,
-                    y: amount.y * scaleY,
+                    x: amount.x * (embeddedImage.width * embeddedScale / viewport.width),
+                    y: amount.y * (embeddedImage.height * embeddedScale / viewport.height),
                     page: pageNumber,
                   });
                 }
