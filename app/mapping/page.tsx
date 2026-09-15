@@ -444,7 +444,7 @@ export default function MappingPage() {
         const pdf = sources.find((source) => source.kind === "pdf");
         if (pdf) {
           setPdfFile({ fileName: pdf.fileName, size: pdf.size });
-          const fileResponse = await fetch(pdf.url);
+          const fileResponse = await fetch("/api/mapping/source", { cache: "no-store" });
           if (fileResponse.ok && !cancelled) {
             const blob = await fileResponse.blob();
             await onPdfPicked(new File([blob], pdf.fileName, { type: pdf.mimeType }), false);
