@@ -659,7 +659,12 @@ const REPORT_END_MARKERS: Record<FinancialSheetKind, string> = {
 };
 
 function matchesReportEndMarker(label: string, marker: string): boolean {
-  return isNearLabel(normalizeFinancialLabel(normalizeBoundaryLabel(label)), marker);
+  const normalized = normalizeFinancialLabel(normalizeBoundaryLabel(label));
+  if (marker === REPORT_END_MARKERS.cashflow) {
+    const words = normalized.split(" ");
+    return ["saldo", "kas", "akhir"].every((expected) => words.some((word) => isNearWord(word, expected)));
+  }
+  return isNearLabel(normalized, marker);
 }
 
 /** Nama laporan untuk pesan ke pengguna. */
