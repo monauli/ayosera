@@ -73,10 +73,6 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
     target: "Laba rugi ditahan",
     parts: ["Laba rugi ditahan", "Pendapatan Periode ini"],
     note: "Gabungan dari: Laba rugi ditahan + Pendapatan Periode ini",
-    // Februari 2026: -611.623,41 + -2.680.094,81 = -3.291.718,22 — sama
-    // persis dengan "Laba rugi ditahan" di Excel. Excel juga punya baris
-    // "Pendapatan periode ini" tersendiri bernilai 0, yang setelah aturan ini
-    // jadi baris nihil sebelah dan tidak ditampilkan.
     verified: true,
   },
 ];

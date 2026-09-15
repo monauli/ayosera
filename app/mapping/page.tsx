@@ -319,6 +319,7 @@ export default function MappingPage() {
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; reports: Record<FinancialSheetKind, MappingParseResult> } | null>(null);
+  const [activeReport, setActiveReport] = useState<FinancialSheetKind>("profit-loss");
   const [restoreBusy, setRestoreBusy] = useState(true);
   // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
   const excelInputId = useId();
@@ -646,9 +647,18 @@ export default function MappingPage() {
       </section>
 
       <div className="mapping-results-grid">
-      {REPORT_ORDER.filter((kind) => comparisons[kind]).map((kind) => (
-        <ComparisonSection key={kind} title={REPORT_TITLES[kind]} comparison={comparisons[kind]!} />
-      ))}
+      <nav className="mapping-tabs" aria-label="Pilih laporan">
+        {REPORT_ORDER.map((kind) => (
+          <button key={kind} type="button" className={activeReport === kind ? "is-active" : ""} onClick={() => setActiveReport(kind)}>
+            {REPORT_TITLES[kind]}
+          </button>
+        ))}
+      </nav>
+      <div className="mapping-tab-reports">
+        <ReportBox title={`Excel — ${REPORT_TITLES[activeReport]}`} view={excelViews[activeReport]} open showCode={false} />
+        <ReportBox title={`PDF — ${REPORT_TITLES[activeReport]}`} view={pdfViews[activeReport]} open showCode />
+      </div>
+      {comparisons[activeReport] && <ComparisonSection title={REPORT_TITLES[activeReport]} comparison={comparisons[activeReport]!} />}
 
       {Object.keys(comparisons).length === 0 && (
         <section className="mapping-compare" aria-label="Hasil perbandingan">
@@ -718,9 +728,6 @@ export default function MappingPage() {
               {excelFile.fileName} · {(excelFile.size / 1024).toFixed(0)} KB · {availablePeriods.length} bulan terdeteksi
             </p>
           )}
-          {REPORT_ORDER.map((kind) => (
-            <ReportBox key={kind} title={REPORT_TITLES[kind]} view={excelViews[kind]} open={kind === "profit-loss"} showCode={false} />
-          ))}
         </section>
 
         <section className="mapping-panel" aria-label="Sumber PDF">
@@ -761,9 +768,6 @@ export default function MappingPage() {
               {pdfFile.fileName} · {(pdfFile.size / 1024 / 1024).toFixed(1)} MB
             </p>
           )}
-          {REPORT_ORDER.map((kind) => (
-            <ReportBox key={kind} title={REPORT_TITLES[kind]} view={pdfViews[kind]} open={kind === "profit-loss"} showCode />
-          ))}
         </section>
       </div>
 
