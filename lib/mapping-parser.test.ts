@@ -36,7 +36,7 @@ function findLabel(lines: readonly MappingLine[], pattern: RegExp): MappingLine 
 }
 
 test("PDF scan dengan satu JPEG full-page mengembalikan gambar asli per halaman", async () => {
-  const bytes = new Uint8Array(readFileSync("tmp/fixtures/Laporan Keuangan 0226.pdf"));
+  const bytes = new Uint8Array(readFileSync("tmp/fixtures/keuangan/keuangan/Laporan Keuangan 0226.pdf"));
   const images = await extractEmbeddedJpegPages(bytes);
 
   assert.deepEqual(
