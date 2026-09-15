@@ -1236,8 +1236,15 @@ export async function extractScanTokens(
             // Jika browser gagal membuat bitmap, tetap coba JPEG asli langsung.
           }
         }
-        const { data } = await worker.recognize(imageInput, {}, { text: true, blocks: true });
-        const blocks = data.blocks as TesseractBlockLike[] | null;
+        let { data } = await worker.recognize(imageInput, {}, { text: true, blocks: true });
+        let blocks = data.blocks as TesseractBlockLike[] | null;
+        // Pada JPEG terkompresi tertentu, upscale membuat Tesseract
+        // mengembalikan text tetapi tanpa blocks. Ulangi ukuran asli agar
+        // token berkoordinat halaman tidak hilang seluruhnya.
+        if ((!blocks || blocks.length === 0) && imageInput !== imageBlob) {
+          ({ data } = await worker.recognize(imageBlob, {}, { text: true, blocks: true }));
+          blocks = data.blocks as TesseractBlockLike[] | null;
+        }
         tokens.push(...flattenOcrWords(blocks, pageNumber));
         tolerances.push(ocrRowTolerance(blocks));
         if (enlargedCanvas) {
