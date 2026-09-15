@@ -5,6 +5,7 @@ import { currentStoreId } from "@/lib/reconciliation-store";
 import { readFinancialWorkbook } from "@/lib/mapping-excel-parser";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { loadLatestMappingSources, saveMappingSource } from "@/lib/mapping-source-store";
+import { hasMappingPeriodLock } from "@/lib/mapping-period-lock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,11 +53,15 @@ export async function POST(request: Request) {
     const form = await request.formData();
     const file = form.get("file");
     const kind = form.get("kind");
+    const period = typeof form.get("period") === "string" ? String(form.get("period")) : undefined;
     if (kind !== "excel" && kind !== "pdf") {
       return NextResponse.json({ error: "Jenis berkas tidak dikenal." }, { status: 400, headers: NO_CACHE_HEADERS });
     }
     if (!(file instanceof File) || !file.size) {
       return NextResponse.json({ error: "Berkas wajib diisi." }, { status: 400, headers: NO_CACHE_HEADERS });
+    }
+    if (await hasMappingPeriodLock(currentStoreId(), kind === "pdf" ? period : undefined)) {
+      return NextResponse.json({ error: "Periode sudah dikunci; buka kunci dulu sebelum mengganti berkas." }, { status: 423, headers: NO_CACHE_HEADERS });
     }
     if (file.size > MAX_BYTES) {
       return NextResponse.json({ error: `Berkas maksimal ${MAX_BYTES / 1024 / 1024} MB.` }, { status: 400, headers: NO_CACHE_HEADERS });

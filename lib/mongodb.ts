@@ -150,6 +150,7 @@ export type OlseraFinancialLedgerEntryDocument = { _id: string; storeId: number;
 export type OlseraFinancialSyncLogDocument = { _id: string; storeId: number; period: string; status: "running" | "success" | "partial" | "failed"; phase: "accounts" | "monthly-reports" | "ledger-details" | "reconcile" | "completed"; accountCursor: number; accountCodes: string[]; reportsCompleted: string[]; recordsProcessed: number; accountsProcessed: number; errorMessage: string | null; failedAccountCodes?: string[]; recoveredAccountCodes?: string[]; accountAttempts?: Array<{ code: string; attempts: number }>; finalized?: boolean; startedAt: Date; updatedAt: Date; completedAt: Date | null };
 export type OlseraFinancialCronInvocationDocument = { _id: string; cronRunId: string; period: string | null; status: string; startedAt: Date; finishedAt: Date; durationMs: number; stepsExecuted: number; checkpoint: number | null; safeErrorCode: string | null; stopReason: string | null };
 export type MappingSourceDocument = { _id?: string; storeId: number; kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; sheets?: unknown; uploadedAt: Date; uploadedBy: string };
+export type MappingPeriodLockDocument = { _id: string; storeId: number; period: string; status: "locked" | "unlocked"; lockedAt: Date | null; lockedBy: string | null; unlockedAt: Date | null; unlockedBy: string | null; updatedAt: Date; history: Array<{ action: "lock" | "unlock"; actor: string; reason: string | null; at: Date }> };
 export type FinancialEmptyLedgerObservation = { runId: string; invocationId: string; observedAt: Date; rowCount: number; sourceStatus: "success-empty" };
 export type FinancialEmptyLedgerConfirmationDocument = { _id: string; storeId: number; period: string; accountCode: string; status: "candidate" | "confirmed" | "cancelled"; observations: FinancialEmptyLedgerObservation[]; confirmedAt: Date | null; lastNonEmptyAt: Date | null; updatedAt: Date; createdAt: Date };
 export type FinancialStaleCleanupAuditDocument = { _id: string; storeId: number; period: string; accountCode: string; runId: string; reason: string; firstCheck: FinancialEmptyLedgerObservation; secondCheck: FinancialEmptyLedgerObservation; deletedCount: number; succeeded: boolean; createdAt: Date };
@@ -1027,6 +1028,7 @@ export async function collections() {
     olseraFinancialSyncLogs: db.collection<OlseraFinancialSyncLogDocument>("olsera_financial_sync_logs"),
     olseraFinancialCronInvocations: db.collection<OlseraFinancialCronInvocationDocument>("olsera_financial_cron_invocations"),
     mappingSources: db.collection<MappingSourceDocument>("mapping_sources"),
+    mappingPeriodLocks: db.collection<MappingPeriodLockDocument>("mapping_period_locks"),
     olseraFinancialEmptyLedgerConfirmations: db.collection<FinancialEmptyLedgerConfirmationDocument>("olsera_financial_empty_ledger_confirmations"),
     olseraFinancialStaleCleanupAudits: db.collection<FinancialStaleCleanupAuditDocument>("olsera_financial_stale_cleanup_audits"),
     olseraSyncLocks: db.collection<OlseraSyncLockDocument>("olsera_sync_locks"),
@@ -1099,6 +1101,7 @@ async function createIndexes() {
     rateLimits,
     historicalBackfillAuditLog,
     mappingSources,
+    mappingPeriodLocks,
   } = await collections();
   await Promise.all([
     webhookLogs.createIndex({ receivedAt: -1 }),
@@ -1223,6 +1226,7 @@ async function createIndexes() {
     // Milestone 4 Bagian C — jejak audit backfill reversibel, satu per orderItemId.
     historicalBackfillAuditLog.createIndex({ storeId: 1, createdAt: -1 }),
     mappingSources.createIndex({ storeId: 1, kind: 1, uploadedAt: -1 }),
+    mappingPeriodLocks.createIndex({ storeId: 1, period: 1 }, { unique: true }),
   ]);
 }
 

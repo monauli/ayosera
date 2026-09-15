@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Moon, Sun } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Lock, Moon, Sun, Unlock } from "lucide-react";
 import { analyzeFinancialPdf, REPORT_TITLES, type MappingParseResult, type FinancialLine, type ReconciliationCheck } from "@/lib/mapping-parser";
 import { compareFinancialReports, type ComparisonRow, type ComparisonStatus } from "@/lib/mapping-compare";
 import {
@@ -300,6 +300,9 @@ function ComparisonSection({ title, comparison }: { title: string; comparison: R
 
 export default function MappingPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [periodLocked, setPeriodLocked] = useState(false);
+  const [lockBusy, setLockBusy] = useState(false);
+  const [lockError, setLockError] = useState<string | null>(null);
   const [mode, setMode] = useState<ThemeMode>("dark");
 
   const [excelFile, setExcelFile] = useState<UploadedFile | null>(null);
@@ -343,6 +346,14 @@ export default function MappingPage() {
       setPeriod(availablePeriods[0]);
     }
   }, [availablePeriods, period]);
+
+  useEffect(() => {
+    if (!period) return;
+    fetch(`/api/mapping/lock?period=${encodeURIComponent(period)}`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => setPeriodLocked(payload?.data?.status === "locked"))
+      .catch(() => setPeriodLocked(false));
+  }, [period]);
 
   const upload = useCallback(async (file: File, kind: "excel" | "pdf") => {
     const body = new FormData();
@@ -517,6 +528,25 @@ export default function MappingPage() {
     return result;
   }, [excelResults, pdfResult, periodGuard]);
 
+  const allComparisonsCocok = REPORT_ORDER.every((kind) => {
+    const summary = comparisons[kind]?.summary;
+    return summary && summary.beda === 0 && summary.hanyaExcel === 0 && summary.hanyaPdf === 0;
+  });
+  const togglePeriodLock = async () => {
+    if (!period || user?.role !== "supervisor" || lockBusy) return;
+    setLockBusy(true); setLockError(null);
+    try {
+      const action = periodLocked ? "unlock" : "lock";
+      const reason = action === "unlock" ? window.prompt("Alasan buka kunci:", "Perlu koreksi sumber") : undefined;
+      if (action === "unlock" && !reason) return;
+      const response = await fetch("/api/mapping/lock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, period, reason }) });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? "Gagal mengubah lock periode.");
+      setPeriodLocked(payload.data.status === "locked");
+    } catch (error) { setLockError(error instanceof Error ? error.message : "Gagal mengubah lock periode."); }
+    finally { setLockBusy(false); }
+  };
+
   const pdfViews = useMemo((): Record<FinancialSheetKind, ReportView> => {
     const pending: ReportView = { state: "empty", note: "Unggah PDF laporan keuangan untuk melihat hasil bacanya." };
     const note =
@@ -587,6 +617,11 @@ export default function MappingPage() {
             ))}
           </select>
         </label>
+        {user?.role === "supervisor" && period && <button type="button" className="recon-button secondary" disabled={lockBusy || (!periodLocked && !allComparisonsCocok)} onClick={() => void togglePeriodLock()}>
+          {periodLocked ? <Unlock size={14} /> : <Lock size={14} />} {periodLocked ? "Buka Kunci" : "Kunci Periode"}
+        </button>}
+        {periodLocked && <span className="mapping-note">Periode terkunci; upload baru ditolak.</span>}
+        {lockError && <span className="recon-error">{lockError}</span>}
       </section>
 
       {REPORT_ORDER.filter((kind) => comparisons[kind]).map((kind) => (
@@ -638,7 +673,7 @@ export default function MappingPage() {
               type="file"
               className="recon-file-input-hidden"
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              disabled={excelBusy}
+              disabled={excelBusy || periodLocked}
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (file) void onExcelPicked(file);
@@ -679,7 +714,7 @@ export default function MappingPage() {
               type="file"
               className="recon-file-input-hidden"
               accept="application/pdf"
-              disabled={pdfBusy}
+              disabled={pdfBusy || periodLocked}
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (file) void onPdfPicked(file);
