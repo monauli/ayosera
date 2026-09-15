@@ -1204,8 +1204,8 @@ th[scope],
 .mapping-note { margin:0; color:rgb(var(--rd-text-tertiary)); font-size:.73rem; overflow-wrap:anywhere; }
 .mapping-upload { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
 .mapping-page { display:flex; flex-direction:column; }
-.mapping-page > .mapping-panels { order:1; width:100%; }
-.mapping-page > .mapping-period-filter { order:2; width:100%; }
+.mapping-page > .mapping-period-filter { order:1; width:100%; }
+.mapping-page > .mapping-panels { order:2; width:100%; }
 .mapping-results-grid { order:3; width:100%; max-width:1500px; margin:0 auto; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.8rem; align-items:start; }
 .mapping-results-grid .mapping-compare { min-width:0; max-width:none; margin:0; }
 .mapping-lock-bar { order:4; width:100%; max-width:1500px; margin:0 auto 1rem; display:flex; align-items:center; justify-content:flex-end; gap:.7rem; min-height:2.8rem; }

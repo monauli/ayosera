@@ -219,7 +219,7 @@ function ComparisonSection({ title, comparison }: { title: string; comparison: R
   return (
     <section className="mapping-compare" aria-label={`Hasil perbandingan ${title}`}>
       <header>
-        <h2>Perbandingan {title} — Excel vs PDF</h2>
+        <h2>Mapping {title} — Excel vs PDF</h2>
         {/* "hanya di PDF" DIPERTAHANKAN: setelah akun nihil sebelah dibuang
             dari hasil (lihat isEmptyOnOneSide di lib/mapping-compare.ts) dan
             kop surat dibersihkan dari hasil baca PDF (stripLetterhead di
@@ -428,7 +428,10 @@ export default function MappingPage() {
     let cancelled = false;
     void (async () => {
       const response = await fetch("/api/mapping/upload", { cache: "no-store" });
-      if (!response.ok || cancelled) return;
+      if (!response.ok || cancelled) {
+        if (!cancelled) setPdfError("Sumber tersimpan belum bisa dibaca.");
+        return;
+      }
       const payload = await response.json();
       const sources = Array.isArray(payload.data) ? (payload.data as Array<{ kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; uploadedAt: string; sheets?: ExcelReportSheet[] }>) : [];
       const excel = sources.find((source) => source.kind === "excel");
@@ -438,10 +441,13 @@ export default function MappingPage() {
       }
       const pdf = sources.find((source) => source.kind === "pdf");
       if (pdf) {
+        setPdfFile({ fileName: pdf.fileName, size: pdf.size });
         const fileResponse = await fetch(pdf.url);
         if (fileResponse.ok && !cancelled) {
           const blob = await fileResponse.blob();
           await onPdfPicked(new File([blob], pdf.fileName, { type: pdf.mimeType }), false);
+        } else if (!cancelled) {
+          setPdfError("File PDF tersimpan tidak bisa dibaca.");
         }
       }
     })().catch(() => undefined);
@@ -634,7 +640,7 @@ export default function MappingPage() {
       {Object.keys(comparisons).length === 0 && (
         <section className="mapping-compare" aria-label="Hasil perbandingan">
           <header>
-            <h2>Perbandingan Excel vs PDF</h2>
+            <h2>Mapping Excel vs PDF</h2>
           </header>
           {periodWarning && (
             <div className="mapping-reject" role="alert">
@@ -648,7 +654,7 @@ export default function MappingPage() {
             {/* Perbandingan sengaja tidak jalan kalau salah satu sisi ditolak
                 pengaman aritmatika — membandingkan angka yang sudah diketahui
                 tidak bisa dipercaya hanya menghasilkan selisih palsu. */}
-            Perbandingan tiap laporan tampil setelah KEDUA sisinya terbaca, lolos pengaman aritmatika, dan periodenya sama. Laporan yang tidak ada di PDF yang
+            Mapping tiap laporan tampil setelah KEDUA sisinya terbaca, lolos pengaman aritmatika, dan periodenya sama. Laporan yang tidak ada di PDF yang
             diunggah cukup tidak muncul.
           </p>
         </section>
@@ -685,7 +691,7 @@ export default function MappingPage() {
               }}
             />
             <label htmlFor={excelInputId} className={`recon-button secondary recon-file-trigger${excelBusy ? " is-disabled" : ""}`}>
-              <FileSpreadsheet size={14} /> Pilih File Excel
+              <FileSpreadsheet size={14} /> Upload File Excel
             </label>
             {excelBusy && (
               <span className="mapping-note">
@@ -726,7 +732,7 @@ export default function MappingPage() {
               }}
             />
             <label htmlFor={pdfInputId} className={`recon-button secondary recon-file-trigger${pdfBusy ? " is-disabled" : ""}`}>
-              <FileText size={14} /> Pilih File PDF
+              <FileText size={14} /> Upload File PDF
             </label>
             {pdfBusy && (
               <span className="mapping-note">
