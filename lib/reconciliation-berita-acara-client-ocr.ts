@@ -118,7 +118,7 @@ export function averageConfidence(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-type PdfjsModule = typeof import("pdfjs-dist");
+type PdfjsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 type PdfDocumentProxy = Awaited<ReturnType<PdfjsModule["getDocument"]>>["promise"] extends Promise<infer T> ? T : never;
 
 type PdfTextItemLike = { str?: unknown; transform?: unknown };
@@ -230,8 +230,8 @@ export async function extractPdfTextLayerItems(doc: PdfDocumentProxy): Promise<P
 export async function extractInventoryBaPdfItems(file: File, onStatus: OnOcrStatus = () => {}): Promise<PositionedPdfTextItem[] | null> {
   if (file.type !== "application/pdf") return null;
   onStatus(STATUS_READING);
-  const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
   const buffer = new Uint8Array(await file.arrayBuffer());
   const loadingTask = pdfjs.getDocument({ data: buffer });
   try {
@@ -336,8 +336,8 @@ export async function extractBeritaAcaraTextClient(file: File, deps: ClientOcrDe
   }
 
   onStatus(STATUS_READING);
-  const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
   const buffer = new Uint8Array(await file.arrayBuffer());
   const loadingTask = pdfjs.getDocument({ data: buffer });
   try {

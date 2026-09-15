@@ -1085,7 +1085,7 @@ export function parseFinancialReport(
 // Tipe pdf.js diambil lewat `typeof import()` supaya tetap type-only dan
 // terhapus saat runtime — inti murni di atas tidak ikut menarik pdfjs-dist.
 // Pola sama dengan lib/reconciliation-berita-acara-client-ocr.ts.
-type PdfjsModule = typeof import("pdfjs-dist");
+type PdfjsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 type PdfDocumentProxy = Awaited<ReturnType<PdfjsModule["getDocument"]>>["promise"] extends Promise<infer T> ? T : never;
 
 /** Toleransi baris untuk text layer pdf.js — sama dengan groupPdfTextItemsIntoLines. */
@@ -1171,8 +1171,8 @@ export async function analyzeFinancialPdf(
   onStatus: (status: string) => void = () => {},
 ): Promise<{ source: PdfAnalysisSource; reports: Record<FinancialSheetKind, MappingParseResult> }> {
   onStatus("Membuka berkas PDF...");
-  const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
   const bytes = new Uint8Array(await file.arrayBuffer());
   const loadingTask = pdfjs.getDocument({ data: bytes });
   try {
