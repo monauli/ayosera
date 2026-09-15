@@ -401,14 +401,14 @@ export default function MappingPage() {
   );
 
   const onPdfPicked = useCallback(
-    async (file: File) => {
+    async (file: File, persist = true) => {
       setPdfBusy(true);
       setPdfError(null);
       setPdfResult(null);
       setPdfStatus("Membaca berkas...");
       try {
         setPdfFile({ fileName: file.name, size: file.size });
-        await upload(file, "pdf");
+        if (persist) await upload(file, "pdf");
         const analysed = await analyzeFinancialPdf(file, setPdfStatus);
         setPdfResult(analysed);
       } catch (error) {
@@ -439,7 +439,7 @@ export default function MappingPage() {
         const fileResponse = await fetch(pdf.url);
         if (fileResponse.ok && !cancelled) {
           const blob = await fileResponse.blob();
-          await onPdfPicked(new File([blob], pdf.fileName, { type: pdf.mimeType }));
+          await onPdfPicked(new File([blob], pdf.fileName, { type: pdf.mimeType }), false);
         }
       }
     })().catch(() => undefined);
