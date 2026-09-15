@@ -319,6 +319,7 @@ export default function MappingPage() {
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; reports: Record<FinancialSheetKind, MappingParseResult> } | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState(true);
   // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
   const excelInputId = useId();
   const pdfInputId = useId();
@@ -330,8 +331,8 @@ export default function MappingPage() {
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setUser(d?.user ?? null))
-      .catch(() => setUser(null));
+      .then((d) => { setUser(d?.user ?? null); if (!d?.user) setRestoreBusy(false); })
+      .catch(() => { setUser(null); setRestoreBusy(false); });
   }, []);
 
   useEffect(() => {
@@ -427,28 +428,32 @@ export default function MappingPage() {
     if (!user) return;
     let cancelled = false;
     void (async () => {
-      const response = await fetch("/api/mapping/upload", { cache: "no-store" });
-      if (!response.ok || cancelled) {
-        if (!cancelled) setPdfError("Sumber tersimpan belum bisa dibaca.");
-        return;
-      }
-      const payload = await response.json();
-      const sources = Array.isArray(payload.data) ? (payload.data as Array<{ kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; uploadedAt: string; sheets?: ExcelReportSheet[] }>) : [];
-      const excel = sources.find((source) => source.kind === "excel");
-      if (excel) {
-        setExcelFile({ url: excel.url, fileName: excel.fileName, size: excel.size, uploadedAt: excel.uploadedAt });
-        setSheets(excel.sheets ?? []);
-      }
-      const pdf = sources.find((source) => source.kind === "pdf");
-      if (pdf) {
-        setPdfFile({ fileName: pdf.fileName, size: pdf.size });
-        const fileResponse = await fetch(pdf.url);
-        if (fileResponse.ok && !cancelled) {
-          const blob = await fileResponse.blob();
-          await onPdfPicked(new File([blob], pdf.fileName, { type: pdf.mimeType }), false);
-        } else if (!cancelled) {
-          setPdfError("File PDF tersimpan tidak bisa dibaca.");
+      try {
+        const response = await fetch("/api/mapping/upload", { cache: "no-store" });
+        if (!response.ok || cancelled) {
+          if (!cancelled) setPdfError("Sumber tersimpan belum bisa dibaca.");
+          return;
         }
+        const payload = await response.json();
+        const sources = Array.isArray(payload.data) ? (payload.data as Array<{ kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; uploadedAt: string; sheets?: ExcelReportSheet[] }>) : [];
+        const excel = sources.find((source) => source.kind === "excel");
+        if (excel) {
+          setExcelFile({ url: excel.url, fileName: excel.fileName, size: excel.size, uploadedAt: excel.uploadedAt });
+          setSheets(excel.sheets ?? []);
+        }
+        const pdf = sources.find((source) => source.kind === "pdf");
+        if (pdf) {
+          setPdfFile({ fileName: pdf.fileName, size: pdf.size });
+          const fileResponse = await fetch(pdf.url);
+          if (fileResponse.ok && !cancelled) {
+            const blob = await fileResponse.blob();
+            await onPdfPicked(new File([blob], pdf.fileName, { type: pdf.mimeType }), false);
+          } else if (!cancelled) {
+            setPdfError("File PDF tersimpan tidak bisa dibaca.");
+          }
+        }
+      } finally {
+        if (!cancelled) setRestoreBusy(false);
       }
     })().catch(() => undefined);
     return () => {
@@ -618,6 +623,12 @@ export default function MappingPage() {
         </div>
       </header>
 
+      {restoreBusy && <div className="mapping-restore-status" role="status" aria-live="polite">
+        <Loader2 className="spin" size={16} />
+        <span>Memulihkan file tersimpan… jangan upload ulang dulu.</span>
+        <div className="mapping-progress" aria-hidden="true"><span /></div>
+      </div>}
+
       <section className="recon-filters mapping-period-filter" aria-label="Pilih periode">
         <label>
           Periode
@@ -683,7 +694,7 @@ export default function MappingPage() {
               type="file"
               className="recon-file-input-hidden"
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              disabled={excelBusy || periodLocked}
+              disabled={restoreBusy || excelBusy || periodLocked}
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (file) void onExcelPicked(file);
@@ -724,7 +735,7 @@ export default function MappingPage() {
               type="file"
               className="recon-file-input-hidden"
               accept="application/pdf"
-              disabled={pdfBusy || periodLocked}
+              disabled={restoreBusy || pdfBusy || periodLocked}
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (file) void onPdfPicked(file);
