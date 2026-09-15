@@ -455,7 +455,9 @@ export default function MappingPage() {
       } finally {
         if (!cancelled) setRestoreBusy(false);
       }
-    })().catch(() => undefined);
+    })().catch((error) => {
+      if (!cancelled) setPdfError(error instanceof Error ? error.message : "Gagal memulihkan PDF tersimpan.");
+    });
     return () => {
       cancelled = true;
     };
@@ -750,6 +752,7 @@ export default function MappingPage() {
                 <Loader2 className="spin" style={{ width: ".9rem", verticalAlign: "-.15rem" }} /> {pdfStatus || "Membaca..."}
               </span>
             )}
+            {restoreBusy && !pdfBusy && <span className="mapping-restore-inline" role="status"><Loader2 className="spin" size={14} /> Memulihkan dan membaca PDF tersimpan…</span>}
           </div>
           {pdfError && <p className="recon-error">{pdfError}</p>}
           {periodWarning && <p className="recon-error">{periodWarning}</p>}
