@@ -348,6 +348,7 @@ export default function MappingPage() {
     const body = new FormData();
     body.append("file", file);
     body.append("kind", kind);
+    if (kind === "pdf" && period) body.append("period", period);
     const response = await fetch("/api/mapping/upload", { method: "POST", body });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
@@ -362,7 +363,7 @@ export default function MappingPage() {
       );
     }
     return payload.data as UploadedFile & { sheets?: ExcelReportSheet[] };
-  }, []);
+  }, [period]);
 
   const onExcelPicked = useCallback(
     async (file: File) => {
@@ -391,19 +392,7 @@ export default function MappingPage() {
       setPdfStatus("Membaca berkas...");
       try {
         setPdfFile({ fileName: file.name, size: file.size });
-        // PDF SENGAJA tidak dikirim ke server sama sekali. Parsingnya memang
-        // sudah terjadi di BROWSER (halaman scan dirender ke canvas lalu
-        // di-OCR; Canvas API tidak ada di serverless Vercel), jadi satu-satunya
-        // guna unggahannya adalah arsip — dan arsip itu belum dibaca siapa pun.
-        // Menukarnya dengan kegagalan pasti pada berkas >4,5 MB (batas body
-        // request serverless Vercel; laporan scan bertanda tangan berukuran
-        // 4,6 MB) jelas tidak sepadan.
-        //
-        // Kalau arsip PDF dibutuhkan nanti (Tahap 5), jalurnya adalah client
-        // upload @vercel/blob (browser -> Blob, tidak lewat function). Itu
-        // menuntut connect-src di lib/csp.ts dibuka ke https://vercel.com
-        // (endpoint unggah SDK-nya) — perubahan keamanan yang harus diputuskan
-        // terpisah, bukan efek samping perbaikan bug ini.
+        await upload(file, "pdf");
         const analysed = await analyzeFinancialPdf(file, setPdfStatus);
         setPdfResult(analysed);
       } catch (error) {
@@ -413,7 +402,7 @@ export default function MappingPage() {
         setPdfStatus("");
       }
     },
-    [],
+    [period, upload],
   );
 
   useEffect(() => {
@@ -682,7 +671,7 @@ export default function MappingPage() {
               <FileText style={{ width: "1rem", verticalAlign: "-.15rem", marginRight: ".35rem" }} />
               PDF laporan keuangan{period ? ` — ${periodLabel(period)}` : ""}
             </h2>
-            <p>Pilih PDF untuk periode yang dipilih; satu berkas boleh memuat ketiga laporan. Berkasnya tidak dikirim ke mana pun — dibaca sepenuhnya di browser ini, termasuk OCR untuk PDF hasil scan.</p>
+            <p>Pilih PDF untuk periode yang dipilih; satu berkas boleh memuat ketiga laporan. Berkas disimpan agar tidak perlu diunggah ulang, lalu dibaca sepenuhnya di browser ini.</p>
           </div>
           <div className="mapping-upload">
             <input
