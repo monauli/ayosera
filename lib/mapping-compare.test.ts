@@ -253,6 +253,17 @@ describe("penjodohan tidak pernah menebak", () => {
 describe("Neraca Februari 2026 — aturan pengelompokan yang terverifikasi", () => {
   const result = compareFinancialReports(excelLines("2026-02", "balance-sheet"), pdfLines("mapping-laba-rugi-feb-2026-scan", "balance-sheet"), "balance-sheet");
 
+  test("akun kas tetap digabung saat OCR menambahkan akhiran pada nama akun", () => {
+    const pdf = pdfLines("mapping-laba-rugi-feb-2026-scan", "balance-sheet").map((line) =>
+      line.code === "11107" ? { ...line, label: "kas ayat silang QRIS/EDC BCA" } : line,
+    );
+    const comparison = compareFinancialReports(excelLines("2026-02", "balance-sheet"), pdf, "balance-sheet");
+    const row = findRow(comparison.rows, /^Kas dan Bank$/);
+    assert.equal(row.status, "COCOK");
+    assert.equal(row.pdfValue, 300755160.64);
+    assert.deepEqual(comparison.skippedRules, []);
+  });
+
   test("tiga rekening kas PDF digabung jadi satu baris Excel", () => {
     // Excel mencatat satu baris "Kas dan Bank"; PDF memecahnya jadi dua
     // rekening bank plus kas ayat silang. Angkanya HARUS mendarat sama persis.

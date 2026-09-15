@@ -22,6 +22,8 @@ export type MappingGroupingRule = {
   target: string;
   /** Label yang dijumlahkan, apa adanya seperti tercetak di sisi `combine`. */
   parts: readonly string[];
+  /** Kode akun PDF yang stabil ketika label OCR berubah. */
+  partCodes?: readonly string[];
   /** Kalimat yang ditampilkan ke pengguna pada baris hasil gabungan. */
   note: string;
   /**
@@ -52,6 +54,7 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
     combine: "pdf",
     target: "Kas dan Bank",
     parts: ["BANK BCA 7195-332266", "BANK BCA 719-5538808", "kas ayat silang QRIS/EDC"],
+    partCodes: ["11105", "11106", "11107"],
     note: "Gabungan dari: BANK BCA 7195-332266 + BANK BCA 719-5538808 + kas ayat silang QRIS/EDC",
     // Februari 2026: 255.454.187,17 + 43.305.973,47 + 1.995.000,00
     // = 300.755.160,64 — sama persis dengan "Kas dan Bank" di Excel.

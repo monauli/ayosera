@@ -109,7 +109,10 @@ function applyRules(
   for (const rule of rules) {
     if (rule.combine !== side) continue;
     const wanted = rule.parts.map((part) => normalizeFinancialLabel(part));
-    const found = wanted.map((part) => working.find((candidate) => candidate.normalized === part));
+    const found = wanted.map((part, index) => {
+      const code = rule.partCodes?.[index];
+      return working.find((candidate) => code ? candidate.line.code === code : candidate.normalized === part);
+    });
     const missing = wanted.map((part, index) => (found[index] ? null : rule.parts[index])).filter((part): part is string => part !== null);
     if (missing.length > 0) {
       skipped.push({ rule, missing });
