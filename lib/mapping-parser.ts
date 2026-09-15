@@ -1245,6 +1245,21 @@ export async function extractScanTokens(
           ({ data } = await worker.recognize(imageBlob, {}, { text: true, blocks: true }));
           blocks = data.blocks as TesseractBlockLike[] | null;
         }
+        if (!blocks || blocks.length === 0) {
+          const page = await pdfDocument.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: SCAN_RENDER_SCALE });
+          const fallbackCanvas = document.createElement("canvas");
+          fallbackCanvas.width = Math.ceil(viewport.width);
+          fallbackCanvas.height = Math.ceil(viewport.height);
+          const fallbackContext = fallbackCanvas.getContext("2d");
+          if (fallbackContext) {
+            await page.render({ canvas: fallbackCanvas, canvasContext: fallbackContext, viewport }).promise;
+            ({ data } = await worker.recognize(fallbackCanvas, {}, { text: true, blocks: true }));
+            blocks = data.blocks as TesseractBlockLike[] | null;
+          }
+          fallbackCanvas.width = 0;
+          fallbackCanvas.height = 0;
+        }
         tokens.push(...flattenOcrWords(blocks, pageNumber));
         tolerances.push(ocrRowTolerance(blocks));
         if (enlargedCanvas) {
