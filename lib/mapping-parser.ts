@@ -1263,7 +1263,10 @@ export async function extractScanTokens(
         const embeddedTokens = flattenOcrWords(blocks, pageNumber);
         const hasCashflowMarker = embeddedTokens.some((token) => /saldo/i.test(token.text))
           && embeddedTokens.some((token) => /akhir/i.test(token.text));
-        if (!hasCashflowMarker && pageNumber === pdfDocument.numPages) {
+        const hasActivitySubtotal = embeddedTokens.some((token) => /^total$/i.test(token.text))
+          && embeddedTokens.some((token) => /aktivitas/i.test(token.text));
+        const extraTokens: MappingToken[] = [];
+        if ((!hasCashflowMarker || !hasActivitySubtotal) && pageNumber === pdfDocument.numPages) {
           const page = await pdfDocument.getPage(pageNumber);
           const viewport = page.getViewport({ scale: SCAN_RENDER_SCALE });
           const fallbackCanvas = document.createElement("canvas");
@@ -1273,12 +1276,55 @@ export async function extractScanTokens(
           if (fallbackContext) {
             await page.render({ canvas: fallbackCanvas, canvasContext: fallbackContext, viewport }).promise;
             const fallback = await worker.recognize(fallbackCanvas, {}, { text: true, blocks: true });
-            if (fallback.data.blocks?.length) blocks = fallback.data.blocks as TesseractBlockLike[];
+            const fallbackBlocks = fallback.data.blocks as TesseractBlockLike[] | null;
+            if ((!blocks || blocks.length === 0) && fallbackBlocks?.length) {
+              blocks = fallbackBlocks;
+            } else if (fallbackBlocks?.length) {
+              const fallbackTokens = flattenOcrWords(fallbackBlocks, pageNumber);
+              const fallbackRows = groupTokensIntoRows(fallbackTokens, ocrRowTolerance(fallbackBlocks));
+              const activityRow = fallbackRows.find((row) => {
+                const label = row.labelTokens.map((token) => token.text).join(" ");
+                return /total/i.test(label) && /aktivitas/i.test(label);
+              });
+              if (activityRow) {
+                const scaleX = (embeddedImage.width * EMBEDDED_OCR_SCALE) / viewport.width;
+                const scaleY = (embeddedImage.height * EMBEDDED_OCR_SCALE) / viewport.height;
+                const activityLabelTokens = activityRow.labelTokens.filter((token) => /[a-z0-9]/i.test(token.text));
+                const activityText = String(fallback.data.text ?? "");
+                const isNegativeActivity = /total\s+aktivitas[^\n]*-\s*[\d,.]+/i.test(activityText);
+                const amount = activityRow.amountTokens.find((token) => /\d/.test(token.text));
+                const embeddedAmountIndexes = amount
+                  ? embeddedTokens.flatMap((token, index) => token.text.replace(/\s/g, "") === amount.text.replace(/\s/g, "") ? [index] : [])
+                  : [];
+                if (isNegativeActivity) {
+                  for (const index of embeddedAmountIndexes) {
+                    const token = embeddedTokens[index];
+                    embeddedTokens[index] = { ...token, text: `-${token.text.replace(/^[-–—]/, "")}` };
+                  }
+                }
+                const amountTokens = embeddedAmountIndexes.length < 2 ? activityRow.amountTokens : [];
+                const scaledActivityTokens = [...activityLabelTokens, ...amountTokens].map((token) => ({
+                    ...token,
+                    x: token.x * scaleX,
+                    y: token.y * scaleY,
+                  }));
+                extraTokens.push(...scaledActivityTokens);
+                if (isNegativeActivity && embeddedAmountIndexes.length < 2 && amount) {
+                  extraTokens.push({
+                    text: `-${amount.text.replace(/^[-–—]/, "")}`,
+                    x: amount.x * scaleX,
+                    y: amount.y * scaleY,
+                    page: pageNumber,
+                  });
+                }
+              }
+            }
           }
           fallbackCanvas.width = 0;
           fallbackCanvas.height = 0;
         }
         tokens.push(...flattenOcrWords(blocks, pageNumber));
+        tokens.push(...extraTokens);
         tolerances.push(ocrRowTolerance(blocks));
         if (enlargedCanvas) {
           enlargedCanvas.width = 0;
