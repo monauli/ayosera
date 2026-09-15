@@ -67,14 +67,6 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
     // = 300.755.160,64 — sama persis dengan "Kas dan Bank" di Excel.
     verified: true,
   },
-  {
-    report: "balance-sheet",
-    combine: "pdf",
-    target: "Laba rugi ditahan",
-    parts: ["Laba rugi ditahan", "Pendapatan Periode ini"],
-    note: "Gabungan dari: Laba rugi ditahan + Pendapatan Periode ini",
-    verified: true,
-  },
 ];
 
 export const MAPPING_ALIAS_RULES: readonly MappingAliasRule[] = [
