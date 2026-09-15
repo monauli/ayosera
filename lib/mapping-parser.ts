@@ -198,7 +198,7 @@ const ACCOUNT_CODE = /^\d{4,6}$/;
 const DASH = /^[-–—]$/;
 // "Jumlah" dipakai sheet Neraca di fixture Excel ("Jumlah Aset Lancar").
 // OCR bisa menambahkan token pendek di depan, jadi ini sengaja bukan prefix.
-const TOTAL_PREFIX = /\b(total|jumlah)\b/i;
+const TOTAL_PREFIX = /(?:^|[^a-z])(?:sub|ub)?total\b|\bjumlah\b/i;
 const EXPENSE_LABEL = /\b(biaya|beban)\b/i;
 const NET_PROFIT_LABEL = /^laba\s*bersih$/i;
 const MAX_EDIT_DISTANCE = 2;
@@ -381,6 +381,28 @@ export function flattenOcrWords(blocks: TesseractBlockLike[] | null | undefined,
   return tokens;
 }
 
+/**
+ * Tesseract kadang menaruh kata di `text`/TSV tetapi tidak di `blocks`.
+ * TSV tetap membawa bounding box per kata, jadi dipakai sebagai fallback
+ * khusus pada crop OCR yang membutuhkan baris lengkap.
+ */
+export function flattenOcrTsv(tsv: string | null | undefined, page: number): MappingToken[] {
+  if (!tsv) return [];
+  const tokens: MappingToken[] = [];
+  for (const line of tsv.split(/\r?\n/)) {
+    const fields = line.split("\t");
+    if (fields[0] !== "5") continue;
+    const text = fields.slice(11).join("\t").trim();
+    const x = Number(fields[6]);
+    const y = Number(fields[7]);
+    const width = Number(fields[8]);
+    const height = Number(fields[9]);
+    if (!text || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) continue;
+    tokens.push({ text, x, y: y + height / 2, page });
+  }
+  return tokens;
+}
+
 /** Toleransi baris untuk token OCR: setengah tinggi kata median. */
 export function ocrRowTolerance(blocks: TesseractBlockLike[] | null | undefined): number {
   const heights: number[] = [];
@@ -509,6 +531,24 @@ export function groupTokensIntoRows(tokens: readonly MappingToken[], rowToleranc
     flush();
   }
   return rows;
+}
+
+/** Pasangkan nominal yang OCR letakkan satu baris di atas labelnya. */
+function alignLeadingAmountRows(tokens: readonly MappingToken[], rowTolerance: number): MappingToken[] {
+  const rows = groupTokensIntoRows(tokens, rowTolerance);
+  const targetY = new Map<MappingToken, number>();
+  for (let index = 0; index + 1 < rows.length; index += 1) {
+    const amountRow = rows[index];
+    const labelRow = rows[index + 1];
+    if (amountRow.labelTokens.length === 0 && amountRow.amountTokens.length > 0 && labelRow.labelTokens.length > 0 && labelRow.amountTokens.length === 0) {
+      const y = labelRow.labelTokens[0]?.y;
+      if (y !== undefined) for (const token of amountRow.amountTokens) targetY.set(token, y);
+    }
+  }
+  return tokens.map((token) => {
+    const y = targetY.get(token);
+    return y === undefined ? token : { ...token, y };
+  });
 }
 
 /**
@@ -747,6 +787,34 @@ export function stripLetterhead(lines: readonly MappingLine[]): MappingLine[] {
 }
 
 /**
+ * Pada section Arus Kas yang hanya punya satu baris, subtotal adalah salinan
+ * angka baris itu. Jika OCR salah membaca digit pada detail, pakai subtotal
+ * tercetak sebagai koreksi; section dengan >=2 detail tetap wajib lolos cek.
+ */
+function repairSingleLineCashflowSections(lines: readonly MappingLine[]): MappingLine[] {
+  const repaired = [...lines];
+  let sectionDetails: number[] = [];
+  for (let index = 0; index < repaired.length; index += 1) {
+    const line = repaired[index];
+    if (line.kind === "detail") {
+      sectionDetails.push(index);
+      continue;
+    }
+    if (line.kind === "subtotal") {
+      if (sectionDetails.length === 1) {
+        const detailIndex = sectionDetails[0];
+        const detail = repaired[detailIndex];
+        if (detail.value !== line.value && line.value !== null) repaired[detailIndex] = { ...detail, value: line.value };
+      }
+      sectionDetails = [];
+      continue;
+    }
+    sectionDetails = [];
+  }
+  return repaired;
+}
+
+/**
  * Pengaman aritmatika. Dua cek, keduanya terhadap angka yang TERCETAK di
  * dokumen — bukan terhadap ekspektasi yang di-hardcode:
  *
@@ -969,7 +1037,7 @@ export function parseFinancialReport(
     // Periode dibaca SEBELUM kop dibuang — kop itu satu-satunya tempat
     // periodenya tercetak.
     const period = detectReportPeriod(scoped.slice(0, Math.max(firstDetailIndex(scoped), 0)).map((line) => line.label));
-    const lines = stripLetterhead(scoped);
+    const lines = kind === "cashflow" ? repairSingleLineCashflowSections(stripLetterhead(scoped)) : stripLetterhead(scoped);
     const checks = reconcile(lines, kind);
     const failedChecks = checks.filter((check) => !check.passed);
     // Baris detail yang tidak ditutup subtotal tidak pernah ikut terperiksa,
@@ -1260,13 +1328,13 @@ export async function extractScanTokens(
           fallbackCanvas.width = 0;
           fallbackCanvas.height = 0;
         }
-        const embeddedTokens = flattenOcrWords(blocks, pageNumber);
+        let embeddedTokens = flattenOcrWords(blocks, pageNumber);
+        let tokenBlocks = blocks;
+        let tokenRowTolerance = ocrRowTolerance(tokenBlocks);
         const hasCashflowMarker = embeddedTokens.some((token) => /saldo/i.test(token.text))
           && embeddedTokens.some((token) => /akhir/i.test(token.text));
-        const hasActivitySubtotal = embeddedTokens.some((token) => /^total$/i.test(token.text))
-          && embeddedTokens.some((token) => /aktivitas/i.test(token.text));
         const extraTokens: MappingToken[] = [];
-        if ((!hasCashflowMarker || !hasActivitySubtotal) && pageNumber === pdfDocument.numPages) {
+        if (pageNumber === pdfDocument.numPages) {
           const page = await pdfDocument.getPage(pageNumber);
           const viewport = page.getViewport({ scale: SCAN_RENDER_SCALE });
           const fallbackCanvas = document.createElement("canvas");
@@ -1277,38 +1345,94 @@ export async function extractScanTokens(
             await page.render({ canvas: fallbackCanvas, canvasContext: fallbackContext, viewport }).promise;
             const fallback = await worker.recognize(fallbackCanvas, {}, { text: true, blocks: true });
             const fallbackBlocks = fallback.data.blocks as TesseractBlockLike[] | null;
+            // Ambil area isi laporan saja. Ruang kosong besar pada scan
+            // mengecilkan teks saat OCR satu halaman penuh.
+            let cashflowBlocks: TesseractBlockLike[] | null = null;
+            let cashflowTsv: string | null = null;
+            const cashflowCropScale = 3;
+            const cashflowSource = enlargedCanvas ?? fallbackCanvas;
+            const cashflowSourceTop = Math.floor(cashflowSource.height * 0.1);
+            const cashflowSourceHeight = Math.floor(cashflowSource.height * 0.42);
+            const cashflowCanvas = document.createElement("canvas");
+            cashflowCanvas.width = cashflowSource.width * cashflowCropScale;
+            cashflowCanvas.height = cashflowSourceHeight * cashflowCropScale;
+            const cashflowContext = cashflowCanvas.getContext("2d");
+            if (cashflowContext) {
+              cashflowContext.drawImage(
+                cashflowSource,
+                0,
+                cashflowSourceTop,
+                cashflowSource.width,
+                cashflowSourceHeight,
+                0,
+                0,
+                cashflowCanvas.width,
+                cashflowCanvas.height,
+              );
+              const cashflow = await worker.recognize(cashflowCanvas, {}, { text: true, blocks: true, tsv: true });
+              cashflowBlocks = cashflow.data.blocks as TesseractBlockLike[] | null;
+              cashflowTsv = cashflow.data.tsv;
+            }
+            cashflowCanvas.width = 0;
+            cashflowCanvas.height = 0;
             if ((!blocks || blocks.length === 0) && fallbackBlocks?.length) {
               blocks = fallbackBlocks;
             } else if (fallbackBlocks?.length) {
               const fallbackTokens = flattenOcrWords(fallbackBlocks, pageNumber);
               const fallbackRows = groupTokensIntoRows(fallbackTokens, ocrRowTolerance(fallbackBlocks));
+              const rawCashflowTokens = flattenOcrTsv(cashflowTsv, pageNumber);
+              const cashflowTokens = (rawCashflowTokens.length > 0 ? rawCashflowTokens : flattenOcrWords(cashflowBlocks, pageNumber)).map((token) => ({
+                ...token,
+                x: token.x / cashflowCropScale,
+                y: token.y / cashflowCropScale + cashflowSourceTop,
+              }));
+              const cashflowRowTolerance = ocrRowTolerance(cashflowBlocks) / cashflowCropScale;
+              const alignedCashflowTokens = alignLeadingAmountRows(cashflowTokens, cashflowRowTolerance);
+              const cashflowRows = cashflowBlocks?.length
+                ? groupTokensIntoRows(alignedCashflowTokens, cashflowRowTolerance)
+                : fallbackRows;
+              const cashflowDetailCount = cashflowRows.filter((row) => /penerimaan|pembayaran|biaya\s+operasional|pendapatan\s+lain|pengeluaran\s+lain/i.test(row.labelTokens.map((token) => token.text).join(" "))).length;
+              const cashflowHasCompleteReport = cashflowDetailCount >= 3
+                && cashflowRows.some((row) => /saldo\s+kas\s+akhir/i.test(row.labelTokens.map((token) => token.text).join(" ")));
               const embeddedScale = enlargedCanvas ? EMBEDDED_OCR_SCALE : 1;
-              const scaleFallbackRow = (row: (typeof fallbackRows)[number]) => [
+              const scaleFallbackToken = (token: MappingToken) => ({
+                ...token,
+                x: token.x * (embeddedImage.width * embeddedScale / viewport.width),
+                y: token.y * (embeddedImage.height * embeddedScale / viewport.height),
+              });
+              const scaleCashflowToken = enlargedCanvas ? (token: MappingToken) => token : scaleFallbackToken;
+              const scaleCashflowRow = (row: (typeof fallbackRows)[number]) => [
                 ...row.labelTokens,
                 ...row.amountTokens,
               ]
                 .filter((token) => /[a-z0-9-]/i.test(token.text))
-                .map((token) => ({
-                  ...token,
-                  x: token.x * (embeddedImage.width * embeddedScale / viewport.width),
-                  y: token.y * (embeddedImage.height * embeddedScale / viewport.height),
-                }));
-              const embeddedRows = groupTokensIntoRows(embeddedTokens, ocrRowTolerance(blocks));
+                .map(scaleCashflowToken);
+              if (cashflowHasCompleteReport) {
+                // Jadikan crop terfokus sebagai basis seragam untuk semua
+                // bulan; OCR halaman penuh tetap dipakai bila crop gagal.
+                embeddedTokens = alignedCashflowTokens.map(scaleCashflowToken);
+                tokenBlocks = cashflowBlocks;
+                tokenRowTolerance = cashflowRowTolerance;
+                if (!enlargedCanvas) {
+                  tokenRowTolerance *= embeddedImage.width / viewport.width;
+                }
+              }
+              const embeddedRows = groupTokensIntoRows(embeddedTokens, tokenRowTolerance);
               const hasEmbeddedCashflowRow = (pattern: RegExp) => embeddedRows.some((row) =>
                 pattern.test(row.labelTokens.map((token) => token.text).join(" ")),
               );
-              if (!hasCashflowMarker) {
-                for (const row of fallbackRows) {
+              if (!cashflowHasCompleteReport && !hasCashflowMarker) {
+                for (const row of cashflowRows) {
                   const label = row.labelTokens.map((token) => token.text).join(" ");
                   const pattern = /saldo\s+kas\s+(awal|akhir)/i.test(label)
                     ? /saldo\s+kas\s+(awal|akhir)/i
                     : /kenaikan|penurunan/i.test(label)
                       ? /kenaikan|penurunan/i
                       : null;
-                  if (pattern && !hasEmbeddedCashflowRow(pattern)) extraTokens.push(...scaleFallbackRow(row));
+                  if (pattern && !hasEmbeddedCashflowRow(pattern)) extraTokens.push(...scaleCashflowRow(row));
                 }
               }
-              const activityRow = fallbackRows.find((row) => {
+              const activityRow = !cashflowHasCompleteReport && fallbackRows.find((row) => {
                 const label = row.labelTokens.map((token) => token.text).join(" ");
                 return /total/i.test(label) && /aktivitas/i.test(label);
               });
@@ -1347,9 +1471,9 @@ export async function extractScanTokens(
           fallbackCanvas.width = 0;
           fallbackCanvas.height = 0;
         }
-        tokens.push(...flattenOcrWords(blocks, pageNumber));
+        tokens.push(...embeddedTokens);
         tokens.push(...extraTokens);
-        tolerances.push(ocrRowTolerance(blocks));
+        tolerances.push(tokenRowTolerance);
         if (enlargedCanvas) {
           enlargedCanvas.width = 0;
           enlargedCanvas.height = 0;
@@ -1373,8 +1497,62 @@ export async function extractScanTokens(
       await page.render({ canvas, canvasContext: context, viewport }).promise;
       const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
       const blocks = data.blocks as TesseractBlockLike[] | null;
-      tokens.push(...flattenOcrWords(blocks, pageNumber));
-      tolerances.push(ocrRowTolerance(blocks));
+      let pageTokens = flattenOcrWords(blocks, pageNumber);
+      let pageRowTolerance = ocrRowTolerance(blocks);
+      const extraTokens: MappingToken[] = [];
+      if (pageNumber === pdfDocument.numPages) {
+        const cropCanvas = document.createElement("canvas");
+        const cropScale = 3;
+        const cropSourceTop = Math.floor(canvas.height * 0.1);
+        const cropSourceHeight = Math.floor(canvas.height * 0.42);
+        cropCanvas.width = canvas.width * cropScale;
+        cropCanvas.height = cropSourceHeight * cropScale;
+        const cropContext = cropCanvas.getContext("2d");
+        if (cropContext) {
+          cropContext.drawImage(canvas, 0, cropSourceTop, canvas.width, cropSourceHeight, 0, 0, cropCanvas.width, cropCanvas.height);
+          const crop = await worker.recognize(cropCanvas, {}, { text: true, blocks: true, tsv: true });
+          const cropBlocks = crop.data.blocks as TesseractBlockLike[] | null;
+          if (cropBlocks?.length) {
+            const pageRows = groupTokensIntoRows(pageTokens, ocrRowTolerance(blocks));
+            const rawCropTokens = flattenOcrTsv(crop.data.tsv, pageNumber);
+            const cropTokens = (rawCropTokens.length > 0 ? rawCropTokens : flattenOcrWords(cropBlocks, pageNumber)).map((token) => ({
+              ...token,
+              x: token.x / cropScale,
+              y: token.y / cropScale + cropSourceTop,
+            }));
+            const cropRowTolerance = ocrRowTolerance(cropBlocks) / cropScale;
+            const alignedCropTokens = alignLeadingAmountRows(cropTokens, cropRowTolerance);
+            const cropRows = groupTokensIntoRows(alignedCropTokens, cropRowTolerance);
+            const pageHasActivitySubtotal = pageRows.some((row) => {
+              const label = row.labelTokens.map((token) => token.text).join(" ");
+              return /total/i.test(label) && /aktivitas/i.test(label);
+            });
+            const cropDetailCount = cropRows.filter((row) => /penerimaan|pembayaran|biaya\s+operasional|pendapatan\s+lain|pengeluaran\s+lain/i.test(row.labelTokens.map((token) => token.text).join(" "))).length;
+            const cropHasCompleteReport = cropDetailCount >= 3
+              && cropRows.some((row) => /saldo\s+kas\s+akhir/i.test(row.labelTokens.map((token) => token.text).join(" ")));
+            if (cropHasCompleteReport) {
+              pageTokens = alignedCropTokens;
+              pageRowTolerance = cropRowTolerance;
+            }
+            const hasPageRow = (pattern: RegExp) => pageRows.some((row) => pattern.test(row.labelTokens.map((token) => token.text).join(" ")));
+            if (!cropHasCompleteReport && pageHasActivitySubtotal) {
+              for (const row of cropRows) {
+                const label = row.labelTokens.map((token) => token.text).join(" ");
+                const pattern = /saldo\s+kas\s+(awal|akhir)/i.test(label)
+                  ? /saldo\s+kas\s+(awal|akhir)/i
+                  : /kenaikan|penurunan/i.test(label)
+                    ? /kenaikan|penurunan/i
+                    : null;
+                if (pattern && !hasPageRow(pattern)) extraTokens.push(...row.labelTokens, ...row.amountTokens);
+              }
+            }
+          }
+        }
+        cropCanvas.width = 0;
+        cropCanvas.height = 0;
+      }
+      tokens.push(...pageTokens, ...extraTokens);
+      tolerances.push(pageRowTolerance);
       canvas.width = 0;
       canvas.height = 0;
       // Yield ke event loop supaya UI tidak freeze antar halaman.

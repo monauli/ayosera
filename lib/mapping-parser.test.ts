@@ -316,6 +316,12 @@ describe("Arus Kas — fixture Feb-2026 halaman 3 (PDF hasil scan, OCR)", () => 
     assert.equal(result.lines.every((l) => l.code === null), true);
   });
 
+  test("subtotal dengan noise OCR sebelum SubTotal tetap menutup section", () => {
+    const tokens = fixture.tokens.map((token) => token.page === 3 && token.text === "Total" ? { ...token, text: "~<ubTotal" } : token);
+    const parsed = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "cashflow" });
+    assert.ok(parsed.status === "ok", parsed.status === "rejected" ? parsed.reason : "");
+  });
+
   test("angka terverifikasi Februari 2026", () => {
     assert.ok(result.status === "ok");
     assertAmount(findLabel(result.lines, /^Total Aktivitas Operasional$/i).value, -147870178.97, "Total Aktivitas Operasional");
