@@ -24,7 +24,7 @@
 // "hanya ada di satu sisi" — pola yang sama dengan
 // buildCleanedCatalogNameIndex di scripts/bootstrap-monthly-snapshot-baseline.ts.
 import { isNearLabel, normalizeFinancialLabel, type FinancialLine, type MappingLineKind } from "./mapping-parser.ts";
-import { rulesForReport, type MappingGroupingRule, type MappingReportKind } from "./mapping-rules.ts";
+import { aliasRulesForReport, rulesForReport, type MappingAliasRule, type MappingGroupingRule, type MappingReportKind } from "./mapping-rules.ts";
 
 export { isNearLabel, normalizeFinancialLabel } from "./mapping-parser.ts";
 
@@ -194,6 +194,14 @@ function pickMatch(excel: Side, candidates: Side[], near: boolean): Side | null 
   return sameKind.length === 1 ? sameKind[0] : null;
 }
 
+function pickAliasMatch(excel: Side, candidates: Side[], aliases: readonly MappingAliasRule[]): Side | null {
+  const matches = aliases.flatMap((alias) => {
+    if (!alias.excelLabels.some((label) => normalizeFinancialLabel(label) === excel.normalized)) return [];
+    return candidates.filter((candidate) => alias.pdfCode ? candidate.line.code === alias.pdfCode : candidate.normalized === normalizeFinancialLabel(alias.pdfLabel));
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /**
  * Bandingkan laporan versi Excel dengan versi PDF.
  *
@@ -208,6 +216,7 @@ export function compareFinancialReports(
   report: MappingReportKind = "profit-loss",
 ): ComparisonResult {
   const rules = rulesForReport(report);
+  const aliases = aliasRulesForReport(report);
   const excelApplied = applyRules(comparableSides(excelLines), rules, "excel");
   const pdfApplied = applyRules(comparableSides(pdfLines), rules, "pdf");
 
@@ -228,7 +237,7 @@ export function compareFinancialReports(
     }
   }
   for (const excel of pending) {
-    const match = pickMatch(excel, remaining, true);
+    const match = pickAliasMatch(excel, remaining, aliases) ?? pickMatch(excel, remaining, true);
     if (!match) continue;
     remaining.splice(remaining.indexOf(match), 1);
     rows[rows.findIndex((row) => row.excelLabel === excel.line.label && row.pdfLabel === null)] = toRow(excel, match, "fuzzy");

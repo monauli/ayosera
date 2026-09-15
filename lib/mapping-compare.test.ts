@@ -253,6 +253,12 @@ describe("penjodohan tidak pernah menebak", () => {
 describe("Neraca Februari 2026 — aturan pengelompokan yang terverifikasi", () => {
   const result = compareFinancialReports(excelLines("2026-02", "balance-sheet"), pdfLines("mapping-laba-rugi-feb-2026-scan", "balance-sheet"), "balance-sheet");
 
+  test("alias nama Neraca yang berbeda tetap cocok", () => {
+    for (const label of [/^Piutang Sewa Lapangan$/, /^Persedian barang dagang$/, /^Jumlah Aset Lancar$/]) {
+      assert.equal(findRow(result.rows, label).status, "COCOK", `${label} seharusnya cocok`);
+    }
+  });
+
   test("akun kas tetap digabung saat OCR menambahkan akhiran pada nama akun", () => {
     const pdf = pdfLines("mapping-laba-rugi-feb-2026-scan", "balance-sheet").map((line) =>
       line.code === "11107" ? { ...line, label: "kas ayat silang QRIS/EDC BCA" } : line,
@@ -291,12 +297,9 @@ describe("Neraca Februari 2026 — aturan pengelompokan yang terverifikasi", () 
 
   test("tidak ada satu pun selisih angka; yang tersisa hanya beda penamaan", () => {
     assert.equal(result.summary.beda, 0);
-    assert.equal(result.summary.cocok, 15);
-    // "Piutang Sewa Lapangan" vs "Piutang Court Fee", "Persedian" vs
-    // "Persediaan", "Jumlah Aset Lancar" vs "Total Aset Lancar" — beda label,
-    // bukan beda angka. Dibiarkan tampil apa adanya, tidak dijodohkan paksa.
-    assert.equal(result.summary.hanyaExcel, 3);
-    assert.equal(result.summary.hanyaPdf, 3);
+    assert.equal(result.summary.cocok, 18);
+    assert.equal(result.summary.hanyaExcel, 0);
+    assert.equal(result.summary.hanyaPdf, 0);
   });
 
   test("identitas neraca ikut terbandingkan di kedua sisi", () => {

@@ -35,6 +35,13 @@ export type MappingGroupingRule = {
   verified: boolean;
 };
 
+export type MappingAliasRule = {
+  report: MappingReportKind;
+  excelLabels: readonly string[];
+  pdfLabel: string;
+  pdfCode?: string;
+};
+
 export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
   {
     report: "profit-loss",
@@ -74,6 +81,12 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
   },
 ];
 
+export const MAPPING_ALIAS_RULES: readonly MappingAliasRule[] = [
+  { report: "balance-sheet", excelLabels: ["Piutang Sewa Lapangan"], pdfLabel: "Piutang Court Fee", pdfCode: "11301" },
+  { report: "balance-sheet", excelLabels: ["Persedian barang dagang", "Persediaan barang dagang"], pdfLabel: "Persediaan barang dagang", pdfCode: "11400" },
+  { report: "balance-sheet", excelLabels: ["Jumlah Aset Lancar"], pdfLabel: "Total Aset Lancar" },
+];
+
 /**
  * CATATAN LINGKUP — aturan "Penjualan" TIDAK berlaku di semua periode.
  *
@@ -93,4 +106,8 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
  */
 export function rulesForReport(report: MappingReportKind): MappingGroupingRule[] {
   return MAPPING_GROUPING_RULES.filter((rule) => rule.report === report);
+}
+
+export function aliasRulesForReport(report: MappingReportKind): MappingAliasRule[] {
+  return MAPPING_ALIAS_RULES.filter((rule) => rule.report === report);
 }
