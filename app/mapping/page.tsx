@@ -654,10 +654,6 @@ export default function MappingPage() {
           </button>
         ))}
       </nav>
-      <div className="mapping-tab-reports">
-        <ReportBox title={`Excel — ${REPORT_TITLES[activeReport]}`} view={excelViews[activeReport]} open showCode={false} />
-        <ReportBox title={`PDF — ${REPORT_TITLES[activeReport]}`} view={pdfViews[activeReport]} open showCode />
-      </div>
       {comparisons[activeReport] && <ComparisonSection title={REPORT_TITLES[activeReport]} comparison={comparisons[activeReport]!} />}
 
       {Object.keys(comparisons).length === 0 && (
