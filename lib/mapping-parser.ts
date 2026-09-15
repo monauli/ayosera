@@ -1231,7 +1231,7 @@ export async function extractScanTokens(
             // Jika browser gagal membuat bitmap, tetap coba JPEG asli langsung.
           }
         }
-        const { data } = await worker.recognize(imageInput, {}, { text: false, blocks: true });
+        const { data } = await worker.recognize(imageInput, {}, { text: true, blocks: true });
         const blocks = data.blocks as TesseractBlockLike[] | null;
         tokens.push(...flattenOcrWords(blocks, pageNumber));
         tolerances.push(ocrRowTolerance(blocks));
@@ -1256,7 +1256,7 @@ export async function extractScanTokens(
       // panggilan ini disamakan dengan ocrScannedPdf di
       // lib/reconciliation-berita-acara-client-ocr.ts yang sudah jalan di produksi.
       await page.render({ canvas, canvasContext: context, viewport }).promise;
-      const { data } = await worker.recognize(canvas, {}, { text: false, blocks: true });
+      const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true });
       const blocks = data.blocks as TesseractBlockLike[] | null;
       tokens.push(...flattenOcrWords(blocks, pageNumber));
       tolerances.push(ocrRowTolerance(blocks));

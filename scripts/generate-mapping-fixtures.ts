@@ -93,7 +93,7 @@ async function ocrInChrome(images: readonly Uint8Array[]): Promise<(TesseractBlo
         for (let index = 1; index <= imageCount; index++) {
           const response = await fetch(`/images/${index}.jpg`);
           if (!response.ok) throw new Error(`Gambar OCR ${index} gagal dimuat (${response.status}).`);
-          const recognized = await worker.recognize(await response.blob(), {}, { text: false, blocks: true });
+          const recognized = await worker.recognize(await response.blob(), {}, { text: true, blocks: true });
           blocks.push(recognized.data.blocks);
         }
         return blocks;
