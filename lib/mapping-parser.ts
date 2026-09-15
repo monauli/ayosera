@@ -1214,7 +1214,9 @@ export async function extractScanTokens(
             enlargedCanvas.height = bitmap.height * EMBEDDED_OCR_SCALE;
             const imageContext = enlargedCanvas.getContext("2d");
             if (imageContext) {
-              imageContext.imageSmoothingEnabled = true;
+              // Jangan mengaburkan huruf kecil pada scan terkompresi saat
+              // dibesarkan sebelum OCR.
+              imageContext.imageSmoothingEnabled = false;
               imageContext.drawImage(bitmap, 0, 0, enlargedCanvas.width, enlargedCanvas.height);
               imageInput = enlargedCanvas;
             }
