@@ -763,11 +763,12 @@ export default function MappingPage() {
           </div>
           {pdfError && <p className="recon-error">{pdfError}</p>}
           {periodWarning && <p className="recon-error">{periodWarning}</p>}
-          {pdfFile && (
+          {pdfFile && periodGuard.state !== "mismatch" && (
             <p className="mapping-note">
               {pdfFile.fileName} · {(pdfFile.size / 1024 / 1024).toFixed(1)} MB
             </p>
           )}
+          {periodGuard.state === "mismatch" && <p className="mapping-note">Belum ada file periode {periodLabel(period)} PDF.</p>}
         </section>
       </div>
 
