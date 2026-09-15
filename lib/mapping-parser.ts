@@ -1260,6 +1260,24 @@ export async function extractScanTokens(
           fallbackCanvas.width = 0;
           fallbackCanvas.height = 0;
         }
+        const embeddedTokens = flattenOcrWords(blocks, pageNumber);
+        const hasCashflowMarker = embeddedTokens.some((token) => /saldo/i.test(token.text))
+          && embeddedTokens.some((token) => /akhir/i.test(token.text));
+        if (!hasCashflowMarker && pageNumber === pdfDocument.numPages) {
+          const page = await pdfDocument.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: SCAN_RENDER_SCALE });
+          const fallbackCanvas = document.createElement("canvas");
+          fallbackCanvas.width = Math.ceil(viewport.width);
+          fallbackCanvas.height = Math.ceil(viewport.height);
+          const fallbackContext = fallbackCanvas.getContext("2d");
+          if (fallbackContext) {
+            await page.render({ canvas: fallbackCanvas, canvasContext: fallbackContext, viewport }).promise;
+            const fallback = await worker.recognize(fallbackCanvas, {}, { text: true, blocks: true });
+            if (fallback.data.blocks?.length) blocks = fallback.data.blocks as TesseractBlockLike[];
+          }
+          fallbackCanvas.width = 0;
+          fallbackCanvas.height = 0;
+        }
         tokens.push(...flattenOcrWords(blocks, pageNumber));
         tolerances.push(ocrRowTolerance(blocks));
         if (enlargedCanvas) {
