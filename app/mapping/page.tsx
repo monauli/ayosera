@@ -416,6 +416,33 @@ export default function MappingPage() {
     [],
   );
 
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    void (async () => {
+      const response = await fetch("/api/mapping/upload", { cache: "no-store" });
+      if (!response.ok || cancelled) return;
+      const payload = await response.json();
+      const sources = Array.isArray(payload.data) ? (payload.data as Array<{ kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; uploadedAt: string; sheets?: ExcelReportSheet[] }>) : [];
+      const excel = sources.find((source) => source.kind === "excel");
+      if (excel) {
+        setExcelFile({ url: excel.url, fileName: excel.fileName, size: excel.size, uploadedAt: excel.uploadedAt });
+        setSheets(excel.sheets ?? []);
+      }
+      const pdf = sources.find((source) => source.kind === "pdf");
+      if (pdf) {
+        const fileResponse = await fetch(pdf.url);
+        if (fileResponse.ok && !cancelled) {
+          const blob = await fileResponse.blob();
+          await onPdfPicked(new File([blob], pdf.fileName, { type: pdf.mimeType }));
+        }
+      }
+    })().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [user, onPdfPicked]);
+
   /** Hasil parse tiap sheet untuk periode terpilih; dipakai panel DAN perbandingan. */
   const excelResults = useMemo((): Partial<Record<FinancialSheetKind, ExcelParseResult>> => {
     if (!sheets || !period) return {};

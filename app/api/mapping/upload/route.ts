@@ -4,9 +4,21 @@ import { uploadMappingSource } from "@/lib/blob-storage";
 import { currentStoreId } from "@/lib/reconciliation-store";
 import { readFinancialWorkbook } from "@/lib/mapping-excel-parser";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
+import { loadLatestMappingSources, saveMappingSource } from "@/lib/mapping-source-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function GET() {
+  try {
+    await requireModule("mapping");
+    return NextResponse.json({ data: await loadLatestMappingSources(currentStoreId()) }, { headers: NO_CACHE_HEADERS });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    const reason = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: `Gagal membaca sumber tersimpan: ${reason}` }, { status: 500, headers: NO_CACHE_HEADERS });
+  }
+}
 
 const EXCEL_MIME_TYPES = [
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -36,7 +48,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
  */
 export async function POST(request: Request) {
   try {
-    await requireModule("mapping");
+    const user = await requireModule("mapping");
     const form = await request.formData();
     const file = form.get("file");
     const kind = form.get("kind");
@@ -75,11 +87,14 @@ export async function POST(request: Request) {
     }
 
     const uploaded = await uploadMappingSource({ storeId: currentStoreId(), kind, file });
+    const uploadedAt = new Date();
+    await saveMappingSource({ storeId: currentStoreId(), kind, url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, sheets, uploadedAt, uploadedBy: user.email });
     return NextResponse.json(
-      { data: { url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, uploadedAt: new Date().toISOString(), sheets } },
+      { data: { url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, uploadedAt: uploadedAt.toISOString(), sheets } },
       { status: 201, headers: NO_CACHE_HEADERS },
     );
   } catch (error) {
+    if (error instanceof Response) return error;
     // Alasannya ikut dikirim: "Gagal mengunggah berkas." tanpa keterangan
     // tidak bisa dibedakan dari penolakan platform (413 body >4,5 MB) yang
     // bahkan tidak pernah sampai ke sini, dan itu persis yang membuat
