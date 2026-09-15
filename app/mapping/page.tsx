@@ -262,8 +262,9 @@ function ComparisonSection({ title, comparison }: { title: string; comparison: R
         <table className="recon-table">
           <thead>
             <tr>
-              <th>Akun</th>
-              <th>Keterangan</th>
+              <th>Akun PDF</th>
+              <th>Nama Excel</th>
+              <th>Nama PDF</th>
               <th>Excel</th>
               <th>PDF</th>
               <th>Selisih</th>
@@ -273,15 +274,16 @@ function ComparisonSection({ title, comparison }: { title: string; comparison: R
           <tbody>
             {rows.map((row: ComparisonRow, index: number) => (
               <tr key={`${row.label}-${index}`}>
-                <td>{row.code ?? ""}</td>
+                <td>{row.code ?? "—"}</td>
                 <td>
-                  {row.label}
+                  {row.excelLabel ?? "—"}
                   {/* Keterangan aturan pengelompokan TETAP tampil — penggabungan
                       tidak boleh terjadi diam-diam. Keterangan penjodohan
                       longgar sengaja TIDAK: penjodohannya tetap berjalan sama,
                       cuma tidak perlu diumumkan per baris. */}
                   {row.rule && <small className="mapping-rule-tag">{row.rule.note}</small>}
                 </td>
+                <td>{row.pdfLabel ?? "—"}</td>
                 <td>{formatAmount(row.excelValue)}</td>
                 <td>{formatAmount(row.pdfValue)}</td>
                 <td>{row.difference === null ? "" : formatAmount(row.difference)}</td>
@@ -578,7 +580,7 @@ export default function MappingPage() {
   }
 
   return (
-    <main className="recon-page">
+    <main className="recon-page mapping-page">
       <header className="recon-header">
         <div>
           <Link href="/" className="recon-back">
@@ -610,7 +612,7 @@ export default function MappingPage() {
         </div>
       </header>
 
-      <section className="recon-filters" aria-label="Pilih periode">
+      <section className="recon-filters mapping-period-filter" aria-label="Pilih periode">
         <label>
           Periode
           <select value={period} disabled={availablePeriods.length === 0} onChange={(event) => setPeriod(event.target.value)}>
@@ -622,13 +624,9 @@ export default function MappingPage() {
             ))}
           </select>
         </label>
-        {user?.role === "supervisor" && period && <button type="button" className="recon-button secondary" disabled={lockBusy || (!periodLocked && !allComparisonsCocok)} onClick={() => void togglePeriodLock()}>
-          {periodLocked ? <Unlock size={14} /> : <Lock size={14} />} {periodLocked ? "Buka Kunci" : "Kunci Periode"}
-        </button>}
-        {periodLocked && <span className="mapping-note">Periode terkunci; upload baru ditolak.</span>}
-        {lockError && <span className="recon-error">{lockError}</span>}
       </section>
 
+      <div className="mapping-results-grid">
       {REPORT_ORDER.filter((kind) => comparisons[kind]).map((kind) => (
         <ComparisonSection key={kind} title={REPORT_TITLES[kind]} comparison={comparisons[kind]!} />
       ))}
@@ -655,6 +653,7 @@ export default function MappingPage() {
           </p>
         </section>
       )}
+      </div>
 
       <div className="mapping-panels">
         <section className="mapping-panel" aria-label="Sumber Excel">
@@ -747,6 +746,14 @@ export default function MappingPage() {
           ))}
         </section>
       </div>
+
+      <section className="mapping-lock-bar" aria-label="Kunci periode">
+        {periodLocked && <span className="mapping-note">Periode terkunci; upload baru ditolak.</span>}
+        {lockError && <span className="recon-error">{lockError}</span>}
+        {user?.role === "supervisor" && period && <button type="button" className="recon-button secondary" disabled={lockBusy || (!periodLocked && !allComparisonsCocok)} onClick={() => void togglePeriodLock()}>
+          {periodLocked ? <Unlock size={14} /> : <Lock size={14} />} {periodLocked ? "Buka Kunci" : "Kunci Periode"}
+        </button>}
+      </section>
     </main>
   );
 }
