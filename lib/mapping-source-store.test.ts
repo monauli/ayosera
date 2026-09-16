@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getCachedPdfReports, inferMappingSourcePeriod, selectMappingSources, selectPdfForPeriod } from "./mapping-source-selection.ts";
+import { getCachedPdfReports, inferMappingSourcePeriod, selectMappingSources, selectPdfForPeriod, shouldAttemptPdfRestore } from "./mapping-source-selection.ts";
 import type { MappingSourceDocument } from "./mongodb.ts";
 
 const source = (kind: "excel" | "pdf", uploadedAt: string, period?: string): MappingSourceDocument => ({
@@ -50,4 +50,10 @@ test("hasil PDF tersimpan dipakai hanya bila versinya masih sesuai", () => {
   assert.deepEqual(getCachedPdfReports(cached, "1"), reports);
   assert.equal(getCachedPdfReports(cached, "2"), null);
   assert.equal(getCachedPdfReports({ parsedReports: reports }, "1"), null);
+});
+
+test("pemulihan PDF yang gagal tidak mengulang percobaan identik", () => {
+  assert.equal(shouldAttemptPdfRestore("2026-03|march.pdf", "2026-03", "march.pdf"), false);
+  assert.equal(shouldAttemptPdfRestore("2026-03|march.pdf", "2026-04", "march.pdf"), true);
+  assert.equal(shouldAttemptPdfRestore(null, "2026-03", "march.pdf"), true);
 });

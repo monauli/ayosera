@@ -26,7 +26,7 @@ import {
   type ExcelReportSheet,
   type FinancialSheetKind,
 } from "@/lib/mapping-excel-parser";
-import { getCachedPdfReports, selectPdfForPeriod } from "@/lib/mapping-source-selection";
+import { getCachedPdfReports, selectPdfForPeriod, shouldAttemptPdfRestore } from "@/lib/mapping-source-selection";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 type SessionUser = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
@@ -341,6 +341,7 @@ export default function MappingPage() {
   const [pdfSaveError, setPdfSaveError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; reports: Record<FinancialSheetKind, MappingParseResult> } | null>(null);
   const [pdfSources, setPdfSources] = useState<StoredPdfFile[]>([]);
+  const pdfRestoreAttemptRef = useRef<string | null>(null);
   const [activeReport, setActiveReport] = useState<FinancialSheetKind>("profit-loss");
   const [restoreBusy, setRestoreBusy] = useState(true);
   // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
@@ -540,6 +541,9 @@ export default function MappingPage() {
       setPdfSaveError(null);
       return;
     }
+    const sourceKey = candidates.map((candidate) => candidate.url).join(",");
+    if (!shouldAttemptPdfRestore(pdfRestoreAttemptRef.current, period, sourceKey)) return;
+    pdfRestoreAttemptRef.current = `${period}|${sourceKey}`;
     let cancelled = false;
     void (async () => {
       setPdfResult(null);
