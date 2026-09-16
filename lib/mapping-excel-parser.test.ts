@@ -153,6 +153,20 @@ describe("Neraca dan Arus Kas Februari 2026", () => {
     assert.equal(result.checks.every((c) => c.passed), true);
   });
 
+  test("Neraca tetap diterima untuk selisih pembulatan akhir Rp1", () => {
+    const sheet = sheetOf("balance-sheet");
+    const adjusted: ExcelReportSheet = {
+      ...sheet,
+      rows: sheet.rows.map((row) => row.label === "TOTAL KEWAJIBAN DAN MODAL"
+        ? { ...row, cells: row.cells.map((cell, index) => index === 4 && typeof cell === "number" ? cell - 1 : cell) }
+        : row),
+    };
+    const result = parseFinancialSheet(adjusted, "2026-02");
+    assert.equal(result.status, "ok");
+    assert.ok(result.status === "ok");
+    assert.equal(result.checks.at(-1)?.tolerance, 1);
+  });
+
   test("subtotal berlabel 'Jumlah' ikut tertutup, bukan cuma 'Total'", () => {
     const result = parseFinancialSheet(sheetOf("balance-sheet"), "2026-02");
     assert.ok(result.status === "ok");

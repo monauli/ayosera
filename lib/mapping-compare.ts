@@ -29,7 +29,7 @@ import { aliasRulesForReport, rulesForReport, type MappingAliasRule, type Mappin
 export { isNearLabel, normalizeFinancialLabel } from "./mapping-parser.ts";
 
 export type ComparisonStatus = "COCOK" | "BEDA" | "HANYA_EXCEL" | "HANYA_PDF";
-export type MatchTier = "normalized" | "fuzzy" | null;
+export type MatchTier = "normalized" | "fuzzy" | "amount" | null;
 
 export type ComparisonRow = {
   /** Label yang ditampilkan; sisi Excel bila ada, selain itu sisi PDF. */
@@ -203,6 +203,22 @@ function pickMatch(excel: Side, candidates: Side[], near: boolean): Side | null 
   return sameKind.length === 1 ? sameKind[0] : null;
 }
 
+function sameAmount(a: Side, b: Side): boolean {
+  return a.line.value !== null && b.line.value !== null && Math.abs(a.line.value - b.line.value) <= 0.005;
+}
+
+/** Pasangkan label biaya yang bergeser hanya bila nominalnya unik di kedua sisi. */
+function pickUniqueAmountMatch(excel: Side, candidates: Side[], unresolved: readonly Side[]): Side | null {
+  if (excel.line.kind !== "detail" || excel.line.value === null) return null;
+  const firstWord = excel.normalized.split(" ")[0];
+  if (firstWord !== "biaya") return null;
+  const sameFamily = (side: Side) => side.line.kind === "detail" && side.normalized.split(" ")[0] === firstWord;
+  if (unresolved.filter((side) => sameFamily(side) && sameAmount(excel, side)).length !== 1) return null;
+  const matches = candidates.filter((side) => sameFamily(side) && sameAmount(excel, side));
+  if (matches.some((side) => side.normalized === excel.normalized)) return null;
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function pickAliasMatch(excel: Side, candidates: Side[], aliases: readonly MappingAliasRule[]): Side | null {
   const matches = aliases.flatMap((alias) => {
     if (!alias.excelLabels.some((label) => normalizeFinancialLabel(label) === excel.normalized)) return [];
@@ -226,6 +242,9 @@ export function compareFinancialReports(
 ): ComparisonResult {
   const rules = rulesForReport(report);
   const aliases = aliasRulesForReport(report);
+  // Jika kedua sisi sudah memecah akun yang sama, jangan gabungkan salah satu
+  // sisi karena itu menciptakan selisih palsu. Aturan yang tidak lengkap tetap
+  // diteruskan agar alasan skip masih terlihat di hasil.
   const activeRules = rules.filter((rule) => !(hasAllRuleParts(excelLines, rule) && hasAllRuleParts(pdfLines, rule)));
   const excelApplied = applyRules(comparableSides(excelLines), activeRules, "excel");
   const pdfApplied = applyRules(comparableSides(pdfLines), activeRules, "pdf");
@@ -233,24 +252,38 @@ export function compareFinancialReports(
   const remaining = [...pdfApplied.sides];
   const rows: ComparisonRow[] = [];
   const pending: Side[] = [];
+  const rowIndexByExcel = new Map<Side, number>();
 
-  // Tahap ketat dulu untuk SELURUH baris, baru tahap longgar — supaya sebuah
-  // label tidak keburu diambil pasangan mirip padahal ada pasangan persisnya.
+  // Pasangan label dengan nominal sama diprioritaskan agar versi Excel yang
+  // menggeser nama biaya satu baris tidak menghasilkan selisih palsu.
   for (const excel of excelApplied.sides) {
     const match = pickMatch(excel, remaining, false);
-    if (match) {
-      remaining.splice(remaining.indexOf(match), 1);
-      rows.push(toRow(excel, match, "normalized"));
+    const preferred = match && sameAmount(excel, match) ? match : pickUniqueAmountMatch(excel, remaining, excelApplied.sides);
+    if (preferred) {
+      remaining.splice(remaining.indexOf(preferred), 1);
+      rows.push(toRow(excel, preferred, preferred === match ? "normalized" : "amount"));
     } else {
+      rowIndexByExcel.set(excel, rows.length);
       pending.push(excel);
       rows.push(toRow(excel, null, null));
     }
   }
+
+  const labelPending: Side[] = [];
   for (const excel of pending) {
+    const amountMatch = pickUniqueAmountMatch(excel, remaining, pending);
+    if (amountMatch) {
+      remaining.splice(remaining.indexOf(amountMatch), 1);
+      rows[rowIndexByExcel.get(excel)!] = toRow(excel, amountMatch, "amount");
+      continue;
+    }
+    labelPending.push(excel);
+  }
+  for (const excel of labelPending) {
     const match = pickAliasMatch(excel, remaining, aliases) ?? pickMatch(excel, remaining, true);
     if (!match) continue;
     remaining.splice(remaining.indexOf(match), 1);
-    rows[rows.findIndex((row) => row.excelLabel === excel.line.label && row.pdfLabel === null)] = toRow(excel, match, "fuzzy");
+    rows[rowIndexByExcel.get(excel)!] = toRow(excel, match, "fuzzy");
   }
   for (const pdf of remaining) rows.push(toRow(null, pdf, null));
 

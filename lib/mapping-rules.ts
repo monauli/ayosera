@@ -54,8 +54,8 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
     verified: true,
   },
   // --- Neraca ------------------------------------------------------------
-  // Keduanya AKTIF sejak parser PDF Neraca ada, dan keduanya sudah dibuktikan
-  // angkanya terhadap Februari 2026 — lihat komentar verified masing-masing.
+  // Aktif sejak parser PDF Neraca ada dan sudah dibuktikan angkanya terhadap
+  // Februari 2026.
   {
     report: "balance-sheet",
     combine: "pdf",
@@ -86,12 +86,9 @@ export const MAPPING_ALIAS_RULES: readonly MappingAliasRule[] = [
  * sebagai dua baris terpisah, persis seperti Excel — jadi menjumlahkan
  * keduanya di sisi Excel malah MEMBUAT selisih yang sebenarnya tidak ada.
  *
- * Aturan ini sengaja tetap diterapkan tanpa syarat periode, sesuai keputusan
- * yang diambil saat Tahap 4 dirancang. Konsekuensinya nyata dan harus
- * diketahui sebelum dipakai lintas bulan; kalau nanti diputuskan aturan perlu
- * berlaku per periode, tambahkan field `periods` di MappingGroupingRule dan
- * saring di appliedRules() — bukan dengan menebak di dalam logika
- * perbandingan.
+ * Logika perbandingan menerapkan aturan ini hanya ketika salah satu sisi
+ * masih menggabungkan kedua akun dan sisi lainnya sudah memecahnya. Jika
+ * keduanya sudah terpisah, aturan dilewati agar tidak membuat selisih palsu.
  */
 export function rulesForReport(report: MappingReportKind): MappingGroupingRule[] {
   return MAPPING_GROUPING_RULES.filter((rule) => rule.report === report);

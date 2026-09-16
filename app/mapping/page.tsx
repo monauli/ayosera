@@ -311,7 +311,7 @@ export default function MappingPage() {
   const [sheets, setSheets] = useState<ExcelReportSheet[] | null>(null);
   const [excelBusy, setExcelBusy] = useState(false);
   const [excelError, setExcelError] = useState<string | null>(null);
-  const [period, setPeriod] = useState<string>("");
+  const [period, setPeriod] = useState<string>(EARLIEST_PERIOD);
   const periodRef = useRef(period);
 
   const [pdfFile, setPdfFile] = useState<PickedFile | null>(null);
@@ -636,7 +636,7 @@ export default function MappingPage() {
         <label>
           Periode
           <select value={period} disabled={availablePeriods.length === 0} onChange={(event) => setPeriod(event.target.value)}>
-            {availablePeriods.length === 0 && <option value="">Unggah Excel dulu</option>}
+            {availablePeriods.length === 0 && <option value={EARLIEST_PERIOD}>{periodLabel(EARLIEST_PERIOD)}</option>}
             {availablePeriods.map((value) => (
               <option key={value} value={value}>
                 {periodLabel(value)}

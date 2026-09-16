@@ -193,6 +193,8 @@ const TRUNCATION_TOLERANCE_PER_LINE = 1;
 
 /** Subtotal membawa desimal penuh, jadi rantai subtotal -> laba bersih harus eksak. */
 export const FINAL_TOLERANCE = 0.05;
+/** Neraca Excel dapat berbeda Rp1 karena pembulatan formula total akhir. */
+export const BALANCE_FINAL_TOLERANCE = 1;
 
 const ACCOUNT_CODE = /^\d{4,6}$/;
 const DASH = /^[-–—]$/;
@@ -208,6 +210,7 @@ const MAX_EDIT_RATIO = 0.1;
 export function normalizeFinancialLabel(label: string): string {
   const words = label
     .toLowerCase()
+    .replace(/\bsubtotal\b/g, "total")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .split(" ")
@@ -912,9 +915,10 @@ function identityCheck(
   expected: number | undefined,
   actual: number | undefined,
   contributors: readonly ReconciliationContributor[] = [],
+  tolerance: number = FINAL_TOLERANCE,
 ): ReconciliationCheck {
   if (expected === undefined || actual === undefined) {
-    return { kind: "final", label: `${label} (nilai tidak lengkap untuk periode ini)`, expected: Number.NaN, actual: Number.NaN, difference: Number.NaN, tolerance: FINAL_TOLERANCE, passed: false, contributors };
+    return { kind: "final", label: `${label} (nilai tidak lengkap untuk periode ini)`, expected: Number.NaN, actual: Number.NaN, difference: Number.NaN, tolerance, passed: false, contributors };
   }
   return {
     kind: "final",
@@ -922,8 +926,8 @@ function identityCheck(
     expected,
     actual,
     difference: actual - expected,
-    tolerance: FINAL_TOLERANCE,
-    passed: Math.abs(actual - expected) <= FINAL_TOLERANCE,
+    tolerance,
+    passed: Math.abs(actual - expected) <= tolerance,
     contributors,
   };
 }
@@ -956,6 +960,7 @@ export function reconcileFinalIdentity(kind: FinancialSheetKind, lines: readonly
       findLineByLabel(lines, /^total\s+aset$/i)?.value ?? undefined,
       liabilitiesAndEquity?.value ?? undefined,
       asContributor(liabilitiesAndEquity),
+      BALANCE_FINAL_TOLERANCE,
     );
   }
   const openingLine = lines.find((line) => matchesReportEndMarker(line.label, "saldo kas awal"));
