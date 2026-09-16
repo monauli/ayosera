@@ -49,6 +49,13 @@ describe("normalisasi label", () => {
     assert.equal(normalizeFinancialLabel("Mm Biaya Pokok Penjualan"), "biaya pokok penjualan");
   });
 
+  test("artefak OCR nomor akun dan nominal di depan label dibuang", () => {
+    assert.equal(normalizeFinancialLabel("As 50500 Potongan pembelian"), "potongan pembelian");
+    assert.equal(normalizeFinancialLabel("\\\"60601 Biaya Maintenance"), "biaya maintenance");
+    assert.equal(normalizeFinancialLabel("70,000 Pendapatan lain lain"), "pendapatan lain lain");
+    assert.equal(normalizeFinancialLabel("~<ubTotal Aktivitas Investasi"), "total aktivitas investasi");
+  });
+
   test("label yang memang hanya dua kata tidak ikut terpangkas", () => {
     assert.equal(normalizeFinancialLabel("Biaya Sewa"), "biaya sewa");
   });
@@ -274,6 +281,18 @@ describe("Neraca Februari 2026 — aturan pengelompokan yang terverifikasi", () 
     for (const label of [/^Piutang Sewa Lapangan$/, /^Persedian barang dagang$/, /^Jumlah Aset Lancar$/]) {
       assert.equal(findRow(result.rows, label).status, "COCOK", `${label} seharusnya cocok`);
     }
+  });
+
+  test("subtotal aset tidak lancar PDF dipasangkan dengan jumlah Excel", () => {
+    const line = (label: string, value: number, kind: FinancialLine["kind"] = "subtotal"): FinancialLine => ({ code: null, label, value, kind, assumedZero: false });
+    const comparison = compareFinancialReports(
+      [line("Jumlah Aset Tidak Lancar", 24790666)],
+      [line("SubTotal Aset Tidak Lancar", 24790666)],
+      "balance-sheet",
+    );
+    assert.equal(comparison.summary.hanyaPdf, 0);
+    assert.equal(comparison.summary.hanyaExcel, 0);
+    assert.equal(findRow(comparison.rows, /^Jumlah Aset Tidak Lancar$/).status, "COCOK");
   });
 
   test("akun kas tetap digabung saat OCR menambahkan akhiran pada nama akun", () => {

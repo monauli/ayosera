@@ -74,6 +74,7 @@ export const MAPPING_ALIAS_RULES: readonly MappingAliasRule[] = [
   { report: "balance-sheet", excelLabels: ["Piutang Sewa Lapangan"], pdfLabel: "Piutang Court Fee", pdfCode: "11301" },
   { report: "balance-sheet", excelLabels: ["Persedian barang dagang", "Persediaan barang dagang"], pdfLabel: "Persediaan barang dagang", pdfCode: "11400" },
   { report: "balance-sheet", excelLabels: ["Jumlah Aset Lancar"], pdfLabel: "Total Aset Lancar" },
+  { report: "balance-sheet", excelLabels: ["Jumlah Aset Tidak Lancar"], pdfLabel: "SubTotal Aset Tidak Lancar" },
 ];
 
 /**

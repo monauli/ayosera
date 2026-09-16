@@ -212,12 +212,17 @@ const MAX_EDIT_RATIO = 0.1;
 export function normalizeFinancialLabel(label: string): string {
   const words = label
     .toLowerCase()
-    .replace(/\bsubtotal\b/g, "total")
+    .replace(/\b(?:sub|ub)total\b/g, "total")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .split(" ")
     .filter(Boolean);
+  // OCR scan April kadang menempelkan nomor akun/nominal di depan nama:
+  // "As 50500 Potongan pembelian", "70,000 Pendapatan lain lain", dan
+  // "\"60601 Biaya Maintenance". Angka pembuka bukan bagian dari label.
+  while (words.length > 1 && /^\d+$/.test(words[0])) words.shift();
   if (words.length > 2 && words[0].length <= 2) words.shift();
+  while (words.length > 1 && /^\d+$/.test(words[0])) words.shift();
   return words.join(" ");
 }
 
