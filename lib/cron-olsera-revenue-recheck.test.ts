@@ -234,18 +234,37 @@ test("ronde TIDAK jalan kalau periode locked (Kunci Periode Rekonsiliasi Omzet) 
   assert.equal(getLedgerDetailMock.mock.callCount(), 0);
 });
 
-test("ronde TIDAK jalan kalau roundFinishedAt belum 7 hari lalu -> status round-not-due", async () => {
+test("ronde TIDAK jalan kalau roundFinishedAt belum 24 jam lalu -> status round-not-due", async () => {
   resetAll();
-  const threeDaysAgo = new Date(Date.now() - 3 * DAY_MS);
+  const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () =>
     fakeSyncLog({
       status: "success",
-      revenueRecheck: { accountCodes: ["40000"], cursor: 1, roundStartedAt: new Date(threeDaysAgo.getTime() - 60_000), roundFinishedAt: threeDaysAgo, attempts: 0, changed: [] },
+      revenueRecheck: { accountCodes: ["40000"], cursor: 1, roundStartedAt: new Date(twelveHoursAgo.getTime() - 60_000), roundFinishedAt: twelveHoursAgo, attempts: 0, changed: [] },
     }),
   );
   const res = await runOlseraRevenueRecheckCron("Bearer test-secret");
   assert.equal(res.body.status, "round-not-due");
   assert.equal(getLedgerDetailMock.mock.callCount(), 0);
+});
+
+test("ronde jalan lagi setelah 24 jam untuk menangkap jurnal terlambat", async () => {
+  resetAll();
+  const twoDaysAgo = new Date(Date.now() - 2 * DAY_MS);
+  getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () =>
+    fakeSyncLog({
+      status: "success",
+      accountCodes: ["40000"],
+      revenueRecheck: { accountCodes: ["40000"], cursor: 1, roundStartedAt: new Date(twoDaysAgo.getTime() - 60_000), roundFinishedAt: twoDaysAgo, attempts: 0, changed: [] },
+    }),
+  );
+  countLedgerEntriesForAccountMock.mock.mockImplementation(async () => 0);
+  getLedgerDetailMock.mock.mockImplementation(async () => ({ totalRecords: 1, entries: [{ debit: 450000 }] }));
+
+  const res = await runOlseraRevenueRecheckCron("Bearer test-secret");
+
+  assert.equal(res.body.status, "round-complete");
+  assert.equal(getLedgerDetailMock.mock.callCount(), 1);
 });
 
 test("ronde baru memakai SEMUA run.accountCodes (85, daftar yang disimpan sync awal dari getAccounts) — bukan daftar tetap — dan maju cursor-nya", async () => {
@@ -303,7 +322,7 @@ test("ronde LAMA yang masih berjalan dengan daftar 9 akun tetap memakai daftar d
   assert.deepEqual(getLedgerDetailMock.mock.calls.map((call) => call.arguments[1]), legacyNine.slice(4, 4 + REVENUE_RECHECK_SLOTS_PER_INVOCATION));
 });
 
-test("ronde MID-CURSOR (belum 7 hari sejak roundStartedAt) TETAP dilanjutkan — gerbang 7 hari hanya berlaku untuk MULAI ronde baru, bukan melanjutkan yang sudah berjalan", async () => {
+test("ronde MID-CURSOR tetap dilanjutkan — gerbang 24 jam hanya berlaku untuk MULAI ronde baru", async () => {
   resetAll();
   const midRound: FakeRevenueRecheckState = { accountCodes: [...FAKE_ACCOUNT_CODES], cursor: 4, roundStartedAt: new Date(Date.now() - 60 * 60 * 1000), roundFinishedAt: null, attempts: 0, changed: [] };
   getFinancialSyncLogForPeriodMock.mock.mockImplementationOnce(async () => fakeSyncLog({ status: "success", revenueRecheck: midRound }));
@@ -372,15 +391,15 @@ test("isRevenueRecheckRoundDue: belum pernah ada ronde (undefined) -> due", () =
   assert.equal(isRevenueRecheckRoundDue(undefined, new Date()), true);
 });
 
-test("isRevenueRecheckRoundDue: ronde terakhir selesai < 7 hari lalu -> belum due", () => {
+test("isRevenueRecheckRoundDue: ronde terakhir selesai < 24 jam lalu -> belum due", () => {
   const now = new Date("2026-09-02T00:00:00Z");
-  const state: FakeRevenueRecheckState = { accountCodes: [], cursor: 9, roundStartedAt: new Date(now.getTime() - 4 * DAY_MS), roundFinishedAt: new Date(now.getTime() - 3 * DAY_MS), attempts: 0, changed: [] };
+  const state: FakeRevenueRecheckState = { accountCodes: [], cursor: 9, roundStartedAt: new Date(now.getTime() - 2 * DAY_MS), roundFinishedAt: new Date(now.getTime() - 12 * 60 * 60 * 1000), attempts: 0, changed: [] };
   assert.equal(isRevenueRecheckRoundDue(state, now), false);
 });
 
-test("isRevenueRecheckRoundDue: ronde terakhir selesai >= 7 hari lalu -> due", () => {
+test("isRevenueRecheckRoundDue: ronde terakhir selesai >= 24 jam lalu -> due", () => {
   const now = new Date("2026-09-02T00:00:00Z");
-  const state: FakeRevenueRecheckState = { accountCodes: [], cursor: 9, roundStartedAt: new Date(now.getTime() - 8 * DAY_MS), roundFinishedAt: new Date(now.getTime() - 7 * DAY_MS), attempts: 0, changed: [] };
+  const state: FakeRevenueRecheckState = { accountCodes: [], cursor: 9, roundStartedAt: new Date(now.getTime() - 2 * DAY_MS), roundFinishedAt: new Date(now.getTime() - 24 * 60 * 60 * 1000), attempts: 0, changed: [] };
   assert.equal(isRevenueRecheckRoundDue(state, now), true);
 });
 

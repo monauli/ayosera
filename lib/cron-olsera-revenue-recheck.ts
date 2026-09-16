@@ -38,15 +38,14 @@
 // Jadwal invocation vs jadwal ronde — DUA KONSEP BERBEDA:
 //   - Kadensi INVOCATION (jadwal cron-job.org, menit :15 supaya menjauh dari
 //     financial (:45) dan inventory (:25)).
-//   - Kadensi RONDE (REVENUE_RECHECK_ROUND_INTERVAL_MS): 7 hari, dihitung
+//   - Kadensi RONDE (REVENUE_RECHECK_ROUND_INTERVAL_MS): 24 jam, dihitung
 //     sejak ronde terakhir SELESAI. Ronde hanya boleh MULAI sekali per
 //     jendela ini; begitu mulai, invocation berikutnya melanjutkan
 //     checkpoint (cursor) sampai benar-benar selesai, berapa pun umurnya
-//     (ronde berjalan TIDAK PERNAH di-restart oleh jendela 7 hari), lalu
+//     (ronde berjalan TIDAK PERNAH di-restart oleh jendela 24 jam), lalu
 //     berhenti sampai jendela berikutnya lewat. Simulasi 2026-09-03 dengan
 //     jumlah baris nyata 2026-08 (85 akun, 12.131 baris): ≈22 invocation per
-//     ronde pada REVENUE_RECHECK_SLOTS_PER_INVOCATION=4 → ≈7 hari pada 3
-//     invocation/hari, ≈4 hari pada 6/hari.
+//     ronde pada REVENUE_RECHECK_SLOTS_PER_INVOCATION=4 → selesai bertahap.
 //   Invocation di luar jendela ronde itu no-op murah: satu findOne, TANPA
 //   request Olsera apa pun.
 //
@@ -100,7 +99,7 @@ import { collections, withMongo } from "@/lib/mongodb";
 export const REVENUE_RECHECK_SLOTS_PER_INVOCATION = 4;
 
 /** Jeda minimum antar MULAI ronde baru. TIDAK menunda ronde yang SUDAH berjalan (lihat isRoundInProgress) — itu selalu dilanjutkan invocation berikutnya, apa pun umurnya. */
-export const REVENUE_RECHECK_ROUND_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+export const REVENUE_RECHECK_ROUND_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 // Lock module "financial" — SENGAJA berbagi lock global yang sama dengan
 // cron Financial utama (lib/olsera-cron-lock.ts, singleton lintas modul
@@ -122,7 +121,7 @@ function toTime(value: Date | string | null | undefined): number {
   return Number.isFinite(time) ? time : 0;
 }
 
-/** true = ronde sedang berjalan (mid-fetch ATAU cursor selesai tapi laporan belum difinalisasi) -> HARUS dilanjutkan, jendela 7 hari tidak relevan lagi. */
+/** true = ronde sedang berjalan (mid-fetch ATAU cursor selesai tapi laporan belum difinalisasi) -> HARUS dilanjutkan, jendela 24 jam tidak relevan lagi. */
 export function isRevenueRecheckRoundInProgress(state: RevenueRecheckState | undefined | null): boolean {
   return Boolean(state?.roundStartedAt && !state.roundFinishedAt);
 }
