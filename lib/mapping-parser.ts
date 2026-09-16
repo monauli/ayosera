@@ -153,7 +153,7 @@ export type MappingParseResult =
 
 // Naikkan versi saat aturan OCR/parser berubah agar cache hasil lama tidak
 // dianggap valid dan dipakai lagi setelah deploy.
-export const MAPPING_PARSER_VERSION = "2";
+export const MAPPING_PARSER_VERSION = "3";
 
 /**
  * Skala render pdf.js untuk jalur PDF hasil scan.
@@ -1268,6 +1268,15 @@ export async function analyzeFinancialPdf(
       return { source: "pdf-scanned-ocr", reports: { "profit-loss": blank, "balance-sheet": blank, cashflow: blank } };
     }
     const reports = parseAllReports(scanned.tokens, scanned.rowTolerance);
+    // Jarak baris pada halaman Laba Rugi bisa berbeda dari Neraca/Arus Kas.
+    // Jika toleransi median membuatnya ditolak, coba sekali dengan toleransi
+    // lebih lebar; rekonsiliasi tetap menjadi syarat wajib penerimaan.
+    const wider = parseAllReports(scanned.tokens, scanned.rowTolerance * 1.5);
+    for (const kind of ["profit-loss", "balance-sheet"] as const) {
+      if (reports[kind].status === "rejected" && !reports[kind].notFound && wider[kind].status === "ok") {
+        reports[kind] = wider[kind];
+      }
+    }
     if (reports.cashflow.status === "rejected" && reports.cashflow.notFound) {
       // Scan terkompresi kadang memberi jarak Y berbeda antar-kata pada satu
       // baris. Coba toleransi lebih lebar; pengaman aritmatika tetap wajib lolos.
