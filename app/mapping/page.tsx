@@ -483,8 +483,9 @@ export default function MappingPage() {
       setPdfFile(null);
       setPdfError(null);
       setPdfBusy(true);
-        setPdfStatus(source ? "Memulihkan PDF periode terpilih..." : "Mencari PDF lama untuk periode terpilih...");
+      setPdfStatus(source ? "Memulihkan PDF periode terpilih..." : "Mencari PDF lama untuk periode terpilih...");
       try {
+        let restored = false;
         for (const candidate of candidates) {
           let fileResponse: Response | null = null;
           try {
@@ -500,6 +501,7 @@ export default function MappingPage() {
           const analysed = await analyzeFinancialPdf(file, setPdfStatus);
           const detectedPeriod = REPORT_ORDER.map((kind) => analysed.reports[kind]).map((result) => result.status === "ok" ? result.period : null).find((value) => value !== null);
           if (source || detectedPeriod === period) {
+            restored = true;
             const tagged = source ? candidate : { ...candidate, period };
             setPdfFile({ fileName: tagged.fileName, size: tagged.size });
             if (!source) {
@@ -510,6 +512,7 @@ export default function MappingPage() {
             return;
           }
         }
+        if (!restored && !cancelled) setPdfError(`PDF periode ${periodLabel(period)} tidak ditemukan di penyimpanan.`);
       } catch (error) {
         if (!cancelled) setPdfError(error instanceof Error ? error.message : "Gagal memulihkan PDF tersimpan.");
       } finally {
