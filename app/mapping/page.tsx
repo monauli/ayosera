@@ -61,13 +61,16 @@ const EARLIEST_PERIOD = "2026-02";
 
 async function fetchPdfBlob(url: string, timeoutMs: number): Promise<Blob | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
-    if (!response.ok) return null;
-    return await response.blob();
+    const request = fetch(url, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => response.ok ? response.blob() : null);
+    const deadline = new Promise<null>((resolve) => {
+      timeout = setTimeout(() => resolve(null), timeoutMs);
+    });
+    return await Promise.race([request, deadline]);
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
     controller.abort();
   }
 }
@@ -501,14 +504,9 @@ export default function MappingPage() {
         let restored = false;
         for (const candidate of candidates) {
           let blob: Blob | null = null;
-          try {
-            blob = await fetchPdfBlob(candidate.url, 15_000);
-          } catch {
-            // Blob bisa menolak fetch lintas-origin; lanjutkan lewat endpoint internal.
-          }
-          if (!blob) {
-            blob = await fetchPdfBlob(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, 20_000);
-          }
+          // Endpoint internal menghindari CORS/extension blocker pada URL Blob.
+          blob = await fetchPdfBlob(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, 15_000);
+          if (!blob) blob = await fetchPdfBlob(candidate.url, 10_000);
           if (!blob) continue;
           if (cancelled) return;
           const file = new File([blob], candidate.fileName, { type: candidate.mimeType ?? "application/pdf" });
@@ -539,7 +537,9 @@ export default function MappingPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, restoreBusy, period, pdfSources, pdfResult, pdfBusy]);
+  // pdfBusy sengaja tidak menjadi dependency: perubahan busy setelah satu
+  // percobaan selesai tidak boleh memulai retry OCR tanpa batas.
+  }, [user, restoreBusy, period, pdfSources, pdfResult]);
 
   /** Hasil parse tiap sheet untuk periode terpilih; dipakai panel DAN perbandingan. */
   const excelResults = useMemo((): Partial<Record<FinancialSheetKind, ExcelParseResult>> => {
