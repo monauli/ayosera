@@ -592,9 +592,10 @@ export default function MappingPage() {
     return () => {
       cancelled = true;
     };
-  // pdfBusy sengaja tidak menjadi dependency: perubahan busy setelah satu
-  // percobaan selesai tidak boleh memulai retry OCR tanpa batas.
-  }, [user, restoreBusy, period, pdfSources, pdfResult, pdfFile]);
+  // Hanya perubahan periode/sumber awal yang memulai pemulihan. Reset
+  // pdfFile/pdfResult di dalam proses tidak boleh membatalkan effect aktif.
+  // pdfBusy sengaja tidak menjadi dependency agar tidak memulai retry OCR.
+  }, [user, restoreBusy, period]);
 
   /** Hasil parse tiap sheet untuk periode terpilih; dipakai panel DAN perbandingan. */
   const excelResults = useMemo((): Partial<Record<FinancialSheetKind, ExcelParseResult>> => {
