@@ -437,17 +437,39 @@ export default function MappingPage() {
       setPdfStatus("Membaca berkas...");
       try {
         setPdfFile({ fileName: file.name, size: file.size });
+        let uploadedUrl: string | null = null;
+        let uploadedPeriod = periodRef.current;
         if (persist) {
           const uploaded = await upload(file, "pdf");
-          const period = uploaded.period ?? periodRef.current;
+          uploadedUrl = uploaded.url;
+          uploadedPeriod = uploaded.period ?? periodRef.current;
           setPdfFile({ url: uploaded.url, fileName: uploaded.fileName, size: uploaded.size });
           setPdfSources((current) => [
-            { ...uploaded, mimeType: uploaded.mimeType ?? "application/pdf", period },
-            ...current.filter((source) => source.period !== period),
+            { ...uploaded, mimeType: uploaded.mimeType ?? "application/pdf", period: uploadedPeriod },
+            ...current.filter((source) => source.period !== uploadedPeriod),
           ]);
         }
         const analysed = await analyzeFinancialPdf(file, setPdfStatus);
         setPdfResult(analysed);
+        if (persist && uploadedUrl) {
+          setPdfStatus("Menyimpan hasil baca PDF...");
+          const response = await fetch("/api/mapping/source", {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              url: uploadedUrl,
+              period: uploadedPeriod,
+              parsedReports: analysed.reports,
+              parsedWithVersion: MAPPING_PARSER_VERSION,
+            }),
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) throw new Error(payload?.error ?? "Hasil baca PDF gagal disimpan.");
+          setPdfSources((current) => current.map((source) => source.url === uploadedUrl
+            ? { ...source, period: uploadedPeriod, parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }
+            : source));
+          setPdfCacheSaved(true);
+        }
       } catch (error) {
         setPdfError(error instanceof Error ? error.message : "Gagal membaca PDF.");
       } finally {
@@ -574,7 +596,12 @@ export default function MappingPage() {
             void fetch("/api/mapping/source", {
               method: "PATCH",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ url: candidate.url, ...(source ? {} : { period }) }),
+              body: JSON.stringify({
+                url: candidate.url,
+                ...(source ? {} : { period }),
+                parsedReports: analysed.reports,
+                parsedWithVersion: MAPPING_PARSER_VERSION,
+              }),
             }).catch(() => {});
             return;
           }
@@ -865,7 +892,7 @@ export default function MappingPage() {
               <FileText style={{ width: "1rem", verticalAlign: "-.15rem", marginRight: ".35rem" }} />
               PDF laporan keuangan{period ? ` — ${periodLabel(period)}` : ""}
             </h2>
-            <p>Pilih PDF untuk periode yang dipilih. Setelah selesai dibaca, simpan hasilnya agar langsung tersedia di perangkat lain.</p>
+            <p>Pilih PDF untuk periode yang dipilih. Hasil baca disimpan otomatis agar tidak perlu dibaca ulang.</p>
           </div>
           <div className="mapping-upload">
             <input
@@ -899,7 +926,7 @@ export default function MappingPage() {
           )}
           {pdfResult && pdfFile?.url && !pdfCacheSaved && !pdfBusy && periodGuard.state !== "mismatch" && (
             <button type="button" className="recon-button secondary" disabled={pdfSaveBusy || periodLocked} onClick={() => void savePdfResult()}>
-              {pdfSaveBusy ? <Loader2 className="spin" size={14} /> : <FileText size={14} />} {pdfSaveBusy ? "Menyimpan hasil baca..." : "Simpan Hasil Baca PDF"}
+              {pdfSaveBusy ? <Loader2 className="spin" size={14} /> : <FileText size={14} />} {pdfSaveBusy ? "Menyimpan hasil baca..." : "Coba Simpan Hasil Baca PDF"}
             </button>
           )}
           {pdfCacheSaved && <p className="mapping-note">Hasil baca PDF tersimpan dan bisa dipakai di perangkat lain.</p>}

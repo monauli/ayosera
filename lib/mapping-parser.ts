@@ -151,7 +151,9 @@ export type MappingParseResult =
       notFound?: boolean;
     };
 
-export const MAPPING_PARSER_VERSION = "1";
+// Naikkan versi saat aturan OCR/parser berubah agar cache hasil lama tidak
+// dianggap valid dan dipakai lagi setelah deploy.
+export const MAPPING_PARSER_VERSION = "2";
 
 /**
  * Skala render pdf.js untuk jalur PDF hasil scan.
@@ -1403,8 +1405,17 @@ export async function extractScanTokens(
         let tokenRowTolerance = ocrRowTolerance(tokenBlocks);
         const hasCashflowMarker = embeddedTokens.some((token) => /saldo/i.test(token.text))
           && embeddedTokens.some((token) => /akhir/i.test(token.text));
+        const embeddedRows = groupTokensIntoRows(embeddedTokens, tokenRowTolerance);
+        const embeddedCashflowDetailCount = embeddedRows.filter((row) =>
+          /penerimaan|pembayaran|biaya\s+operasional|pendapatan\s+lain|pengeluaran\s+lain/i.test(row.labelTokens.map((token) => token.text).join(" ")),
+        ).length;
+        const embeddedHasCompleteCashflow = embeddedCashflowDetailCount >= 3
+          && embeddedRows.some((row) => /saldo\s+kas\s+akhir/i.test(row.labelTokens.map((token) => token.text).join(" ")));
         const extraTokens: MappingToken[] = [];
-        if (pageNumber === pdfDocument.numPages) {
+        // Jika OCR gambar asli sudah menangkap Arus Kas lengkap, jangan OCR
+        // halaman terakhir dua kali lagi lewat canvas besar + crop. Duplikasi
+        // ini yang membuat PDF scan terasa macet ber-menit-menit.
+        if (pageNumber === pdfDocument.numPages && !embeddedHasCompleteCashflow) {
           const page = await pdfDocument.getPage(pageNumber);
           const viewport = page.getViewport({ scale: SCAN_RENDER_SCALE });
           const fallbackCanvas = document.createElement("canvas");
@@ -1487,7 +1498,6 @@ export async function extractScanTokens(
                   tokenRowTolerance *= embeddedImage.width / viewport.width;
                 }
               }
-              const embeddedRows = groupTokensIntoRows(embeddedTokens, tokenRowTolerance);
               const hasEmbeddedCashflowRow = (pattern: RegExp) => embeddedRows.some((row) =>
                 pattern.test(row.labelTokens.map((token) => token.text).join(" ")),
               );
