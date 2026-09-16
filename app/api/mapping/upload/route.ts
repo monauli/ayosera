@@ -14,7 +14,6 @@ export async function GET() {
   try {
     await requireModule("mapping");
     const data = await loadLatestMappingSources(currentStoreId());
-    console.error("[mapping-source] restore", data.map(({ kind, period, fileName }) => ({ kind, period: period ?? null, fileName })));
     return NextResponse.json({ data }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;

@@ -1277,6 +1277,7 @@ export async function extractScanTokens(
     import("tesseract.js"),
     import("./reconciliation-berita-acara-client-ocr"),
   ]);
+  onStatus("Menyiapkan mesin OCR lokal...");
   const worker = await createWorker("ind+eng", undefined, TESSERACT_ASSET_OPTIONS);
   try {
     const tokens: MappingToken[] = [];
