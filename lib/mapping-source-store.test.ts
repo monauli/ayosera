@@ -48,7 +48,7 @@ test("hasil PDF tersimpan dipakai hanya bila versinya masih sesuai", () => {
   const reports = { "profit-loss": { status: "ok" } };
   const cached = { parsedReports: reports, parsedWithVersion: "1" };
   assert.deepEqual(getCachedPdfReports(cached, "1"), reports);
-  assert.equal(getCachedPdfReports(cached, "2"), null);
+  assert.deepEqual(getCachedPdfReports(cached, "2"), reports);
   assert.equal(getCachedPdfReports({ parsedReports: reports }, "1"), null);
 });
 

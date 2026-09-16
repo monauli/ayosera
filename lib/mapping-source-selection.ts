@@ -1,7 +1,9 @@
 import type { MappingSourceDocument } from "./mongodb.ts";
 
-export function getCachedPdfReports<T extends { parsedReports?: unknown; parsedWithVersion?: string }>(source: T, parserVersion: string): T["parsedReports"] | null {
-  return source.parsedWithVersion === parserVersion && source.parsedReports ? source.parsedReports : null;
+export function getCachedPdfReports<T extends { parsedReports?: unknown; parsedWithVersion?: string }>(source: T, _parserVersion: string): T["parsedReports"] | null {
+  // Cached OCR is still usable after a parser upgrade. Re-OCR only when no
+  // saved result exists; users should not wait again for an already-saved PDF.
+  return source.parsedReports ? source.parsedReports : null;
 }
 
 export function shouldAttemptPdfRestore(lastAttemptKey: string | null, period: string, sourceKey: string): boolean {
