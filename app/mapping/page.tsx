@@ -59,6 +59,19 @@ const STATUS_TONE: Record<ComparisonStatus, "ok" | "warn" | "danger" | "neutral"
  */
 const EARLIEST_PERIOD = "2026-02";
 
+async function fetchPdfBlob(url: string, timeoutMs: number): Promise<Blob | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.blob();
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+  }
+}
+
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
 /** "2026-02" -> "Februari 2026". */
@@ -487,15 +500,16 @@ export default function MappingPage() {
       try {
         let restored = false;
         for (const candidate of candidates) {
-          let fileResponse: Response | null = null;
+          let blob: Blob | null = null;
           try {
-            fileResponse = await fetch(candidate.url, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
+            blob = await fetchPdfBlob(candidate.url, 15_000);
           } catch {
             // Blob bisa menolak fetch lintas-origin; lanjutkan lewat endpoint internal.
           }
-          if (!fileResponse?.ok) fileResponse = await fetch(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
-          if (!fileResponse.ok) continue;
-          const blob = await fileResponse.blob();
+          if (!blob) {
+            blob = await fetchPdfBlob(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, 20_000);
+          }
+          if (!blob) continue;
           if (cancelled) return;
           const file = new File([blob], candidate.fileName, { type: candidate.mimeType ?? "application/pdf" });
           const analysed = await analyzeFinancialPdf(file, setPdfStatus);
