@@ -93,9 +93,9 @@ export async function POST(request: Request) {
 
     const uploaded = await uploadMappingSource({ storeId: currentStoreId(), kind, file });
     const uploadedAt = new Date();
-    await saveMappingSource({ storeId: currentStoreId(), kind, url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, sheets, uploadedAt, uploadedBy: user.email });
+    await saveMappingSource({ storeId: currentStoreId(), kind, period: kind === "pdf" ? period : undefined, url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, sheets, uploadedAt, uploadedBy: user.email });
     return NextResponse.json(
-      { data: { url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, uploadedAt: uploadedAt.toISOString(), sheets } },
+      { data: { url: uploaded.url, fileName: file.name, mimeType: file.type, size: file.size, period: kind === "pdf" ? period : undefined, uploadedAt: uploadedAt.toISOString(), sheets } },
       { status: 201, headers: NO_CACHE_HEADERS },
     );
   } catch (error) {

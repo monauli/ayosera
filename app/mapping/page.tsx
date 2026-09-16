@@ -26,11 +26,12 @@ import {
   type ExcelReportSheet,
   type FinancialSheetKind,
 } from "@/lib/mapping-excel-parser";
+import { selectPdfForPeriod } from "@/lib/mapping-source-selection";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 type SessionUser = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
-type UploadedFile = { url: string; fileName: string; size: number; uploadedAt: string };
-/** PDF tidak diunggah ke mana pun — hanya dibaca di browser ini. */
+type UploadedFile = { url: string; fileName: string; mimeType?: string; size: number; period?: string; uploadedAt: string };
+/** Ringkasan file PDF yang sedang ditampilkan; isi PDF tetap dibaca di browser. */
 type PickedFile = { fileName: string; size: number };
 
 // Nama laporan dipakai dari parser — pesan penolakannya menyebut nama yang
@@ -319,6 +320,7 @@ export default function MappingPage() {
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; reports: Record<FinancialSheetKind, MappingParseResult> } | null>(null);
+  const [pdfSources, setPdfSources] = useState<UploadedFile[]>([]);
   const [activeReport, setActiveReport] = useState<FinancialSheetKind>("profit-loss");
   const [restoreBusy, setRestoreBusy] = useState(true);
   // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
@@ -412,7 +414,14 @@ export default function MappingPage() {
       setPdfStatus("Membaca berkas...");
       try {
         setPdfFile({ fileName: file.name, size: file.size });
-        if (persist) await upload(file, "pdf");
+        if (persist) {
+          const stored = await upload(file, "pdf");
+          const period = stored.period ?? periodRef.current;
+          setPdfSources((current) => [
+            { ...stored, mimeType: stored.mimeType ?? "application/pdf", period },
+            ...current.filter((source) => source.period !== period),
+          ]);
+        }
         const analysed = await analyzeFinancialPdf(file, setPdfStatus);
         setPdfResult(analysed);
       } catch (error) {
@@ -436,23 +445,13 @@ export default function MappingPage() {
           return;
         }
         const payload = await response.json();
-        const sources = Array.isArray(payload.data) ? (payload.data as Array<{ kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; uploadedAt: string; sheets?: ExcelReportSheet[] }>) : [];
+        const sources = Array.isArray(payload.data) ? (payload.data as Array<{ kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; period?: string; uploadedAt: string; sheets?: ExcelReportSheet[] }>) : [];
         const excel = sources.find((source) => source.kind === "excel");
         if (excel) {
           setExcelFile({ url: excel.url, fileName: excel.fileName, size: excel.size, uploadedAt: excel.uploadedAt });
           setSheets(excel.sheets ?? []);
         }
-        const pdf = sources.find((source) => source.kind === "pdf");
-        if (pdf) {
-          setPdfFile({ fileName: pdf.fileName, size: pdf.size });
-          const fileResponse = await fetch("/api/mapping/source", { cache: "no-store" });
-          if (fileResponse.ok && !cancelled) {
-            const blob = await fileResponse.blob();
-            await onPdfPicked(new File([blob], pdf.fileName, { type: pdf.mimeType }), false);
-          } else if (!cancelled) {
-            setPdfError("File PDF tersimpan tidak bisa dibaca.");
-          }
-        }
+        if (!cancelled) setPdfSources(sources.filter((source) => source.kind === "pdf"));
       } finally {
         if (!cancelled) setRestoreBusy(false);
       }
@@ -463,6 +462,62 @@ export default function MappingPage() {
       cancelled = true;
     };
   }, [user, onPdfPicked]);
+
+  // Pulihkan hanya PDF untuk periode yang sedang dipilih. Sebelumnya endpoint
+  // selalu mengembalikan satu PDF terakhir, sehingga upload Februari/Maret
+  // terlihat seperti hilang.
+  useEffect(() => {
+    if (!user || restoreBusy || !period || pdfBusy) return;
+    const source = selectPdfForPeriod(pdfSources, period);
+    const currentPdfPeriod = pdfResult && REPORT_ORDER.map((kind) => pdfResult.reports[kind]).map((result) => result.status === "ok" ? result.period : null).find((value) => value !== null);
+    if (currentPdfPeriod === period) return;
+    const candidates = source ? [source] : pdfSources.filter((item) => !item.period);
+    if (candidates.length === 0) {
+      setPdfFile(null);
+      setPdfResult(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      setPdfResult(null);
+      setPdfFile(null);
+      setPdfError(null);
+      setPdfBusy(true);
+      setPdfStatus(source ? "Memulihkan PDF periode terpilih..." : "Mencari PDF lama untuk periode terpilih...");
+      try {
+        for (const candidate of candidates) {
+          let fileResponse = await fetch(candidate.url, { cache: "no-store" });
+          if (!fileResponse.ok) fileResponse = await fetch(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, { cache: "no-store" });
+          if (!fileResponse.ok) continue;
+          const blob = await fileResponse.blob();
+          if (cancelled) return;
+          const file = new File([blob], candidate.fileName, { type: candidate.mimeType ?? "application/pdf" });
+          const analysed = await analyzeFinancialPdf(file, setPdfStatus);
+          const detectedPeriod = REPORT_ORDER.map((kind) => analysed.reports[kind]).map((result) => result.status === "ok" ? result.period : null).find((value) => value !== null);
+          if (source || detectedPeriod === period) {
+            const tagged = source ? candidate : { ...candidate, period };
+            setPdfFile({ fileName: tagged.fileName, size: tagged.size });
+            if (!source) {
+              setPdfSources((current) => current.map((item) => item.url === candidate.url ? tagged : item));
+              void fetch("/api/mapping/source", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: candidate.url, period }) });
+            }
+            if (!cancelled) setPdfResult(analysed);
+            return;
+          }
+        }
+      } catch (error) {
+        if (!cancelled) setPdfError(error instanceof Error ? error.message : "Gagal memulihkan PDF tersimpan.");
+      } finally {
+        if (!cancelled) {
+          setPdfBusy(false);
+          setPdfStatus("");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, restoreBusy, period, pdfSources, pdfResult, pdfBusy]);
 
   /** Hasil parse tiap sheet untuk periode terpilih; dipakai panel DAN perbandingan. */
   const excelResults = useMemo((): Partial<Record<FinancialSheetKind, ExcelParseResult>> => {
@@ -764,7 +819,7 @@ export default function MappingPage() {
               {pdfFile.fileName} · {(pdfFile.size / 1024 / 1024).toFixed(1)} MB
             </p>
           )}
-          {periodGuard.state === "mismatch" && <p className="mapping-note">Belum ada file periode {periodLabel(period)} PDF.</p>}
+          {!pdfBusy && !pdfFile && !pdfError && period && <p className="mapping-note">Belum ada file periode {periodLabel(period)} PDF.</p>}
         </section>
       </div>
 
