@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Lock, Moon, Sun, Unlock } from "lucide-react";
-import { analyzeFinancialPdf, REPORT_TITLES, type MappingParseResult, type FinancialLine, type ReconciliationCheck } from "@/lib/mapping-parser";
+import { analyzeFinancialPdf, MAPPING_PARSER_VERSION, REPORT_TITLES, type MappingParseResult, type FinancialLine, type ReconciliationCheck } from "@/lib/mapping-parser";
 import { compareFinancialReports, type ComparisonRow, type ComparisonStatus } from "@/lib/mapping-compare";
 import {
   detectMonthColumns,
@@ -26,11 +26,12 @@ import {
   type ExcelReportSheet,
   type FinancialSheetKind,
 } from "@/lib/mapping-excel-parser";
-import { selectPdfForPeriod } from "@/lib/mapping-source-selection";
+import { getCachedPdfReports, selectPdfForPeriod } from "@/lib/mapping-source-selection";
 import { readInitialThemeMode, THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/theme-mode";
 
 type SessionUser = { id: string; role: "supervisor" | "user"; allowedModules: string[] };
 type UploadedFile = { url: string; fileName: string; mimeType?: string; size: number; period?: string; uploadedAt: string };
+type StoredPdfFile = UploadedFile & { parsedReports?: Record<FinancialSheetKind, MappingParseResult>; parsedWithVersion?: string };
 /** Ringkasan file PDF yang sedang ditampilkan; isi PDF tetap dibaca di browser. */
 type PickedFile = { fileName: string; size: number };
 
@@ -336,7 +337,7 @@ export default function MappingPage() {
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; reports: Record<FinancialSheetKind, MappingParseResult> } | null>(null);
-  const [pdfSources, setPdfSources] = useState<UploadedFile[]>([]);
+  const [pdfSources, setPdfSources] = useState<StoredPdfFile[]>([]);
   const [activeReport, setActiveReport] = useState<FinancialSheetKind>("profit-loss");
   const [restoreBusy, setRestoreBusy] = useState(true);
   // id stabil untuk menghubungkan <label htmlFor> ke <input type="file">.
@@ -429,17 +430,27 @@ export default function MappingPage() {
       setPdfResult(null);
       setPdfStatus("Membaca berkas...");
       try {
+        let stored: UploadedFile | undefined;
         setPdfFile({ fileName: file.name, size: file.size });
         if (persist) {
-          const stored = await upload(file, "pdf");
-          const period = stored.period ?? periodRef.current;
+          const uploaded = await upload(file, "pdf");
+          stored = uploaded;
+          const period = uploaded.period ?? periodRef.current;
           setPdfSources((current) => [
-            { ...stored, mimeType: stored.mimeType ?? "application/pdf", period },
+            { ...uploaded, mimeType: uploaded.mimeType ?? "application/pdf", period },
             ...current.filter((source) => source.period !== period),
           ]);
         }
         const analysed = await analyzeFinancialPdf(file, setPdfStatus);
         setPdfResult(analysed);
+        if (persist && stored) void fetch("/api/mapping/source", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ url: stored.url, parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }),
+        }).catch(() => {});
+        if (persist && stored) setPdfSources((current) => current.map((source) => source.url === stored!.url
+          ? { ...source, parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }
+          : source));
       } catch (error) {
         setPdfError(error instanceof Error ? error.message : "Gagal membaca PDF.");
       } finally {
@@ -461,13 +472,13 @@ export default function MappingPage() {
           return;
         }
         const payload = await response.json();
-        const sources = Array.isArray(payload.data) ? (payload.data as Array<{ kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; period?: string; uploadedAt: string; sheets?: ExcelReportSheet[] }>) : [];
+        const sources = Array.isArray(payload.data) ? (payload.data as Array<{ kind: "excel" | "pdf"; url: string; fileName: string; mimeType: string; size: number; period?: string; uploadedAt: string; sheets?: ExcelReportSheet[]; parsedReports?: Record<FinancialSheetKind, MappingParseResult>; parsedWithVersion?: string }>) : [];
         const excel = sources.find((source) => source.kind === "excel");
         if (excel) {
           setExcelFile({ url: excel.url, fileName: excel.fileName, size: excel.size, uploadedAt: excel.uploadedAt });
           setSheets(excel.sheets ?? []);
         }
-        if (!cancelled) setPdfSources(sources.filter((source) => source.kind === "pdf"));
+        if (!cancelled) setPdfSources(sources.filter((source) => source.kind === "pdf") as StoredPdfFile[]);
       } finally {
         if (!cancelled) setRestoreBusy(false);
       }
@@ -487,6 +498,13 @@ export default function MappingPage() {
     const source = selectPdfForPeriod(pdfSources, period);
     const currentPdfPeriod = pdfResult && REPORT_ORDER.map((kind) => pdfResult.reports[kind]).map((result) => result.status === "ok" ? result.period : null).find((value) => value !== null);
     if (currentPdfPeriod === period) return;
+    const cachedReports = source ? getCachedPdfReports(source, MAPPING_PARSER_VERSION) : null;
+    if (source && cachedReports) {
+      setPdfFile({ fileName: source.fileName, size: source.size });
+      setPdfResult({ source: "pdf-scanned-ocr", reports: cachedReports });
+      setPdfError(null);
+      return;
+    }
     const candidates = source ? [source] : pdfSources.filter((item) => !item.period);
     if (candidates.length === 0) {
       setPdfFile(null);
@@ -516,11 +534,15 @@ export default function MappingPage() {
             restored = true;
             const tagged = source ? candidate : { ...candidate, period };
             setPdfFile({ fileName: tagged.fileName, size: tagged.size });
-            if (!source) {
-              setPdfSources((current) => current.map((item) => item.url === candidate.url ? tagged : item));
-              void fetch("/api/mapping/source", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: candidate.url, period }) });
-            }
+            setPdfSources((current) => current.map((item) => item.url === candidate.url
+              ? { ...item, ...tagged, parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }
+              : item));
             if (!cancelled) setPdfResult(analysed);
+            void fetch("/api/mapping/source", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ url: candidate.url, ...(source ? {} : { period }), parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }),
+            }).catch(() => {});
             return;
           }
         }

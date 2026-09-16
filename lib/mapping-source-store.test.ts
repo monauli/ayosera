@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inferMappingSourcePeriod, selectMappingSources, selectPdfForPeriod } from "./mapping-source-selection.ts";
+import { getCachedPdfReports, inferMappingSourcePeriod, selectMappingSources, selectPdfForPeriod } from "./mapping-source-selection.ts";
 import type { MappingSourceDocument } from "./mongodb.ts";
 
 const source = (kind: "excel" | "pdf", uploadedAt: string, period?: string): MappingSourceDocument => ({
@@ -42,4 +42,12 @@ test("periode PDF lama dapat dikenali dari nama file tanpa OCR", () => {
   const [selected] = selectMappingSources([source("pdf", "2026-02-01T00:00:00.000Z")].map((item) => ({ ...item, fileName: "Laporan Keuangan 0226_compressed.pdf" })));
   assert.equal(selected.period, "2026-02");
   assert.equal(selectPdfForPeriod([selected], "2026-02")?.fileName, "Laporan Keuangan 0226_compressed.pdf");
+});
+
+test("hasil PDF tersimpan dipakai hanya bila versinya masih sesuai", () => {
+  const reports = { "profit-loss": { status: "ok" } };
+  const cached = { parsedReports: reports, parsedWithVersion: "1" };
+  assert.deepEqual(getCachedPdfReports(cached, "1"), reports);
+  assert.equal(getCachedPdfReports(cached, "2"), null);
+  assert.equal(getCachedPdfReports({ parsedReports: reports }, "1"), null);
 });

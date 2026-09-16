@@ -151,6 +151,8 @@ export type MappingParseResult =
       notFound?: boolean;
     };
 
+export const MAPPING_PARSER_VERSION = "1";
+
 /**
  * Skala render pdf.js untuk jalur PDF hasil scan.
  *

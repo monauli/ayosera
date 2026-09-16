@@ -22,5 +22,10 @@ export async function tagMappingSourcePeriod(storeId: number, url: string, perio
   await mappingSources.updateOne({ storeId, kind: "pdf", url }, { $set: { period } });
 }
 
+export async function saveMappingSourceParse(storeId: number, url: string, parsedReports: unknown, parsedWithVersion: string): Promise<void> {
+  const { mappingSources } = await collections();
+  await mappingSources.updateOne({ storeId, kind: "pdf", url }, { $set: { parsedReports, parsedWithVersion } });
+}
+
 /** Nama lama dipertahankan untuk caller di luar modul selama migrasi. */
 export const loadLatestMappingSources = loadMappingSources;
