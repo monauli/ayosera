@@ -547,7 +547,8 @@ export default function MappingPage() {
     if (currentPdfPeriod === period) return;
     if (pdfResult && pdfFile?.url && source?.url === pdfFile.url) return;
     const cachedReports = source ? getCachedPdfReports(source, MAPPING_PARSER_VERSION) : null;
-    if (source && cachedReports) {
+    const cachedProfitLossOk = cachedReports?.["profit-loss"]?.status === "ok";
+    if (source && cachedReports && cachedProfitLossOk) {
       setPdfFile({ url: source.url, fileName: source.fileName, size: source.size });
       setPdfResult({ source: "pdf-scanned-ocr", reports: cachedReports });
       setPdfCacheSaved(true);
