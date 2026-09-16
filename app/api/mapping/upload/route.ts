@@ -13,7 +13,9 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     await requireModule("mapping");
-    return NextResponse.json({ data: await loadLatestMappingSources(currentStoreId()) }, { headers: NO_CACHE_HEADERS });
+    const data = await loadLatestMappingSources(currentStoreId());
+    console.info("[mapping-source] restore", data.map(({ kind, period, fileName }) => ({ kind, period: period ?? null, fileName })));
+    return NextResponse.json({ data }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     if (error instanceof Response) return error;
     const reason = error instanceof Error ? error.message : String(error);
