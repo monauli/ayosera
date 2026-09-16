@@ -483,11 +483,16 @@ export default function MappingPage() {
       setPdfFile(null);
       setPdfError(null);
       setPdfBusy(true);
-      setPdfStatus(source ? "Memulihkan PDF periode terpilih..." : "Mencari PDF lama untuk periode terpilih...");
+        setPdfStatus(source ? "Memulihkan PDF periode terpilih..." : "Mencari PDF lama untuk periode terpilih...");
       try {
         for (const candidate of candidates) {
-          let fileResponse = await fetch(candidate.url, { cache: "no-store" });
-          if (!fileResponse.ok) fileResponse = await fetch(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, { cache: "no-store" });
+          let fileResponse: Response | null = null;
+          try {
+            fileResponse = await fetch(candidate.url, { cache: "no-store" });
+          } catch {
+            // Blob bisa menolak fetch lintas-origin; lanjutkan lewat endpoint internal.
+          }
+          if (!fileResponse?.ok) fileResponse = await fetch(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, { cache: "no-store" });
           if (!fileResponse.ok) continue;
           const blob = await fileResponse.blob();
           if (cancelled) return;
