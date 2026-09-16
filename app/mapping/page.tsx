@@ -33,7 +33,7 @@ type SessionUser = { id: string; role: "supervisor" | "user"; allowedModules: st
 type UploadedFile = { url: string; fileName: string; mimeType?: string; size: number; period?: string; uploadedAt: string };
 type StoredPdfFile = UploadedFile & { parsedReports?: Record<FinancialSheetKind, MappingParseResult>; parsedWithVersion?: string };
 /** Ringkasan file PDF yang sedang ditampilkan; isi PDF tetap dibaca di browser. */
-type PickedFile = { fileName: string; size: number };
+type PickedFile = { url?: string; fileName: string; size: number };
 
 // Nama laporan dipakai dari parser — pesan penolakannya menyebut nama yang
 // sama, jadi tidak boleh ada dua daftar yang bisa menyimpang.
@@ -336,6 +336,9 @@ export default function MappingPage() {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfStatus, setPdfStatus] = useState<string>("");
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfCacheSaved, setPdfCacheSaved] = useState(false);
+  const [pdfSaveBusy, setPdfSaveBusy] = useState(false);
+  const [pdfSaveError, setPdfSaveError] = useState<string | null>(null);
   const [pdfResult, setPdfResult] = useState<{ source: string; reports: Record<FinancialSheetKind, MappingParseResult> } | null>(null);
   const [pdfSources, setPdfSources] = useState<StoredPdfFile[]>([]);
   const [activeReport, setActiveReport] = useState<FinancialSheetKind>("profit-loss");
@@ -427,15 +430,16 @@ export default function MappingPage() {
     async (file: File, persist = true) => {
       setPdfBusy(true);
       setPdfError(null);
+      setPdfSaveError(null);
+      setPdfCacheSaved(false);
       setPdfResult(null);
       setPdfStatus("Membaca berkas...");
       try {
-        let stored: UploadedFile | undefined;
         setPdfFile({ fileName: file.name, size: file.size });
         if (persist) {
           const uploaded = await upload(file, "pdf");
-          stored = uploaded;
           const period = uploaded.period ?? periodRef.current;
+          setPdfFile({ url: uploaded.url, fileName: uploaded.fileName, size: uploaded.size });
           setPdfSources((current) => [
             { ...uploaded, mimeType: uploaded.mimeType ?? "application/pdf", period },
             ...current.filter((source) => source.period !== period),
@@ -443,14 +447,6 @@ export default function MappingPage() {
         }
         const analysed = await analyzeFinancialPdf(file, setPdfStatus);
         setPdfResult(analysed);
-        if (persist && stored) void fetch("/api/mapping/source", {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ url: stored.url, parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }),
-        }).catch(() => {});
-        if (persist && stored) setPdfSources((current) => current.map((source) => source.url === stored!.url
-          ? { ...source, parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }
-          : source));
       } catch (error) {
         setPdfError(error instanceof Error ? error.message : "Gagal membaca PDF.");
       } finally {
@@ -460,6 +456,34 @@ export default function MappingPage() {
     },
     [upload],
   );
+
+  const savePdfResult = useCallback(async () => {
+    if (!pdfFile?.url || !pdfResult || pdfSaveBusy || !period) return;
+    setPdfSaveBusy(true);
+    setPdfSaveError(null);
+    try {
+      const response = await fetch("/api/mapping/source", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          url: pdfFile.url,
+          period,
+          parsedReports: pdfResult.reports,
+          parsedWithVersion: MAPPING_PARSER_VERSION,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? "Hasil baca PDF gagal disimpan.");
+      setPdfSources((current) => current.map((source) => source.url === pdfFile.url
+        ? { ...source, period, parsedReports: pdfResult.reports, parsedWithVersion: MAPPING_PARSER_VERSION }
+        : source));
+      setPdfCacheSaved(true);
+    } catch (error) {
+      setPdfSaveError(error instanceof Error ? error.message : "Hasil baca PDF gagal disimpan.");
+    } finally {
+      setPdfSaveBusy(false);
+    }
+  }, [pdfFile, pdfResult, pdfSaveBusy, period]);
 
   useEffect(() => {
     if (!user) return;
@@ -498,10 +522,13 @@ export default function MappingPage() {
     const source = selectPdfForPeriod(pdfSources, period);
     const currentPdfPeriod = pdfResult && REPORT_ORDER.map((kind) => pdfResult.reports[kind]).map((result) => result.status === "ok" ? result.period : null).find((value) => value !== null);
     if (currentPdfPeriod === period) return;
+    if (pdfResult && pdfFile?.url && source?.url === pdfFile.url) return;
     const cachedReports = source ? getCachedPdfReports(source, MAPPING_PARSER_VERSION) : null;
     if (source && cachedReports) {
-      setPdfFile({ fileName: source.fileName, size: source.size });
+      setPdfFile({ url: source.url, fileName: source.fileName, size: source.size });
       setPdfResult({ source: "pdf-scanned-ocr", reports: cachedReports });
+      setPdfCacheSaved(true);
+      setPdfSaveError(null);
       setPdfError(null);
       return;
     }
@@ -509,12 +536,16 @@ export default function MappingPage() {
     if (candidates.length === 0) {
       setPdfFile(null);
       setPdfResult(null);
+      setPdfCacheSaved(false);
+      setPdfSaveError(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       setPdfResult(null);
       setPdfFile(null);
+      setPdfCacheSaved(false);
+      setPdfSaveError(null);
       setPdfError(null);
       setPdfBusy(true);
       setPdfStatus(source ? "Memulihkan PDF periode terpilih..." : "Mencari PDF lama untuk periode terpilih...");
@@ -533,15 +564,13 @@ export default function MappingPage() {
           if (source || detectedPeriod === period) {
             restored = true;
             const tagged = source ? candidate : { ...candidate, period };
-            setPdfFile({ fileName: tagged.fileName, size: tagged.size });
-            setPdfSources((current) => current.map((item) => item.url === candidate.url
-              ? { ...item, ...tagged, parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }
-              : item));
+            setPdfFile({ url: tagged.url, fileName: tagged.fileName, size: tagged.size });
+            setPdfSources((current) => current.map((item) => item.url === candidate.url ? { ...item, ...tagged } : item));
             if (!cancelled) setPdfResult(analysed);
             void fetch("/api/mapping/source", {
               method: "PATCH",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ url: candidate.url, ...(source ? {} : { period }), parsedReports: analysed.reports, parsedWithVersion: MAPPING_PARSER_VERSION }),
+              body: JSON.stringify({ url: candidate.url, ...(source ? {} : { period }) }),
             }).catch(() => {});
             return;
           }
@@ -561,7 +590,7 @@ export default function MappingPage() {
     };
   // pdfBusy sengaja tidak menjadi dependency: perubahan busy setelah satu
   // percobaan selesai tidak boleh memulai retry OCR tanpa batas.
-  }, [user, restoreBusy, period, pdfSources, pdfResult]);
+  }, [user, restoreBusy, period, pdfSources, pdfResult, pdfFile]);
 
   /** Hasil parse tiap sheet untuk periode terpilih; dipakai panel DAN perbandingan. */
   const excelResults = useMemo((): Partial<Record<FinancialSheetKind, ExcelParseResult>> => {
@@ -831,7 +860,7 @@ export default function MappingPage() {
               <FileText style={{ width: "1rem", verticalAlign: "-.15rem", marginRight: ".35rem" }} />
               PDF laporan keuangan{period ? ` — ${periodLabel(period)}` : ""}
             </h2>
-            <p>Pilih PDF untuk periode yang dipilih; satu berkas boleh memuat ketiga laporan. Berkas disimpan agar tidak perlu diunggah ulang, lalu dibaca sepenuhnya di browser ini.</p>
+            <p>Pilih PDF untuk periode yang dipilih. Setelah selesai dibaca, simpan hasilnya agar langsung tersedia di perangkat lain.</p>
           </div>
           <div className="mapping-upload">
             <input
@@ -863,6 +892,13 @@ export default function MappingPage() {
               {pdfFile.fileName} · {(pdfFile.size / 1024 / 1024).toFixed(1)} MB
             </p>
           )}
+          {pdfResult && pdfFile?.url && !pdfCacheSaved && !pdfBusy && periodGuard.state !== "mismatch" && (
+            <button type="button" className="recon-button secondary" disabled={pdfSaveBusy || periodLocked} onClick={() => void savePdfResult()}>
+              {pdfSaveBusy ? <Loader2 className="spin" size={14} /> : <FileText size={14} />} {pdfSaveBusy ? "Menyimpan hasil baca..." : "Simpan Hasil Baca PDF"}
+            </button>
+          )}
+          {pdfCacheSaved && <p className="mapping-note">Hasil baca PDF tersimpan dan bisa dipakai di perangkat lain.</p>}
+          {pdfSaveError && <p className="recon-error">{pdfSaveError}</p>}
           {!pdfBusy && !pdfFile && !pdfError && period && <p className="mapping-note">Belum ada file periode {periodLabel(period)} PDF.</p>}
         </section>
       </div>
