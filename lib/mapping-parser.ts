@@ -203,6 +203,7 @@ export const FINAL_TOLERANCE = 0.05;
 export const BALANCE_FINAL_TOLERANCE = 1;
 
 const ACCOUNT_CODE = /^\d{4,6}$/;
+const LONG_ACCOUNT_NUMBER = /^\d{7,}$/;
 const DASH = /^[-–—]$/;
 // "Jumlah" dipakai sheet Neraca di fixture Excel ("Jumlah Aset Lancar").
 // OCR bisa menambahkan token pendek di depan, jadi ini sengaja bukan prefix.
@@ -211,6 +212,12 @@ const EXPENSE_LABEL = /\b(biaya|beban)\b/i;
 const NET_PROFIT_LABEL = /^laba\s*bersih$/i;
 const MAX_EDIT_DISTANCE = 2;
 const MAX_EDIT_RATIO = 0.1;
+
+/** OCR kadang membaca 0 pada kode akun sebagai O/Q, atau 1 sebagai I/l. */
+export function normalizeOcrAccountCode(text: string): string | null {
+  const normalized = text.replace(/[oOqQ]/g, "0").replace(/[iIl]/g, "1");
+  return ACCOUNT_CODE.test(normalized) ? normalized : null;
+}
 
 /** Bentuk label bersama untuk penjodohan dan pencocokan penanda OCR. */
 export function normalizeFinancialLabel(label: string): string {
@@ -227,6 +234,8 @@ export function normalizeFinancialLabel(label: string): string {
   while (words.length > 1 && /^\d+$/.test(words[0])) words.shift();
   if (words.length > 2 && words[0].length <= 2) words.shift();
   while (words.length > 1 && /^\d+$/.test(words[0])) words.shift();
+  // Scan Mei menambahkan "wi" di ujung SubTotal Pendapatan.
+  if (words[0] === "total" && words.length > 2 && (words.at(-1)?.length ?? 0) <= 2) words.pop();
   return words.join(" ");
 }
 
@@ -312,7 +321,10 @@ export function detectReportPeriod(labels: readonly string[]): string | null {
 function normalizeBoundaryLabel(label: string): string {
   const words = label.trim().split(/\s+/).filter(Boolean);
   const markerWords = ["total", "jumlah", "saldo", "laba"];
-  const markerIndex = words.findIndex((word) => markerWords.some((marker) => isNearWord(word.toLowerCase().replace(/[^a-z0-9]/g, ""), marker)));
+  const markerIndex = words.findIndex((word) => {
+    const normalized = word.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return /^(?:sub|ub)?total$/.test(normalized) || markerWords.some((marker) => isNearWord(normalized, marker));
+  });
   if (markerIndex === -1) return label.trim();
   const prefixIsNoise = words.slice(0, markerIndex).every((word) => word.replace(/[^a-z0-9]/gi, "").length <= 2);
   const start = prefixIsNoise ? markerIndex : 0;
@@ -447,7 +459,7 @@ type Row = { page: number; labelTokens: MappingToken[]; amountTokens: MappingTok
  */
 function isAmountToken(text: string): boolean {
   if (DASH.test(text)) return true;
-  if (ACCOUNT_CODE.test(text)) return false;
+  if (ACCOUNT_CODE.test(text) || LONG_ACCOUNT_NUMBER.test(text)) return false;
   return parseFinancialAmount(text) !== null;
 }
 
@@ -478,7 +490,7 @@ function isNoiseToken(text: string): boolean {
  */
 function isFormattedAmount(text: string): boolean {
   if (!/[.,]/.test(text)) return false;
-  if (ACCOUNT_CODE.test(text)) return false;
+  if (ACCOUNT_CODE.test(text) || LONG_ACCOUNT_NUMBER.test(text)) return false;
   return parseFinancialAmount(text) !== null;
 }
 
@@ -655,11 +667,12 @@ function classify(rows: readonly Row[], rowOffset: 0 | 1): MappingLine[] {
     const source = rows[index - rowOffset];
     const amountTokens = source && source.page === row.page ? source.amountTokens : [];
     const [first, ...rest] = labelTokens;
-    const hasCode = first !== undefined && ACCOUNT_CODE.test(first.text) && rest.length > 0;
+    const normalizedCode = first !== undefined ? normalizeOcrAccountCode(first.text) : null;
+    const hasCode = normalizedCode !== null && rest.length > 0;
     return {
       page: row.page,
       label: normalizeBoundaryLabel((hasCode ? rest : labelTokens).map((token) => token.text).join(" ").trim()),
-      code: hasCode ? first.text : null,
+      code: hasCode ? normalizedCode : null,
       value: readAmountCell(amountTokens),
       empty: labelTokens.length === 0,
     };
@@ -825,6 +838,43 @@ function repairSingleLineCashflowSections(lines: readonly MappingLine[]): Mappin
     }
     sectionDetails = [];
   }
+  return repaired;
+}
+
+/**
+ * Perbaiki OCR yang menambahkan satu digit di depan angka modal.
+ * Koreksi hanya dipakai bila Total Modal dan detail Modal membuktikan angka
+ * yang benar; tidak ada nominal yang di-hardcode.
+ */
+function repairBalanceOcrArtifacts(lines: readonly MappingLine[]): MappingLine[] {
+  const repaired = [...lines];
+  const totalIndex = repaired.findIndex((line) => /^total\s+modal$/i.test(line.label.trim()));
+  const incomeIndex = repaired.findIndex((line) => /^pendapatan\s+periode\s+ini$/i.test(line.label.trim()));
+  if (totalIndex === -1 || incomeIndex === -1 || incomeIndex > totalIndex) return repaired;
+  const sectionStart = repaired.slice(0, totalIndex).findLastIndex((line) => line.kind === "header" && /^modal$/i.test(line.label.trim()));
+  const income = repaired[incomeIndex]?.value;
+  const total = repaired[totalIndex]?.value;
+  if (sectionStart === -1 || income === null || income === undefined || total === null || total === undefined) return repaired;
+  const otherDetails = repaired.slice(sectionStart + 1, totalIndex)
+    .filter((line) => line.kind === "detail" && line !== repaired[incomeIndex])
+    .reduce((sum, line) => sum + (line.value ?? 0), 0);
+  const expectedIncome = total - otherDetails;
+  if (Math.abs((income - expectedIncome) - 1_000_000_000) <= FINAL_TOLERANCE) {
+    repaired[incomeIndex] = { ...repaired[incomeIndex], value: expectedIncome };
+  }
+  return repaired;
+}
+
+/** OCR kadang kehilangan tanda minus pada total non-operasional. */
+function repairNonOperatingTotalSign(lines: readonly MappingLine[]): MappingLine[] {
+  const repaired = [...lines];
+  const totalIndex = repaired.findIndex((line) => /^total\s+pendapatan\s+non\s+operasional$/i.test(line.label.trim()));
+  const income = repaired.find((line) => /^subtotal\s+pendapatan\s+non\s+operasional$/i.test(line.label.trim()));
+  const expense = repaired.find((line) => /^subtotal\s+biaya\s+non\s+operasional$/i.test(line.label.trim()));
+  const printed = totalIndex === -1 ? null : repaired[totalIndex]?.value;
+  if (totalIndex === -1 || printed === null || printed === undefined || income?.value === null || income?.value === undefined || expense?.value === null || expense?.value === undefined) return repaired;
+  const expected = income.value - expense.value;
+  if (Math.abs(Math.abs(printed) - Math.abs(expected)) <= FINAL_TOLERANCE) repaired[totalIndex] = { ...repaired[totalIndex], value: expected };
   return repaired;
 }
 
@@ -1053,7 +1103,10 @@ export function parseFinancialReport(
     // Periode dibaca SEBELUM kop dibuang — kop itu satu-satunya tempat
     // periodenya tercetak.
     const period = detectReportPeriod(scoped.slice(0, Math.max(firstDetailIndex(scoped), 0)).map((line) => line.label));
-    const lines = kind === "cashflow" ? repairSingleLineCashflowSections(stripLetterhead(scoped)) : stripLetterhead(scoped);
+    let lines = stripLetterhead(scoped);
+    if (kind === "cashflow") lines = repairSingleLineCashflowSections(lines);
+    if (kind === "balance-sheet") lines = repairBalanceOcrArtifacts(lines);
+    if (kind === "profit-loss") lines = repairNonOperatingTotalSign(lines);
     const checks = reconcile(lines, kind);
     const failedChecks = checks.filter((check) => !check.passed);
     // Baris detail yang tidak ditutup subtotal tidak pernah ikut terperiksa,

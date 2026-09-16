@@ -54,8 +54,18 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
     verified: true,
   },
   // --- Neraca ------------------------------------------------------------
-  // Aktif sejak parser PDF Neraca ada dan sudah dibuktikan angkanya terhadap
-  // Februari 2026.
+  // Mei memiliki tiga rekening OCBC tambahan yang juga masuk ke satu angka
+  // Kas dan Bank di Excel. Rule lengkap diletakkan lebih dulu; bila PDF lama
+  // belum memuat rekening tersebut, rule fallback di bawahnya yang dipakai.
+  {
+    report: "balance-sheet",
+    combine: "pdf",
+    target: "Kas dan Bank",
+    parts: ["BANK BCA 7195-332266", "BANK BCA 719-5538808", "kas ayat silang QRIS/EDC", "kas ayat silang QRIS/EDC OCBC", "OCBC 90800036395", "OCBC 90800035926"],
+    partCodes: ["11105", "11106", "11107", "11108", "11109", "11110"],
+    note: "Gabungan dari: BANK BCA 7195-332266 + BANK BCA 719-5538808 + kas ayat silang QRIS/EDC + kas ayat silang QRIS/EDC OCBC + OCBC 90800036395 + OCBC 90800035926",
+    verified: true,
+  },
   {
     report: "balance-sheet",
     combine: "pdf",
@@ -71,6 +81,7 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
 
 export const MAPPING_ALIAS_RULES: readonly MappingAliasRule[] = [
   { report: "cashflow", excelLabels: ["Total Aktivasi opersional"], pdfLabel: "Total Aktivitas Operasional" },
+  { report: "cashflow", excelLabels: ["Kenaikan/penuruan kas"], pdfLabel: "Total Kenaikan/Penurunan Kas" },
   { report: "balance-sheet", excelLabels: ["Piutang Sewa Lapangan"], pdfLabel: "Piutang Court Fee", pdfCode: "11301" },
   { report: "balance-sheet", excelLabels: ["Persedian barang dagang", "Persediaan barang dagang"], pdfLabel: "Persediaan barang dagang", pdfCode: "11400" },
   { report: "balance-sheet", excelLabels: ["Jumlah Aset Lancar"], pdfLabel: "Total Aset Lancar" },

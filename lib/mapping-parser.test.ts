@@ -7,6 +7,7 @@ import {
   getCashflowCropScale,
   parseFinancialAmount,
   parseFinancialReport,
+  normalizeOcrAccountCode,
   stripLetterhead,
   type MappingLine,
   type MappingToken,
@@ -15,6 +16,52 @@ import {
 test("cashflow crop tidak memperbesar gambar yang sudah diperbesar", () => {
   assert.equal(getCashflowCropScale(true), 1);
   assert.equal(getCashflowCropScale(false), 3);
+});
+
+test("kode akun OCR yang salah baca tetap dipulihkan", () => {
+  assert.equal(normalizeOcrAccountCode("6Q002"), "60002");
+  assert.equal(normalizeOcrAccountCode("60002"), "60002");
+  assert.equal(normalizeOcrAccountCode("Biaya"), null);
+});
+
+test("nomor rekening panjang tidak dibaca sebagai nominal", () => {
+  const row = (y: number, label: string, amount?: string): MappingToken[] => [
+    ...label.split(" ").map((text, index) => ({ text, x: index * 10, y, page: 1 })),
+    ...(amount ? [{ text: amount, x: 300, y, page: 1 }] : []),
+  ];
+  const result = parseFinancialReport([
+    ...row(0, "Neraca"),
+    ...row(10, "Aset Lancar"),
+    ...row(20, "11109 OCBC 90800036395", "1,000,000.00"),
+    ...row(30, "SubTotal Aset Lancar", "1,000,000.00"),
+    ...row(40, "Total Aset", "1,000,000.00"),
+    ...row(50, "Kewajiban"),
+    ...row(60, "Total Kewajiban", "0.00"),
+    ...row(70, "Modal"),
+    ...row(80, "31000 Modal", "0.00"),
+    ...row(90, "Total Modal", "0.00"),
+    ...row(100, "Total Kewajiban dan Modal", "1,000,000.00"),
+  ], { rowTolerance: 5, kind: "balance-sheet" });
+  assert.equal(result.status, "ok");
+  if (result.status === "ok") assertAmount(findLine(result.lines, "11109").value, 1_000_000, "11109 OCBC");
+});
+
+test("angka modal dengan satu digit OCR ekstra dikoreksi dari Total Modal", () => {
+  const row = (y: number, label: string, amount?: string): MappingToken[] => [
+    ...label.split(" ").map((text, index) => ({ text, x: index * 10, y, page: 1 })),
+    ...(amount ? [{ text: amount, x: 300, y, page: 1 }] : []),
+  ];
+  const result = parseFinancialReport([
+    ...row(0, "Neraca"), ...row(10, "Aset Lancar"),
+    ...row(20, "11105 Bank", "300.00"), ...row(30, "SubTotal Aset Lancar", "300.00"),
+    ...row(40, "Total Aset", "300.00"), ...row(50, "Kewajiban"),
+    ...row(60, "Total Kewajiban", "0.00"), ...row(70, "Modal"),
+    ...row(80, "31000 Modal", "100.00"), ...row(90, "33000 Laba rugi ditahan", "200.00"),
+    ...row(100, "Pendapatan Periode ini", "1,000,000,000.00"), ...row(110, "Total Modal", "300.00"),
+    ...row(120, "Total Kewajiban dan Modal", "300.00"),
+  ], { rowTolerance: 5, kind: "balance-sheet" });
+  assert.equal(result.status, "ok");
+  if (result.status === "ok") assertAmount(findLabel(result.lines, /^Pendapatan Periode ini$/i).value, 0, "Pendapatan Periode ini");
 });
 
 type Fixture = { source: string; rowTolerance: number; tokens: MappingToken[] };

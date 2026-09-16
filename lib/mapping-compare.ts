@@ -288,6 +288,8 @@ export function compareFinancialReports(
   for (const pdf of remaining) rows.push(toRow(null, pdf, null));
 
   const visible = rows.filter((row) => !isEmptyOnOneSide(row));
+  const appliedRules = [...excelApplied.applied, ...pdfApplied.applied];
+  const appliedTargets = new Set(appliedRules.map((rule) => rule.target));
   const summary: ComparisonSummary = {
     cocok: visible.filter((row) => row.status === "COCOK").length,
     beda: visible.filter((row) => row.status === "BEDA").length,
@@ -297,7 +299,10 @@ export function compareFinancialReports(
   return {
     rows: visible,
     summary,
-    appliedRules: [...excelApplied.applied, ...pdfApplied.applied],
-    skippedRules: [...excelApplied.skipped, ...pdfApplied.skipped],
+    appliedRules,
+    // A complete newer rule and a legacy fallback can share one target.
+    // Once the fallback is applied, its intentionally unavailable newer
+    // sibling is not an actionable warning for the user.
+    skippedRules: [...excelApplied.skipped, ...pdfApplied.skipped].filter(({ rule }) => !appliedTargets.has(rule.target)),
   };
 }

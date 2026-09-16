@@ -62,6 +62,7 @@ describe("normalisasi label", () => {
 
   test("SubTotal dan Total adalah label subtotal yang sama", () => {
     assert.equal(normalizeFinancialLabel("SubTotal Pendapatan Non Operasional"), "total pendapatan non operasional");
+    assert.equal(normalizeFinancialLabel("SubTotal Pendapatan wi"), "total pendapatan");
   });
 });
 
@@ -97,7 +98,7 @@ describe("aturan pengelompokan tersedia sebagai data", () => {
 
   test("aturan Neraca kas aktif dan sudah terverifikasi angkanya", () => {
     const rules = rulesForReport("balance-sheet");
-    assert.equal(rules.length, 1);
+    assert.equal(rules.length, 2);
     // verified:true di sini bukan klaim kosong — dibuktikan terhadap Februari
     // 2026 di suite "Neraca Februari 2026" di bawah.
     assert.equal(rules.every((rule) => rule.verified === true), true);
@@ -365,4 +366,12 @@ describe("Arus Kas Februari 2026", () => {
     // Excel bernilai 0, jadi baris itu nihil sebelah dan sudah dibuang.
     assert.equal(result.rows.some((row) => /Investasi|Pendanaan/i.test(row.label)), false);
   });
+});
+
+test("label kenaikan kas yang berbeda tetap cocok", () => {
+  const line = (label: string): FinancialLine => ({ code: null, label, value: 10, kind: "derived", assumedZero: false });
+  const result = compareFinancialReports([line("Kenaikan/penuruan kas")], [line("Total Kenaikan/Penurunan Kas")], "cashflow");
+  assert.equal(result.summary.cocok, 1);
+  assert.equal(result.summary.hanyaExcel, 0);
+  assert.equal(result.summary.hanyaPdf, 0);
 });
