@@ -4,12 +4,18 @@ import { readFileSync } from "node:fs";
 import {
   detectReportPeriod,
   extractEmbeddedJpegPages,
+  getCashflowCropScale,
   parseFinancialAmount,
   parseFinancialReport,
   stripLetterhead,
   type MappingLine,
   type MappingToken,
 } from "./mapping-parser.ts";
+
+test("cashflow crop tidak memperbesar gambar yang sudah diperbesar", () => {
+  assert.equal(getCashflowCropScale(true), 1);
+  assert.equal(getCashflowCropScale(false), 3);
+});
 
 type Fixture = { source: string; rowTolerance: number; tokens: MappingToken[] };
 

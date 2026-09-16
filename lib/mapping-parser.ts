@@ -177,6 +177,10 @@ export const SCAN_RENDER_SCALE = 4.2;
 const EMBEDDED_OCR_MIN_WIDTH = 1800;
 const EMBEDDED_OCR_SCALE = 3;
 
+export function getCashflowCropScale(sourceWasEnlarged: boolean): number {
+  return sourceWasEnlarged ? 1 : 3;
+}
+
 /**
  * Toleransi rekonsiliasi PER BARIS DETAIL, dalam rupiah.
  *
@@ -1362,7 +1366,7 @@ export async function extractScanTokens(
             // mengecilkan teks saat OCR satu halaman penuh.
             let cashflowBlocks: TesseractBlockLike[] | null = null;
             let cashflowTsv: string | null = null;
-            const cashflowCropScale = 3;
+            const cashflowCropScale = getCashflowCropScale(enlargedCanvas !== null);
             const cashflowSource = enlargedCanvas ?? fallbackCanvas;
             const cashflowSourceTop = Math.floor(cashflowSource.height * 0.1);
             const cashflowSourceHeight = Math.floor(cashflowSource.height * 0.42);
