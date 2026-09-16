@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     const requestedUrl = params.get("url");
     const source = (await loadLatestMappingSources(currentStoreId())).find((item) => item.kind === "pdf" && (requestedUrl ? item.url === requestedUrl : requestedPeriod ? item.period === requestedPeriod : true));
     if (!source) return NextResponse.json({ error: "PDF tersimpan tidak ditemukan." }, { status: 404 });
-    const response = await fetch(source.url, { cache: "no-store" });
+    const response = await fetch(source.url, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
     if (!response.ok || !response.body) return NextResponse.json({ error: "PDF tersimpan tidak bisa diambil." }, { status: 502 });
     return new NextResponse(response.body, { headers: { "content-type": source.mimeType, "cache-control": "no-store" } });
   } catch (error) {

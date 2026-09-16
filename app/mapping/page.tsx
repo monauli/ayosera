@@ -489,11 +489,11 @@ export default function MappingPage() {
         for (const candidate of candidates) {
           let fileResponse: Response | null = null;
           try {
-            fileResponse = await fetch(candidate.url, { cache: "no-store" });
+            fileResponse = await fetch(candidate.url, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
           } catch {
             // Blob bisa menolak fetch lintas-origin; lanjutkan lewat endpoint internal.
           }
-          if (!fileResponse?.ok) fileResponse = await fetch(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, { cache: "no-store" });
+          if (!fileResponse?.ok) fileResponse = await fetch(`/api/mapping/source?url=${encodeURIComponent(candidate.url)}`, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
           if (!fileResponse.ok) continue;
           const blob = await fileResponse.blob();
           if (cancelled) return;
