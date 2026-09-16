@@ -177,7 +177,9 @@ export const SCAN_RENDER_SCALE = 4.2;
 // ukuran itu kehilangan baris saldo yang kecil; gambar asli dibesarkan di
 // memori sebelum OCR, tanpa merender ulang halaman PDF lewat pdf.js.
 const EMBEDDED_OCR_MIN_WIDTH = 1800;
-const EMBEDDED_OCR_SCALE = 3;
+// 2x cukup untuk huruf scan 150 DPI. 3x membuat bitmap ~20 MP dan membuat
+// satu halaman OCR memakan waktu sangat lama di browser pengguna.
+const EMBEDDED_OCR_SCALE = 2;
 
 export function getCashflowCropScale(sourceWasEnlarged: boolean): number {
   return sourceWasEnlarged ? 1 : 3;
