@@ -734,7 +734,7 @@ export default function MappingPage() {
       <section className="recon-filters mapping-period-filter" aria-label="Pilih periode">
         <label>
           Periode
-          <select value={period} disabled={availablePeriods.length === 0} onChange={(event) => setPeriod(event.target.value)}>
+          <select value={period} disabled={availablePeriods.length === 0 || pdfBusy} onChange={(event) => setPeriod(event.target.value)}>
             {availablePeriods.length === 0 && <option value={EARLIEST_PERIOD}>{periodLabel(EARLIEST_PERIOD)}</option>}
             {availablePeriods.map((value) => (
               <option key={value} value={value}>
