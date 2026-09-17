@@ -491,6 +491,7 @@ export default function DashboardPage() {
   const today = formatJakartaDate(new Date());
   const currentMonth = today.slice(0, 7);
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
+  const [dataLoading, setDataLoading] = useState(false);
   const [transactionRows, setTransactionRows] = useState<TransactionRow[]>([]);
   // Penanda "request paling baru" untuk loadData() — mencegah response yang
   // lebih lambat dari request LAMA menimpa state dengan data basi bila
@@ -696,6 +697,7 @@ export default function DashboardPage() {
     // tanggal di luar filter aktif. requestId dibandingkan lagi setelah
     // Promise.all selesai; response yang bukan lagi "yang terbaru" dibuang.
     const requestId = ++loadRequestIdRef.current;
+    setDataLoading(true);
     loadAbortRef.current?.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
@@ -753,6 +755,7 @@ export default function DashboardPage() {
       // Server mengoreksi halaman bila melebihi total; sinkronkan agar UI konsisten.
       if (payload.page !== page) setPage(payload.page);
     }
+    if (requestId === loadRequestIdRef.current) setDataLoading(false);
   }
 
   async function syncRange(range: { startDate: string; endDate: string }) {
@@ -2301,6 +2304,7 @@ export default function DashboardPage() {
                 receivedAtMs: receivedAtMs(transaction),
               }))}
               recentLoading={false}
+              dataLoading={dataLoading}
               onViewAll={() => setActiveNav("Transaksi")}
               bookingStatusItems={bookingStatusItems}
               totalBookings={totalBookings}

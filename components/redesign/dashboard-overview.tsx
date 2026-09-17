@@ -87,6 +87,7 @@ export function DashboardOverview({
   courtTopContributionPercent,
   recentRows,
   recentLoading,
+  dataLoading,
   onViewAll,
 }: {
   presets: { label: string; value: string }[];
@@ -121,6 +122,7 @@ export function DashboardOverview({
   events: EventItem[];
   recentRows: RecentRow[];
   recentLoading: boolean;
+  dataLoading: boolean;
   onViewAll: () => void;
 }) {
   // Hanya untuk widget "Status Transaksi Terbaru" — tabel "Transaksi Terbaru"
@@ -128,7 +130,7 @@ export function DashboardOverview({
   const sortedStatusRows = sortByReceivedAtDesc(recentRows);
 
   return (
-    <div className="space-y-4">
+    <div className={`rd-dashboard-content space-y-4 ${dataLoading ? "rd-data-loading" : ""}`}>
       {/* Filter ringkas: Hari / Minggu / Bulan / Rentang khusus. Input bulan
           dan rentang hanya tampil saat modenya aktif — handler tetap yang lama. */}
       <div className="rd-enter flex flex-wrap items-center gap-2">
