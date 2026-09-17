@@ -1285,6 +1285,7 @@ th[scope],
 /* Shared dashboard accent: white surfaces + green actions from the approved
    reference, while retaining the existing dark mode as an option. */
 .rd-shell .rd-nav-item-active { box-shadow:inset 2px 0 0 rgb(5 150 105 / .9), inset 0 0 0 1px rgb(16 185 129 / .14); }
+.rd-theme-toggle { display:none !important; }
 .rd-shell .rd-nav-sub-active { border-color:rgb(5 150 105); background:rgb(16 185 129 / .1); }
 .rd-shell .text-rose-600, .rd-shell .text-rose-500 { color:rgb(5 150 105); }
 .rd-shell .bg-rose-600 { background-color:rgb(5 150 105); }

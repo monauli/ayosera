@@ -203,7 +203,7 @@ export default function InventoryOpnamePage() {
       .catch(() => setUser(null));
   }, []);
   useEffect(() => {
-    const initialMode = readInitialThemeMode();
+    const initialMode: ThemeMode = "light";
     setMode(initialMode);
     document.documentElement.setAttribute("data-mode", initialMode);
     window.localStorage.setItem(THEME_MODE_STORAGE_KEY, initialMode);
@@ -704,7 +704,7 @@ export default function InventoryOpnamePage() {
           )}
           <button
             type="button"
-            className="recon-button secondary"
+            className="recon-button secondary rd-theme-toggle"
             aria-label={mode === "dark" ? "Ganti ke Light Mode" : "Ganti ke Dark Mode"}
             title={mode === "dark" ? "Light Mode" : "Dark Mode"}
             onClick={() =>

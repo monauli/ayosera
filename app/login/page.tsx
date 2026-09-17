@@ -27,7 +27,7 @@ export default function LoginPage() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setMode(readInitialThemeMode());
+    setMode("light");
     setHydrated(true);
   }, []);
 

@@ -366,7 +366,7 @@ export default function MappingPage() {
     // Mapping mengikuti referensi dashboard terang; toggle tetap bisa mengubah
     // ke dark mode dan preferensi itu tetap disimpan.
     const stored = window.localStorage.getItem(THEME_MODE_STORAGE_KEY);
-    const initial = stored === "dark" ? "dark" : "light";
+    const initial: ThemeMode = "light";
     setMode(initial);
     document.documentElement.setAttribute("data-mode", initial);
   }, []);
@@ -783,7 +783,7 @@ export default function MappingPage() {
         <div style={{ display: "flex", gap: ".5rem" }}>
           <button
             type="button"
-            className="recon-button secondary"
+            className="recon-button secondary rd-theme-toggle"
             aria-label={mode === "dark" ? "Ganti ke Light Mode" : "Ganti ke Dark Mode"}
             title={mode === "dark" ? "Light Mode" : "Dark Mode"}
             onClick={() =>

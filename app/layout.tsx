@@ -25,15 +25,8 @@ const geistSans = Geist({
 const THEME_MODE_BOOTSTRAP = `
 (function () {
   try {
-    var stored = localStorage.getItem("ayo-mode");
-    var migrated = localStorage.getItem("ayo-mode-light-migrated");
-    if (!migrated) {
-      stored = "light";
-      localStorage.setItem("ayo-mode", "light");
-      localStorage.setItem("ayo-mode-light-migrated", "1");
-    }
-    var mode = stored === "light" || stored === "dark" ? stored : "light";
-    document.documentElement.setAttribute("data-mode", mode);
+    localStorage.setItem("ayo-mode", "light");
+    document.documentElement.setAttribute("data-mode", "light");
   } catch (error) {
     document.documentElement.setAttribute("data-mode", "light");
   }

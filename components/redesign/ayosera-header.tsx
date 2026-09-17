@@ -78,7 +78,7 @@ export function AyoseraHeader({
           onClick={onToggleMode}
           aria-label={mode === "dark" ? "Ganti ke Light Mode" : "Ganti ke Dark Mode"}
           title={mode === "dark" ? "Light Mode" : "Dark Mode"}
-          className="shrink-0 text-slate-300 hover:bg-white/10 hover:text-white"
+          className="rd-theme-toggle shrink-0 text-slate-300 hover:bg-white/10 hover:text-white"
         >
           {mode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>

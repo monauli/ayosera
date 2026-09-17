@@ -661,7 +661,7 @@ export default function DashboardPage() {
     // berjalan (termasuk saat StrictMode menjalankannya dua kali) ia selalu
     // membaca ULANG nilai yang benar dan menuliskannya kembali — tidak pernah
     // ada state basi yang ikut tertulis.
-    const initialMode = readInitialThemeMode();
+    const initialMode: ThemeMode = "light";
     setMode(initialMode);
     document.documentElement.setAttribute("data-mode", initialMode);
     window.localStorage.setItem(THEME_MODE_STORAGE_KEY, initialMode);
