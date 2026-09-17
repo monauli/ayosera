@@ -797,6 +797,24 @@ th[scope],
 [data-mode="light"] .rd-shell .text-rose-600,
 [data-mode="light"] .rd-shell .text-rose-500 { color: rgb(5 150 105); }
 
+/* Card refinement: compact dashboard cards with the thin, calm treatment of
+   the selected reference. Keep content/layout intact; only surface treatment
+   changes globally in light mode. */
+[data-mode="light"] .rd-shell .rd-card {
+  border-radius: .75rem;
+  box-shadow: 0 4px 18px rgb(15 23 42 / .06);
+  transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease;
+}
+[data-mode="light"] .rd-shell .rd-card:hover {
+  border-color: rgb(110 231 183);
+  box-shadow: 0 8px 24px rgb(15 23 42 / .1);
+}
+[data-mode="light"] .rd-shell .rd-stat-icon {
+  background: rgb(236 253 245);
+  color: rgb(6 95 70);
+  box-shadow: inset 0 0 0 1px rgb(167 243 208);
+}
+
 /* Phase 5B P1 fix: "Monitoring Integritas Data" / "Kesehatan Koneksi"
    (components/private-integration-monitor.tsx) adalah dark-first — kartu
    `bg-black/10,/20` dan banner `bg-cyan-950/20`/`bg-amber-950/10`/
