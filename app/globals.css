@@ -1303,6 +1303,26 @@ th[scope],
 [data-mode="light"] .rd-shell .rd-card { box-shadow:0 12px 30px -24px rgb(15 23 42 / .28); }
 [data-mode="light"] .rd-shell .rd-card:hover { box-shadow:0 16px 34px -24px rgb(5 150 105 / .25); }
 
+/* Referensi dashboard: satu kartu utama hijau, sisanya ringan dan putih. */
+[data-mode="light"] .rd-shell .rd-stat-primary {
+  border-color:rgb(22 101 52);
+  background:linear-gradient(145deg,rgb(39 125 61),rgb(24 91 44));
+  box-shadow:0 14px 28px -20px rgb(22 101 52 / .55);
+}
+[data-mode="light"] .rd-shell .rd-stat-primary .rd-stat-title,
+[data-mode="light"] .rd-shell .rd-stat-primary .rd-stat-value,
+[data-mode="light"] .rd-shell .rd-stat-primary .rd-stat-detail { color:#fff; }
+[data-mode="light"] .rd-shell .rd-stat-primary .rd-stat-icon { background:rgb(255 255 255 / .16); color:#fff; box-shadow:none; }
+[data-mode="light"] .rd-shell .rd-stat-secondary .rd-stat-value { color:rgb(22 101 52); }
+[data-mode="light"] .rd-shell .rd-stat-secondary .rd-stat-icon { background:rgb(236 253 245); color:rgb(5 150 105); }
+
+/* Alle aksi memakai aksen hijau referensi dan memberi umpan balik hover/focus. */
+.rd-shell button, .rd-shell a { transition:color .2s ease, background-color .2s ease, border-color .2s ease, box-shadow .2s ease; }
+[data-mode="light"] .rd-shell .bg-rose-600:hover { background-color:rgb(4 120 87); box-shadow:0 8px 18px -12px rgb(5 150 105 / .7); }
+[data-mode="light"] .rd-shell .hover\:bg-white\/10:hover { background-color:rgb(236 253 245); }
+[data-mode="light"] .rd-shell .hover\:text-white:hover, [data-mode="light"] .rd-shell .hover\:text-rose-300:hover { color:rgb(6 95 70); }
+[data-mode="light"] .rd-shell .rd-stat-card:hover { border-color:rgb(110 231 183); }
+
 /* Tahap 4 — hasil perbandingan kiri-kanan. Lebar penuh di atas kedua panel
    karena isinya menyatukan keduanya. Tetap memakai .recon-table dan
    .recon-badge-* yang sudah ada; yang baru hanya wadah dan ringkasannya. */

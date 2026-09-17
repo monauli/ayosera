@@ -1,5 +1,4 @@
 import type { ElementType, KeyboardEvent } from "react";
-import { BorderBeam } from "@/components/redesign/border-beam";
 
 // Kartu metrik gelap untuk Dashboard redesign. Presentasi murni — nilai dan
 // detail datang dari state/fetch lama di app/page.tsx.
@@ -35,7 +34,7 @@ export function DashboardStatCard({
 
   return (
     <div
-      className={`rd-card rd-enter relative overflow-hidden rounded-2xl p-5 ${
+      className={`rd-card rd-stat-card rd-enter relative overflow-hidden rounded-2xl p-5 ${beam ? "rd-stat-primary" : "rd-stat-secondary"} ${
         interactive ? "cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--ring))]" : ""
       }`}
       style={{ animationDelay: `${delay}ms` }}
@@ -45,12 +44,11 @@ export function DashboardStatCard({
       onClick={onClick}
       onKeyDown={interactive ? handleKeyDown : undefined}
     >
-      {beam && <BorderBeam />}
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-[15px] text-slate-400">{title}</p>
-          <p className="mt-2 truncate text-2xl font-semibold tracking-tight text-slate-50">{value}</p>
-          <p className="mt-1 truncate text-xs text-slate-500">{detail}</p>
+          <p className="rd-stat-title text-[15px] text-slate-400">{title}</p>
+          <p className="rd-stat-value mt-2 truncate text-2xl font-semibold tracking-tight text-slate-50">{value}</p>
+          <p className="rd-stat-detail mt-1 truncate text-xs text-slate-500">{detail}</p>
         </div>
         <div className="rd-stat-icon flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
           <Icon className="h-5 w-5" />
