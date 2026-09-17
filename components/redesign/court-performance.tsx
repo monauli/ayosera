@@ -32,7 +32,7 @@ export function CourtPerformance({
 
       <div className="mt-4 space-y-3.5">
         {items.map((item) => (
-          <div key={item.key} className="space-y-1.5">
+          <div key={item.key} className="space-y-1.5" title={`${item.label}: ${item.revenue}, ${item.count} pesanan`}>
             <div className="flex items-start justify-between gap-3 text-[15px]">
               <span className="font-medium text-slate-200">{item.label}</span>
               <span className="shrink-0 text-right">

@@ -41,6 +41,7 @@ export function DashboardStatCard({
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
       aria-label={interactive ? `${title}: ${value}. ${detail}. Klik untuk membuka daftar transaksi.` : undefined}
+      title={`${title}: ${value} — ${detail}`}
       onClick={onClick}
       onKeyDown={interactive ? handleKeyDown : undefined}
     >
