@@ -830,6 +830,12 @@ export default function MappingPage() {
               <p>{periodWarning}</p>
             </div>
           )}
+          {pdfResult && pdfViews[activeReport].state !== "ok" && pdfViews[activeReport].state !== "empty" && (
+            <ReportBox title={`PDF — ${REPORT_TITLES[activeReport]}`} view={pdfViews[activeReport]} open={false} showCode />
+          )}
+          {excelResults[activeReport] && excelViews[activeReport].state !== "ok" && (
+            <ReportBox title={`Excel — ${REPORT_TITLES[activeReport]}`} view={excelViews[activeReport]} open={false} showCode={false} />
+          )}
           <p className="mapping-note">
             {/* Perbandingan sengaja tidak jalan kalau salah satu sisi ditolak
                 pengaman aritmatika — membandingkan angka yang sudah diketahui
