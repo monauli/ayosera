@@ -217,7 +217,7 @@ export function DashboardOverview({
       {/* Susunan analitik: Status Booking (1fr) | Perbandingan Pendapatan Bulanan
           (1.6fr, lebih lebar) | Performa Lapangan (1fr). Turun ke 2 kolom pada
           tablet, 1 kolom pada mobile — tidak ada horizontal overflow. */}
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1.6fr_1fr]">
+      <section className="rd-analytics-grid grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1.6fr_1fr]">
         <div className="rd-card rd-enter relative overflow-hidden rounded-2xl p-5" style={{ animationDelay: "180ms" }}>
           <BorderBeam />
           <h2 className="text-base font-semibold text-slate-100">Status Booking</h2>
@@ -255,7 +255,7 @@ export function DashboardOverview({
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.8fr_1fr]">
+      <section className="rd-activity-grid grid gap-4 xl:grid-cols-[1.8fr_1fr]">
         <div className="rd-card rd-enter relative min-w-0 rounded-2xl p-5" style={{ animationDelay: "420ms" }}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

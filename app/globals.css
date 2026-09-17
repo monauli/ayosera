@@ -1286,6 +1286,13 @@ th[scope],
    reference, while retaining the existing dark mode as an option. */
 .rd-shell .rd-nav-item-active { box-shadow:inset 2px 0 0 rgb(5 150 105 / .9), inset 0 0 0 1px rgb(16 185 129 / .14); }
 .rd-theme-toggle { display:none !important; }
+.rd-shell .rd-analytics-grid, .rd-shell .rd-activity-grid { scroll-margin-top:5rem; }
+.rd-shell .rd-analytics-grid > .rd-card, .rd-shell .rd-activity-grid > .rd-card { border-radius:1rem; }
+.rd-shell .rd-analytics-grid > .rd-card { min-height:24rem; }
+.rd-shell .rd-activity-grid > .rd-card { min-height:18rem; }
+[data-mode="light"] .rd-shell .rd-analytics-grid > .rd-card, [data-mode="light"] .rd-shell .rd-activity-grid > .rd-card { border-color:rgb(226 232 240); background:rgb(255 255 255); }
+[data-mode="light"] .rd-shell .rd-analytics-grid > .rd-card:hover, [data-mode="light"] .rd-shell .rd-activity-grid > .rd-card:hover { border-color:rgb(167 243 208); }
+@media (max-width:767px) { .rd-shell .rd-analytics-grid > .rd-card, .rd-shell .rd-activity-grid > .rd-card { min-height:0; } }
 .rd-shell .rd-nav-sub-active { border-color:rgb(5 150 105); background:rgb(16 185 129 / .1); }
 .rd-shell .text-rose-600, .rd-shell .text-rose-500 { color:rgb(5 150 105); }
 .rd-shell .bg-rose-600 { background-color:rgb(5 150 105); }
