@@ -19,12 +19,14 @@ export async function loadMappingSources(storeId: number): Promise<MappingSource
 
 export async function tagMappingSourcePeriod(storeId: number, url: string, period: string): Promise<void> {
   const { mappingSources } = await collections();
-  await mappingSources.updateOne({ storeId, kind: "pdf", url }, { $set: { period } });
+  const result = await mappingSources.updateOne({ storeId, kind: "pdf", url }, { $set: { period } });
+  if (result.matchedCount === 0) throw new Error("PDF tersimpan tidak ditemukan untuk periode ini.");
 }
 
 export async function saveMappingSourceParse(storeId: number, url: string, parsedReports: unknown, parsedWithVersion: string): Promise<void> {
   const { mappingSources } = await collections();
-  await mappingSources.updateOne({ storeId, kind: "pdf", url }, { $set: { parsedReports, parsedWithVersion } });
+  const result = await mappingSources.updateOne({ storeId, kind: "pdf", url }, { $set: { parsedReports, parsedWithVersion } });
+  if (result.matchedCount === 0) throw new Error("PDF tersimpan tidak ditemukan; hasil baca belum disimpan.");
 }
 
 /** Nama lama dipertahankan untuk caller di luar modul selama migrasi. */
