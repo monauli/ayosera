@@ -1362,3 +1362,13 @@ th[scope],
 [data-mode="light"] .rd-shell .rd-card:hover { transform:translateY(-2px); }
 .rd-shell button:focus-visible, .rd-shell a:focus-visible { outline:2px solid rgb(16 185 129); outline-offset:2px; }
 @media (prefers-reduced-motion: reduce) { .rd-shell .rd-card, .rd-shell button, .rd-shell a { transition:none; } .rd-shell .rd-card:hover { transform:none; } }
+@media (max-width:767px) {
+  .rd-shell .rd-header { min-height:4rem; }
+  .rd-shell .rd-header > div { gap:.5rem; padding-inline:.75rem; }
+  .rd-shell .rd-header .rd-chip { max-width:8.5rem; overflow:hidden; text-overflow:ellipsis; }
+  .rd-shell .rd-dashboard-content { padding-bottom:1rem; }
+  .rd-shell .rd-dashboard-content > .rd-analytics-grid,
+  .rd-shell .rd-dashboard-content > .rd-activity-grid { gap:.75rem; }
+  .rd-shell .rd-dashboard-content .rd-capsule-group { width:100%; overflow-x:auto; flex-wrap:nowrap; }
+  .rd-shell .rd-dashboard-content .rd-capsule { flex:0 0 auto; }
+}
