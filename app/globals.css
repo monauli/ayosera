@@ -1332,6 +1332,13 @@ th[scope],
 [data-mode="light"] .rd-shell .rd-nav-item-active { color:rgb(6 95 70); background:rgb(236 253 245); }
 [data-mode="light"] .rd-shell .rd-capsule:hover { color:rgb(6 95 70); background:rgb(236 253 245); }
 [data-mode="light"] .rd-shell .rd-capsule-active { color:rgb(6 95 70); background:rgb(220 252 231); border-color:rgb(134 239 172); }
+[data-mode="light"] .rd-shell .rd-sidebar { background:linear-gradient(180deg,rgb(255 255 255),rgb(248 253 250)); border-right-color:rgb(209 250 229); }
+[data-mode="light"] .rd-shell .rd-sidebar .rd-logo { background:rgb(220 252 231); color:rgb(6 95 70); box-shadow:0 6px 16px -12px rgb(5 150 105 / .7); }
+[data-mode="light"] .rd-shell .rd-sidebar .rd-nav-item,
+[data-mode="light"] .rd-shell .rd-sidebar .rd-nav-sub { transition:background-color .2s ease,color .2s ease,border-color .2s ease,transform .2s ease; }
+[data-mode="light"] .rd-shell .rd-sidebar .rd-nav-item:hover,
+[data-mode="light"] .rd-shell .rd-sidebar .rd-nav-sub:hover { transform:translateX(2px); }
+[data-mode="light"] .rd-shell .rd-sidebar .rd-sidebar-status { border:1px solid rgb(167 243 208); background:rgb(236 253 245); }
 
 /* Tahap 4 — hasil perbandingan kiri-kanan. Lebar penuh di atas kedua panel
    karena isinya menyatukan keduanya. Tetap memakai .recon-table dan
