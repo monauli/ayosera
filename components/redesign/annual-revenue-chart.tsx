@@ -46,8 +46,8 @@ function formatRupiahCompact(value: number) {
 }
 
 function barFill(status: MonthlyRevenueStatus) {
-  if (status === "running") return "#86efac"; // hijau muda — bulan berjalan
-  if (status === "partial") return "#bbf7d0"; // hijau pucat — data parsial
+  if (status === "running") return "#2dd4bf"; // teal — bulan berjalan
+  if (status === "partial") return "#f59e0b"; // amber — data parsial
   return "#15803d"; // hijau utama Ayosera — bulan lengkap
 }
 

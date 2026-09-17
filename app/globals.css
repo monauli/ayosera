@@ -1339,6 +1339,8 @@ th[scope],
 [data-mode="light"] .rd-shell .rd-sidebar .rd-nav-item:hover,
 [data-mode="light"] .rd-shell .rd-sidebar .rd-nav-sub:hover { transform:translateX(2px); }
 [data-mode="light"] .rd-shell .rd-sidebar .rd-sidebar-status { border:1px solid rgb(167 243 208); background:rgb(236 253 245); }
+[data-mode="light"] .rd-shell .rd-court-progress { background:rgb(241 245 249); }
+[data-mode="light"] .rd-shell .rd-court-progress > div { background:linear-gradient(90deg,rgb(14 116 144),rgb(45 212 191)); }
 
 /* Tahap 4 — hasil perbandingan kiri-kanan. Lebar penuh di atas kedua panel
    karena isinya menyatukan keduanya. Tetap memakai .recon-table dan

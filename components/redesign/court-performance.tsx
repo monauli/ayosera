@@ -40,7 +40,7 @@ export function CourtPerformance({
                 <span className="ml-1.5 text-xs tabular-nums text-slate-500">{item.count} pesanan</span>
               </span>
             </div>
-            <Progress value={item.progress} className="bg-white/10" />
+            <Progress value={item.progress} className="rd-court-progress bg-white/10" />
           </div>
         ))}
       </div>
