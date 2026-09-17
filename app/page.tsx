@@ -496,6 +496,7 @@ export default function DashboardPage() {
   // lebih lambat dari request LAMA menimpa state dengan data basi bila
   // datang belakangan daripada response request BARU (race condition).
   const loadRequestIdRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
   const [txnMeta, setTxnMeta] = useState<{ total: number; totalPages: number }>({ total: 0, totalPages: 1 });
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
@@ -695,6 +696,9 @@ export default function DashboardPage() {
     // tanggal di luar filter aktif. requestId dibandingkan lagi setelah
     // Promise.all selesai; response yang bukan lagi "yang terbaru" dibuang.
     const requestId = ++loadRequestIdRef.current;
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
 
     const params = buildFilterParams(range);
     // Cache buster: pastikan browser/CDN tidak mengembalikan data lama.
@@ -718,8 +722,8 @@ export default function DashboardPage() {
     const transactionPath = `/api/transactions?${txnParams.toString()}`;
 
     const [dashboardResponse, transactionsResponse] = await Promise.all([
-      fetch(dashboardPath, { cache: "no-store" }),
-      fetch(transactionPath, { cache: "no-store" }),
+      fetch(dashboardPath, { cache: "no-store", signal: controller.signal }),
+      fetch(transactionPath, { cache: "no-store", signal: controller.signal }),
     ]);
 
     // Sudah ada request lebih baru yang berjalan (mis. user pindah filter
