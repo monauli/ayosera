@@ -1062,19 +1062,16 @@ export default function DashboardPage() {
     const earliestDay = earliestTransactionDate ? earliestTransactionDate.slice(8, 10) : null;
 
     async function run() {
-      const points: MonthlyRevenuePoint[] = [];
-      for (let index = 0; index < 12; index++) {
+      const points = await Promise.all(Array.from({ length: 12 }, async (_, index): Promise<MonthlyRevenuePoint> => {
         const monthValue = `${annualRevenueYear}-${String(index + 1).padStart(2, "0")}`;
         const label = MONTH_SHORT_LABELS[index];
         const fullLabel = `${MONTH_FULL_LABELS[index]} ${annualRevenueYear}`;
 
         if (monthValue > currentMonth) {
-          points.push({ monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "future" });
-          continue;
+          return { monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "future" };
         }
         if (earliestMonth && monthValue < earliestMonth) {
-          points.push({ monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "unavailable" });
-          continue;
+          return { monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "unavailable" };
         }
 
         const range = monthRangeFromValue(monthValue);
@@ -1092,32 +1089,32 @@ export default function DashboardPage() {
           });
           if (response.status === 401) {
             await redirectToLogin();
-            return;
+            return { monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "unavailable" };
           }
           const payload = response.ok
             ? ((await response.json().catch(() => null)) as {
                 metrics?: { revenueMonth?: string; totalTransactions?: number };
               } | null)
             : null;
-          if (cancelled) return;
+          if (cancelled) return { monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "unavailable" };
 
           let status: MonthlyRevenueStatus = "complete";
           if (monthValue === currentMonth) status = "running";
           else if (earliestMonth === monthValue && earliestDay && earliestDay !== "01") status = "partial";
 
-          points.push({
+          return {
             monthIndex: index,
             label,
             fullLabel,
             amount: parseRupiahToNumber(payload?.metrics?.revenueMonth),
             transactionCount: payload?.metrics?.totalTransactions ?? 0,
             status,
-          });
+          };
         } catch (error) {
-          if ((error as Error)?.name === "AbortError") return;
-          points.push({ monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "unavailable" });
+          if ((error as Error)?.name === "AbortError") throw error;
+          return { monthIndex: index, label, fullLabel, amount: null, transactionCount: null, status: "unavailable" };
         }
-      }
+      }));
       if (cancelled) return;
       annualRevenueCacheRef.current.set(annualRevenueYear, points);
       setAnnualRevenueData(points);
