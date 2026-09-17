@@ -1359,6 +1359,15 @@ th[scope],
 .mapping-rule-tag { display:block; margin-top:.2rem; color:rgb(59 130 246); font-size:.68rem; overflow-wrap:anywhere; }
 [data-mode="dark"] .mapping-rule-tag { color:rgb(147 197 253); }
 @media (max-width:720px){ .mapping-compare{padding:.7rem} .mapping-compare-wrap .recon-table{font-size:.72rem} }
+[data-mode="light"] .rd-shell .mapping-restore-status { border-color:rgb(110 231 183); background:rgb(236 253 245); }
+[data-mode="light"] .rd-shell .mapping-restore-inline { color:rgb(6 95 70); }
+[data-mode="light"] .rd-shell .mapping-progress { background:rgb(226 232 240); }
+[data-mode="light"] .rd-shell .mapping-progress span { background:rgb(5 150 105); }
+[data-mode="light"] .rd-shell .recon-skeleton { border-color:rgb(167 243 208); background:rgb(236 253 245); color:rgb(6 95 70); }
+[data-mode="light"] .rd-shell .recon-error { color:rgb(190 18 60); }
+[data-mode="light"] .rd-shell .recon-badge-warn { border-color:rgb(251 191 36 / .55); background:rgb(255 251 235); color:rgb(146 64 14); }
+[data-mode="light"] .mapping-page .mapping-progress span { background:rgb(5 150 105); }
+[data-mode="light"] .mapping-page .mapping-restore-status { border-color:rgb(110 231 183); background:rgb(236 253 245); }
 
 [data-mode="light"] .rd-shell .rd-card { transition:transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
 [data-mode="light"] .rd-shell .rd-card:hover { transform:translateY(-2px); }
