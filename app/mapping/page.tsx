@@ -925,9 +925,9 @@ export default function MappingPage() {
               {pdfFile.fileName} · {(pdfFile.size / 1024 / 1024).toFixed(1)} MB
             </p>
           )}
-          {pdfResult && pdfFile?.url && !pdfCacheSaved && !pdfBusy && periodGuard.state !== "mismatch" && (
-            <button type="button" className="recon-button secondary" disabled={pdfSaveBusy || periodLocked} onClick={() => void savePdfResult()}>
-              {pdfSaveBusy ? <Loader2 className="spin" size={14} /> : <FileText size={14} />} {pdfSaveBusy ? "Menyimpan hasil baca..." : "Coba Simpan Hasil Baca PDF"}
+          {pdfResult && pdfFile?.url && !pdfBusy && periodGuard.state !== "mismatch" && (
+            <button type="button" className="recon-button secondary" disabled={pdfSaveBusy || periodLocked || pdfCacheSaved} onClick={() => void savePdfResult()}>
+              {pdfSaveBusy ? <Loader2 className="spin" size={14} /> : <FileText size={14} />} {pdfSaveBusy ? "Menyimpan hasil baca..." : pdfCacheSaved ? "Hasil Baca PDF Tersimpan" : "Simpan Hasil Baca PDF"}
             </button>
           )}
           {pdfCacheSaved && <p className="mapping-note">Hasil baca PDF tersimpan dan bisa dipakai di perangkat lain.</p>}
