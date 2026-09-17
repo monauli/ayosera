@@ -1259,6 +1259,29 @@ th[scope],
 @media (max-width:1100px){ .mapping-panels{grid-template-columns:1fr} }
 @media (max-width:720px){ .mapping-panel{padding:.7rem} .mapping-lines{max-height:16rem} .mapping-lock-bar{align-items:stretch; flex-direction:column} }
 
+/* Mapping polish: sumber tetap ringkas, tetapi terbaca sebagai dua kartu kerja.
+   Hover hanya mengubah warna/border agar layout tidak bergeser. */
+.mapping-panels { gap:1rem; }
+.mapping-panels .mapping-panel { min-height:8.25rem; padding:1rem; border:1px solid rgb(var(--rd-card-border)); border-radius:1rem; background:linear-gradient(145deg,rgb(var(--rd-card-from)),rgb(var(--rd-card-to))); transition:border-color .2s ease, box-shadow .2s ease; }
+.mapping-panels .mapping-panel:hover { border-color:rgb(var(--rd-card-border-hover)); box-shadow:0 10px 26px rgb(15 23 42 / .08); }
+.mapping-panels .mapping-panel-head { display:grid; gap:.3rem; }
+.mapping-panels .mapping-panel-head h2 { display:block; margin:0; font-size:1rem; letter-spacing:-.01em; }
+.mapping-panels .mapping-upload { margin-top:.55rem; }
+.mapping-panels .mapping-panel > .mapping-note:not(.mapping-upload .mapping-note) { display:block; margin-top:.25rem; }
+.mapping-panels .mapping-panel .recon-button.secondary { min-height:2.35rem; border-radius:.65rem; }
+.mapping-tabs { width:max-content; max-width:100%; padding:.2rem; border:1px solid rgb(var(--rd-card-border)); border-radius:.8rem; background:rgb(var(--rd-card-from)); box-shadow:0 2px 8px rgb(15 23 42 / .04); }
+.mapping-tabs button { border:0; border-radius:.6rem; padding:.6rem .95rem; color:rgb(var(--rd-text-tertiary)); font-size:.8rem; font-weight:650; transition:color .2s ease, background-color .2s ease, box-shadow .2s ease; }
+.mapping-tabs button:hover { transform:none; border-color:transparent; background:rgb(236 253 245); color:rgb(6 95 70); }
+.mapping-tabs button.is-active { border:1px solid rgb(110 231 183); background:rgb(5 150 105); color:#fff; box-shadow:0 4px 10px rgb(5 150 105 / .18); }
+.mapping-tabs button.is-active:hover { background:rgb(4 120 87); color:#fff; }
+.mapping-compare { box-shadow:0 8px 24px rgb(15 23 42 / .05); }
+.mapping-report { transition:border-color .2s ease, box-shadow .2s ease; }
+.mapping-report:hover { border-color:rgb(var(--rd-card-border-hover)); box-shadow:0 4px 14px rgb(15 23 42 / .05); }
+.mapping-report > summary { transition:background-color .2s ease, color .2s ease; }
+.mapping-report > summary:hover { background:rgb(236 253 245 / .6); color:rgb(6 95 70); }
+.mapping-page .recon-button:focus-visible, .mapping-page .mapping-tabs button:focus-visible { box-shadow:0 0 0 3px rgb(16 185 129 / .2); }
+@media (max-width:720px){ .mapping-tabs { width:100%; } .mapping-tabs button { flex:1; padding-inline:.55rem; } .mapping-panels .mapping-panel { min-height:0; } }
+
 /* Tahap 4 — hasil perbandingan kiri-kanan. Lebar penuh di atas kedua panel
    karena isinya menyatukan keduanya. Tetap memakai .recon-table dan
    .recon-badge-* yang sudah ada; yang baru hanya wadah dan ringkasannya. */
