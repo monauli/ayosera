@@ -74,7 +74,7 @@ const AYO_TOKEN_STATUS_COLOR: Record<AyoTokenHealth["status"], string> = {
 // Status Indonesia dari classifyTokenHealth() (lib/private-integration-monitor.ts) — pola sama
 // dengan AYO_TOKEN_STATUS_COLOR di atas, key set beda karena sumbernya beda fungsi/bahasa.
 const TOKEN_HEALTH_STATUS_COLOR: Record<TokenHealthStatus, string> = {
-  AKTIF: "text-cyan-200",
+  AKTIF: "text-emerald-700",
   AKAN_KEDALUWARSA: "text-amber-300",
   KEDALUWARSA: "text-rose-300",
   UNAUTHORIZED: "text-rose-300",
@@ -109,7 +109,7 @@ export function PrivateIntegrationMonitor() {
 
   if (state.kind === "loading") {
     return (
-      <section className="pim-panel mt-6 flex items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4 text-sm text-slate-400">
+      <section className="pim-panel mt-6 flex items-center gap-2 rounded-xl border border-emerald-300/40 bg-emerald-50 p-4 text-sm text-slate-600">
         <Loader2 className="h-4 w-4 animate-spin" /> Memuat status integrasi...
       </section>
     );
@@ -155,13 +155,13 @@ export function PrivateIntegrationMonitor() {
   const otherHealth = health.filter((item) => item.source !== "ayo-mobile");
 
   return (
-    <section className="pim-panel mt-6 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-4">
+    <section className="pim-panel mt-6 rounded-xl border border-emerald-300/60 bg-emerald-50/70 p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-slate-100">Monitoring Integritas Data</h2>
           <p className="mt-1 text-sm text-slate-400">Hanya metadata aman; token dan credential tidak pernah ditampilkan.</p>
         </div>
-        <Button type="button" variant="outline" onClick={() => void load()}>
+        <Button type="button" className="bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => void load()}>
           <RefreshCw className="h-4 w-4" /> Periksa Sekarang
         </Button>
       </div>
