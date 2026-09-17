@@ -789,6 +789,14 @@ th[scope],
   background-color: rgb(var(--rd-surface) / var(--rd-surface-alpha-strong));
 }
 
+/* Dashboard skin: green is the primary action/status accent in the light
+   reference UI; rose remains reserved for errors and destructive actions. */
+[data-mode="light"] .rd-shell .bg-rose-600 { background-color: rgb(5 150 105); }
+[data-mode="light"] .rd-shell .hover\:bg-rose-700:hover,
+[data-mode="light"] .rd-shell .hover\:bg-rose-500:hover { background-color: rgb(4 120 87); }
+[data-mode="light"] .rd-shell .text-rose-600,
+[data-mode="light"] .rd-shell .text-rose-500 { color: rgb(5 150 105); }
+
 /* Phase 5B P1 fix: "Monitoring Integritas Data" / "Kesehatan Koneksi"
    (components/private-integration-monitor.tsx) adalah dark-first — kartu
    `bg-black/10,/20` dan banner `bg-cyan-950/20`/`bg-amber-950/10`/
