@@ -46,9 +46,9 @@ function formatRupiahCompact(value: number) {
 }
 
 function barFill(status: MonthlyRevenueStatus) {
-  if (status === "running") return "#f472b6"; // rose lebih terang — bulan berjalan (belum penuh)
-  if (status === "partial") return "#fda4af"; // rose muda — cakupan data parsial
-  return "#e11d48"; // rose/pink utama Ayosera — bulan lengkap
+  if (status === "running") return "#86efac"; // hijau muda — bulan berjalan
+  if (status === "partial") return "#bbf7d0"; // hijau pucat — data parsial
+  return "#15803d"; // hijau utama Ayosera — bulan lengkap
 }
 
 function RevenueTooltip({ active, payload }: { active?: boolean; payload?: { payload: MonthlyRevenuePoint }[] }) {
