@@ -87,12 +87,12 @@ test("THEME_MODE_STORAGE_KEY: kunci localStorage tidak berubah dari mekanisme ex
 // tulis sempat jalan dengan `mode` basi sebelum effect baca sempat mengoreksi,
 // dan di bawah React StrictMode koreksi itu tidak pernah benar-benar menang).
 
-test("app/page.tsx: baca (readInitialThemeMode) dan tulis (setAttribute + localStorage.setItem) mode terjadi dalam SATU effect mount yang sama", () => {
+test("app/page.tsx: mode light diterapkan dan disimpan saat mount", () => {
   const source = pageSource();
   const mountEffectMatch = source.match(/useEffect\(\(\) => \{\s*const saved = window\.localStorage\.getItem\(THEME_STORAGE_KEY\);[\s\S]*?\}, \[\]\);/);
   assert.ok(mountEffectMatch, "effect mount yang membaca theme+mode harus ditemukan");
   const mountEffectBody = mountEffectMatch[0];
-  assert.ok(mountEffectBody.includes("readInitialThemeMode()"));
+  assert.ok(mountEffectBody.includes('const initialMode: ThemeMode = "light";'));
   assert.ok(mountEffectBody.includes("setMode(initialMode)"));
   assert.ok(mountEffectBody.includes('document.documentElement.setAttribute("data-mode", initialMode)'));
   assert.ok(mountEffectBody.includes("window.localStorage.setItem(THEME_MODE_STORAGE_KEY, initialMode)"));
@@ -107,13 +107,10 @@ test("app/page.tsx: TIDAK ADA lagi effect terpisah yang menulis mode berdasarkan
   );
 });
 
-test("app/login/page.tsx: mode dikoreksi lewat effect mount yang memanggil readInitialThemeMode() (bukan lazy initializer yang bisa memicu hydration mismatch)", () => {
+test("app/login/page.tsx: mode light diterapkan lewat effect mount", () => {
   const source = loginSource();
   assert.ok(source.includes('const [mode, setMode] = useState<ThemeMode>("light");'));
-  // Effect mount boleh berisi pernyataan lain (mis. penanda hydration untuk
-  // tombol submit), yang dijaga di sini adalah setMode(readInitialThemeMode())
-  // berada di dalam effect dependency [] — bukan di initializer useState.
-  assert.ok(/useEffect\(\(\) => \{[^}]*setMode\(readInitialThemeMode\(\)\);[^}]*\}, \[\]\);/.test(source));
+  assert.ok(/useEffect\(\(\) => \{[^}]*setMode\("light"\);[^}]*\}, \[\]\);/.test(source));
   assert.equal(source.includes('useState<ThemeMode>(() => readInitialThemeMode())'), false, "lazy initializer menyebabkan mismatch server/klien (server tidak punya window)");
 });
 
