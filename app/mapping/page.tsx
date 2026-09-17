@@ -360,7 +360,10 @@ export default function MappingPage() {
   }, []);
 
   useEffect(() => {
-    const initial = readInitialThemeMode();
+    // Mapping mengikuti referensi dashboard terang; toggle tetap bisa mengubah
+    // ke dark mode dan preferensi itu tetap disimpan.
+    const stored = window.localStorage.getItem(THEME_MODE_STORAGE_KEY);
+    const initial = stored === "dark" ? "dark" : "light";
     setMode(initial);
     document.documentElement.setAttribute("data-mode", initial);
   }, []);

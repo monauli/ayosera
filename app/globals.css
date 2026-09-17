@@ -1215,13 +1215,19 @@ th[scope],
 .mapping-progress span { display:block; width:40%; height:100%; border-radius:inherit; background:rgb(59 130 246); animation:mapping-progress 1.2s ease-in-out infinite; }
 @keyframes mapping-progress { 0% { transform:translateX(-120%); } 100% { transform:translateX(280%); } }
 .mapping-page { display:flex; flex-direction:column; }
+.mapping-page .recon-button:not(.danger) { background:rgb(5 150 105); color:#fff; border-color:rgb(5 150 105); }
+.mapping-page .recon-button:not(.danger):hover { background:rgb(4 120 87); border-color:rgb(4 120 87); transform:translateY(-1px); box-shadow:0 6px 14px rgb(5 150 105 / .18); }
+.mapping-page .recon-button.secondary { background:rgb(var(--rd-card-from)); color:rgb(var(--rd-text-secondary)); border-color:rgb(var(--rd-card-border)); }
+.mapping-page .recon-button.secondary:hover { background:rgb(236 253 245); color:rgb(6 95 70); border-color:rgb(110 231 183); }
+.mapping-page .recon-button:focus-visible,
+.mapping-page .mapping-tabs button:focus-visible { outline:2px solid rgb(16 185 129); outline-offset:2px; }
 .mapping-page > .mapping-period-filter { order:1; width:100%; }
 .mapping-page > .mapping-panels { order:2; width:100%; }
 .mapping-results-grid { order:3; width:100%; max-width:1500px; margin:0 auto; display:grid; grid-template-columns:1fr; gap:.8rem; align-items:start; }
 .mapping-results-grid .mapping-compare { min-width:0; max-width:none; margin:0; }
 .mapping-tabs { display:flex; gap:.5rem; border-bottom:1px solid var(--border); }
 .mapping-tabs button { border:1px solid transparent; border-bottom:2px solid transparent; border-radius:.55rem .55rem 0 0; background:transparent; color:var(--muted); padding:.7rem 1rem; cursor:pointer; font:inherit; transition:color .18s ease, background .18s ease, border-color .18s ease, transform .18s ease; }
-.mapping-tabs button:hover { color:var(--foreground); background:color-mix(in srgb, var(--primary) 14%, transparent); border-color:color-mix(in srgb, var(--primary) 28%, transparent); transform:translateY(-2px); }
+.mapping-tabs button:hover { color:rgb(6 95 70); background:rgb(236 253 245); border-color:rgb(167 243 208); transform:translateY(-2px); }
 .mapping-tabs button.is-active { color:var(--foreground); border-bottom-color:var(--primary); }
 .mapping-lock-bar { order:4; width:100%; max-width:1500px; margin:0 auto 1rem; display:flex; align-items:center; justify-content:flex-end; gap:.7rem; min-height:2.8rem; }
 @media (max-width:1100px){ .mapping-panels{grid-template-columns:1fr} }
