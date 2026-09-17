@@ -44,12 +44,19 @@ test("periode PDF lama dapat dikenali dari nama file tanpa OCR", () => {
   assert.equal(selectPdfForPeriod([selected], "2026-02")?.fileName, "Laporan Keuangan 0226_compressed.pdf");
 });
 
+test("PDF upload ulang tanpa cache tidak menutupi hasil baca tersimpan", () => {
+  const old = { ...source("pdf", "2026-05-01T00:00:00.000Z", "2026-05"), parsedReports: { "profit-loss": { status: "ok" } } };
+  const newer = source("pdf", "2026-05-02T00:00:00.000Z", "2026-05");
+  const selected = selectMappingSources([newer, old]);
+  assert.equal(selected.find((item) => item.kind === "pdf")?.url, old.url);
+});
+
 test("hasil PDF tersimpan dipakai hanya bila versinya masih sesuai", () => {
   const reports = { "profit-loss": { status: "ok" } };
   const cached = { parsedReports: reports, parsedWithVersion: "1" };
   assert.deepEqual(getCachedPdfReports(cached, "1"), reports);
   assert.deepEqual(getCachedPdfReports(cached, "2"), reports);
-  assert.equal(getCachedPdfReports({ parsedReports: reports }, "1"), null);
+  assert.deepEqual(getCachedPdfReports({ parsedReports: reports }, "1"), reports);
 });
 
 test("pemulihan PDF yang gagal tidak mengulang percobaan identik", () => {

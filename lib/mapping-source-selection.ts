@@ -44,7 +44,12 @@ export function selectMappingSources(rows: readonly MappingSourceDocument[]): Ma
       legacyPdf.push(row);
       continue;
     }
-    if (!pdfByPeriod.has(period)) pdfByPeriod.set(period, row.period === period ? row : { ...row, period });
+    const candidate = row.period === period ? row : { ...row, period };
+    const current = pdfByPeriod.get(period);
+    // Upload ulang yang belum selesai OCR tidak boleh menutupi PDF lama yang
+    // sudah punya cache. Pilih file terbaru bila keduanya sama-sama tersimpan;
+    // bila tidak, gunakan hasil baca tersimpan agar periode tidak OCR ulang.
+    if (!current || (!current.parsedReports && candidate.parsedReports)) pdfByPeriod.set(period, candidate);
   }
   return [
     ...(excel ? [excel] : []),
