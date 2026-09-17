@@ -1282,6 +1282,19 @@ th[scope],
 .mapping-page .recon-button:focus-visible, .mapping-page .mapping-tabs button:focus-visible { box-shadow:0 0 0 3px rgb(16 185 129 / .2); }
 @media (max-width:720px){ .mapping-tabs { width:100%; } .mapping-tabs button { flex:1; padding-inline:.55rem; } .mapping-panels .mapping-panel { min-height:0; } }
 
+/* Shared dashboard accent: white surfaces + green actions from the approved
+   reference, while retaining the existing dark mode as an option. */
+.rd-shell .rd-nav-item-active { box-shadow:inset 2px 0 0 rgb(5 150 105 / .9), inset 0 0 0 1px rgb(16 185 129 / .14); }
+.rd-shell .rd-nav-sub-active { border-color:rgb(5 150 105); background:rgb(16 185 129 / .1); }
+.rd-shell .text-rose-600, .rd-shell .text-rose-500 { color:rgb(5 150 105); }
+.rd-shell .bg-rose-600 { background-color:rgb(5 150 105); }
+.rd-shell .hover\:bg-rose-700:hover, .rd-shell .hover\:bg-rose-500:hover { background-color:rgb(4 120 87); }
+.rd-shell .active\:bg-rose-800:active, .rd-shell .active\:bg-rose-700:active { background-color:rgb(6 95 70); }
+.rd-shell .border-rose-500, .rd-shell .border-rose-600 { border-color:rgb(16 185 129); }
+.rd-shell .ring-rose-400:focus-visible { --tw-ring-color:rgb(110 231 183); }
+[data-mode="light"] .rd-shell .rd-card { box-shadow:0 12px 30px -24px rgb(15 23 42 / .28); }
+[data-mode="light"] .rd-shell .rd-card:hover { box-shadow:0 16px 34px -24px rgb(5 150 105 / .25); }
+
 /* Tahap 4 — hasil perbandingan kiri-kanan. Lebar penuh di atas kedua panel
    karena isinya menyatukan keduanya. Tetap memakai .recon-table dan
    .recon-badge-* yang sudah ada; yang baru hanya wadah dan ringkasannya. */
