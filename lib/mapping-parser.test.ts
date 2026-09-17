@@ -435,7 +435,7 @@ describe("diagnosa penolakan menunjuk baris, bukan cuma selisih", () => {
   const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "balance-sheet" });
 
   test("yang dilaporkan adalah percobaan TERBAIK, bukan yang terakhir dicoba", () => {
-    assert.ok(result.status === "rejected");
+    assert.ok(result.status === "warning");
     // offset 0 gagal 1 cek, offset 1 gagal 3. Sebelum perbaikan ini yang tampil
     // di layar adalah offset 1 — tiga selisih raksasa yang tidak satu pun
     // menunjuk ke sebab sebenarnya.
@@ -445,7 +445,7 @@ describe("diagnosa penolakan menunjuk baris, bukan cuma selisih", () => {
   });
 
   test("baris biang keladinya ikut disebut, lengkap dengan nilainya", () => {
-    assert.ok(result.status === "rejected");
+    assert.ok(result.status === "warning");
     const check = result.bestAttempt?.failedChecks[0];
     assert.ok(check);
     assert.equal(check.label, "Total Kewajiban dan Modal");
@@ -491,7 +491,7 @@ describe("laporan yang tidak ada di berkas dibedakan dari yang ditolak", () => {
   });
 });
 
-describe("pengaman aritmatika — dokumen yang tidak rekonsiliasi DITOLAK", () => {
+describe("pengaman aritmatika — dokumen yang tidak rekonsiliasi tetap ditampilkan", () => {
   const fixture = loadFixture("mapping-laba-rugi-feb-2026-scan");
 
   /** Buang token pertama yang cocok, meniru satu kegagalan baca OCR. */
@@ -512,8 +512,8 @@ describe("pengaman aritmatika — dokumen yang tidak rekonsiliasi DITOLAK", () =
       (t) => t.text === "-" && t.page === anchor.page && t.x < anchor.x && Math.abs(t.y - anchor.y) <= fixture.rowTolerance,
     );
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance });
-    assert.equal(result.status, "rejected");
-    assert.ok(result.status === "rejected");
+    assert.equal(result.status, "warning");
+    assert.ok(result.status === "warning");
     assert.match(result.reason, /tidak rekonsiliasi/);
     // Selisihnya harus 2x nominalnya — tanda yang terbalik, bukan nilai hilang.
     const failed = result.attempts.find((a) => a.rowOffset === 1)?.failedChecks ?? [];
@@ -523,49 +523,48 @@ describe("pengaman aritmatika — dokumen yang tidak rekonsiliasi DITOLAK", () =
   test("satu baris detail terlewat ditolak", () => {
     const tokens = withoutToken((t) => t.text === "17,059,300");
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance });
-    assert.equal(result.status, "rejected");
+    assert.equal(result.status, "warning");
   });
 
-  test("Neraca yang tidak seimbang DITOLAK, bukan ditampilkan apa adanya", () => {
+  test("Neraca yang tidak seimbang tetap ditampilkan sebagai warning", () => {
     // Satu baris aset hilang: Total Aset Lancar tidak lagi sama dengan jumlah
     // detailnya, DAN Total Aset tidak lagi sama dengan Total Kewajiban dan
     // Modal. Neraca yang tidak seimbang tidak boleh pernah lolos.
     const tokens = withoutToken((t) => t.text === "4,250,000.00");
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "balance-sheet" });
-    assert.equal(result.status, "rejected");
-    assert.ok(result.status === "rejected");
-    assert.equal(result.notFound, undefined, "ini dokumen bermasalah, bukan laporan yang tidak ada");
+    assert.equal(result.status, "warning");
+    assert.ok(result.status === "warning");
     assert.match(result.reason, /Neraca tidak rekonsiliasi/);
   });
 
-  test("Arus Kas yang saldo awalnya salah baca DITOLAK", () => {
+  test("Arus Kas yang saldo awalnya salah baca tetap ditampilkan sebagai warning", () => {
     // Identitas saldo awal + aktivitas = saldo akhir langsung meleset, walau
     // subtotal aktivitasnya sendiri masih benar — persis kelas kesalahan yang
     // tidak akan tertangkap cek subtotal saja.
     const tokens = fixture.tokens.map((token) => (token.text === "448,625,339.61" ? { ...token, text: "448,625,449.61" } : token));
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "cashflow" });
-    assert.equal(result.status, "rejected");
-    assert.ok(result.status === "rejected");
+    assert.equal(result.status, "warning");
+    assert.ok(result.status === "warning");
     assert.match(result.reason, /Arus Kas tidak rekonsiliasi/);
   });
 
-  test("Arus Kas yang satu baris aktivitasnya hilang DITOLAK", () => {
+  test("Arus Kas yang satu baris aktivitasnya hilang tetap ditampilkan sebagai warning", () => {
     const tokens = withoutToken((t) => t.text === "4,560,000.00");
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance, kind: "cashflow" });
-    assert.equal(result.status, "rejected");
+    assert.equal(result.status, "warning");
   });
 
-  test("satu digit salah baca ditolak", () => {
+  test("satu digit salah baca tetap ditampilkan sebagai warning", () => {
     // 98,453,500.00 -> 98,453,600.00: satu digit, mustahil dilihat mata.
     const tokens = fixture.tokens.map((t) => (t.text === "98,453,500.00" ? { ...t, text: "98,453,600.00" } : t));
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance });
-    assert.equal(result.status, "rejected");
+    assert.equal(result.status, "warning");
   });
 
   test("alasan penolakan menyebut kedua offset yang dicoba", () => {
     const tokens = withoutToken((t) => t.text === "17,059,300");
     const result = parseFinancialReport(tokens, { rowTolerance: fixture.rowTolerance });
-    assert.ok(result.status === "rejected");
+    assert.ok(result.status === "warning");
     assert.deepEqual(result.attempts.map((a) => a.rowOffset), [0, 1]);
   });
 

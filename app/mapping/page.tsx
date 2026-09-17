@@ -38,6 +38,7 @@ type PickedFile = { url?: string; fileName: string; size: number };
 // Nama laporan dipakai dari parser — pesan penolakannya menyebut nama yang
 // sama, jadi tidak boleh ada dua daftar yang bisa menyimpang.
 const REPORT_ORDER: FinancialSheetKind[] = ["profit-loss", "balance-sheet", "cashflow"];
+const isUsableReport = (result: MappingParseResult): result is Extract<MappingParseResult, { status: "ok" | "warning" }> => result.status === "ok" || result.status === "warning";
 
 const STATUS_LABEL: Record<ComparisonStatus, string> = {
   COCOK: "Cocok",
@@ -98,7 +99,7 @@ type ReportView =
   | { state: "empty"; note: string }
   | { state: "loading"; note: string }
   | { state: "unsupported"; note: string }
-  | { state: "ok"; lines: readonly FinancialLine[]; checks: readonly ReconciliationCheck[]; note?: string }
+  | { state: "ok" | "warning"; lines: readonly FinancialLine[]; checks: readonly ReconciliationCheck[]; note?: string }
   | { state: "rejected"; reason: string; failedChecks: readonly ReconciliationCheck[] };
 
 function excelResultToView(result: ExcelParseResult): ReportView {
@@ -108,8 +109,8 @@ function excelResultToView(result: ExcelParseResult): ReportView {
 }
 
 function pdfResultToView(result: MappingParseResult, note: string): ReportView {
-  if (result.status === "ok") {
-    return { state: "ok", lines: result.lines, checks: result.checks, note };
+  if (isUsableReport(result)) {
+    return { state: result.status, lines: result.lines, checks: result.checks, note };
   }
   // Laporan yang memang tidak ada di berkas BUKAN dokumen bermasalah —
   // menampilkannya sebagai "Ditolak" akan terbaca seolah ada yang salah.
@@ -148,6 +149,8 @@ function ReportBox({
       <span className="recon-badge recon-badge-ok">
         <CheckCircle2 style={{ width: ".8rem", marginRight: ".2rem" }} /> Rekonsiliasi cocok
       </span>
+    ) : view.state === "warning" ? (
+      <span className="recon-badge recon-badge-warn"><AlertTriangle style={{ width: ".8rem", marginRight: ".2rem" }} /> Ada selisih</span>
     ) : view.state === "rejected" ? (
       <span className="recon-badge recon-badge-danger">Ditolak</span>
     ) : view.state === "loading" ? (
@@ -159,7 +162,7 @@ function ReportBox({
     );
 
   return (
-    <details className="mapping-report" open={open && view.state === "ok"}>
+    <details className="mapping-report" open={open && (view.state === "ok" || view.state === "warning")}>
       <summary>
         <span>{title}</span>
         {badge}
@@ -193,7 +196,7 @@ function ReportBox({
           </div>
         )}
         {(view.state === "empty" || view.state === "loading" || view.state === "unsupported") && <p className="mapping-note">{view.note}</p>}
-        {view.state === "ok" && (
+        {(view.state === "ok" || view.state === "warning") && (
           <>
             {view.note && <p className="mapping-note">{view.note}</p>}
             <div className="mapping-lines">
@@ -546,11 +549,11 @@ export default function MappingPage() {
   useEffect(() => {
     if (!user || restoreBusy || !period || pdfBusy) return;
     const source = selectPdfForPeriod(pdfSources, period);
-    const currentPdfPeriod = pdfResult && REPORT_ORDER.map((kind) => pdfResult.reports[kind]).map((result) => result.status === "ok" ? result.period : null).find((value) => value !== null);
+    const currentPdfPeriod = pdfResult && REPORT_ORDER.map((kind) => pdfResult.reports[kind]).map((result) => isUsableReport(result) ? result.period : null).find((value) => value !== null);
     if (currentPdfPeriod === period) return;
     if (pdfResult && pdfFile?.url && source?.url === pdfFile.url) return;
     const cachedReports = source ? getCachedPdfReports(source, MAPPING_PARSER_VERSION) : null;
-    const cachedProfitLossOk = cachedReports?.["profit-loss"]?.status === "ok";
+    const cachedProfitLossOk = cachedReports?.["profit-loss"] && isUsableReport(cachedReports["profit-loss"]);
     if (source && cachedReports && cachedProfitLossOk) {
       setPdfFile({ url: source.url, fileName: source.fileName, size: source.size });
       setPdfResult({ source: "pdf-scanned-ocr", reports: cachedReports });
@@ -590,7 +593,7 @@ export default function MappingPage() {
           if (cancelled) return;
           const file = new File([blob], candidate.fileName, { type: candidate.mimeType ?? "application/pdf" });
           const analysed = await analyzeFinancialPdf(file, setPdfStatus);
-          const detectedPeriod = REPORT_ORDER.map((kind) => analysed.reports[kind]).map((result) => result.status === "ok" ? result.period : null).find((value) => value !== null);
+          const detectedPeriod = REPORT_ORDER.map((kind) => analysed.reports[kind]).map((result) => isUsableReport(result) ? result.period : null).find((value) => value !== null);
           if (source || detectedPeriod === period) {
             restored = true;
             const tagged = source ? candidate : { ...candidate, period };
@@ -680,7 +683,7 @@ export default function MappingPage() {
     // Ketiga laporan berasal dari SATU berkas, jadi periodenya satu. Diambil
     // dari laporan mana pun yang lolos — kalau tidak ada yang lolos, tidak
     // ada perbandingan untuk dijaga.
-    const parsed = REPORT_ORDER.map((kind) => pdfResult.reports[kind]).filter((result) => result.status === "ok");
+    const parsed = REPORT_ORDER.map((kind) => pdfResult.reports[kind]).filter(isUsableReport);
     if (parsed.length === 0) return { state: "idle" };
     const pdfPeriod = parsed.map((result) => result.period).find((value) => value !== null) ?? null;
     if (pdfPeriod === null) return { state: "unknown" };
@@ -713,13 +716,14 @@ export default function MappingPage() {
     for (const kind of REPORT_ORDER) {
       const excel = excelResults[kind];
       const pdf = pdfResult.reports[kind];
-      if (!excel || excel.status !== "ok" || pdf.status !== "ok") continue;
+      if (!excel || excel.status !== "ok" || !isUsableReport(pdf)) continue;
       result[kind] = compareFinancialReports(excel.lines, pdf.lines, kind);
     }
     return result;
   }, [excelResults, pdfResult, periodGuard]);
 
   const allComparisonsCocok = REPORT_ORDER.every((kind) => {
+    if (pdfResult?.reports[kind]?.status !== "ok") return false;
     const summary = comparisons[kind]?.summary;
     return summary && summary.beda === 0 && summary.hanyaExcel === 0 && summary.hanyaPdf === 0;
   });

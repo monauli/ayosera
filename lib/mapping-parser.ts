@@ -110,6 +110,8 @@ export type ReconciliationCheck = {
   contributors: readonly ReconciliationContributor[];
 };
 
+type ParseAttempt = { rowOffset: 0 | 1; lines: MappingLine[]; checks: ReconciliationCheck[]; failedChecks: ReconciliationCheck[] };
+
 export type MappingParseResult =
   | {
       status: "ok";
@@ -128,10 +130,20 @@ export type MappingParseResult =
       checks: ReconciliationCheck[];
     }
   | {
+      status: "warning";
+      rowOffsetApplied: 0 | 1;
+      period: string | null;
+      lines: MappingLine[];
+      checks: ReconciliationCheck[];
+      reason: string;
+      attempts: ParseAttempt[];
+      bestAttempt?: ParseAttempt;
+    }
+  | {
       status: "rejected";
       reason: string;
       /** Hasil rekonsiliasi tiap offset yang dicoba, untuk diagnosis. */
-      attempts: { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] }[];
+      attempts: ParseAttempt[];
       /**
        * Percobaan yang PALING DEKAT benar — paling sedikit cek gagal, lalu
        * selisih terbesarnya paling kecil.
@@ -141,7 +153,7 @@ export type MappingParseResult =
        * dan yang tampil di layar justru diagnosa offset 1 — angka-angka yang
        * sama sekali tidak menunjuk ke masalah sebenarnya.
        */
-      bestAttempt?: { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] };
+      bestAttempt?: ParseAttempt;
       /**
        * true bila laporan ini memang TIDAK ADA di berkas — bukan ada tapi
        * angkanya tidak bisa dipercaya. Dibedakan supaya PDF yang hanya
@@ -1053,8 +1065,6 @@ function describeRowOffset(rowOffset: 0 | 1): string {
   return rowOffset === 0 ? "nominal sebaris dengan label" : "nominal tercetak 1 baris di atas label";
 }
 
-type ParseAttempt = { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] };
-
 /**
  * Percobaan yang paling dekat benar: paling sedikit cek gagal, lalu selisih
  * terbesarnya paling kecil. Selisih NaN (cek yang tidak bisa dijalankan sama
@@ -1096,7 +1106,7 @@ export function parseFinancialReport(
 ): MappingParseResult {
   const kind = options.kind ?? "profit-loss";
   const rows = groupTokensIntoRows(tokens, options.rowTolerance);
-  const attempts: { rowOffset: 0 | 1; failedChecks: ReconciliationCheck[] }[] = [];
+  const attempts: ParseAttempt[] = [];
   for (const rowOffset of [0, 1] as const) {
     const scoped = scopeToReport(classify(rows, rowOffset), kind);
     if (scoped === null) {
@@ -1135,7 +1145,7 @@ export function parseFinancialReport(
     if (failedChecks.length === 0) {
       return { status: "ok", rowOffsetApplied: rowOffset, period, lines, checks };
     }
-    attempts.push({ rowOffset, failedChecks });
+    attempts.push({ rowOffset, lines, checks, failedChecks });
   }
   const best = pickBestAttempt(attempts);
   const others = attempts
@@ -1146,7 +1156,11 @@ export function parseFinancialReport(
     ? `Layout yang paling mendekati: ${describeRowOffset(best.rowOffset)}, ${best.failedChecks.length} cek gagal. ${best.failedChecks.map(describeFailedCheck).join(" | ")}.`
     : "Tidak ada satu pun percobaan layout yang bisa dijalankan.";
   return {
-    status: "rejected",
+    status: "warning",
+    rowOffsetApplied: best?.rowOffset ?? 0,
+    period: best ? detectReportPeriod(best.lines.slice(0, Math.max(firstDetailIndex(best.lines), 0)).map((line) => line.label)) : null,
+    lines: best?.lines ?? [],
+    checks: best?.checks ?? [],
     reason: `${REPORT_TITLES[kind]} tidak rekonsiliasi terhadap total yang tercetak, jadi hasil bacanya tidak bisa dipercaya. ${diagnosis}${others ? ` Layout lain yang dicoba: ${others}.` : ""}`,
     attempts,
     bestAttempt: best,
@@ -1273,7 +1287,7 @@ export async function analyzeFinancialPdf(
     // lebih lebar; rekonsiliasi tetap menjadi syarat wajib penerimaan.
     const wider = parseAllReports(scanned.tokens, scanned.rowTolerance * 1.5);
     for (const kind of ["profit-loss", "balance-sheet"] as const) {
-      if (reports[kind].status === "rejected" && !reports[kind].notFound && wider[kind].status === "ok") {
+      if (reports[kind].status === "rejected" && !reports[kind].notFound && (wider[kind].status === "ok" || wider[kind].status === "warning")) {
         reports[kind] = wider[kind];
       }
     }
