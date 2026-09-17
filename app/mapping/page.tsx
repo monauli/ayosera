@@ -594,7 +594,7 @@ export default function MappingPage() {
             setPdfFile({ url: tagged.url, fileName: tagged.fileName, size: tagged.size });
             setPdfSources((current) => current.map((item) => item.url === candidate.url ? { ...item, ...tagged } : item));
             if (!cancelled) setPdfResult(analysed);
-            void fetch("/api/mapping/source", {
+            const saveResponse = await fetch("/api/mapping/source", {
               method: "PATCH",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({
@@ -603,7 +603,13 @@ export default function MappingPage() {
                 parsedReports: analysed.reports,
                 parsedWithVersion: MAPPING_PARSER_VERSION,
               }),
-            }).catch(() => {});
+            });
+            if (saveResponse.ok) {
+              setPdfCacheSaved(true);
+            } else {
+              const savePayload = await saveResponse.json().catch(() => null);
+              setPdfSaveError(savePayload?.error ?? "Hasil baca PDF gagal disimpan.");
+            }
             return;
           }
         }
