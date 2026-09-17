@@ -316,6 +316,7 @@ function ComparisonSection({ title, comparison }: { title: string; comparison: R
           </tbody>
         </table>
       </div>
+      <p className="mapping-mobile-scroll-hint">Geser tabel ke kiri/kanan untuk melihat semua kolom.</p>
       {rows.length === 0 && <p className="mapping-note">Tidak ada baris untuk ditampilkan.</p>}
     </section>
   );

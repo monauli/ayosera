@@ -1352,13 +1352,14 @@ th[scope],
 .mapping-rules { display:grid; gap:.3rem; margin:0; padding:0; list-style:none; }
 .mapping-rules li { border-left:2px solid rgb(59 130 246 / .55); background:rgb(59 130 246 / .06); padding:.4rem .55rem; font-size:.73rem; color:rgb(var(--rd-text-secondary)); overflow-wrap:anywhere; }
 .mapping-compare-wrap { overflow-x:auto; border:1px solid rgb(var(--rd-border) / calc(var(--rd-border-alpha) / 2)); border-radius:.5rem; }
+.mapping-mobile-scroll-hint { display:none; margin:0; color:rgb(var(--rd-text-muted)); font-size:.72rem; }
 .mapping-compare-wrap .recon-table td:nth-child(4),.mapping-compare-wrap .recon-table th:nth-child(4),
 .mapping-compare-wrap .recon-table td:nth-child(5),.mapping-compare-wrap .recon-table th:nth-child(5),
 .mapping-compare-wrap .recon-table td:nth-child(6),.mapping-compare-wrap .recon-table th:nth-child(6) { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .mapping-compare-wrap .recon-table th:nth-child(2),.mapping-compare-wrap .recon-table td:nth-child(2),.mapping-compare-wrap .recon-table th:nth-child(3),.mapping-compare-wrap .recon-table td:nth-child(3) { min-width:12rem; }
 .mapping-rule-tag { display:block; margin-top:.2rem; color:rgb(59 130 246); font-size:.68rem; overflow-wrap:anywhere; }
 [data-mode="dark"] .mapping-rule-tag { color:rgb(147 197 253); }
-@media (max-width:720px){ .mapping-compare{padding:.7rem} .mapping-compare-wrap .recon-table{font-size:.72rem} }
+@media (max-width:720px){ .mapping-compare{padding:.7rem} .mapping-compare-wrap{max-width:100%;overscroll-behavior-x:contain} .mapping-compare-wrap .recon-table{min-width:46rem;font-size:.72rem} .mapping-mobile-scroll-hint{display:block} }
 [data-mode="light"] .rd-shell .mapping-restore-status { border-color:rgb(110 231 183); background:rgb(236 253 245); }
 [data-mode="light"] .rd-shell .mapping-restore-inline { color:rgb(6 95 70); }
 [data-mode="light"] .rd-shell .mapping-progress { background:rgb(226 232 240); }
