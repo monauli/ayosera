@@ -231,7 +231,9 @@ function pickAliasMatch(excel: Side, candidates: Side[], aliases: readonly Mappi
     if (!alias.excelLabels.some((label) => normalizeFinancialLabel(label) === excel.normalized)) return [];
     return candidates.filter((candidate) => alias.pdfCode ? candidate.line.code === alias.pdfCode : candidate.normalized === normalizeFinancialLabel(alias.pdfLabel));
   });
-  return matches.length === 1 ? matches[0] : null;
+  if (matches.length === 1) return matches[0];
+  const sameKind = matches.filter((candidate) => candidate.line.kind === excel.line.kind);
+  return sameKind.length === 1 ? sameKind[0] : null;
 }
 
 /**
