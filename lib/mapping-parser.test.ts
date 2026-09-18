@@ -307,6 +307,14 @@ describe("parseFinancialReport — fixture Mei-2026 (PDF digital, text layer)", 
     assertAmount(findLine(repaired.lines, "70000").value, 77522.77, "70000 Pendapatan lain lain");
     assertAmount(findLabel(repaired.lines, /^Total Pendapatan non operasional$/i).value, 77522.77, "Subtotal pendapatan non-operasional");
   });
+
+  test("memulihkan tanda biaya yang hilang dari OCR", () => {
+    const corrupted = fixture.tokens.map((token) => token.text === "(162.000,00)" ? { ...token, text: "162.000,00" } : token);
+    const repaired = parseFinancialReport(corrupted, { rowTolerance: fixture.rowTolerance });
+    assert.equal(repaired.status, "ok");
+    assert.ok(repaired.status === "ok");
+    assertAmount(findLine(repaired.lines, "50500").value, -162000, "50500 Potongan pembelian");
+  });
 });
 
 describe("Neraca — fixture Feb-2026 halaman 2 (PDF hasil scan, OCR)", () => {

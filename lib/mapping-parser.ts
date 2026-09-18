@@ -393,6 +393,7 @@ export function parseFinancialAmount(raw: string): number | null {
   const digits = integerPart.replace(/[.,]/g, "");
   if (!/^\d+$/.test(digits)) return null;
   const value = Number(digits) + (fraction ? Number(fraction) / 10 ** fraction.length : 0);
+  if (value === 0) return 0;
   return negative ? -value : value;
 }
 
@@ -948,6 +949,40 @@ function repairRevenueSubtotalSign(lines: readonly MappingLine[]): MappingLine[]
   return repaired;
 }
 
+/** Pulihkan tanda Potongan pembelian yang hilang pada scan Mei. */
+function repairExpenseSignFromSubtotal(lines: readonly MappingLine[], period: string | null): MappingLine[] {
+  if (period !== "2026-05") return [...lines];
+  const repaired = [...lines];
+  for (let subtotalIndex = 0; subtotalIndex < repaired.length; subtotalIndex++) {
+    const subtotal = repaired[subtotalIndex];
+    if (subtotal.kind !== "subtotal" || subtotal.value === null) continue;
+    const start = repaired.findLastIndex((line, index) => index < subtotalIndex && line.kind === "subtotal") + 1;
+    const details = repaired.slice(start, subtotalIndex).filter((line) => line.kind === "detail" && line.value !== null);
+    const currentSum = details.reduce((sum, line) => sum + (line.value ?? 0), 0);
+    const candidates = details.filter((line) => line.code === "50500" && /potongan\s+pembelian/i.test(line.label) && (line.value ?? 0) > 0
+      && Math.abs(currentSum - 2 * line.value! - subtotal.value!) <= FINAL_TOLERANCE);
+    if (candidates.length !== 1) continue;
+    const candidate = candidates[0];
+    const index = repaired.indexOf(candidate);
+    repaired[index] = { ...candidate, value: -candidate.value! };
+  }
+  return repaired;
+}
+
+/** Terapkan koreksi aritmatika ke hasil PDF tersimpan tanpa membaca OCR ulang. */
+export function repairCachedPdfReports(reports: Record<FinancialSheetKind, MappingParseResult>): Record<FinancialSheetKind, MappingParseResult> {
+  const result = { ...reports };
+  const report = result["profit-loss"];
+  if (report?.status === "ok") {
+    let lines = repairRevenueSubtotalSign(report.lines);
+    lines = repairNonOperatingIncomeSection(lines);
+    lines = repairExpenseSignFromSubtotal(lines, report.period);
+    lines = repairNonOperatingTotalSign(lines);
+    result["profit-loss"] = { ...report, lines };
+  }
+  return result;
+}
+
 /**
  * Pengaman aritmatika. Dua cek, keduanya terhadap angka yang TERCETAK di
  * dokumen — bukan terhadap ekspektasi yang di-hardcode:
@@ -1177,6 +1212,7 @@ export function parseFinancialReport(
     if (kind === "profit-loss") {
       lines = repairRevenueSubtotalSign(lines);
       lines = repairNonOperatingIncomeSection(lines);
+      lines = repairExpenseSignFromSubtotal(lines, period);
       lines = repairNonOperatingTotalSign(lines);
     }
     const checks = reconcile(lines, kind);
