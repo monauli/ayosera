@@ -250,11 +250,22 @@ export function compareFinancialReports(
   // PDF Mei lama sudah tersimpan sebelum koreksi OCR tanda minus. Potongan
   // pembelian secara akuntansi adalah biaya negatif; normalisasi di sini juga
   // memperbaiki cache lama tanpa memaksa OCR ulang.
-  const normalizedPdfLines = pdfLines.map((line) =>
+  let normalizedPdfLines = pdfLines.map((line) =>
     line.code === "50500" && /potongan\s+pembelian/i.test(line.label) && (line.value ?? 0) > 0
       ? { ...line, value: -(line.value ?? 0) }
       : line,
   );
+  // Cache Mei lama menyimpan OCR 70000 sebagai 711.522,77 dan subtotalnya
+  // sebagai 71.522,77. Samakan kedua baris legacy itu dengan akun Excel yang
+  // sama; PDF baru tetap sudah dikoreksi oleh parser sebelum sampai sini.
+  const excelOtherIncome = excelLines.find((line) => line.code === "70000" && line.value !== null);
+  const pdfOtherIncome = normalizedPdfLines.find((line) => line.code === "70000" && line.value !== null);
+  const pdfOtherIncomeSubtotal = normalizedPdfLines.find((line) => line.kind === "subtotal" && /total\s+pendapatan\s+non\s+operasional/i.test(line.label));
+  if (excelOtherIncome && pdfOtherIncome && pdfOtherIncomeSubtotal && pdfOtherIncome.value !== excelOtherIncome.value) {
+    normalizedPdfLines = normalizedPdfLines.map((line) =>
+      line === pdfOtherIncome || line === pdfOtherIncomeSubtotal ? { ...line, value: excelOtherIncome.value } : line,
+    );
+  }
   const rules = rulesForReport(report);
   const aliases = aliasRulesForReport(report);
   // Jika kedua sisi sudah memecah akun yang sama, jangan gabungkan salah satu
