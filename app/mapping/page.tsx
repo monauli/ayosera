@@ -724,7 +724,7 @@ export default function MappingPage() {
   }, [excelResults, pdfResult, periodGuard]);
 
   const allComparisonsCocok = REPORT_ORDER.every((kind) => {
-    if (pdfResult?.reports[kind]?.status !== "ok") return false;
+    if (!pdfResult || !isUsableReport(pdfResult.reports[kind])) return false;
     const summary = comparisons[kind]?.summary;
     return summary && summary.beda === 0 && summary.hanyaExcel === 0 && summary.hanyaPdf === 0;
   });
