@@ -725,8 +725,11 @@ export default function MappingPage() {
 
   const allComparisonsCocok = REPORT_ORDER.every((kind) => {
     if (!pdfResult || !isUsableReport(pdfResult.reports[kind])) return false;
-    const summary = comparisons[kind]?.summary;
-    return summary && summary.beda === 0 && summary.hanyaExcel === 0 && summary.hanyaPdf === 0;
+    const comparison = comparisons[kind];
+    if (!comparison || comparison.summary.beda > 0) return false;
+    return comparison.rows.every((row) =>
+      row.status === "COCOK" || row.kind === "subtotal" || row.kind === "derived",
+    );
   });
   const togglePeriodLock = async () => {
     if (!period || user?.role !== "supervisor" || lockBusy) return;
