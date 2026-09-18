@@ -123,11 +123,18 @@ function applyRules(
       return working.find((candidate) => code ? candidate.line.code === code : candidate.normalized === part);
     });
     const missing = wanted.map((part, index) => (found[index] ? null : rule.parts[index])).filter((part): part is string => part !== null);
-    if (missing.length > 0) {
+    // Rekening Kas dan Bank tidak selalu dicetak lengkap pada setiap PDF.
+    // Selama minimal tiga rekening ditemukan, gabungkan semua rekening yang
+    // tersedia; jangan jatuh ke fallback tiga rekening yang mengabaikan OCBC.
+    const partialCashRule = side === "pdf"
+      && rule.target === "Kas dan Bank"
+      && found.filter(Boolean).length >= 3
+      && found.some((part) => part?.line.code === "11109" || part?.line.code === "11110");
+    if (missing.length > 0 && !partialCashRule) {
       skipped.push({ rule, missing });
       continue;
     }
-    const parts = found as Side[];
+    const parts = found.filter((part): part is Side => part !== undefined);
     const total = parts.reduce((sum, part) => sum + (part.line.value ?? 0), 0);
     const anchor = parts[0];
     const merged: Side = {

@@ -286,6 +286,27 @@ describe("parseFinancialReport — fixture Mei-2026 (PDF digital, text layer)", 
     assertAmount(findLabel(result.lines, /^Laba bersih$/i).value, 129448027.24, "Laba bersih");
     assert.equal(result.checks.every((c) => c.passed), true);
   });
+
+  test("memulihkan angka pendapatan non-operasional saat OCR salah membaca digit", () => {
+    let incomeSeen = false;
+    let subtotalSeen = false;
+    const corrupted = fixture.tokens.map((token) => {
+      if (token.text === "77.522,77" && !incomeSeen) {
+        incomeSeen = true;
+        return { ...token, text: "711.522,77" };
+      }
+      if (token.text === "77.522,77" && !subtotalSeen) {
+        subtotalSeen = true;
+        return { ...token, text: "71.522,77" };
+      }
+      return token;
+    });
+    const repaired = parseFinancialReport(corrupted, { rowTolerance: fixture.rowTolerance });
+    assert.equal(repaired.status, "ok");
+    assert.ok(repaired.status === "ok");
+    assertAmount(findLine(repaired.lines, "70000").value, 77522.77, "70000 Pendapatan lain lain");
+    assertAmount(findLabel(repaired.lines, /^Total Pendapatan non operasional$/i).value, 77522.77, "Subtotal pendapatan non-operasional");
+  });
 });
 
 describe("Neraca — fixture Feb-2026 halaman 2 (PDF hasil scan, OCR)", () => {

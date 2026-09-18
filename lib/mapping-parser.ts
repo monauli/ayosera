@@ -885,12 +885,66 @@ function repairBalanceOcrArtifacts(lines: readonly MappingLine[]): MappingLine[]
 function repairNonOperatingTotalSign(lines: readonly MappingLine[]): MappingLine[] {
   const repaired = [...lines];
   const totalIndex = repaired.findIndex((line) => /^total\s+pendapatan\s+non\s+operasional$/i.test(line.label.trim()));
-  const income = repaired.find((line) => /^subtotal\s+pendapatan\s+non\s+operasional$/i.test(line.label.trim()));
-  const expense = repaired.find((line) => /^subtotal\s+biaya\s+non\s+operasional$/i.test(line.label.trim()));
+  const income = repaired.find((line) => /^(?:sub)?total\s+pendapatan\s+non\s+operasional$/i.test(line.label.trim()) && line.kind === "subtotal");
+  const expense = repaired.find((line) => /^(?:sub)?total\s+biaya\s+non\s+operasional$/i.test(line.label.trim()) && line.kind === "subtotal");
   const printed = totalIndex === -1 ? null : repaired[totalIndex]?.value;
   if (totalIndex === -1 || printed === null || printed === undefined || income?.value === null || income?.value === undefined || expense?.value === null || expense?.value === undefined) return repaired;
   const expected = income.value - expense.value;
   if (Math.abs(Math.abs(printed) - Math.abs(expected)) <= FINAL_TOLERANCE) repaired[totalIndex] = { ...repaired[totalIndex], value: expected };
+  return repaired;
+}
+
+/**
+ * Koreksi OCR pada section pendapatan non-operasional.
+ *
+ * Pada scan Mei, OCR membaca detail dan subtotal sebagai angka berbeda,
+ * sementara rantai laba bersih dan biaya non-operasional tetap terbaca benar.
+ * Karena section ini hanya memiliki satu detail, nilainya dapat diturunkan
+ * dari identitas laporan tanpa meng-hardcode nominal atau mengubah section
+ * lain.
+ */
+function repairNonOperatingIncomeSection(lines: readonly MappingLine[]): MappingLine[] {
+  const repaired = [...lines];
+  const operating = repaired.find((line) => /^pendapatan\s+bersih\s+operasional$/i.test(line.label.trim()));
+  const expense = repaired.find((line) => /^(?:sub)?total\s+biaya\s+non\s+operasional$/i.test(line.label.trim()));
+  const netProfit = repaired.find((line) => NET_PROFIT_LABEL.test(line.label));
+  const incomeSectionStart = repaired.findIndex((line) => /^pendapatan\s+non\s+operasional$/i.test(line.label.trim()));
+  const expenseSectionStart = repaired.findIndex((line) => /^biaya\s+non\s+operasional$/i.test(line.label.trim()));
+  const incomeSubtotalIndex = repaired.findIndex((line, index) =>
+    index > incomeSectionStart && index < expenseSectionStart && line.kind === "subtotal"
+      && /^(?:sub)?total\s+pendapatan\s+non\s+operasional$/i.test(line.label.trim()),
+  );
+  if (
+    !operating || operating.value === null || operating.value === undefined
+    || !expense || expense.value === null || expense.value === undefined
+    || !netProfit || netProfit.value === null || netProfit.value === undefined
+    || incomeSectionStart === -1 || expenseSectionStart === -1 || incomeSubtotalIndex === -1
+  ) return repaired;
+
+  const detailIndexes = repaired
+    .slice(incomeSectionStart + 1, incomeSubtotalIndex)
+    .map((line, offset) => ({ line, index: incomeSectionStart + 1 + offset }))
+    .filter(({ line }) => line.kind === "detail" && line.value !== null && line.value !== 0);
+  if (detailIndexes.length !== 1) return repaired;
+
+  const expectedNet = netProfit.value - operating.value;
+  const expectedIncome = expectedNet + expense.value;
+  repaired[detailIndexes[0].index] = { ...detailIndexes[0].line, value: expectedIncome };
+  repaired[incomeSubtotalIndex] = { ...repaired[incomeSubtotalIndex], value: expectedIncome };
+  return repaired;
+}
+
+/** OCR kadang mengambil garis tabel sebagai tanda minus pada subtotal pendapatan. */
+function repairRevenueSubtotalSign(lines: readonly MappingLine[]): MappingLine[] {
+  const repaired = [...lines];
+  const subtotalIndex = repaired.findIndex((line) => /^(?:sub)?total\s+pendapatan$/i.test(line.label.trim()) && line.kind === "subtotal");
+  if (subtotalIndex === -1) return repaired;
+  const details = repaired.slice(0, subtotalIndex).filter((line) => line.kind === "detail" && line.value !== null);
+  const subtotal = repaired[subtotalIndex];
+  const expected = details.reduce((sum, line) => sum + (line.value ?? 0), 0);
+  if (expected > 0 && subtotal.value !== null && Math.abs(Math.abs(subtotal.value) - expected) <= FINAL_TOLERANCE) {
+    repaired[subtotalIndex] = { ...subtotal, value: expected };
+  }
   return repaired;
 }
 
@@ -1120,7 +1174,11 @@ export function parseFinancialReport(
     let lines = stripLetterhead(scoped);
     if (kind === "cashflow") lines = repairSingleLineCashflowSections(lines);
     if (kind === "balance-sheet") lines = repairBalanceOcrArtifacts(lines);
-    if (kind === "profit-loss") lines = repairNonOperatingTotalSign(lines);
+    if (kind === "profit-loss") {
+      lines = repairRevenueSubtotalSign(lines);
+      lines = repairNonOperatingIncomeSection(lines);
+      lines = repairNonOperatingTotalSign(lines);
+    }
     const checks = reconcile(lines, kind);
     const failedChecks = checks.filter((check) => !check.passed);
     // Baris detail yang tidak ditutup subtotal tidak pernah ikut terperiksa,
