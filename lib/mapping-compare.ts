@@ -260,7 +260,7 @@ export function compareFinancialReports(
   // sama; PDF baru tetap sudah dikoreksi oleh parser sebelum sampai sini.
   const excelOtherIncome = excelLines.find((line) => line.code === "70000" && line.value !== null);
   const pdfOtherIncome = normalizedPdfLines.find((line) => line.code === "70000" && line.value !== null);
-  const pdfOtherIncomeSubtotal = normalizedPdfLines.find((line) => line.kind === "subtotal" && /total\s+pendapatan\s+non\s+operasional/i.test(line.label));
+  const pdfOtherIncomeSubtotal = normalizedPdfLines.find((line) => line.kind === "subtotal" && /(?:sub)?total\s+pendapatan\s+non\s+operasional/i.test(line.label));
   if (excelOtherIncome && pdfOtherIncome && pdfOtherIncomeSubtotal && pdfOtherIncome.value !== excelOtherIncome.value) {
     normalizedPdfLines = normalizedPdfLines.map((line) =>
       line === pdfOtherIncome || line === pdfOtherIncomeSubtotal ? { ...line, value: excelOtherIncome.value } : line,
