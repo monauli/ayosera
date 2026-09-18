@@ -232,10 +232,10 @@ function pickAliasMatch(excel: Side, candidates: Side[], aliases: readonly Mappi
     return candidates.filter((candidate) => alias.pdfCode ? candidate.line.code === alias.pdfCode : candidate.normalized === normalizeFinancialLabel(alias.pdfLabel));
   });
   if (matches.length === 1) return matches[0];
-  const sameKind = matches.filter((candidate) => candidate.line.kind === excel.line.kind);
-  const sameAmount = sameKind.filter((candidate) => candidate.line.value !== null && excel.line.value !== null
+  const sameAmount = matches.filter((candidate) => candidate.line.value !== null && excel.line.value !== null
     && Math.abs(candidate.line.value - excel.line.value) <= EQUAL_TOLERANCE);
   if (sameAmount.length === 1) return sameAmount[0];
+  const sameKind = matches.filter((candidate) => candidate.line.kind === excel.line.kind);
   return sameKind.length === 1 ? sameKind[0] : null;
 }
 
