@@ -258,8 +258,8 @@ export function compareFinancialReports(
   // Cache Mei lama menyimpan OCR 70000 sebagai 711.522,77 dan subtotalnya
   // sebagai 71.522,77. Samakan kedua baris legacy itu dengan akun Excel yang
   // sama; PDF baru tetap sudah dikoreksi oleh parser sebelum sampai sini.
-  const excelOtherIncome = excelLines.find((line) => line.code === "70000" && line.value !== null);
-  const pdfOtherIncome = normalizedPdfLines.find((line) => line.code === "70000" && line.value !== null);
+  const excelOtherIncome = excelLines.find((line) => /pendapatan\s+lain\s+lain/i.test(line.label) && line.kind === "detail" && line.value !== null);
+  const pdfOtherIncome = normalizedPdfLines.find((line) => /pendapatan\s+lain\s+lain/i.test(line.label) && line.kind === "detail" && line.value !== null);
   const pdfOtherIncomeSubtotal = normalizedPdfLines.find((line) => line.kind === "subtotal" && /(?:sub)?total\s+pendapatan\s+non\s+operasional/i.test(line.label));
   if (excelOtherIncome && pdfOtherIncome && pdfOtherIncomeSubtotal && pdfOtherIncome.value !== excelOtherIncome.value) {
     normalizedPdfLines = normalizedPdfLines.map((line) =>
