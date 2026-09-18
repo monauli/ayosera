@@ -261,7 +261,8 @@ export function compareFinancialReports(
   const excelOtherIncome = excelLines.find((line) => /pendapatan\s+lain\s+lain/i.test(line.label) && line.kind === "detail" && line.value !== null);
   const pdfOtherIncome = normalizedPdfLines.find((line) => /pendapatan\s+lain\s+lain/i.test(line.label) && line.kind === "detail" && line.value !== null);
   const pdfOtherIncomeSubtotal = normalizedPdfLines.find((line) => line.kind === "subtotal" && /(?:sub)?total\s+pendapatan\s+non\s+operasional/i.test(line.label));
-  if (excelOtherIncome && pdfOtherIncome && pdfOtherIncomeSubtotal && pdfOtherIncome.value !== excelOtherIncome.value) {
+  if (excelOtherIncome && pdfOtherIncome && pdfOtherIncomeSubtotal
+    && Math.abs((pdfOtherIncome.value ?? 0) - (excelOtherIncome.value ?? 0)) > 100) {
     normalizedPdfLines = normalizedPdfLines.map((line) =>
       line === pdfOtherIncome || line === pdfOtherIncomeSubtotal ? { ...line, value: excelOtherIncome.value } : line,
     );
