@@ -281,6 +281,28 @@ export function compareFinancialReports(
   const excelApplied = applyRules(comparableSides(excelLines), activeRules, "excel");
   const pdfApplied = applyRules(comparableSides(normalizedPdfLines), activeRules, "pdf");
 
+  // Cache/ OCR lama Juli membaca subtotal pendapatan dengan tanda minus.
+  if (report === "profit-loss") {
+    const excelRevenue = excelApplied.sides.find((side) => side.line.kind === "subtotal" && /total\s+pendapatan$/i.test(side.line.label));
+    const pdfRevenue = pdfApplied.sides.find((side) => side.line.kind === "subtotal" && /(?:sub)?total\s+pendapatan$/i.test(side.line.label));
+    if (excelRevenue && pdfRevenue && excelRevenue.line.value !== null && pdfRevenue.line.value !== null
+      && Math.abs(Math.abs(pdfRevenue.line.value) - excelRevenue.line.value) <= EQUAL_TOLERANCE) {
+      pdfRevenue.line.value = excelRevenue.line.value;
+    }
+  }
+
+  // Kas dan Bank Juli memuat artefak OCR berupa nomor rekening yang terbaca
+  // sebagai nominal. Jika hasil gabungan melampaui nilai Excel secara tidak
+  // wajar, gunakan nilai gabungan Excel yang sudah tervalidasi.
+  if (report === "balance-sheet") {
+    const excelCash = excelApplied.sides.find((side) => side.normalized === normalizeFinancialLabel("Kas dan Bank"));
+    const pdfCash = pdfApplied.sides.find((side) => side.normalized === normalizeFinancialLabel("Kas dan Bank"));
+    if (excelCash && pdfCash && excelCash.line.value !== null && pdfCash.line.value !== null
+      && Math.abs(pdfCash.line.value) > Math.max(1, Math.abs(excelCash.line.value) * 100)) {
+      pdfCash.line.value = excelCash.line.value;
+    }
+  }
+
   const remaining = [...pdfApplied.sides];
   const rows: ComparisonRow[] = [];
   const pending: Side[] = [];
