@@ -81,7 +81,7 @@ export const MAPPING_GROUPING_RULES: readonly MappingGroupingRule[] = [
 
 export const MAPPING_ALIAS_RULES: readonly MappingAliasRule[] = [
   { report: "cashflow", excelLabels: ["Total Aktivasi opersional"], pdfLabel: "Total Aktivitas Operasional" },
-  { report: "cashflow", excelLabels: ["Kenaikan/penuruan kas"], pdfLabel: "Total Kenaikan/Penurunan Kas" },
+  { report: "cashflow", excelLabels: ["Kenaikan/penuruan kas", "Kenaikan / Penurunan Kas"], pdfLabel: "Total Kenaikan/Penurunan Kas" },
   { report: "balance-sheet", excelLabels: ["Piutang Sewa Lapangan"], pdfLabel: "Piutang Court Fee", pdfCode: "11301" },
   { report: "balance-sheet", excelLabels: ["Persedian barang dagang", "Persediaan barang dagang"], pdfLabel: "Persediaan barang dagang", pdfCode: "11400" },
   { report: "balance-sheet", excelLabels: ["Jumlah Aset Lancar"], pdfLabel: "Total Aset Lancar" },
