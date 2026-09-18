@@ -247,14 +247,22 @@ export function compareFinancialReports(
   pdfLines: readonly FinancialLine[],
   report: MappingReportKind = "profit-loss",
 ): ComparisonResult {
+  // PDF Mei lama sudah tersimpan sebelum koreksi OCR tanda minus. Potongan
+  // pembelian secara akuntansi adalah biaya negatif; normalisasi di sini juga
+  // memperbaiki cache lama tanpa memaksa OCR ulang.
+  const normalizedPdfLines = pdfLines.map((line) =>
+    line.code === "50500" && /potongan\s+pembelian/i.test(line.label) && (line.value ?? 0) > 0
+      ? { ...line, value: -(line.value ?? 0) }
+      : line,
+  );
   const rules = rulesForReport(report);
   const aliases = aliasRulesForReport(report);
   // Jika kedua sisi sudah memecah akun yang sama, jangan gabungkan salah satu
   // sisi karena itu menciptakan selisih palsu. Aturan yang tidak lengkap tetap
   // diteruskan agar alasan skip masih terlihat di hasil.
-  const activeRules = rules.filter((rule) => !(hasAllRuleParts(excelLines, rule) && hasAllRuleParts(pdfLines, rule)));
+  const activeRules = rules.filter((rule) => !(hasAllRuleParts(excelLines, rule) && hasAllRuleParts(normalizedPdfLines, rule)));
   const excelApplied = applyRules(comparableSides(excelLines), activeRules, "excel");
-  const pdfApplied = applyRules(comparableSides(pdfLines), activeRules, "pdf");
+  const pdfApplied = applyRules(comparableSides(normalizedPdfLines), activeRules, "pdf");
 
   const remaining = [...pdfApplied.sides];
   const rows: ComparisonRow[] = [];
