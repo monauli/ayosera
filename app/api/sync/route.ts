@@ -76,7 +76,9 @@ export async function POST(request: Request) {
       logProgress: true,
     });
 
-    const paymentEvents = await maybeSyncAyoPaymentEvents().catch((error) => ({ skipped: false, reason: "failed", error: error instanceof Error ? error.message.replace(/AYO_MOBILE_TOKEN\s*[=:]\s*[^\s&]+/gi, "AYO_MOBILE_TOKEN=[redacted]") : "failed" }));
+    const paymentEvents = await maybeSyncAyoPaymentEvents({
+      forceWindow: filters.start_date && filters.end_date ? { start: filters.start_date, end: filters.end_date } : undefined,
+    }).catch((error) => ({ skipped: false, reason: "failed", error: error instanceof Error ? error.message.replace(/AYO_MOBILE_TOKEN\s*[=:]\s*[^\s&]+/gi, "AYO_MOBILE_TOKEN=[redacted]") : "failed" }));
     return NextResponse.json({ ...result, paymentEvents });
   } catch (error) {
     await logSyncFailure({ type: "manual", startedAt, error });

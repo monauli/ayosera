@@ -32,7 +32,7 @@ type State = Partial<AyoPaymentEventSyncStateDocument> & { _id: typeof PAYMENT_E
 type StateCollection = { findOne(filter: Record<string, unknown>): Promise<State | null>; findOneAndUpdate(filter: Record<string, unknown>, update: Record<string, unknown>, options: { upsert: true; returnDocument: "after" }): Promise<State | null>; updateOne(filter: Record<string, unknown>, update: Record<string, unknown>, options?: { upsert?: boolean }): Promise<unknown> };
 type EventsCollection = { find(filter: Record<string, unknown>): { toArray(): Promise<AyoPaymentEventStagingEvent[]> }; bulkWrite(operations: unknown[]): Promise<unknown> };
 type RunsCollection = { updateOne(filter: Record<string, unknown>, update: Record<string, unknown>, options: { upsert: true }): Promise<unknown> };
-export type PaymentEventAutoSyncContext = { state: StateCollection; events: EventsCollection; runs: RunsCollection; fetch?: typeof fetchAyoPaymentEvents; now?: () => Date; env?: Record<string, string | undefined> };
+export type PaymentEventAutoSyncContext = { state: StateCollection; events: EventsCollection; runs: RunsCollection; fetch?: typeof fetchAyoPaymentEvents; now?: () => Date; env?: Record<string, string | undefined>; forceWindow?: { start: string; end: string } };
 
 export async function syncAyoPaymentEventsAutomatically(context: PaymentEventAutoSyncContext) {
   const now = (context.now ?? (() => new Date()))();
@@ -41,7 +41,7 @@ export async function syncAyoPaymentEventsAutomatically(context: PaymentEventAut
   const locked = await context.state.findOneAndUpdate({ _id: PAYMENT_EVENT_SYNC_STATE_ID, $or: [{ lockUntil: { $lte: now } }, { lockUntil: { $exists: false } }] }, { $set: { lockUntil, lastAttemptAt: now, source: "ayo-report-transactions", runId } }, { upsert: true, returnDocument: "after" });
   if (!locked || locked.runId !== runId) return { skipped: true as const, reason: "locked" as const };
   try {
-    const window = resolvePaymentEventSyncWindow(locked.lastSuccessfulSyncAt ?? null, now, context.env?.AYO_PAYMENT_EVENTS_SYNC_START_DATE);
+    const window = context.forceWindow ?? resolvePaymentEventSyncWindow(locked.lastSuccessfulSyncAt ?? null, now, context.env?.AYO_PAYMENT_EVENTS_SYNC_START_DATE);
     const api = await (context.fetch ?? fetchAyoPaymentEvents)(window.start, window.end);
     const normalized = planPaymentEventUpsert(api.events);
     const validation = validatePaymentPeriod({ startDate: window.start, endDate: window.end, events: normalized.events, expectedTotalTransaction: api.expectedTotalTransaction, expectedTotal: api.expectedTotal, conflictCount: normalized.conflicts + normalized.invalid });
