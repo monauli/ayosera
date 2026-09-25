@@ -1355,7 +1355,10 @@ export async function analyzeFinancialPdf(
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const loadingTask = pdfjs.getDocument({ data: bytes });
+  // PDF tertentu (terutama export Agustus) masuk jalur ReadableStream PDF.js
+  // yang tidak mendukung async iteration di browser produksi. Buffer langsung
+  // lebih stabil dan cukup untuk berkas laporan kecil ini.
+  const loadingTask = pdfjs.getDocument({ data: bytes, disableStream: true, disableAutoFetch: true });
   try {
     const doc = await loadingTask.promise;
     const digital = await extractDigitalTokens(doc);
