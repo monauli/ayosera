@@ -5,8 +5,9 @@ import { resolveVenueName } from "@/lib/booking-mapper";
 import { buildOmzetHarianWorkbook } from "@/lib/omzet-export";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
-import { dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
+import { dashboardPaymentIdByBooking, dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
 import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
+import { loadRacketAddonAmounts, withImportedRacketAddonAmounts } from "@/lib/ayo-racket-addon-store";
 
 export const runtime = "nodejs";
 
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
     // ini sebagai batas atas supaya query tidak ditolak untuk SELURUH bulan.
     const monthEnd = monthCalendarEnd < todayJakarta() ? monthCalendarEnd : todayJakarta();
 
-    const { dayBookings, monthBookings, sportByFieldId, venueName, paymentTypeByBooking } = await withMongo(async () => {
+    const loaded = await withMongo(async () => {
       const { bookings, fields, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
       const [day, month, fieldRows] = await Promise.all([
         bookings.find({ date }).sort({ field_name: 1, start_time: 1 }).toArray(),
@@ -65,8 +66,13 @@ export async function GET(request: Request) {
         sportByFieldId: map,
         venueName: resolveVenueName(),
         paymentTypeByBooking: staged ? dashboardPaymentTypeByBooking(staged.events) : undefined,
+        paymentIdByBooking: staged ? dashboardPaymentIdByBooking(staged.events) : undefined,
       };
     });
+    const addonAmounts = await loadRacketAddonAmounts(loaded.dayBookings.concat(loaded.monthBookings).map((booking) => booking.booking_id));
+    const dayBookings = withImportedRacketAddonAmounts(loaded.dayBookings, addonAmounts);
+    const monthBookings = withImportedRacketAddonAmounts(loaded.monthBookings, addonAmounts);
+    const { sportByFieldId, venueName, paymentTypeByBooking, paymentIdByBooking } = loaded;
 
     const buffer = await buildOmzetHarianWorkbook({
       date,
@@ -75,6 +81,7 @@ export async function GET(request: Request) {
       monthBookings,
       sportByFieldId,
       paymentTypeByBooking,
+      paymentIdByBooking,
     });
 
     const filename = `Omzet Harian ${date}.xlsx`;

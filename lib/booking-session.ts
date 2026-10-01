@@ -31,6 +31,8 @@ export type SessionBooking = {
   /** Nama lapangan — TAMPILAN saja, tidak pernah dipakai sebagai kunci grouping. */
   service?: string;
   amountValue?: number;
+  racketAddonAmount?: string;
+  racketAddonAmountValue?: number;
   status: string;
   previousSchedule?: { date: string; start_time: string; end_time: string };
   fieldChanges?: { field: string; from: string; to: string }[];
@@ -56,6 +58,8 @@ export type BookingSession<T extends SessionBooking> = {
   slotCount: number;
   /** Total sesi dari getRevenueAmount() — cancelled/Rp0/internal mengikuti engine revenue existing. */
   totalRevenue: number;
+  /** Total add-on sewa raket dari anggota sesi, untuk kolom terpisah di tabel. */
+  racketAddonTotal: number;
   statusSummary: string;
   badges: SessionBadge[];
 };
@@ -192,6 +196,7 @@ function buildSession<T extends SessionBooking>(chain: T[], key: string): Bookin
     slotCount: chain.length,
     // Satu-satunya sumber angka: helper revenue existing. Tidak ada rumus baru.
     totalRevenue: chain.reduce((total, booking) => total + getRevenueAmount(booking as Record<string, unknown>), 0),
+    racketAddonTotal: chain.reduce((total, booking) => total + Number(booking.racketAddonAmountValue ?? 0), 0),
     statusSummary: (active[0] ?? first).status,
     badges,
   };

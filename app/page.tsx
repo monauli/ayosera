@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ElementType } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type ElementType } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -17,6 +17,7 @@ import {
   Columns2,
   DatabaseZap,
   FileSpreadsheet,
+  FileUp,
   LayoutDashboard,
   Loader2,
   RefreshCw,
@@ -109,6 +110,8 @@ type TransactionRow = {
   /** Hanya diisi API saat booking punya >1 payment event (lihat lib/booking-payment-aggregate.ts). */
   paymentCount?: number;
   paymentDetails?: { referenceId: string; amount: string; amountValue: number; paymentTime?: string }[];
+  racketAddonAmount?: string;
+  racketAddonAmountValue?: number;
 };
 type DatePreset = "today" | "yesterday" | "week" | "month" | "lastMonth" | "custom" | "manualMonth";
 
@@ -592,6 +595,8 @@ export default function DashboardPage() {
   const [exportStart, setExportStart] = useState(today);
   const [exportEnd, setExportEnd] = useState(today);
   const [exportMonth, setExportMonth] = useState(currentMonth);
+  const [racketAddonImporting, setRacketAddonImporting] = useState(false);
+  const racketAddonInputId = useId();
   const [sort, setSort] = useState<SortState>({ key: "date", dir: "asc" });
   // Session yang sedang dibuka (id deterministik dari helper). Default seluruhnya
   // tertutup, dan direset setiap kali halaman/filter/sort menghasilkan data baru.
@@ -807,7 +812,10 @@ export default function DashboardPage() {
     setExporting(true);
     setSyncMessage("");
     try {
-      const response = await fetch(`/api/transactions/export/harian?date=${exportDate}`, { cache: "no-store" });
+      const response = await fetch(`/api/transactions/export/harian?date=${exportDate}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(120_000),
+      });
       if (response.status === 401) {
         await redirectToLogin();
         return;
@@ -832,11 +840,40 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleRacketAddonImport(file: File) {
+    setRacketAddonImporting(true);
+    setSyncMessage("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch("/api/transactions/addons/import", { method: "POST", body });
+      if (response.status === 401) {
+        await redirectToLogin();
+        return;
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        data?: { addonCount?: number; totalAmount?: number; periods?: string[] };
+        error?: string;
+      };
+      if (!response.ok) {
+        setSyncMessage(payload.error || "Import add-on sewa raket gagal.");
+        return;
+      }
+      const amount = new Intl.NumberFormat("id-ID").format(payload.data?.totalAmount ?? 0);
+       setSyncMessage(`Import add-on berhasil: ${payload.data?.addonCount ?? 0} booking, total Rp${amount}.`);
+       await loadData();
+    } catch {
+      setSyncMessage("Tidak dapat terhubung ke server saat import add-on.");
+    } finally {
+      setRacketAddonImporting(false);
+    }
+  }
+
   async function downloadExcelExport(url: string, fallbackName: string) {
     setExporting(true);
     setSyncMessage("");
     try {
-      const response = await fetch(url, { cache: "no-store" });
+      const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(120_000) });
       if (response.status === 401) {
         await redirectToLogin();
         return false;
@@ -2369,7 +2406,26 @@ export default function DashboardPage() {
                   <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-50">Excel</p>
                   <p className="mt-1 text-xs text-slate-500">Ikut filter aktif</p>
                 </div>
-                <div className="shrink-0">
+                <div className="flex shrink-0 items-center gap-2">
+                  <input
+                    id={racketAddonInputId}
+                    type="file"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    className="sr-only"
+                    disabled={racketAddonImporting || exporting}
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      if (file) void handleRacketAddonImport(file);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  <label
+                    htmlFor={racketAddonInputId}
+                    className={`inline-flex h-11 items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-50 px-3 text-xs font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 ${racketAddonImporting || exporting ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+                  >
+                    {racketAddonImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+                    <span>Import Sewa Raket</span>
+                  </label>
                   <TransactionExportMenu
                     open={exportMenuOpen}
                     onOpenChange={setExportMenuOpen}
@@ -2396,20 +2452,21 @@ export default function DashboardPage() {
 
           <section className="mt-8">
             <div className="rd-card rd-enter relative rounded-2xl p-5" style={{ animationDelay: "340ms" }}>
-                {/* P0 fix: tabel butuh min-w-[1000px] (9 kolom termasuk
+                {/* P0 fix: tabel butuh min-w-[1140px] (10 kolom termasuk
                     Nominal/Status/Perubahan di sisi kanan) sehingga di lebar
                     layar yang lebih sempit dari itu tabel harus digeser
                     horizontal — sebelumnya tidak ada petunjuk visual sama
                     sekali, jadi kolom Nominal terlihat seperti "hilang".
                     Tambahan di sini murni petunjuk visual (teks + fade tepi
                     kanan lewat class rd-table-scroll-wrap), TIDAK mengubah
-                    data/kolom/urutan tabel. */}
+                    urutan kolom yang sudah ada. Kolom add-on ditambahkan terpisah
+                    agar hasil import dapat terlihat per booking. */}
                 <p className="mb-2 flex items-center gap-1.5 text-xs text-slate-400">
                   <MoveHorizontal className="h-3.5 w-3.5 shrink-0" />
-                  Geser tabel ke kanan untuk melihat kolom Nominal, Status, dan Perubahan.
+                  Geser tabel ke kanan untuk melihat kolom Nominal, Add On, Status, dan Perubahan.
                 </p>
                 <div className="rd-table-scroll-wrap overflow-x-auto">
-                  <table className="rd-table w-full min-w-[1000px] text-sm">
+                  <table className="rd-table w-full min-w-[1140px] text-sm">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
                         <SortableHeader label="Tanggal" sortKey="date" sort={sort} onSort={handleSort} />
@@ -2419,6 +2476,7 @@ export default function DashboardPage() {
                         <th className="h-10 px-2 font-medium">Telepon</th>
                         <SortableHeader label="Lapangan" sortKey="service" sort={sort} onSort={handleSort} />
                         <SortableHeader label="Nominal" sortKey="amount" sort={sort} onSort={handleSort} align="right" />
+                        <th className="h-10 px-2 text-right font-medium">Sewa Raket Add On</th>
                         <SortableHeader label="Status" sortKey="status" sort={sort} onSort={handleSort} />
                         <th className="h-10 px-2 font-medium">Perubahan</th>
                       </tr>
@@ -2457,6 +2515,7 @@ export default function DashboardPage() {
                           </select>
                         </th>
                         <th className="px-2 pb-2" />
+                        <th className="px-2 pb-2" />
                         <th className="px-2 pb-2">
                           <select
                             value={columnFilters.status}
@@ -2489,7 +2548,7 @@ export default function DashboardPage() {
                               <BookingSessionRow
                                 key={entry.id}
                                 session={entry}
-                                columnCount={9}
+                                columnCount={10}
                                 formatAmount={formatRupiah}
                                 expanded={expandedSessions.has(entry.id)}
                                 onToggle={() =>
@@ -2536,6 +2595,9 @@ export default function DashboardPage() {
                             <td className="px-2 py-2 text-right font-medium">
                               {transaction.amount}
                             </td>
+                            <td className="px-2 py-2 text-right font-medium text-emerald-700">
+                               {transaction.racketAddonAmountValue ? transaction.racketAddonAmount : "—"}
+                             </td>
                             <td className="px-2 py-2">
                               <Badge variant={statusVariant(transaction.status)}>{statusLabel(transaction.status)}</Badge>
                             </td>
@@ -2558,7 +2620,7 @@ export default function DashboardPage() {
                           </tr>
                           {multiPayment && paymentExpanded && (
                             <tr>
-                              <td colSpan={9} className="border-t border-white/10 bg-white/[0.04] px-2 py-1">
+                              <td colSpan={10} className="border-t border-white/10 bg-white/[0.04] px-2 py-1">
                                 <PaymentDetailList details={transaction.paymentDetails!} bookingId={transaction.id} />
                               </td>
                             </tr>
@@ -2568,7 +2630,7 @@ export default function DashboardPage() {
                         })
                       ) : (
                         <tr>
-                          <td colSpan={9} className="h-[360px] text-center text-sm text-slate-400">
+                          <td colSpan={10} className="h-[360px] text-center text-sm text-slate-400">
                             Tidak ada transaksi ditemukan
                           </td>
                         </tr>

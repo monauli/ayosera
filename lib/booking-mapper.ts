@@ -1,6 +1,23 @@
 import type { BookingDocument, FieldDocument } from "./mongodb.ts";
 import { isCancelledTransaction } from "./revenue.ts";
 
+function optionalNumber(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = Number(raw[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function optionalText(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
+}
+
 export function normalizeBooking(raw: Record<string, unknown>): BookingDocument {
   const now = new Date();
   const branchName = getRawBranchName(raw);
@@ -14,6 +31,8 @@ export function normalizeBooking(raw: Record<string, unknown>): BookingDocument 
     start_time: String(raw.start_time || ""),
     end_time: String(raw.end_time || ""),
     total_price: Number(raw.total_price || 0),
+    racket_addon_amount: optionalNumber(raw, ["racket_addon_amount", "racket_addon_price", "sewa_raket_amount", "sewa_raket"]),
+    payment_id: optionalText(raw, ["payment_id", "paymentId", "reservation_payment_id", "reservationPaymentId"]),
     status: String(raw.status || "UNKNOWN"),
     booker_name: String(raw.booker_name || "-"),
     booker_phone: String(raw.booker_phone || "-"),

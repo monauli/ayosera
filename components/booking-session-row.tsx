@@ -103,6 +103,9 @@ export function BookingSessionRow({
         <td className="max-w-[130px] truncate px-2 py-2">{session.displayPhone}</td>
         <td className="max-w-[180px] truncate px-2 py-2">{session.fieldName || "-"}</td>
         <td className="px-2 py-2 text-right font-medium">{formatAmount(session.totalRevenue)}</td>
+        <td className="px-2 py-2 text-right font-medium text-emerald-700">
+          {session.racketAddonTotal > 0 ? formatAmount(session.racketAddonTotal) : "—"}
+        </td>
         <td className="px-2 py-2">
           <Badge variant={statusVariant(session.statusSummary)}>{statusLabel(session.statusSummary)}</Badge>
         </td>
@@ -142,6 +145,11 @@ export function BookingSessionRow({
                     <span className="whitespace-nowrap text-slate-500">
                       Nominal slot: <span className="font-medium text-slate-200">{booking.amount}</span>
                     </span>
+                    {Number(booking.racketAddonAmountValue ?? 0) > 0 && (
+                      <span className="whitespace-nowrap text-slate-500">
+                        Sewa raket: <span className="font-medium text-emerald-300">{booking.racketAddonAmount}</span>
+                      </span>
+                    )}
                     <Badge variant={statusVariant(booking.status)}>{statusLabel(booking.status)}</Badge>
                     {hasValidReschedule(booking) && (
                       <>

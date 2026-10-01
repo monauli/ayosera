@@ -39,6 +39,8 @@ export type OmzetExportInput = {
   dateList?: string[];
   /** booking_id -> payment type (lib/ayo-payment-events.ts paymentType) — dipakai classifyBookingExportSource untuk MN yang dibayar via Payment Link. Tanpa map ini, MN tetap fallback ke behavior lama (Walk In). */
   paymentTypeByBooking?: ReadonlyMap<string, string | null>;
+  /** booking_id -> payment reference(s) from canonical AYO payment-events. */
+  paymentIdByBooking?: ReadonlyMap<string, string | null>;
 };
 
 /**
@@ -178,6 +180,19 @@ function num(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function racketAddonAmount(b: BookingDocument) {
+  if (isPickle(b.field_name)) return 0;
+  const raw = b.raw ?? {};
+  const rawAmount = ["racket_addon_amount", "racket_addon_price", "sewa_raket_amount", "sewa_raket"]
+    .map((key) => raw[key])
+    .find((value) => Number.isFinite(Number(value)));
+  return Math.max(0, num(b.racket_addon_amount ?? rawAmount));
+}
+
+function fieldRevenueAmount(b: BookingDocument) {
+  return Math.max(0, getRevenueAmount(b) - racketAddonAmount(b));
+}
+
 // ---- Kolom detail (urutan persis template) -------------------------------
 
 type ColumnDef = {
@@ -211,7 +226,13 @@ const BASE_COLUMNS: ColumnDef[] = [
   { header: "Booking Period End Time", get: (b) => b.end_time || "-", width: 11 },
   { header: "Session \nLength", get: (b) => sessionLength(b), width: 12 },
   { header: "Price", get: (b) => num(b.total_price), money: true, width: 12 },
-  { header: "Payment ID", get: () => "-", width: 12 },
+  { header: "Payment ID", get: (b, c) => {
+    const raw = b.raw ?? {};
+    const rawId = ["payment_id", "paymentId", "reservation_payment_id", "reservationPaymentId"]
+      .map((key) => raw[key])
+      .find((value) => value !== undefined && value !== null && String(value).trim());
+    return c.paymentIdByBooking?.get(b.booking_id) || b.payment_id || (rawId ? String(rawId) : "-");
+  }, width: 18 },
   { header: "Payment \nMethod", get: () => "-", width: 14 },
   { header: "Total Booking \nAmount", get: (b) => num(b.total_price), money: true, width: 13 },
   { header: "Discount", get: () => 0, money: true, width: 10 },
@@ -241,6 +262,18 @@ const META_COLUMNS: ColumnDef[] = [
   { header: "Tanggal dan Waktu \nPembatalan", get: () => "-", width: 18 },
   { header: "Alasan Pembatalan", get: () => "-", width: 16 },
 ];
+
+const RACKET_ADDON_COLUMN: ColumnDef = {
+  header: "Sewa Raket Add On",
+  get: racketAddonAmount,
+  money: true,
+  width: 16,
+};
+
+function detailColumns(columns: ColumnDef[]) {
+  const paymentIndex = columns.findIndex((column) => column.header === "Payment ID");
+  return [...columns.slice(0, paymentIndex + 1), RACKET_ADDON_COLUMN, ...columns.slice(paymentIndex + 1)];
+}
 
 // ---- Styling helpers -----------------------------------------------------
 
@@ -360,11 +393,11 @@ function buildWalkInSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
 
 function buildAyoSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const ws = wb.addWorksheet("AYO");
-  const columns: ColumnDef[] = [
+  const columns = detailColumns([
     { header: "No", get: () => "", width: 6 },
     ...BASE_COLUMNS,
     ...META_COLUMNS,
-  ];
+  ]);
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (AYO)", periodText(input), columns, {
     reschedule: "Reschedule",
     paymentFail: "Payment Fail",
@@ -380,7 +413,8 @@ function buildAyoSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     const groupStart = r;
     for (const b of group) {
       no++;
-      const values = [no, ...BASE_COLUMNS.map((c) => c.get(b, input)), ...META_COLUMNS.map((c) => c.get(b, input))];
+      const values = columns.map((c) => c.get(b, input));
+      values[0] = no;
       writeDataRow(ws, r, columns, values);
       r++;
     }
@@ -393,11 +427,11 @@ function buildAllSheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const ws = wb.addWorksheet("ALL");
   // ALL: kolom "Tanggal" memimpin (di-merge), tanpa "Date of Booking" di tengah.
   const baseWithoutDate = BASE_COLUMNS.filter((c) => !c.header.startsWith("Date of"));
-  const columns: ColumnDef[] = [
+  const columns = detailColumns([
     { header: "Tanggal", get: (b) => b.date || "-", width: 12 },
     ...baseWithoutDate,
     ...META_COLUMNS,
-  ];
+  ]);
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (ALL)", periodText(input), columns);
 
   // urutkan per court (padel dulu lalu pickle), dalam court urut jam mulai
@@ -482,13 +516,17 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const ws = wb.addWorksheet(`Summary ${MONTHS_ID[month - 1]}'${String(year).slice(2)}`);
 
   const courts = distinctCourtsForSummary(input.monthBookings);
-  // setiap court -> 2 kolom (AYO, Walk In), mulai kolom B
-  const courtCols = courts.map((court, idx) => {
-    const ayoCol = 2 + idx * 2; // B, D, F, ...
+  // Padel -> 3 kolom (AYO, Walk In, Sewa Raket); Pickleball -> 2 kolom.
+  let nextCourtCol = 2;
+  const courtCols = courts.map((court) => {
+    const ayoCol = nextCourtCol;
     const walkCol = ayoCol + 1; // C, E, G, ...
-    return { court, ayoCol, walkCol, pickle: isPickle(court) };
+    const pickle = isPickle(court);
+    const racketCol = pickle ? undefined : walkCol + 1;
+    nextCourtCol = (racketCol ?? walkCol) + 1;
+    return { court, ayoCol, walkCol, racketCol, pickle };
   });
-  const totalCol = (courtCols.at(-1)?.walkCol ?? 1) + 1;
+  const totalCol = (courtCols.at(-1)?.racketCol ?? courtCols.at(-1)?.walkCol ?? 1) + 1;
   const lastColLetter = colLetter(totalCol);
 
   // Judul
@@ -508,7 +546,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   ws.getColumn(1).width = 14;
 
   for (const c of courtCols) {
-    ws.mergeCells(4, c.ayoCol, 4, c.walkCol);
+    ws.mergeCells(4, c.ayoCol, 4, c.racketCol ?? c.walkCol);
     const head = ws.getCell(4, c.ayoCol);
     head.value = sanitizeExcelCellValue(courtLabel(c.court));
     styleHeaderCell(head);
@@ -518,6 +556,12 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     const walk = ws.getCell(5, c.walkCol);
     walk.value = "Walk In";
     styleHeaderCell(walk);
+    if (c.racketCol) {
+      const racket = ws.getCell(5, c.racketCol);
+      racket.value = "Sewa Raket";
+      styleHeaderCell(racket);
+      ws.getColumn(c.racketCol).width = 12;
+    }
     ws.getColumn(c.ayoCol).width = 12;
     ws.getColumn(c.walkCol).width = 12;
   }
@@ -536,7 +580,14 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     if (!ci) continue;
     const col = isAyoSource(b, input) ? ci.ayoCol : ci.walkCol;
     const key = `${day}|${col}`;
-    agg.set(key, (agg.get(key) ?? 0) + getRevenueAmount(b));
+    agg.set(key, (agg.get(key) ?? 0) + fieldRevenueAmount(b));
+    if (ci.racketCol) {
+      const racket = racketAddonAmount(b);
+      if (racket) {
+        const racketKey = `${day}|${ci.racketCol}`;
+        agg.set(racketKey, (agg.get(racketKey) ?? 0) + racket);
+      }
+    }
   }
 
   const firstDataRow = 6;
@@ -551,7 +602,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     aCell.border = thinBorder();
 
     for (const c of courtCols) {
-      for (const col of [c.ayoCol, c.walkCol]) {
+      for (const col of [c.ayoCol, c.walkCol, ...(c.racketCol ? [c.racketCol] : [])]) {
         const cell = row.getCell(col);
         const v = agg.get(`${d}|${col}`);
         if (v) cell.value = v;
@@ -587,6 +638,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   // Blok ringkasan bawah (PADEL / PICKLE / TOTAL / Average)
   const padelAyo = courtCols.filter((c) => !c.pickle).map((c) => `${colLetter(c.ayoCol)}${totalRow}`);
   const padelWalk = courtCols.filter((c) => !c.pickle).map((c) => `${colLetter(c.walkCol)}${totalRow}`);
+  const padelRacket = courtCols.filter((c) => !c.pickle && c.racketCol).map((c) => `${colLetter(c.racketCol!)}${totalRow}`);
   const pickleAyo = courtCols.filter((c) => c.pickle).map((c) => `${colLetter(c.ayoCol)}${totalRow}`);
   const pickleWalk = courtCols.filter((c) => c.pickle).map((c) => `${colLetter(c.walkCol)}${totalRow}`);
 
@@ -612,7 +664,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   ws.getCell(base + 2, 10).value = { formula: `SUM(H${base + 2}:I${base + 2})` };
   // TOTAL
   ws.getCell(base + 3, 7).value = "TOTAL";
-  ws.getCell(base + 3, 8).value = { formula: `SUM(H${base + 1}:H${base + 2})` };
+  ws.getCell(base + 3, 8).value = { formula: `SUM(H${base + 1}:H${base + 2})+${sumOrZero(padelRacket)}` };
   ws.getCell(base + 3, 9).value = { formula: `SUM(I${base + 1}:I${base + 2})` };
   ws.getCell(base + 3, 10).value = { formula: `SUM(H${base + 3}:I${base + 3})` };
   // Average
@@ -724,12 +776,16 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   const ws = wb.addWorksheet("Summary");
 
   const courts = distinctCourtsForSummary(input.monthBookings);
-  const courtCols = courts.map((court, idx) => {
-    const ayoCol = 2 + idx * 2;
+  let nextCourtCol = 2;
+  const courtCols = courts.map((court) => {
+    const ayoCol = nextCourtCol;
     const walkCol = ayoCol + 1;
-    return { court, ayoCol, walkCol, pickle: isPickle(court) };
+    const pickle = isPickle(court);
+    const racketCol = pickle ? undefined : walkCol + 1;
+    nextCourtCol = (racketCol ?? walkCol) + 1;
+    return { court, ayoCol, walkCol, racketCol, pickle };
   });
-  const totalCol = (courtCols.at(-1)?.walkCol ?? 1) + 1;
+  const totalCol = (courtCols.at(-1)?.racketCol ?? courtCols.at(-1)?.walkCol ?? 1) + 1;
   const lastColLetter = colLetter(totalCol);
 
   ws.mergeCells(`A1:${lastColLetter}1`);
@@ -747,7 +803,7 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   ws.getColumn(1).width = 14;
 
   for (const c of courtCols) {
-    ws.mergeCells(4, c.ayoCol, 4, c.walkCol);
+    ws.mergeCells(4, c.ayoCol, 4, c.racketCol ?? c.walkCol);
     const head = ws.getCell(4, c.ayoCol);
     head.value = sanitizeExcelCellValue(courtLabel(c.court));
     styleHeaderCell(head);
@@ -757,6 +813,12 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
     const walk = ws.getCell(5, c.walkCol);
     walk.value = "Walk In";
     styleHeaderCell(walk);
+    if (c.racketCol) {
+      const racket = ws.getCell(5, c.racketCol);
+      racket.value = "Sewa Raket";
+      styleHeaderCell(racket);
+      ws.getColumn(c.racketCol).width = 12;
+    }
     ws.getColumn(c.ayoCol).width = 12;
     ws.getColumn(c.walkCol).width = 12;
   }
@@ -773,7 +835,14 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
     if (!ci) continue;
     const col = isAyoSource(b, input) ? ci.ayoCol : ci.walkCol;
     const key = `${b.date}|${col}`;
-    agg.set(key, (agg.get(key) ?? 0) + getRevenueAmount(b));
+    agg.set(key, (agg.get(key) ?? 0) + fieldRevenueAmount(b));
+    if (ci.racketCol) {
+      const racket = racketAddonAmount(b);
+      if (racket) {
+        const racketKey = `${b.date}|${ci.racketCol}`;
+        agg.set(racketKey, (agg.get(racketKey) ?? 0) + racket);
+      }
+    }
   }
 
   const firstDataRow = 6;
@@ -788,7 +857,7 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
     aCell.border = thinBorder();
 
     for (const c of courtCols) {
-      for (const col of [c.ayoCol, c.walkCol]) {
+      for (const col of [c.ayoCol, c.walkCol, ...(c.racketCol ? [c.racketCol] : [])]) {
         const cell = row.getCell(col);
         const v = agg.get(`${date}|${col}`);
         if (v) cell.value = v;
@@ -821,6 +890,7 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
 
   const padelAyo = courtCols.filter((c) => !c.pickle).map((c) => `${colLetter(c.ayoCol)}${totalRow}`);
   const padelWalk = courtCols.filter((c) => !c.pickle).map((c) => `${colLetter(c.walkCol)}${totalRow}`);
+  const padelRacket = courtCols.filter((c) => !c.pickle && c.racketCol).map((c) => `${colLetter(c.racketCol!)}${totalRow}`);
   const pickleAyo = courtCols.filter((c) => c.pickle).map((c) => `${colLetter(c.ayoCol)}${totalRow}`);
   const pickleWalk = courtCols.filter((c) => c.pickle).map((c) => `${colLetter(c.walkCol)}${totalRow}`);
 
@@ -844,7 +914,7 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   ws.getCell(base + 2, 9).value = { formula: sumOrZero(pickleWalk) };
   ws.getCell(base + 2, 10).value = { formula: `SUM(H${base + 2}:I${base + 2})` };
   ws.getCell(base + 3, 7).value = "TOTAL";
-  ws.getCell(base + 3, 8).value = { formula: `SUM(H${base + 1}:H${base + 2})` };
+  ws.getCell(base + 3, 8).value = { formula: `SUM(H${base + 1}:H${base + 2})+${sumOrZero(padelRacket)}` };
   ws.getCell(base + 3, 9).value = { formula: `SUM(I${base + 1}:I${base + 2})` };
   ws.getCell(base + 3, 10).value = { formula: `SUM(H${base + 3}:I${base + 3})` };
   ws.getCell(base + 4, 7).value = "Average";
@@ -864,11 +934,11 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
 function buildAllSheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const ws = wb.addWorksheet("ALL");
   const baseWithoutDate = BASE_COLUMNS.filter((c) => !c.header.startsWith("Date of"));
-  const columns: ColumnDef[] = [
+  const columns = detailColumns([
     { header: "Tanggal", get: (b) => b.date || "-", width: 12 },
     ...baseWithoutDate,
     ...META_COLUMNS,
-  ];
+  ]);
   writeDetailHeader(ws, "OMSET SEWA LAPANGAN (ALL)", periodText(input), columns);
 
   const priceIdx = columns.findIndex((c) => c.header === "Price");

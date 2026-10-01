@@ -6,8 +6,9 @@ import { buildOmzetPeriodWorkbook, dateRange, periodLabelRange } from "@/lib/omz
 import { validateDateRangeQuery } from "@/lib/date-range-validation";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
-import { dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
+import { dashboardPaymentIdByBooking, dashboardPaymentTypeByBooking } from "@/lib/dashboard-payment-metrics";
 import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
+import { loadRacketAddonAmounts, withImportedRacketAddonAmounts } from "@/lib/ayo-racket-addon-store";
 
 export const runtime = "nodejs";
 
@@ -33,7 +34,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    const { periodBookings, sportByFieldId, venueName, paymentTypeByBooking } = await withMongo(async () => {
+    const loaded = await withMongo(async () => {
       const { bookings, fields, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
       const [rows, fieldRows] = await Promise.all([
         bookings
@@ -57,8 +58,14 @@ export async function GET(request: Request) {
         sportByFieldId: map,
         venueName: resolveVenueName(),
         paymentTypeByBooking: staged ? dashboardPaymentTypeByBooking(staged.events) : undefined,
+        paymentIdByBooking: staged ? dashboardPaymentIdByBooking(staged.events) : undefined,
       };
     });
+    const periodBookings = withImportedRacketAddonAmounts(
+      loaded.periodBookings,
+      await loadRacketAddonAmounts(loaded.periodBookings.map((booking) => booking.booking_id)),
+    );
+    const { sportByFieldId, venueName, paymentTypeByBooking, paymentIdByBooking } = loaded;
 
     const buffer = await buildOmzetPeriodWorkbook({
       date: start,
@@ -69,6 +76,7 @@ export async function GET(request: Request) {
       periodLabel: periodLabelRange(start, end),
       dateList: dateRange(start, end),
       paymentTypeByBooking,
+      paymentIdByBooking,
     });
 
     const filename = start === end ? `Omzet ${start}.xlsx` : `Omzet ${start} sd ${end}.xlsx`;

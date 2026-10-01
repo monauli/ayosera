@@ -8,12 +8,18 @@ import { NO_CACHE_HEADERS } from "@/lib/no-cache";
 import { readActiveStagedPaymentEvents } from "@/lib/ayo-payment-event-staging";
 import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
 import { aggregateBookingPayments, withBookingPaymentTotals, paymentDetailsFor } from "@/lib/booking-payment-aggregate";
+import { loadRacketAddonAmounts } from "@/lib/ayo-racket-addon-store";
 
 // Data transaksi selalu realtime: nonaktifkan cache Next.js/Vercel.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const MAX_LIMIT = 500;
+const currencyFormat = new Intl.NumberFormat("id-ID", {
+  style: "currency",
+  currency: "IDR",
+  maximumFractionDigits: 0,
+});
 
 function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -141,8 +147,16 @@ export async function GET(request: Request) {
       `[transactions-api] ${Date.now() - startedAt}ms, matched ${result.matchedCount}, page ${result.page}/${result.totalPages}, returned ${result.data.length}`,
     );
 
+    const racketAddonAmounts = await loadRacketAddonAmounts(result.data.map((row) => row.id));
+    const data = result.data.map((row) => {
+      const amountValue = racketAddonAmounts.get(row.id);
+      return amountValue === undefined
+        ? row
+        : { ...row, racketAddonAmount: currencyFormat.format(amountValue), racketAddonAmountValue: amountValue };
+    });
+
     return NextResponse.json(
-      { data: result.data, page: result.page, limit: result.limit, total: result.total, totalPages: result.totalPages },
+      { data, page: result.page, limit: result.limit, total: result.total, totalPages: result.totalPages },
       { headers: NO_CACHE_HEADERS },
     );
   } catch (error) {

@@ -125,6 +125,82 @@ test("buildOmzetHarianWorkbook: nama court normal tidak berubah di header Summar
   assert.equal(headerValue, "Court 3");
 });
 
+test("export menambah sewa raket hanya untuk padel", async () => {
+  const padel = fakeBooking({
+    booking_id: "PADEL-1",
+    field_name: "Court No 1",
+    status: "SUCCESS",
+    total_price: 150000,
+    racket_addon_amount: 50000,
+    payment_id: "PAY-1",
+  });
+  const pickle = fakeBooking({
+    booking_id: "PICKLE-1",
+    field_name: "Pickleball Court No 1",
+    status: "SUCCESS",
+    racket_addon_amount: 100000,
+  });
+  const bytes = await buildOmzetHarianWorkbook({
+    date: "2026-07-01",
+    venueName: "BC Padel Club",
+    dayBookings: [padel, pickle],
+    monthBookings: [padel, pickle],
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+
+  const summary = workbook.worksheets[0];
+  assert.equal(summary.getCell(5, 4).value, "Sewa Raket");
+  assert.equal(summary.getCell(6, 2).value, 100000);
+  assert.equal(summary.getCell(6, 4).value, 50000);
+  assert.notEqual(summary.getCell(5, 5).value, "Sewa Raket");
+
+  const ayo = workbook.getWorksheet("AYO");
+  assert.ok(ayo);
+  const racketColumn = headerColumn(ayo, "Sewa Raket Add On");
+  const paymentColumn = headerColumn(ayo, "Payment ID");
+  assert.equal(ayo.getCell(5, racketColumn).value, 50000);
+  assert.equal(ayo.getCell(5, paymentColumn).value, "PAY-1");
+});
+
+test("export periode memisahkan nominal lapangan dari sewa raket", async () => {
+  const booking = fakeBooking({
+    booking_id: "PADEL-PERIOD-1",
+    field_name: "Court No 1",
+    date: "2026-09-01",
+    status: "SUCCESS",
+    total_price: 200000,
+    racket_addon_amount: 50000,
+  });
+  const bytes = await buildOmzetPeriodWorkbook({
+    date: "2026-09-01",
+    venueName: "BC Padel Club",
+    dayBookings: [booking],
+    monthBookings: [booking],
+    periodLabel: "Laporan Periode 1 September 2026",
+    dateList: ["2026-09-01"],
+  });
+  const summary = await loadFirstSheet(bytes);
+  assert.equal(summary.getCell(6, 2).value, 150000);
+  assert.equal(summary.getCell(6, 4).value, 50000);
+});
+
+test("export memakai payment_id dari payment-events canonical", async () => {
+  const booking = fakeBooking({ booking_id: "BK-PAYMENT-ID", status: "SUCCESS" });
+  const bytes = await buildOmzetHarianWorkbook({
+    date: "2026-07-01",
+    venueName: "BC Padel Club",
+    dayBookings: [booking],
+    monthBookings: [booking],
+    paymentIdByBooking: new Map([[booking.booking_id, "AYOIN2607010001"]]),
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const ayo = workbook.getWorksheet("AYO");
+  assert.ok(ayo);
+  assert.equal(ayo.getCell(5, headerColumn(ayo, "Payment ID")).value, "AYOIN2607010001");
+});
+
 test("buildOmzetPeriodWorkbook: nama court berbahaya disimpan sebagai teks aman di header Summary (varian periode/bulanan)", async () => {
   const malicious = fakeBooking({ field_name: "+CMD|'/C calc'" });
   const input: OmzetExportInput = {

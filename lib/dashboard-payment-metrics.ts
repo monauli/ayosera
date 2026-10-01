@@ -36,6 +36,24 @@ export function dashboardPaymentTypeByBooking(paymentEvents: readonly AyoPayment
   return types;
 }
 
+/** booking_id -> semua payment reference unik untuk kebutuhan export detail. */
+export function dashboardPaymentIdByBooking(paymentEvents: readonly AyoPaymentEvent[]) {
+  const ids = new Map<string, string[]>();
+  for (const event of uniqueDashboardPaymentEvents(paymentEvents)) {
+    if (!event.bookingId) continue;
+    const rawPaymentId = event.raw?.payment_id;
+    const reference = (typeof rawPaymentId === "string" && rawPaymentId.trim() ? rawPaymentId.trim() : null)
+      || event.reservationPaymentId
+      || event.sourceId
+      || event.nativeId;
+    if (!reference) continue;
+    const current = ids.get(event.bookingId) ?? [];
+    if (!current.includes(reference)) current.push(reference);
+    ids.set(event.bookingId, current);
+  }
+  return new Map([...ids].map(([bookingId, references]) => [bookingId, references.join(", ")]));
+}
+
 /**
  * Card metrics must match Court Performance's counting unit: one transaction
  * per booking (dashboardPaymentAmountsByBooking sums split-payment events

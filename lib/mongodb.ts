@@ -40,6 +40,10 @@ export type BookingDocument = {
   start_time: string;
   end_time: string;
   total_price: number;
+  /** Optional AYO add-on; currently absent from older list-bookings payloads. */
+  racket_addon_amount?: number;
+  /** Optional payment reference returned by richer AYO transaction payloads. */
+  payment_id?: string;
   status: string;
   booker_name: string;
   booker_phone: string;
@@ -59,6 +63,18 @@ export type BookingDocument = {
   previousSchedule?: { date: string; start_time: string; end_time: string };
   /** Rincian field non-jadwal yang berubah saat changeType "updated" (nilai sudah human-readable). */
   fieldChanges?: { field: string; from: string; to: string }[];
+};
+
+export type AyoRacketAddonDocument = {
+  _id: string;
+  storeId: number;
+  bookingId: string;
+  date: string;
+  amount: number;
+  paymentId: string;
+  sourceFileName: string;
+  importedAt: Date;
+  importedBy: string;
 };
 
 export type AyoPaymentEventDocument = AyoPaymentEvent;
@@ -994,6 +1010,7 @@ export async function collections() {
   return {
     users: db.collection<UserDocument>("users"),
     bookings: db.collection<BookingDocument>("bookings"),
+    ayoRacketAddons: db.collection<AyoRacketAddonDocument>("ayo_racket_addons"),
     ayoPaymentEvents: db.collection<AyoPaymentEventDocument>("ayo_payment_events"),
     ayoPaymentPeriods: db.collection<AyoPaymentPeriodDocument>("ayo_payment_periods"),
     // Staging AYO sengaja terisolasi dari koleksi payment-event lama. Tidak ada
@@ -1065,6 +1082,7 @@ async function createIndexes() {
   const {
     users,
     bookings,
+    ayoRacketAddons,
     ayoPaymentEvents,
     ayoPaymentPeriods,
     syncLogs,
@@ -1115,6 +1133,7 @@ async function createIndexes() {
     bookings.createIndex({ booker_phone: 1 }),
     bookings.createIndex({ updatedAt: -1 }),
     bookings.createIndex({ syncedAt: -1 }),
+    ayoRacketAddons.createIndex({ storeId: 1, bookingId: 1 }, { unique: true }),
     ayoPaymentEvents.createIndex({ bookingId: 1, date: 1 }),
     syncLogs.createIndex({ startedAt: -1 }),
     fields.createIndex({ id: 1 }, { unique: true }),

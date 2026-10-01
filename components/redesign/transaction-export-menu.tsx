@@ -11,12 +11,12 @@ const MENU_WIDTH = 256;
 const MENU_EST_HEIGHT = 330;
 
 const ITEM_BTN =
-  "flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-slate-200 transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-50";
+  "flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-slate-700 transition-colors hover:bg-slate-100 disabled:pointer-events-none disabled:opacity-50";
 const ROW_LABEL = "px-2 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500";
 const ROW_INPUT =
   "rd-input h-8 min-w-0 flex-1 cursor-pointer px-2 text-xs";
 const ROW_GO =
-  "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/5 text-slate-200 transition-colors hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-50";
+  "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:pointer-events-none disabled:opacity-50";
 
 export function TransactionExportMenu({
   open,
@@ -100,15 +100,16 @@ export function TransactionExportMenu({
       <Button
         ref={triggerRef}
         variant="outline"
-        size="icon"
+        size="default"
         onClick={() => onOpenChange(!open)}
         disabled={exporting}
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label="Menu ekspor Excel"
-        className="h-11 w-11 border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white"
+        className="h-11 border-slate-200 bg-white px-3 text-slate-700 hover:bg-slate-50 hover:text-slate-900"
       >
         {exporting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowDownToLine className="h-5 w-5" />}
+        <span className="hidden sm:inline">Download</span>
       </Button>
       {open &&
         style &&
@@ -128,7 +129,7 @@ export function TransactionExportMenu({
                 onClick={onExportFilter}
                 disabled={exporting || dateRangeInvalid}
               >
-                <ArrowDownToLine className="h-4 w-4 shrink-0 text-slate-400" />
+                <ArrowDownToLine className="h-4 w-4 shrink-0 text-slate-500" />
                 <span className="min-w-0">
                   <span className="block">Ekspor Sesuai Filter</span>
                   <span className="block truncate text-[11px] font-normal text-slate-500">{filterDetail}</span>
