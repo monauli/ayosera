@@ -16,7 +16,7 @@ const usersCreateRoute = here("../app/api/users/route.ts");
 const usersUpdateRoute = here("../app/api/users/[id]/route.ts");
 
 test("modul 'audit' terdaftar di APP_MODULES (satu sistem permission, bukan permission kedua)", () => {
-  assert.match(appModulesLib, /"dasbor",\s*\n\s*"transaksi",\s*\n\s*"olsera",\s*\n\s*"webhook",\s*\n\s*"rekonsiliasi",\s*\n\s*"audit",\s*\n\s*"kunci-rekonsiliasi-omset",\s*\n\s*\] as const;/);
+  assert.match(appModulesLib, /"dasbor",\s*\n\s*"transaksi",\s*\n\s*"olsera",\s*\n\s*"webhook",\s*\n\s*"rekonsiliasi",\s*\n\s*"audit",\s*\n\s*"kunci-rekonsiliasi-omset",\s*\n\s*"mapping",\s*\n\s*\] as const;/);
 });
 
 test("supervisor tetap otomatis mendapat SEMUA modul (termasuk 'audit') lewat normalizeModules yang sama, tanpa kode baru", () => {
@@ -28,7 +28,7 @@ test("user tanpa field allowedModules (data lama) tetap default TIDAK punya modu
 });
 
 test("menu Audit & Sinkronisasi menjadi item navItems biasa (module: \"audit\"), bukan lagi tail khusus supervisor", () => {
-  assert.match(page, /\{ label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "audit" \},\s*\n\];/);
+  assert.match(page, /\{ label: "Audit", display: "Audit & Sinkronisasi", icon: ShieldAlert, module: "audit" \},\s*\n\s*\{ label: "Mapping"[^\n]*\},\s*\n\];/);
   assert.doesNotMatch(page, /isSupervisor \? \[\{ label: "Audit"/);
 });
 

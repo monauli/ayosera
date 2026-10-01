@@ -29,9 +29,9 @@ test("duplicate fingerprint, conflict target, dan timeout menjadi blocker tanpa 
   const timeout = await validateReconciliationWrite(input(), ctx({ findings: { async findOne() { throw new Error("timeout"); } } }), { RECONCILIATION_WRITE_ENABLED: "1" });
   assert.equal(timeout.allowed, false); assert.match(timeout.blockers.join(" "), /Pre-write read gagal/);
 });
-test("preview/readiness route tetap read-only dan memerlukan supervisor", async () => {
+test("preview/readiness route tetap read-only dan memerlukan login (requireUser, sejak a6935f0)", async () => {
   const { readFileSync } = await import("node:fs"); const { fileURLToPath } = await import("node:url"); const here = (p: string) => readFileSync(fileURLToPath(new URL(p, import.meta.url)), "utf8");
   const preview = here("../app/api/reconciliation/write-preview/route.ts"); const readiness = here("../app/api/reconciliation/readiness/route.ts");
-  assert.match(preview, /requireSupervisor\(\)/); assert.match(preview, /preview: true/); assert.doesNotMatch(preview, /\.insertOne\s*\(|\.updateOne\s*\(|\.bulkWrite\s*\(/);
-  assert.match(readiness, /requireSupervisor\(\)/); assert.match(readiness, /command\(\{ ping: 1 \}\)/); assert.doesNotMatch(readiness, /\.insertOne\s*\(|\.updateOne\s*\(|\.bulkWrite\s*\(/);
+  assert.match(preview, /requireUser\(\)/); assert.match(preview, /preview: true/); assert.doesNotMatch(preview, /\.insertOne\s*\(|\.updateOne\s*\(|\.bulkWrite\s*\(/);
+  assert.match(readiness, /requireUser\(\)/); assert.match(readiness, /command\(\{ ping: 1 \}\)/); assert.doesNotMatch(readiness, /\.insertOne\s*\(|\.updateOne\s*\(|\.bulkWrite\s*\(/);
 });

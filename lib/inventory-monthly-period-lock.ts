@@ -1,8 +1,10 @@
 import { collections, type InventoryMonthlyPeriodLockDocument, type OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
 
 export class InventoryMonthlyPeriodLockError extends Error {
-  constructor(message: string, readonly code: "VALIDATION" | "LOCKED" = "VALIDATION") {
+  readonly code: "VALIDATION" | "LOCKED";
+  constructor(message: string, code: "VALIDATION" | "LOCKED" = "VALIDATION") {
     super(message);
+    this.code = code;
     this.name = "InventoryMonthlyPeriodLockError";
   }
 }

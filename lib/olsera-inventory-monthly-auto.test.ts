@@ -359,7 +359,8 @@ test("buildMonthlyRowsFromMonthlySnapshots: snapshot belum tersedia (openingQty 
 });
 
 test("buildMonthlyRowsFromMonthlySnapshots: AYOSERA ada penjualan tapi snapshot belum tersedia -> unexplainedAyoseraSales (sinyal audit)", () => {
-  const doc = snapshotDoc({ _id: "1:2026:06:200:0", productId: 200, openingQty: null, incomingQty: null, outgoingQty: null, closingQty: null, salesQty: null, status: "boundary-only" });
+  // totalPenjualan mengikuti snapshot salesQty (c1fb0d7: mirror Olsera), bukan agregat order item.
+  const doc = snapshotDoc({ _id: "1:2026:06:200:0", productId: 200, openingQty: null, incomingQty: null, outgoingQty: null, closingQty: null, salesQty: 3, status: "boundary-only" });
   const dailySalesByProductKey = aggregateDailySales([{ key: "1:200:0", date: "2026-06-05", qtyChange: -3 }], 2026, 6);
   const { rows, diagnostics } = buildMonthlyRowsFromMonthlySnapshots({ snapshotDocs: [doc], catalogProducts: [], dailySalesByProductKey, days: 30 });
   assert.equal(rows[0].totalPenjualan, 3);
@@ -485,10 +486,11 @@ test("buildMonthlyInventoryWorkbook: total Aktual/Selisih TIDAK PERNAH 0 saat se
 });
 
 test("buildMonthlyInventoryWorkbook: sheet Diagnostik memakai label 'Olsera Open API', TIDAK PERNAH 'Olsera (file)', untuk jalur otomatis", () => {
-  const doc = snapshotDoc({ openingQty: 10, closingQty: 10, salesQty: 5 });
-  const dailySalesByProductKey = aggregateDailySales([{ key: "1:100:0", date: "2026-06-01", qtyChange: -1 }], 2026, 6);
+  // salesMismatch tak mungkin terisi lagi (penjualan = salesQty snapshot); pakai balanceMismatch.
+  const doc = snapshotDoc({ openingQty: 10, closingQty: 8, salesQty: 0 });
+  const dailySalesByProductKey = aggregateDailySales([], 2026, 6);
   const { rows, diagnostics } = buildMonthlyRowsFromMonthlySnapshots({ snapshotDocs: [doc], catalogProducts: [], dailySalesByProductKey, days: 30 });
-  assert.ok(diagnostics.salesMismatch.length > 0);
+  assert.ok(diagnostics.balanceMismatch.length > 0);
   const workbook = buildMonthlyInventoryWorkbook({
     year: 2026, month: 6, days: 30, rows, sourceLabel: "Olsera Open API",
     diagnostics: { headerErrors: [], skippedBlankRows: 0, rowsOutsidePeriod: [], duplicates: [], unmatchedOrAmbiguous: [], ...diagnostics },

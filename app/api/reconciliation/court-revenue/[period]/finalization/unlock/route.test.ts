@@ -1,5 +1,5 @@
 // Route-level test untuk POST .../finalization/unlock. Pola sama seperti
-// ../upload/route.test.ts: requireSupervisor() dan unlockOmzetPeriodFinalization
+// ../upload/route.test.ts: requireModule("kunci-rekonsiliasi-omset") dan unlockOmzetPeriodFinalization
 // di-mock lewat --experimental-test-module-mocks SEBELUM route diimpor, jadi
 // TIDAK PERNAH menyentuh MongoDB sungguhan. OmzetPeriodLockError TETAP
 // implementasi ASLI supaya pemetaan status code (400/409) sungguhan yang diuji.
@@ -22,13 +22,13 @@ const unlockMock = mock.fn(async (input: { reason: unknown }) => {
 mock.module("@/lib/reconciliation-omzet-period-lock", { namedExports: { unlockOmzetPeriodFinalization: unlockMock, OmzetPeriodLockError } });
 
 let supervisorRejects = false;
-const requireSupervisorMock = mock.fn(async () => {
+const requireModuleMock = mock.fn(async () => {
   if (supervisorRejects) {
     throw new Response(JSON.stringify({ error: "Supervisor access required" }), { status: 403, headers: { "Content-Type": "application/json" } });
   }
   return { id: "supervisor-1", role: "supervisor" as const, allowedModules: [] as string[] };
 });
-mock.module("@/lib/auth", { namedExports: { requireSupervisor: requireSupervisorMock } });
+mock.module("@/lib/auth", { namedExports: { requireModule: requireModuleMock } });
 
 let POST!: typeof import("./route.ts").POST;
 before(async () => {

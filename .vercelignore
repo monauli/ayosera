@@ -4,3 +4,8 @@ doc export/
 *.xlsx
 *.pdf
 *.zip
+/*.traineddata
+audit-catalog-only-feb-2026.json
+codex-change-log.txt
+.agents/
+.claude/

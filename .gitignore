@@ -30,3 +30,9 @@ pnpm-debug.log*
 tmp/
 
 .claude/settings.local.json
+
+# Aset OCR lokal, backup, dan artefak sesi (jangan di-commit)
+*.traineddata
+/backup/
+/audit-catalog-only-*.json
+/codex-change-log.txt

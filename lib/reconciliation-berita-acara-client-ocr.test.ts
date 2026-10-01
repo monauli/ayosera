@@ -20,7 +20,7 @@ let recognizeResults: Array<{ text: string; confidence: number }> = [];
 let terminateCalls = 0;
 let ocrShouldFail = false;
 
-mock.module("pdfjs-dist", {
+mock.module("pdfjs-dist/legacy/build/pdf.mjs", {
   namedExports: {
     GlobalWorkerOptions: {} as { workerSrc: string },
     getDocument: () => ({
