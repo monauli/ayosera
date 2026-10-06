@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { buildProductIdentityIndex, productKey, type InventoryProductInput, type MatchedMovement, type StockMovementApiRow } from "./olsera-inventory-monthly-core.ts";
 import {
   buildMatchingContext,
+  filterRetiredAliasSnapshotDocs,
   computeClosingFromOpeningForward,
   computeMonthlyStepBackward,
   computeMonthlyStepForward,
@@ -179,6 +180,40 @@ test("extendIdentityIndexWithAliases: alias yang target barunya TIDAK ada di kat
     { oldProductId: 999, oldVariantId: null, newProductId: 12345, newVariantId: null, confidence: "verified" }, // 12345 tidak ada di katalog
   ]);
   assert.equal(extended.size, baseIndex.size);
+});
+
+test("filterRetiredAliasSnapshotDocs: menyembunyikan baris lama hanya jika baris kanonik ada pada periode yang sama", () => {
+  const catalog = [
+    product({ _id: "1:200:0", productId: 200, name: "NESTLE PURE LIFE 1500ML Duplikate" }),
+  ];
+  const aliases = [
+    { oldProductId: 100, oldVariantId: null, newProductId: 200, newVariantId: null, confidence: "verified" as const },
+  ];
+  const oldDoc = { storeId: 1, productId: 100, variantId: null, label: "lama" };
+  const newDoc = { storeId: 1, productId: 200, variantId: null, label: "kanonik" };
+
+  assert.deepEqual(filterRetiredAliasSnapshotDocs([oldDoc, newDoc], catalog, aliases), [newDoc]);
+});
+
+test("filterRetiredAliasSnapshotDocs: histori sebelum produk pengganti muncul tetap dipertahankan", () => {
+  const catalog = [product({ _id: "1:200:0", productId: 200 })];
+  const aliases = [
+    { oldProductId: 100, oldVariantId: null, newProductId: 200, newVariantId: null, confidence: "verified" as const },
+  ];
+  const oldDoc = { storeId: 1, productId: 100, variantId: null, label: "histori lama" };
+
+  assert.deepEqual(filterRetiredAliasSnapshotDocs([oldDoc], catalog, aliases), [oldDoc]);
+});
+
+test("filterRetiredAliasSnapshotDocs: alias belum terverifikasi tidak menghapus baris apa pun", () => {
+  const catalog = [product({ _id: "1:200:0", productId: 200 })];
+  const aliases = [
+    { oldProductId: 100, oldVariantId: null, newProductId: 200, newVariantId: null, confidence: "high" as const },
+  ];
+  const oldDoc = { storeId: 1, productId: 100, variantId: null, label: "lama" };
+  const newDoc = { storeId: 1, productId: 200, variantId: null, label: "kanonik" };
+
+  assert.deepEqual(filterRetiredAliasSnapshotDocs([oldDoc, newDoc], catalog, aliases), [oldDoc, newDoc]);
 });
 
 // ---- computeMonthlyStepBackward ----

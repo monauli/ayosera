@@ -30,7 +30,7 @@ import {
   type MonthlyMatchMethod,
   type SummaryRow,
 } from "./olsera-inventory-monthly-core.ts";
-import { dominantStoreId, recoverNullProductIdSales, stripDuplicateSuffix } from "./olsera-inventory-monthly-snapshot-core.ts";
+import { dominantStoreId, filterRetiredAliasSnapshotDocs, recoverNullProductIdSales, stripDuplicateSuffix, type ProductAliasEntry } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { ensureMonthlySnapshotChain } from "./olsera-inventory-monthly-snapshot-store.ts";
 import { hasInventoryActivity } from "./olsera-inventory-ui.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
@@ -304,6 +304,8 @@ export function buildMonthlyRows(input: {
 export function buildMonthlyRowsFromMonthlySnapshots(input: {
   snapshotDocs: OlseraInventoryMonthlySnapshotDocument[];
   catalogProducts: InventoryProductInput[];
+  /** Alias verified dipakai sebagai filter tampilan/export; snapshot Mongo tetap utuh. */
+  aliases?: ProductAliasEntry[];
   dailySalesByProductKey: Map<string, { daily: number[]; total: number }>;
   days: number;
 }): {
@@ -332,7 +334,8 @@ export function buildMonthlyRowsFromMonthlySnapshots(input: {
   // total yang disaring. Histori/dokumen snapshot TIDAK dihapus, hanya
   // dikeluarkan dari baris yang dirender — lihat docs/inventory.md "Aturan
   // Kedua Inventori".
-  const activeDocs = input.snapshotDocs.filter((doc) =>
+  const visibleSnapshotDocs = filterRetiredAliasSnapshotDocs(input.snapshotDocs, input.catalogProducts, input.aliases ?? []);
+  const activeDocs = visibleSnapshotDocs.filter((doc) =>
     hasInventoryActivity({
       openingQty: doc.openingQty,
       incomingQty: doc.incomingQty,
@@ -857,11 +860,12 @@ export async function generateMonthlyInventoryExportAuto(input: {
     return { ok: false, errors: [`Gagal menyiapkan snapshot bulanan (${input.year}-${String(input.month).padStart(2, "0")}): ${chain.error}`] };
   }
 
-  const { catalogProducts, salesMovements, unresolvedNullProductSales, syncedDayIds, syncState } = await withMongo(async () => {
-    const { olseraInventoryProducts, olseraInventoryMovements, olseraOrderItems, olseraSyncedDays, olseraSyncState } = await collections();
+  const { catalogProducts, aliases, salesMovements, unresolvedNullProductSales, syncedDayIds, syncState } = await withMongo(async () => {
+    const { olseraInventoryProducts, olseraProductAliases, olseraInventoryMovements, olseraOrderItems, olseraSyncedDays, olseraSyncState } = await collections();
     const storeScope = { storeId: { $in: [currentStoreId(), null] } };
-    const [products, movements, nullMovements, syncedDays, state] = await Promise.all([
+    const [products, aliasDocs, movements, nullMovements, syncedDays, state] = await Promise.all([
       olseraInventoryProducts.find(storeScope).toArray(),
+      olseraProductAliases.find().toArray(),
       olseraInventoryMovements.find({ source: "sale", date: { $gte: startDate, $lte: endDate }, productId: { $ne: null }, ...storeScope }).toArray(),
       // Movement penjualan yang productId-nya null saat sync — terverifikasi
       // live 2026-07-21 (kasus YONEX SHORTS): olsera_order_items.resolvedProductId
@@ -887,6 +891,7 @@ export async function generateMonthlyInventoryExportAuto(input: {
 
     return {
       catalogProducts: products as InventoryProductInput[],
+      aliases: aliasDocs as ProductAliasEntry[],
       salesMovements: [...movements, ...recovered],
       unresolvedNullProductSales: nullMovements.length - recovered.length,
       syncedDayIds: new Set(syncedDays.map((doc) => doc._id)),
@@ -917,6 +922,7 @@ export async function generateMonthlyInventoryExportAuto(input: {
   const { rows, diagnostics } = buildMonthlyRowsFromMonthlySnapshots({
     snapshotDocs: chain.docs,
     catalogProducts,
+    aliases,
     dailySalesByProductKey,
     days,
   });

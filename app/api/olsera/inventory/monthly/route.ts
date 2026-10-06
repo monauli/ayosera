@@ -3,13 +3,14 @@ import { z } from "zod";
 import { requireModule } from "@/lib/auth";
 import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument } from "@/lib/mongodb";
 import { NO_CACHE_HEADERS } from "@/lib/no-cache";
-import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/olsera-inventory-core";
+import { DEFAULT_LOW_STOCK_THRESHOLD, type InventoryProductInput } from "@/lib/olsera-inventory-core";
 import { isHiddenInventoryCategory } from "@/lib/olsera-inventory-ui";
 import { computeMonthlyTabRowSets, monthlyPeriodStatus, monthlyStockStatus, summarizeMonthlyInventory, type MonthlyInventoryUiRow } from "@/lib/olsera-inventory-monthly-ui";
 import { getInventorySyncStatus } from "@/lib/olsera-inventory";
 import { getInventoryMonthlyPeriodLock } from "@/lib/inventory-monthly-period-lock";
 import { currentStoreId } from "@/lib/olsera-store-id";
 import { ensureMonthlySnapshotChain } from "@/lib/olsera-inventory-monthly-snapshot-store";
+import { filterRetiredAliasSnapshotDocs } from "@/lib/olsera-inventory-monthly-snapshot-core";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,18 +46,24 @@ export async function GET(request: Request) {
     const [status, raw] = await Promise.all([
       getInventorySyncStatus(),
       withMongo(async () => {
-        const { olseraInventoryMonthlySnapshots, olseraInventoryProducts } = await collections();
-        const [lock, products] = await Promise.all([
+        const { olseraInventoryMonthlySnapshots, olseraInventoryProducts, olseraProductAliases } = await collections();
+        const [lock, products, aliases] = await Promise.all([
           getInventoryMonthlyPeriodLock(currentStoreId(), year, month),
           olseraInventoryProducts.find().toArray(),
+          olseraProductAliases.find().toArray(),
         ]);
         const snapshots = lock?.status === "locked" ? lock.snapshots : await olseraInventoryMonthlySnapshots.find({ year, month }).sort({ productName: 1, _id: 1 }).toArray();
-        return { snapshots, products, lock };
+        return { snapshots, products, aliases, lock };
       }),
     ]);
 
     const productByKey = new Map(raw.products.map((product) => [rowKey(product.storeId ?? 0, product.productId, product.variantId), product]));
-    const allRows = raw.snapshots.map((snapshot: OlseraInventoryMonthlySnapshotDocument) => {
+    const visibleSnapshots = filterRetiredAliasSnapshotDocs(
+      raw.snapshots,
+      raw.products as InventoryProductInput[],
+      raw.aliases,
+    );
+    const allRows = visibleSnapshots.map((snapshot: OlseraInventoryMonthlySnapshotDocument) => {
       const product = productByKey.get(rowKey(snapshot.storeId, snapshot.productId, snapshot.variantId));
       const category = snapshot.groupName ?? "";
       const minimumStock = product?.lowStockAlert ?? DEFAULT_LOW_STOCK_THRESHOLD;

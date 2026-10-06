@@ -203,6 +203,45 @@ export function buildVerifiedAliasCanonicalKeys(catalogProducts: InventoryProduc
   return keys;
 }
 
+/**
+ * Sembunyikan identitas produk lama yang sudah dipindahkan ke produk kanonik
+ * HANYA pada periode yang memang sudah memuat kedua identitas tersebut.
+ *
+ * Ini adalah filter tampilan/export saja: dokumen snapshot dan master produk
+ * tidak dihapus atau diubah. Jika suatu periode hanya punya baris lama, baris
+ * itu dipertahankan karena bisa jadi histori sebelum proses rename/migrasi.
+ * Hanya alias `verified` yang boleh melakukan penyaringan ini.
+ */
+export function filterRetiredAliasSnapshotDocs<T extends { storeId: number; productId: number; variantId: number | null }>(
+  snapshotDocs: readonly T[],
+  catalogProducts: InventoryProductInput[],
+  aliases: ProductAliasEntry[],
+): T[] {
+  const byProductVariant = new Map<string, InventoryProductInput>();
+  for (const product of catalogProducts) {
+    byProductVariant.set(`${product.productId}:${product.variantId ?? 0}`, product);
+  }
+
+  const aliasPairs: Array<{ oldKey: string; newKey: string }> = [];
+  for (const alias of aliases) {
+    if (alias.confidence !== "verified" || alias.newProductId === null) continue;
+    const canonical = byProductVariant.get(`${alias.newProductId}:${alias.newVariantId ?? 0}`);
+    if (!canonical) continue;
+    aliasPairs.push({
+      oldKey: productKey(canonical.storeId, alias.oldProductId, alias.oldVariantId),
+      newKey: productKey(canonical.storeId, canonical.productId, canonical.variantId),
+    });
+  }
+  if (!aliasPairs.length) return [...snapshotDocs];
+
+  const presentKeys = new Set(snapshotDocs.map((doc) => productKey(doc.storeId, doc.productId, doc.variantId)));
+  const retiredKeys = new Set(
+    aliasPairs.filter((pair) => presentKeys.has(pair.newKey)).map((pair) => pair.oldKey),
+  );
+  if (!retiredKeys.size) return [...snapshotDocs];
+  return snapshotDocs.filter((doc) => !retiredKeys.has(productKey(doc.storeId, doc.productId, doc.variantId)));
+}
+
 // ---------------------------------------------------------------------------
 // Dokumen ledger bulanan (bentuk plain, dipetakan ke
 // OlseraInventoryMonthlySnapshotDocument oleh layer store)

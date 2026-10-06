@@ -26,7 +26,7 @@ import ExcelJS from "exceljs";
 import { collections, withMongo, type OlseraInventoryMonthlySnapshotDocument } from "./mongodb.ts";
 import type { InventoryProductInput } from "./olsera-inventory-core.ts";
 import { hasInventoryActivity } from "./olsera-inventory-ui.ts";
-import { stripDuplicateSuffix } from "./olsera-inventory-monthly-snapshot-core.ts";
+import { filterRetiredAliasSnapshotDocs, stripDuplicateSuffix, type ProductAliasEntry } from "./olsera-inventory-monthly-snapshot-core.ts";
 import { ensureMonthlySnapshotChain } from "./olsera-inventory-monthly-snapshot-store.ts";
 import { currentStoreId } from "./olsera-store-id.ts";
 
@@ -102,6 +102,8 @@ export type TwoSheetInventoryRow = {
 export function buildTwoSheetInventoryRows(input: {
   catalogProducts: InventoryProductInput[];
   snapshotDocs: OlseraInventoryMonthlySnapshotDocument[];
+  /** Alias verified dipakai sebagai filter tampilan/export; snapshot Mongo tetap utuh. */
+  aliases?: ProductAliasEntry[];
   storeId: number;
   /** true = bulan yang diekspor adalah bulan berjalan (memengaruhi apakah produk aktif tanpa snapshot tetap dimasukkan). Default false (bulan lampau). */
   isCurrentMonth?: boolean;
@@ -110,12 +112,13 @@ export function buildTwoSheetInventoryRows(input: {
   const productByKey = new Map(
     input.catalogProducts.map((product) => [`${input.storeId}:${product.productId}:${product.variantId ?? 0}`, product]),
   );
-  const docByKey = new Map(input.snapshotDocs.map((doc) => [`${doc.storeId}:${doc.productId}:${doc.variantId ?? 0}`, doc]));
+  const visibleSnapshotDocs = filterRetiredAliasSnapshotDocs(input.snapshotDocs, input.catalogProducts, input.aliases ?? []);
+  const docByKey = new Map(visibleSnapshotDocs.map((doc) => [`${doc.storeId}:${doc.productId}:${doc.variantId ?? 0}`, doc]));
 
   const keys: string[] = [];
   const seenKeys = new Set<string>();
 
-  for (const doc of input.snapshotDocs) {
+  for (const doc of visibleSnapshotDocs) {
     const key = `${doc.storeId}:${doc.productId}:${doc.variantId ?? 0}`;
     const product = productByKey.get(key);
     const category = doc.groupName ?? "";
@@ -350,10 +353,13 @@ async function loadInventoryRowsForExport(input: { year: number; month: number }
     return { ok: false, errors: [`Gagal menyiapkan snapshot bulanan (${input.year}-${String(input.month).padStart(2, "0")}): ${chain.error}`] };
   }
 
-  const catalogProducts = await withMongo(async () => {
-    const { olseraInventoryProducts } = await collections();
-    const products = await olseraInventoryProducts.find({ storeId: { $in: [currentStoreId(), null] } }).toArray();
-    return products as InventoryProductInput[];
+  const { catalogProducts, aliases } = await withMongo(async () => {
+    const { olseraInventoryProducts, olseraProductAliases } = await collections();
+    const [products, aliasDocs] = await Promise.all([
+      olseraInventoryProducts.find({ storeId: { $in: [currentStoreId(), null] } }).toArray(),
+      olseraProductAliases.find().toArray(),
+    ]);
+    return { catalogProducts: products as InventoryProductInput[], aliases: aliasDocs as ProductAliasEntry[] };
   });
 
   if (!catalogProducts.length) {
@@ -363,6 +369,7 @@ async function loadInventoryRowsForExport(input: { year: number; month: number }
   const rows = buildTwoSheetInventoryRows({
     catalogProducts,
     snapshotDocs: chain.docs,
+    aliases,
     storeId: chain.storeId,
     isCurrentMonth: isCurrentYearMonth(input.year, input.month),
   });
