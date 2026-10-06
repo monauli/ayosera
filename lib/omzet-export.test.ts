@@ -107,8 +107,8 @@ test("buildOmzetHarianWorkbook: nama court berbahaya (field_name diawali karakte
   };
   const bytes = await buildOmzetHarianWorkbook(input);
   const ws = await loadFirstSheet(bytes);
-  const headerValue = ws.getCell(4, 2).value; // court pertama -> kolom B, baris 4
-  assert.equal(headerValue, "'=SUM(A1:A2)");
+  const headerValues = ws.getRow(4).values as unknown as unknown[];
+  assert.ok(headerValues.includes("'=SUM(A1:A2)"));
 });
 
 test("buildOmzetHarianWorkbook: nama court normal tidak berubah di header Summary", async () => {
@@ -121,7 +121,7 @@ test("buildOmzetHarianWorkbook: nama court normal tidak berubah di header Summar
   };
   const bytes = await buildOmzetHarianWorkbook(input);
   const ws = await loadFirstSheet(bytes);
-  const headerValue = ws.getCell(4, 2).value;
+  const headerValue = ws.getCell(4, 8).value;
   assert.equal(headerValue, "Court 3");
 });
 
@@ -161,6 +161,43 @@ test("export menambah sewa raket hanya untuk padel", async () => {
   const paymentColumn = headerColumn(ayo, "Payment ID");
   assert.equal(ayo.getCell(5, racketColumn).value, 50000);
   assert.equal(ayo.getCell(5, paymentColumn).value, "PAY-1");
+});
+
+test("Summary mengikuti format baru: total keseluruhan terpisah dari total lapangan", async () => {
+  const padel = fakeBooking({
+    booking_id: "SUMMARY-PADEL",
+    field_name: "Court No 1",
+    status: "SUCCESS",
+    total_price: 200000,
+    racket_addon_amount: 50000,
+  });
+  const pickle = fakeBooking({
+    booking_id: "SUMMARY-PICKLE",
+    field_name: "Pickleball Court No 1",
+    status: "SUCCESS",
+    total_price: 100000,
+  });
+  const bytes = await buildOmzetHarianWorkbook({
+    date: "2026-09-01",
+    venueName: "BC Padel Club",
+    dayBookings: [padel, pickle],
+    monthBookings: [padel, pickle],
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const summary = workbook.worksheets[0];
+
+  assert.equal(summary.getCell(4, 18).value, "TOTAL \nKESELURUHAN");
+  assert.equal(summary.getCell(4, 19).value, "TOTAL \nLAPANGAN");
+  assert.equal((summary.getCell(6, 18).value as { formula: string }).formula, "SUM(B6:Q6)");
+  assert.equal((summary.getCell(6, 19).value as { formula: string }).formula, "B6+C6+E6+F6+H6+I6+K6+L6+N6+O6+P6+Q6");
+  assert.equal(summary.getCell(38, 10).value, "PADEL");
+  assert.equal(summary.getCell(38, 11).value, "PICKLE");
+  assert.equal(summary.getCell(38, 12).value, "Sewa Raket \nPadel");
+  assert.equal(summary.getCell(38, 13).value, "TOTAL");
+  assert.equal(summary.getCell(39, 9).value, "AYO");
+  assert.equal((summary.getCell(39, 12).value as { formula: string }).formula, "D36+G36+J36+M36");
+  assert.equal((summary.getCell(41, 13).value as { formula: string }).formula, "SUM(J41:K41)");
 });
 
 test("detail export memisahkan Price lapangan dari add-on dan mempertahankan total booking", async () => {
@@ -239,8 +276,8 @@ test("buildOmzetPeriodWorkbook: nama court berbahaya disimpan sebagai teks aman 
   };
   const bytes = await buildOmzetPeriodWorkbook(input);
   const ws = await loadFirstSheet(bytes);
-  const headerValue = ws.getCell(4, 2).value;
-  assert.equal(headerValue, "'+CMD|'/C calc'");
+  const headerValues = ws.getRow(4).values as unknown as unknown[];
+  assert.ok(headerValues.includes("'+CMD|'/C calc'"));
 });
 
 test("export AYO mengeluarkan cancelled tanpa mengubah kolom, urutan, atau total baris yang tersisa", async () => {

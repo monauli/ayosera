@@ -521,8 +521,9 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     nextCourtCol = (racketCol ?? walkCol) + 1;
     return { court, ayoCol, walkCol, racketCol, pickle };
   });
-  const totalCol = (courtCols.at(-1)?.racketCol ?? courtCols.at(-1)?.walkCol ?? 1) + 1;
-  const lastColLetter = colLetter(totalCol);
+  const totalAllCol = (courtCols.at(-1)?.racketCol ?? courtCols.at(-1)?.walkCol ?? 1) + 1;
+  const totalFieldCol = totalAllCol + 1;
+  const lastColLetter = colLetter(totalFieldCol);
 
   // Judul
   ws.mergeCells(`A1:${lastColLetter}1`);
@@ -560,11 +561,15 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
     ws.getColumn(c.ayoCol).width = 12;
     ws.getColumn(c.walkCol).width = 12;
   }
-  ws.mergeCells(4, totalCol, 5, totalCol);
-  ws.getCell(4, totalCol).value = "TOTAL";
-  styleHeaderCell(ws.getCell(4, totalCol));
-  ws.getCell(4, totalCol).fill = solidFill(ORANGE);
-  ws.getColumn(totalCol).width = 14;
+  ws.mergeCells(4, totalAllCol, 5, totalAllCol);
+  ws.getCell(4, totalAllCol).value = "TOTAL \nKESELURUHAN";
+  styleHeaderCell(ws.getCell(4, totalAllCol));
+  ws.getCell(4, totalAllCol).fill = solidFill(ORANGE);
+  ws.getColumn(totalAllCol).width = 16;
+  ws.mergeCells(4, totalFieldCol, 5, totalFieldCol);
+  ws.getCell(4, totalFieldCol).value = "TOTAL \nLAPANGAN";
+  styleHeaderCell(ws.getCell(4, totalFieldCol));
+  ws.getColumn(totalFieldCol).width = 15;
 
   // Agregasi HANYA tanggal yang diekspor → hanya baris tanggal itu yang terisi.
   const agg = new Map<string, number>(); // key `${day}|${col}`
@@ -605,12 +610,20 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
         cell.border = thinBorder();
       }
     }
-    // TOTAL kolom = SUM(B:K) baris itu
-    const tcell = row.getCell(totalCol);
-    tcell.value = { formula: `SUM(${colLetter(2)}${rowIdx}:${colLetter(totalCol - 1)}${rowIdx})` };
-    tcell.numFmt = MONEY_FMT;
-    tcell.fill = solidFill(ORANGE_LIGHT);
-    tcell.border = thinBorder();
+    // TOTAL KESELURUHAN memasukkan add-on sewa raket.
+    const totalAllCell = row.getCell(totalAllCol);
+    totalAllCell.value = { formula: `SUM(B${rowIdx}:${colLetter(totalAllCol - 1)}${rowIdx})` };
+    totalAllCell.numFmt = MONEY_FMT;
+    totalAllCell.fill = solidFill(ORANGE_LIGHT);
+    totalAllCell.border = thinBorder();
+    // TOTAL LAPANGAN hanya menjumlahkan AYO + Walk In; add-on tetap terpisah.
+    const fieldColumns = courtCols.flatMap((c) => [c.ayoCol, c.walkCol]);
+    const totalFieldCell = row.getCell(totalFieldCol);
+    totalFieldCell.value = { formula: fieldColumns.length
+      ? fieldColumns.map((col) => `${colLetter(col)}${rowIdx}`).join("+")
+      : "0" };
+    totalFieldCell.numFmt = MONEY_FMT;
+    totalFieldCell.border = thinBorder();
   }
 
   // Baris TOTAL bawah
@@ -620,7 +633,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   trow.getCell(1).font = { bold: true };
   trow.getCell(1).fill = solidFill(YELLOW);
   trow.getCell(1).border = thinBorder();
-  for (let col = 2; col <= totalCol; col++) {
+  for (let col = 2; col <= totalFieldCol; col++) {
     const letter = colLetter(col);
     const cell = trow.getCell(col);
     cell.value = { formula: `SUM(${letter}${firstDataRow}:${letter}${totalRow - 1})` };
@@ -638,38 +651,39 @@ function buildSummarySheet(wb: ExcelJS.Workbook, input: OmzetExportInput) {
   const pickleWalk = courtCols.filter((c) => c.pickle).map((c) => `${colLetter(c.walkCol)}${totalRow}`);
 
   const base = totalRow + 2; // baris header blok
-  ws.getCell(base, 8).value = "PADEL"; // H
-  ws.getCell(base, 9).value = "PICKLE"; // I
-  ws.getCell(base, 10).value = "TOTAL"; // J
-  ws.getCell(base, 11).value = "Selisih OLSERA - AYO"; // K
-  ws.getCell(base, 13).value = "Olsera"; // M
-  for (const col of [8, 9, 10]) ws.getCell(base, col).font = { bold: true };
+  ws.getCell(base, 10).value = "PADEL"; // J
+  ws.getCell(base, 11).value = "PICKLE"; // K
+  ws.getCell(base, 12).value = "Sewa Raket \nPadel"; // L
+  ws.getCell(base, 13).value = "TOTAL"; // M
+  for (const col of [10, 11, 12, 13]) ws.getCell(base, col).font = { bold: true };
 
   const sumOrZero = (cells: string[]) => (cells.length ? cells.join("+") : "0");
 
   // AYO
-  ws.getCell(base + 1, 7).value = "AYO";
-  ws.getCell(base + 1, 8).value = { formula: sumOrZero(padelAyo) };
-  ws.getCell(base + 1, 9).value = { formula: sumOrZero(pickleAyo) };
-  ws.getCell(base + 1, 10).value = { formula: `SUM(H${base + 1}:I${base + 1})` };
+  ws.getCell(base + 1, 9).value = "AYO";
+  ws.getCell(base + 1, 10).value = { formula: sumOrZero(padelAyo) };
+  ws.getCell(base + 1, 11).value = { formula: sumOrZero(pickleAyo) };
+  ws.getCell(base + 1, 12).value = { formula: sumOrZero(padelRacket) };
+  ws.getCell(base + 1, 13).value = { formula: `SUM(J${base + 1}:K${base + 1})` };
   // WALK IN
-  ws.getCell(base + 2, 7).value = "WALK IN";
-  ws.getCell(base + 2, 8).value = { formula: sumOrZero(padelWalk) };
-  ws.getCell(base + 2, 9).value = { formula: sumOrZero(pickleWalk) };
-  ws.getCell(base + 2, 10).value = { formula: `SUM(H${base + 2}:I${base + 2})` };
+  ws.getCell(base + 2, 9).value = "WALK IN";
+  ws.getCell(base + 2, 10).value = { formula: sumOrZero(padelWalk) };
+  ws.getCell(base + 2, 11).value = { formula: sumOrZero(pickleWalk) };
+  ws.getCell(base + 2, 13).value = { formula: `SUM(J${base + 2}:K${base + 2})` };
   // TOTAL
-  ws.getCell(base + 3, 7).value = "TOTAL";
-  ws.getCell(base + 3, 8).value = { formula: `SUM(H${base + 1}:H${base + 2})+${sumOrZero(padelRacket)}` };
-  ws.getCell(base + 3, 9).value = { formula: `SUM(I${base + 1}:I${base + 2})` };
-  ws.getCell(base + 3, 10).value = { formula: `SUM(H${base + 3}:I${base + 3})` };
+  ws.getCell(base + 3, 9).value = "TOTAL";
+  ws.getCell(base + 3, 10).value = { formula: `SUM(J${base + 1}:J${base + 2})` };
+  ws.getCell(base + 3, 11).value = { formula: `SUM(K${base + 1}:K${base + 2})` };
+  ws.getCell(base + 3, 12).value = { formula: `SUM(L${base + 1}:L${base + 2})` };
+  ws.getCell(base + 3, 13).value = { formula: `SUM(J${base + 3}:K${base + 3})` };
   // Average
-  ws.getCell(base + 4, 7).value = "Average";
-  ws.getCell(base + 4, 8).value = { formula: `H${base + 3}/${daysInMonth}` };
-  ws.getCell(base + 4, 9).value = { formula: `I${base + 3}/${daysInMonth}` };
+  ws.getCell(base + 4, 9).value = "Average";
+  ws.getCell(base + 4, 10).value = { formula: `J${base + 3}/${daysInMonth}` };
+  ws.getCell(base + 4, 11).value = { formula: `K${base + 3}/${daysInMonth}` };
 
   for (let rr = base + 1; rr <= base + 4; rr++) {
-    for (const col of [8, 9, 10]) ws.getCell(rr, col).numFmt = MONEY_FMT;
-    ws.getCell(rr, 7).font = { bold: true };
+    for (const col of [10, 11, 12, 13]) ws.getCell(rr, col).numFmt = MONEY_FMT;
+    ws.getCell(rr, 9).font = { bold: true };
   }
 }
 
@@ -685,23 +699,26 @@ function pickleCourtNumber(fieldName: string) {
 }
 
 function distinctCourtsForSummary(bookings: BookingDocument[]) {
-  const padel = Array.from(new Set(bookings.map((b) => b.field_name).filter((f) => f && !isPickle(f))));
-  const hasPickle = bookings.some((b) => b.field_name && isPickle(b.field_name));
-  const set = hasPickle ? [...padel, PICKLE_CANONICAL_1, PICKLE_CANONICAL_2] : padel;
-  if (!set.length) return ["Court No 1", "Court No 2", "Court No 3", "Court No 4", PICKLE_CANONICAL_1, PICKLE_CANONICAL_2];
-  return set.sort((a, b) => {
-    const pa = isPickle(a) ? 1 : 0;
-    const pb = isPickle(b) ? 1 : 0;
-    if (pa !== pb) return pa - pb;
-    return a.localeCompare(b, undefined, { numeric: true });
-  });
+  // Format Summary mengikuti laporan operasional: selalu tampilkan empat
+  // court padel dan dua court pickleball, termasuk bila salah satunya kosong
+  // pada periode yang dipilih. Nama lapangan asing tetap ditambahkan setelah
+  // kolom standar agar tidak hilang dari laporan dan tetap tersanitasi.
+  const standardPadel = ["Court No 1", "Court No 2", "Court No 3", "Court No 4"];
+  const extras = Array.from(new Set(bookings.map((b) => b.field_name).filter((f) => {
+    if (!f || isPickle(f)) return false;
+    const number = f.match(/no\.?\s*(\d+)/i)?.[1] ?? f.match(/court\s*(\d+)/i)?.[1];
+    return !number || Number(number) < 1 || Number(number) > 4;
+  }))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return [...standardPadel, ...extras, PICKLE_CANONICAL_1, PICKLE_CANONICAL_2];
 }
 
 /** Cocokkan booking ke entri Summary; pickleball dipisahkan berdasarkan nomor lapangan. */
 function matchesCourtColumn(court: string, fieldName: string) {
-  return isPickle(court)
-    ? isPickle(fieldName) && pickleCourtNumber(court) === pickleCourtNumber(fieldName)
-    : court === fieldName;
+  if (isPickle(court)) return isPickle(fieldName) && pickleCourtNumber(court) === pickleCourtNumber(fieldName);
+  if (isPickle(fieldName)) return false;
+  const courtNumber = court.match(/no\.?\s*(\d+)/i)?.[1] ?? court.match(/court\s*(\d+)/i)?.[1];
+  const fieldNumber = fieldName.match(/no\.?\s*(\d+)/i)?.[1] ?? fieldName.match(/court\s*(\d+)/i)?.[1];
+  return courtNumber && fieldNumber ? Number(courtNumber) === Number(fieldNumber) : court === fieldName;
 }
 
 export async function buildOmzetHarianWorkbook(input: OmzetExportInput): Promise<Uint8Array> {
@@ -780,8 +797,9 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
     nextCourtCol = (racketCol ?? walkCol) + 1;
     return { court, ayoCol, walkCol, racketCol, pickle };
   });
-  const totalCol = (courtCols.at(-1)?.racketCol ?? courtCols.at(-1)?.walkCol ?? 1) + 1;
-  const lastColLetter = colLetter(totalCol);
+  const totalAllCol = (courtCols.at(-1)?.racketCol ?? courtCols.at(-1)?.walkCol ?? 1) + 1;
+  const totalFieldCol = totalAllCol + 1;
+  const lastColLetter = colLetter(totalFieldCol);
 
   ws.mergeCells(`A1:${lastColLetter}1`);
   ws.getCell("A1").value = "SUMMARY LAPANGAN PADEL & PICKLE";
@@ -817,11 +835,15 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
     ws.getColumn(c.ayoCol).width = 12;
     ws.getColumn(c.walkCol).width = 12;
   }
-  ws.mergeCells(4, totalCol, 5, totalCol);
-  ws.getCell(4, totalCol).value = "TOTAL";
-  styleHeaderCell(ws.getCell(4, totalCol));
-  ws.getCell(4, totalCol).fill = solidFill(ORANGE);
-  ws.getColumn(totalCol).width = 14;
+  ws.mergeCells(4, totalAllCol, 5, totalAllCol);
+  ws.getCell(4, totalAllCol).value = "TOTAL \nKESELURUHAN";
+  styleHeaderCell(ws.getCell(4, totalAllCol));
+  ws.getCell(4, totalAllCol).fill = solidFill(ORANGE);
+  ws.getColumn(totalAllCol).width = 16;
+  ws.mergeCells(4, totalFieldCol, 5, totalFieldCol);
+  ws.getCell(4, totalFieldCol).value = "TOTAL \nLAPANGAN";
+  styleHeaderCell(ws.getCell(4, totalFieldCol));
+  ws.getColumn(totalFieldCol).width = 15;
 
   // Agregasi seluruh booking periode → key `${date}|${col}`.
   const agg = new Map<string, number>();
@@ -860,11 +882,18 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
         cell.border = thinBorder();
       }
     }
-    const tcell = row.getCell(totalCol);
-    tcell.value = { formula: `SUM(${colLetter(2)}${rowIdx}:${colLetter(totalCol - 1)}${rowIdx})` };
-    tcell.numFmt = MONEY_FMT;
-    tcell.fill = solidFill(ORANGE_LIGHT);
-    tcell.border = thinBorder();
+    const totalAllCell = row.getCell(totalAllCol);
+    totalAllCell.value = { formula: `SUM(B${rowIdx}:${colLetter(totalAllCol - 1)}${rowIdx})` };
+    totalAllCell.numFmt = MONEY_FMT;
+    totalAllCell.fill = solidFill(ORANGE_LIGHT);
+    totalAllCell.border = thinBorder();
+    const fieldColumns = courtCols.flatMap((c) => [c.ayoCol, c.walkCol]);
+    const totalFieldCell = row.getCell(totalFieldCol);
+    totalFieldCell.value = { formula: fieldColumns.length
+      ? fieldColumns.map((col) => `${colLetter(col)}${rowIdx}`).join("+")
+      : "0" };
+    totalFieldCell.numFmt = MONEY_FMT;
+    totalFieldCell.border = thinBorder();
   });
 
   const totalRow = firstDataRow + dayCount;
@@ -873,7 +902,7 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   trow.getCell(1).font = { bold: true };
   trow.getCell(1).fill = solidFill(YELLOW);
   trow.getCell(1).border = thinBorder();
-  for (let col = 2; col <= totalCol; col++) {
+  for (let col = 2; col <= totalFieldCol; col++) {
     const letter = colLetter(col);
     const cell = trow.getCell(col);
     cell.value = { formula: `SUM(${letter}${firstDataRow}:${letter}${totalRow - 1})` };
@@ -890,35 +919,36 @@ function buildSummarySheetPeriod(wb: ExcelJS.Workbook, input: OmzetExportInput) 
   const pickleWalk = courtCols.filter((c) => c.pickle).map((c) => `${colLetter(c.walkCol)}${totalRow}`);
 
   const base = totalRow + 2;
-  ws.getCell(base, 8).value = "PADEL";
-  ws.getCell(base, 9).value = "PICKLE";
-  ws.getCell(base, 10).value = "TOTAL";
-  ws.getCell(base, 11).value = "Selisih OLSERA - AYO";
-  ws.getCell(base, 13).value = "Olsera";
-  for (const col of [8, 9, 10]) ws.getCell(base, col).font = { bold: true };
+  ws.getCell(base, 10).value = "PADEL";
+  ws.getCell(base, 11).value = "PICKLE";
+  ws.getCell(base, 12).value = "Sewa Raket \nPadel";
+  ws.getCell(base, 13).value = "TOTAL";
+  for (const col of [10, 11, 12, 13]) ws.getCell(base, col).font = { bold: true };
 
   const sumOrZero = (cells: string[]) => (cells.length ? cells.join("+") : "0");
   const safeDiv = Math.max(dayCount, 1);
 
-  ws.getCell(base + 1, 7).value = "AYO";
-  ws.getCell(base + 1, 8).value = { formula: sumOrZero(padelAyo) };
-  ws.getCell(base + 1, 9).value = { formula: sumOrZero(pickleAyo) };
-  ws.getCell(base + 1, 10).value = { formula: `SUM(H${base + 1}:I${base + 1})` };
-  ws.getCell(base + 2, 7).value = "WALK IN";
-  ws.getCell(base + 2, 8).value = { formula: sumOrZero(padelWalk) };
-  ws.getCell(base + 2, 9).value = { formula: sumOrZero(pickleWalk) };
-  ws.getCell(base + 2, 10).value = { formula: `SUM(H${base + 2}:I${base + 2})` };
-  ws.getCell(base + 3, 7).value = "TOTAL";
-  ws.getCell(base + 3, 8).value = { formula: `SUM(H${base + 1}:H${base + 2})+${sumOrZero(padelRacket)}` };
-  ws.getCell(base + 3, 9).value = { formula: `SUM(I${base + 1}:I${base + 2})` };
-  ws.getCell(base + 3, 10).value = { formula: `SUM(H${base + 3}:I${base + 3})` };
-  ws.getCell(base + 4, 7).value = "Average";
-  ws.getCell(base + 4, 8).value = { formula: `H${base + 3}/${safeDiv}` };
-  ws.getCell(base + 4, 9).value = { formula: `I${base + 3}/${safeDiv}` };
+  ws.getCell(base + 1, 9).value = "AYO";
+  ws.getCell(base + 1, 10).value = { formula: sumOrZero(padelAyo) };
+  ws.getCell(base + 1, 11).value = { formula: sumOrZero(pickleAyo) };
+  ws.getCell(base + 1, 12).value = { formula: sumOrZero(padelRacket) };
+  ws.getCell(base + 1, 13).value = { formula: `SUM(J${base + 1}:K${base + 1})` };
+  ws.getCell(base + 2, 9).value = "WALK IN";
+  ws.getCell(base + 2, 10).value = { formula: sumOrZero(padelWalk) };
+  ws.getCell(base + 2, 11).value = { formula: sumOrZero(pickleWalk) };
+  ws.getCell(base + 2, 13).value = { formula: `SUM(J${base + 2}:K${base + 2})` };
+  ws.getCell(base + 3, 9).value = "TOTAL";
+  ws.getCell(base + 3, 10).value = { formula: `SUM(J${base + 1}:J${base + 2})` };
+  ws.getCell(base + 3, 11).value = { formula: `SUM(K${base + 1}:K${base + 2})` };
+  ws.getCell(base + 3, 12).value = { formula: `SUM(L${base + 1}:L${base + 2})` };
+  ws.getCell(base + 3, 13).value = { formula: `SUM(J${base + 3}:K${base + 3})` };
+  ws.getCell(base + 4, 9).value = "Average";
+  ws.getCell(base + 4, 10).value = { formula: `J${base + 3}/${safeDiv}` };
+  ws.getCell(base + 4, 11).value = { formula: `K${base + 3}/${safeDiv}` };
 
   for (let rr = base + 1; rr <= base + 4; rr++) {
-    for (const col of [8, 9, 10]) ws.getCell(rr, col).numFmt = MONEY_FMT;
-    ws.getCell(rr, 7).font = { bold: true };
+    for (const col of [10, 11, 12, 13]) ws.getCell(rr, col).numFmt = MONEY_FMT;
+    ws.getCell(rr, 9).font = { bold: true };
   }
 }
 
