@@ -20,12 +20,13 @@
 // disimpulkan otomatis dari besar-kecilnya selisih.
 import "server-only";
 import { isCurrentJakartaPeriod, jakartaCurrentPeriod } from "./olsera-financial-core.ts";
-import { getRevenueAmount, isCancelledTransaction, isRevenueEligibleTransaction } from "./revenue.ts";
+import { getFieldRevenueAmount, getRacketAddonAmount, isCancelledTransaction, isRevenueEligibleTransaction } from "./revenue.ts";
 import type { BookingDocument } from "./mongodb.ts";
 import { readActiveStagedPaymentEvents, type StagingReadContext } from "./ayo-payment-event-staging.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 import { classifyAyoSport, type Sport } from "./court-mapping.ts";
 import { dashboardPaymentAmountsByBooking } from "./dashboard-payment-metrics.ts";
+import { loadRacketAddonAmounts } from "./ayo-racket-addon-store.ts";
 
 // ---------------------------------------------------------------------------
 // Konstanta akun (SATU-SATUNYA tempat kode akun ini dirujuk untuk omzet)
@@ -144,7 +145,7 @@ export type AyoSportReconciliation = {
   total: OmzetLedgerSide;
 };
 
-export type OmzetLedgerBookingInput = Pick<BookingDocument, "date" | "total_price" | "status"> & Partial<Pick<BookingDocument, "booking_id" | "field_name">>;
+export type OmzetLedgerBookingInput = Pick<BookingDocument, "date" | "total_price" | "status"> & Partial<Pick<BookingDocument, "booking_id" | "field_name" | "racket_addon_amount" | "raw">>;
 
 export type OmzetOlseraLedgerResult = {
   period: string;
@@ -294,11 +295,15 @@ function addSportAmount(target: ReturnType<typeof emptySportBreakdown>, sport: S
  */
 export function computeAyoPaymentEventSportBreakdown(
   events: readonly AyoPaymentEvent[],
-  bookings: readonly Pick<OmzetLedgerBookingInput, "booking_id" | "field_name">[],
+  bookings: readonly Pick<OmzetLedgerBookingInput, "booking_id" | "field_name" | "racket_addon_amount" | "raw">[],
   cancelledBookingIds: ReadonlySet<string> = new Set(),
 ) {
   const target = emptySportBreakdown();
   const bookingSports = sportFromBookings(bookings);
+  const bookingAddons = new Map(bookings.map((booking) => [
+    String(booking.booking_id ?? "").trim(),
+    getRacketAddonAmount(booking),
+  ]));
   const unique = [...new Map(events.map((event) => [event.identity, event])).values()].filter(
     (event) => !event.bookingId || !cancelledBookingIds.has(event.bookingId),
   );
@@ -313,7 +318,7 @@ export function computeAyoPaymentEventSportBreakdown(
     const fromEvent = classifyAyoSport(String(event.fieldName ?? ""));
     const fromBooking = bookingSports.get(bookingId);
     const sport = fromEvent !== "UNKNOWN" ? fromEvent : fromBooking === "PADEL" || fromBooking === "PICKLEBALL" ? fromBooking : "UNKNOWN";
-    addSportAmount(target, sport, amount);
+    addSportAmount(target, sport, Math.max(0, amount - (bookingAddons.get(bookingId) ?? 0)));
   }
 
   for (const event of unique) {
@@ -329,7 +334,7 @@ export function computeAyoBookingSportBreakdown(bookings: OmzetLedgerBookingInpu
   const target = emptySportBreakdown();
   for (const booking of bookings) {
     if (!isRevenueEligibleTransaction(booking)) continue;
-    addSportAmount(target, classifyAyoSport(String(booking.field_name ?? "")), getRevenueAmount(booking));
+    addSportAmount(target, classifyAyoSport(String(booking.field_name ?? "")), getFieldRevenueAmount(booking));
   }
   return target;
 }
@@ -338,12 +343,12 @@ export function computeAyoBookingSportBreakdown(bookings: OmzetLedgerBookingInpu
  * Hitung omzet AYO — booking eligible (bukan cancelled/internal/nol), sama
  * persis lib/revenue.ts yang sudah dipakai seluruh dashboard AYO lain.
  */
-export function computeAyoSide(bookings: Array<Pick<BookingDocument, "date" | "total_price" | "status">>): OmzetLedgerSide {
+export function computeAyoSide(bookings: Array<OmzetLedgerBookingInput>): OmzetLedgerSide {
   const side = emptySide();
   for (const booking of bookings) {
     if (!isRevenueEligibleTransaction(booking)) continue;
     side.count += 1;
-    side.revenue += getRevenueAmount(booking);
+    side.revenue += getFieldRevenueAmount(booking);
   }
   return side;
 }
@@ -358,15 +363,24 @@ export function computeAyoSide(bookings: Array<Pick<BookingDocument, "date" | "t
  * transaction via dashboardPaymentAmountsByBooking(). Events without a
  * bookingId still count individually.
  */
-export function computeAyoPaymentEventSide(events: readonly AyoPaymentEvent[], cancelledBookingIds: ReadonlySet<string> = new Set()): OmzetLedgerSide {
+export function computeAyoPaymentEventSide(
+  events: readonly AyoPaymentEvent[],
+  cancelledBookingIds: ReadonlySet<string> = new Set(),
+  bookings: readonly Pick<OmzetLedgerBookingInput, "booking_id" | "racket_addon_amount" | "raw" | "field_name">[] = [],
+): OmzetLedgerSide {
   const unique = [...new Map(events.map((event) => [event.identity, event])).values()].filter(
     (event) => !event.bookingId || !cancelledBookingIds.has(event.bookingId),
   );
   const amountsByBooking = dashboardPaymentAmountsByBooking(unique);
+  const bookingAddons = new Map(bookings.map((booking) => [
+    String(booking.booking_id ?? "").trim(),
+    getRacketAddonAmount(booking),
+  ]));
   const unlinked = unique.filter((event) => !event.bookingId);
   return {
     count: amountsByBooking.size + unlinked.length,
-    revenue: [...amountsByBooking.values()].reduce((sum, amount) => sum + amount, 0) + unlinked.reduce((sum, event) => sum + event.amount, 0),
+    revenue: [...amountsByBooking].reduce((sum, [bookingId, amount]) => sum + Math.max(0, amount - (bookingAddons.get(bookingId) ?? 0)), 0)
+      + unlinked.reduce((sum, event) => sum + event.amount, 0),
   };
 }
 
@@ -571,6 +585,7 @@ export type OmzetLedgerSourceContext = {
   bookings: MinimalReadCollection<OmzetLedgerBookingInput>;
   ledgerEntries: MinimalReadCollection<LedgerEntryInput & { accountCode: string; period: string }>;
   loadExplanation: (period: string) => Promise<OmzetExplanation | null>;
+  loadRacketAddonAmounts?: (bookingIds: readonly string[]) => Promise<ReadonlyMap<string, number>>;
   staging?: StagingReadContext;
 };
 
@@ -582,6 +597,7 @@ async function resolveContext(context?: OmzetLedgerSourceContext): Promise<Omzet
   return {
     bookings,
     ledgerEntries: olseraFinancialLedgerEntries,
+    loadRacketAddonAmounts,
     staging: { runs: ayoPaymentEventStagingRuns, events: ayoPaymentEventStagingEvents, activation: ayoPaymentEventActivation },
     // Skema BARU append-only (OlseraOmzetReconciliationNoteV2Document, lihat
     // lib/reconciliation-omzet-note-store.ts) — menggantikan
@@ -632,8 +648,15 @@ async function loadPeriodData(period: string, context?: OmzetLedgerSourceContext
     ctx.ledgerEntries.find({ storeId: storeId(), period, accountCode: ACCOUNT_PICKLEBALL_PAYABLE }).toArray(),
     ctx.loadExplanation(period),
   ]);
+  const addonAmounts = ctx.loadRacketAddonAmounts
+    ? await ctx.loadRacketAddonAmounts(bookingRows.map((booking) => String(booking.booking_id ?? "").trim()).filter(Boolean))
+    : new Map<string, number>();
+  const bookingRowsWithAddons = bookingRows.map((booking) => {
+    const amount = addonAmounts.get(String(booking.booking_id ?? "").trim());
+    return amount === undefined ? booking : { ...booking, racket_addon_amount: amount };
+  });
   const staged = ctx.staging ? await readActiveStagedPaymentEvents(start, end, ctx.staging) : null;
-  return { bookingRows, paymentEvents: staged?.events ?? null, entries40001, entries40004, entries21003, explanation };
+  return { bookingRows: bookingRowsWithAddons, paymentEvents: staged?.events ?? null, entries40001, entries40004, entries21003, explanation };
 }
 
 /** Ringkasan SATU bulan — dipakai daftar bulanan di /reconciliation. */

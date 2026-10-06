@@ -163,6 +163,32 @@ test("export menambah sewa raket hanya untuk padel", async () => {
   assert.equal(ayo.getCell(5, paymentColumn).value, "PAY-1");
 });
 
+test("detail export memisahkan Price lapangan dari add-on dan mempertahankan total booking", async () => {
+  const booking = fakeBooking({
+    booking_id: "PADEL-DETAIL-1",
+    field_name: "Court No 1",
+    status: "SUCCESS",
+    total_price: 200000,
+    racket_addon_amount: 50000,
+  });
+  const bytes = await buildOmzetHarianWorkbook({
+    date: "2026-07-01",
+    venueName: "BC Padel Club",
+    dayBookings: [booking],
+    monthBookings: [booking],
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const ayo = workbook.getWorksheet("AYO");
+  assert.ok(ayo);
+
+  assert.equal(ayo.getCell(5, headerColumn(ayo, "Price")).value, 150000);
+  assert.equal(ayo.getCell(5, headerColumn(ayo, "Sewa Raket Add On")).value, 50000);
+  assert.equal(ayo.getCell(5, headerColumn(ayo, "Total Booking \nAmount")).value, 200000);
+  assert.equal(ayo.getCell(5, headerColumn(ayo, "Net Booking \nAmount")).value, 200000);
+  assert.equal(ayo.getCell(5, headerColumn(ayo, "Revenue \nVenue")).value, 200000);
+});
+
 test("export periode memisahkan nominal lapangan dari sewa raket", async () => {
   const booking = fakeBooking({
     booking_id: "PADEL-PERIOD-1",

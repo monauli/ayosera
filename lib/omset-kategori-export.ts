@@ -17,12 +17,13 @@
 import ExcelJS from "exceljs";
 import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 import { collections, withMongo, type BookingDocument } from "./mongodb.ts";
-import { getRevenueAmount, isDisplayEligibleTransaction } from "./revenue.ts";
+import { getFieldRevenueAmount, isDisplayEligibleTransaction } from "./revenue.ts";
 import { loadResolverContext, resolveStoredItemCategory } from "./olsera-resolver-context.ts";
 import { readActiveStagedPaymentEvents } from "./ayo-payment-event-staging.ts";
 import { isPaymentEventsReadEnabled } from "./ayo-payment-events-engine.ts";
 import { dashboardPaymentAmountsByBooking } from "./dashboard-payment-metrics.ts";
 import { withCanonicalPaymentAmountsKeepUncovered } from "./omzet-export.ts";
+import { loadRacketAddonAmounts, withImportedRacketAddonAmounts } from "./ayo-racket-addon-store.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 
 const FONT = "Calibri";
@@ -147,12 +148,66 @@ export function courtCategoryAmounts(bookings: readonly BookingDocument[], dayCo
     if (!isDisplayEligibleTransaction(booking)) continue;
     const index = dayIndex(booking.date ?? "");
     if (index < 0 || index >= dayCount) continue;
-    const amount = getRevenueAmount(booking);
+    const amount = getFieldRevenueAmount(booking);
     if (amount) hasBooking = true;
     if (/pickle/i.test(booking.field_name ?? "")) pickle[index] += amount;
     else padel[index] += amount;
   }
   return { padel, pickle, hasBooking };
+}
+
+type RacketCategoryItem = {
+  date: string;
+  itemName: string;
+  amount: number;
+};
+
+// Koreksi overlap yang dikonfirmasi dari perbandingan laporan September 2026:
+// satu baris Standard Rp30.000 pada 27 September sudah terwakili di sumber
+// AYO. Baris Standard 30 September tetap merupakan transaksi Olsera.
+const STANDARD_RACKET_OVERLAP_CORRECTIONS = new Map<string, number>([
+  ["2026-09-27", 30_000],
+]);
+
+/**
+ * Menyatukan penjualan sewa raket Olsera dengan add-on AYO.
+ *
+ * Add-on AYO belum membawa tipe raket di file import, sehingga sesuai format
+ * laporan operasional saat ini seluruhnya masuk ke Premium. Koreksi overlap
+ * Standard diterapkan dari map koreksi tanggal yang sudah diverifikasi, bukan
+ * dengan mengurangi otomatis semua transaksi pada tanggal yang punya add-on.
+ */
+export function racketCategoryAmounts(
+  items: readonly RacketCategoryItem[],
+  ayoAddonByDate: ReadonlyMap<string, number>,
+  dayCount: number,
+  standardOverlapByDate: ReadonlyMap<string, number> = new Map(),
+) {
+  const zeros = () => new Array<number>(dayCount).fill(0);
+  const dayIndex = (date: string) => Number(date.slice(8, 10)) - 1;
+  const standard = zeros();
+  const premium = zeros();
+
+  for (const item of items) {
+    const idx = dayIndex(item.date);
+    if (idx < 0 || idx >= dayCount) continue;
+    const isPremium = /PREMIUM/i.test(item.itemName);
+    (isPremium ? premium : standard)[idx] += item.amount;
+  }
+
+  for (const [date, amount] of standardOverlapByDate) {
+    const idx = dayIndex(date);
+    if (idx < 0 || idx >= dayCount) continue;
+    standard[idx] = Math.max(0, standard[idx] - Math.max(0, Number(amount) || 0));
+  }
+
+  for (const [date, amount] of ayoAddonByDate) {
+    const idx = dayIndex(date);
+    if (idx < 0 || idx >= dayCount) continue;
+    premium[idx] += Math.max(0, Number(amount) || 0);
+  }
+
+  return { standard, premium };
 }
 
 /** Kumpulkan data bulanan dari MongoDB menjadi baris laporan siap tulis. */
@@ -223,12 +278,19 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
     };
   });
 
+  const addonAmounts = await loadRacketAddonAmounts(monthBookings.map((booking) => booking.booking_id));
+  const enrichedMonthBookings = withImportedRacketAddonAmounts(monthBookings, addonAmounts);
   const zeros = () => new Array<number>(dayCount).fill(0);
   const dayIndex = (date: string) => Number(date.slice(8, 10)) - 1;
+  const ayoAddonByDate = new Map<string, number>();
+  for (const booking of enrichedMonthBookings) {
+    const amount = Math.max(0, Number(booking.racket_addon_amount) || 0);
+    if (amount > 0 && booking.date) ayoAddonByDate.set(booking.date, (ayoAddonByDate.get(booking.date) ?? 0) + amount);
+  }
 
   // Booking lapangan → Padel / Pickleball per tanggal (pola sama dengan
   // Summary Omzet Harian: display-eligible + getRevenueAmount).
-  const { padel, pickle, hasBooking } = courtCategoryAmounts(monthBookings, dayCount);
+  const { padel, pickle, hasBooking } = courtCategoryAmounts(enrichedMonthBookings, dayCount);
 
   // Item Olsera → per (kategori, tanggal); canonical resolver yang sama dengan
   // dashboard & Export Kategori Penjualan.
@@ -239,6 +301,7 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
     if (!arr) byCategory.set(category, (arr = zeros()));
     arr[idx] += amount;
   };
+  const racketItems: RacketCategoryItem[] = [];
   for (const item of items) {
     const idx = dayIndex(item.date);
     if (idx < 0 || idx >= dayCount) continue;
@@ -250,10 +313,15 @@ export async function loadOmsetKategoriRows(month: string): Promise<OmsetKategor
     }
     if (EXCLUDED_OLSERA_CATEGORIES.has(category)) continue;
     if (category === "SEWA RAKET") {
-      category = /PREMIUM/i.test(item.itemName) ? "@RAKET_PREMIUM" : "@RAKET_STANDAR";
+      racketItems.push({ date: item.date, itemName: item.itemName, amount: item.amount });
+      continue;
     }
     add(category, idx, item.amount);
   }
+
+  const racketAmounts = racketCategoryAmounts(racketItems, ayoAddonByDate, dayCount, STANDARD_RACKET_OVERLAP_CORRECTIONS);
+  byCategory.set("@RAKET_STANDAR", racketAmounts.standard);
+  byCategory.set("@RAKET_PREMIUM", racketAmounts.premium);
 
   const takeSource = (source: string): number[] => {
     if (source === "@BOOKING_PADEL") return padel;

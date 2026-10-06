@@ -87,6 +87,14 @@ test("payment event dedupe memakai identity, lalu digabung per booking (split-pa
   assert.deepEqual(computeAyoPaymentEventSide(events), { count: 1, revenue: 237_491_000 });
 });
 
+test("payment event side memisahkan add-on sewa raket dari omzet lapangan bila metadata booking tersedia", () => {
+  const events = [paymentEvent("paid", "BK-racket", 200_000)];
+  assert.deepEqual(
+    computeAyoPaymentEventSide(events, new Set(), [{ booking_id: "BK-racket", racket_addon_amount: 50_000 }]),
+    { count: 1, revenue: 150_000 },
+  );
+});
+
 test("payment event milik booking cancelled dikecualikan dari Omzet AYO", () => {
   const events = [
     paymentEvent("paid", "BK-active", 150_000),
@@ -161,6 +169,23 @@ test("breakdown sport mendedupe historical/rolling berdasarkan identity dan tida
   assert.deepEqual(result.unmapped, { count: 1, revenue: 50_000 });
   assert.deepEqual(result.total, { count: 2, revenue: 150_000 });
   assert.equal(result.court.revenue + result.pickleball.revenue + result.unmapped.revenue, result.total.revenue);
+});
+
+test("breakdown sport menghapus duplicate internal_reservation dan add-on dari omzet lapangan", () => {
+  const first = {
+    ...paymentEventWithSport("internal-1", "MN/2428/260901/0003397", 99_000, "Court No 3"),
+    sourceTable: "internal_reservation",
+    nativeId: "16350403",
+    sourceId: "16350403",
+    paymentNote: "pay280926 161840",
+  } as AyoPaymentEvent;
+  const duplicate = { ...first, identity: "internal-2", reservationPaymentId: "3242357" };
+  const result = computeAyoPaymentEventSportBreakdown(
+    [first, duplicate],
+    [{ booking_id: "MN/2428/260901/0003397", field_name: "Court No 3", racket_addon_amount: 50_000 }],
+  );
+  assert.deepEqual(result.court, { count: 1, revenue: 49_000 });
+  assert.deepEqual(result.total, { count: 1, revenue: 49_000 });
 });
 
 test("booking fallback Februari-Mei memetakan sport tanpa mengubah total existing", () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalOmsetCategoryBookings, courtCategoryAmounts } from "./omset-kategori-export.ts";
+import { canonicalOmsetCategoryBookings, courtCategoryAmounts, racketCategoryAmounts } from "./omset-kategori-export.ts";
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
 import type { BookingDocument } from "./mongodb.ts";
 
@@ -51,4 +51,33 @@ test("tanpa source payment tervalidasi, fallback booking dan kategori lain tidak
   const bookings = [booking({ booking_id: "FALLBACK", date: "2026-05-15", total_price: 175_000 })];
   assert.equal(canonicalOmsetCategoryBookings(bookings, null), bookings);
   assert.equal(courtCategoryAmounts(bookings, 31).padel[14], 175_000);
+});
+
+test("kategori lapangan memisahkan add-on sewa raket dari pendapatan lapangan", () => {
+  const bookings = [booking({ total_price: 200_000, racket_addon_amount: 50_000 })];
+  assert.equal(courtCategoryAmounts(bookings, 31).padel[0], 150_000);
+});
+
+test("kategori sewa raket mengurangi baris Standard Olsera yang overlap dan menambah add-on AYO ke Premium", () => {
+  const result = racketCategoryAmounts(
+    [
+      { date: "2026-09-30", itemName: "SEWA RAKET - RAKET STANDAR", amount: 30_000 },
+      { date: "2026-09-30", itemName: "SEWA RAKET - RAKET PREMIUM", amount: 100_000 },
+      { date: "2026-09-27", itemName: "SEWA RAKET - RAKET STANDAR", amount: 30_000 },
+      { date: "2026-09-27", itemName: "SEWA RAKET - RAKET STANDAR", amount: 30_000 },
+      { date: "2026-09-29", itemName: "SEWA RAKET - RAKET STANDAR", amount: 30_000 },
+    ],
+    new Map([
+      ["2026-09-30", 50_000],
+      ["2026-09-27", 100_000],
+    ]),
+    30,
+    new Map([["2026-09-27", 30_000]]),
+  );
+
+  assert.equal(result.standard[28], 30_000);
+  assert.equal(result.standard[29], 30_000);
+  assert.equal(result.premium[26], 100_000);
+  assert.equal(result.premium[29], 150_000);
+  assert.equal(result.standard[26], 30_000);
 });

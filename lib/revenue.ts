@@ -11,6 +11,8 @@ export const CANCELLED_STATUS_MARKERS = [
 export const CANCELLED_STATUS_PATTERN_SOURCE = CANCELLED_STATUS_MARKERS.join("|");
 
 type RevenueTransaction = {
+  field_name?: unknown;
+  racket_addon_amount?: unknown;
   status?: unknown;
   payment?: unknown;
   status_label?: unknown;
@@ -114,6 +116,22 @@ export function isRevenueEligibleTransaction(transaction: RevenueTransaction | n
 export function getRevenueAmount(transaction: RevenueTransaction | null | undefined) {
   if (!isRevenueEligibleTransaction(transaction)) return 0;
   return getTransactionAmount(transaction);
+}
+
+/** Add-on raket adalah pendapatan terpisah dari sewa lapangan dan hanya berlaku untuk Padel. */
+export function getRacketAddonAmount(transaction: RevenueTransaction | null | undefined) {
+  if (!transaction || /pickle/i.test(String(transaction.field_name ?? ""))) return 0;
+  const raw = transaction.raw && typeof transaction.raw === "object" ? transaction.raw as Record<string, unknown> : {};
+  const rawAmount = ["racket_addon_amount", "racket_addon_price", "sewa_raket_amount", "sewa_raket"]
+    .map((key) => raw[key])
+    .find((value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)));
+  const amount = Number(transaction.racket_addon_amount ?? rawAmount ?? 0);
+  return Number.isFinite(amount) ? Math.max(0, amount) : 0;
+}
+
+/** Pendapatan lapangan setelah memisahkan add-on sewa raket. */
+export function getFieldRevenueAmount(transaction: RevenueTransaction | null | undefined) {
+  return Math.max(0, getRevenueAmount(transaction) - getRacketAddonAmount(transaction));
 }
 
 function collectInternalValues(

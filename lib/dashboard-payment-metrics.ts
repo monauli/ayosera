@@ -1,4 +1,5 @@
 import type { AyoPaymentEvent } from "./ayo-payment-events.ts";
+import { aggregateBookingPayments } from "./booking-payment-aggregate.ts";
 
 /** Canonical Dashboard identity rule: one latest row per payment identity. */
 export function uniqueDashboardPaymentEvents(paymentEvents: readonly AyoPaymentEvent[]) {
@@ -9,16 +10,10 @@ export function uniqueDashboardPaymentEvents(paymentEvents: readonly AyoPaymentE
 
 /**
  * Canonical Dashboard revenue grouped by booking metadata reference.
- * Multiple successful payment records for one booking intentionally remain
- * separate before this aggregation; only duplicate payment identities collapse.
+ * Uses the same identity and semantic duplicate rules as Transaksi AYO.
  */
 export function dashboardPaymentAmountsByBooking(paymentEvents: readonly AyoPaymentEvent[]) {
-  const amounts = new Map<string, number>();
-  for (const event of uniqueDashboardPaymentEvents(paymentEvents)) {
-    if (!event.bookingId) continue;
-    amounts.set(event.bookingId, (amounts.get(event.bookingId) ?? 0) + event.amount);
-  }
-  return amounts;
+  return new Map([...aggregateBookingPayments(paymentEvents)].map(([bookingId, aggregate]) => [bookingId, aggregate.totalAmount]));
 }
 
 /**

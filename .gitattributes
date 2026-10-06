@@ -6,3 +6,4 @@
 # "text" karena isinya sebagian besar karakter ASCII. Konversi CRLF yang
 # tidak sengaja bisa merusak data biner yang dibungkus di dalamnya.
 public/tesseract/** -text
+graphify-out/graph.json merge=graphify

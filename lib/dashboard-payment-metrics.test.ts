@@ -75,6 +75,12 @@ test("agregasi export memakai identity Dashboard: payment berbeda dijumlahkan, d
   );
 });
 
+test("helper dashboard mengabaikan duplicate internal_reservation dengan native booking dan payment note yang sama", () => {
+  const first = { ...event("internal-1", 99_000), bookingId: "MN/2428/260901/0003397", sourceTable: "internal_reservation", nativeId: "16350403", sourceId: "16350403", paymentNote: "pay280926 161840" };
+  const duplicate = { ...first, identity: "internal_reservation:MN/2428/260901/0003397:3242357", _id: "internal-2", reservationPaymentId: "3242357" };
+  assert.equal(dashboardPaymentAmountsByBooking([first, duplicate]).get(first.bookingId), 99_000);
+});
+
 test("chart Pendapatan Bulanan menyediakan ruang penuh untuk label sumbu-Y tanpa mengubah konfigurasi data", async () => {
   const chart = await readFile(new URL("../components/redesign/annual-revenue-chart.tsx", import.meta.url), "utf8");
   assert.match(chart, /<BarChart data=\{data\} margin=\{\{ top: 4, right: 4, left: 8, bottom: 0 \}\}>/);

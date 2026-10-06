@@ -35,8 +35,21 @@ export function aggregateBookingPayments(
   const uniqueByIdentity = new Map<string, AyoPaymentEvent>();
   for (const event of paymentEvents) uniqueByIdentity.set(event.identity, event);
 
+  // API internal_reservation kadang mengirim dua payment id untuk satu baris
+  // booking yang sama. Bila native booking, nominal, dan payment note semuanya
+  // identik, itu satu event bisnis yang sama (bukan split payment). Split
+  // payment tetap dipertahankan karena nominal atau note-nya berbeda.
+  const duplicateBusinessKeys = new Set<string>();
+
   for (const event of uniqueByIdentity.values()) {
     if (!event.bookingId) continue;
+    const nativeId = String(event.nativeId || event.sourceId || "").trim();
+    const paymentNote = String(event.paymentNote || "").trim();
+    if (event.sourceTable === "internal_reservation" && nativeId && paymentNote) {
+      const businessKey = [event.sourceTable, event.bookingId, nativeId, event.amount, paymentNote].join(":");
+      if (duplicateBusinessKeys.has(businessKey)) continue;
+      duplicateBusinessKeys.add(businessKey);
+    }
     const existing = aggregate.get(event.bookingId);
     if (existing) {
       existing.totalAmount += event.amount;

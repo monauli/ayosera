@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import type { BookingDocument } from "./mongodb.ts";
-import { getRevenueAmount, isCancelledTransaction, isDisplayEligibleTransaction } from "./revenue.ts";
+import { getFieldRevenueAmount, getRacketAddonAmount, getRevenueAmount, isCancelledTransaction, isDisplayEligibleTransaction } from "./revenue.ts";
 import { sanitizeExcelCellValue } from "./excel-sanitization.ts";
 
 /**
@@ -181,16 +181,11 @@ function num(value: unknown) {
 }
 
 function racketAddonAmount(b: BookingDocument) {
-  if (isPickle(b.field_name)) return 0;
-  const raw = b.raw ?? {};
-  const rawAmount = ["racket_addon_amount", "racket_addon_price", "sewa_raket_amount", "sewa_raket"]
-    .map((key) => raw[key])
-    .find((value) => Number.isFinite(Number(value)));
-  return Math.max(0, num(b.racket_addon_amount ?? rawAmount));
+  return getRacketAddonAmount(b);
 }
 
 function fieldRevenueAmount(b: BookingDocument) {
-  return Math.max(0, getRevenueAmount(b) - racketAddonAmount(b));
+  return getFieldRevenueAmount(b);
 }
 
 // ---- Kolom detail (urutan persis template) -------------------------------
@@ -225,7 +220,7 @@ const BASE_COLUMNS: ColumnDef[] = [
   { header: "Booking Period \nStart Time", get: (b) => b.start_time || "-", width: 11 },
   { header: "Booking Period End Time", get: (b) => b.end_time || "-", width: 11 },
   { header: "Session \nLength", get: (b) => sessionLength(b), width: 12 },
-  { header: "Price", get: (b) => num(b.total_price), money: true, width: 12 },
+  { header: "Price", get: fieldRevenueAmount, money: true, width: 12 },
   { header: "Payment ID", get: (b, c) => {
     const raw = b.raw ?? {};
     const rawId = ["payment_id", "paymentId", "reservation_payment_id", "reservationPaymentId"]

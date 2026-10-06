@@ -99,6 +99,26 @@ test("duplicate event (identity sama, re-sync) -> tidak double count", () => {
   assert.equal(aggregate.get("BK-DUP")?.paymentCount, 1);
 });
 
+test("duplicate API rows (identity berbeda, native booking dan detail sama) -> tidak double count", () => {
+  const first = {
+    ...event("MN/2428/260901/0003397", "3242384", 99000),
+    nativeId: "16350403",
+    sourceId: "16350403",
+    paymentNote: "pay280926 161840",
+  };
+  const second = {
+    ...first,
+    _id: "internal_reservation:MN/2428/260901/0003397:3242357",
+    identity: "internal_reservation:MN/2428/260901/0003397:3242357",
+    reservationPaymentId: "3242357",
+  };
+  const aggregate = aggregateBookingPayments([first, second]);
+  const entry = aggregate.get("MN/2428/260901/0003397")!;
+  assert.equal(entry.totalAmount, 99000);
+  assert.equal(entry.paymentCount, 1);
+  assert.equal(paymentDetailsFor(entry).length, 1);
+});
+
 test("withBookingPaymentTotals: booking dengan payment event memakai total agregat, booking lain fallback", () => {
   const bookings = [
     { booking_id: SPLIT_PAYMENT_BOOKING_ID, total_price: 50000 /* nilai lama yang tertimpa sync terakhir */ },
