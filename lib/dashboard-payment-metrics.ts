@@ -57,8 +57,10 @@ export function dashboardPaymentIdByBooking(paymentEvents: readonly AyoPaymentEv
  * `revenueEligible` in app/api/dashboard/route.ts, passed in here as
  * `cancelledBookingIds` instead of re-derived. Events with no bookingId can't
  * be matched to a booking's status, so they still count individually.
+ * `racketAddonByBooking` is subtracted per booking: Dashboard revenue is court
+ * rental only, the racket add-on is reported in the Excel exports.
  */
-export function buildDashboardPaymentMetrics(input: { bookingTotal: number; fallbackTransactions: number; fallbackRevenue: number; paymentEvents: readonly AyoPaymentEvent[] | null; cancelledBookingIds?: ReadonlySet<string> }) {
+export function buildDashboardPaymentMetrics(input: { bookingTotal: number; fallbackTransactions: number; fallbackRevenue: number; paymentEvents: readonly AyoPaymentEvent[] | null; cancelledBookingIds?: ReadonlySet<string>; racketAddonByBooking?: ReadonlyMap<string, number> }) {
   if (!input.paymentEvents) return { totalTransactions: input.fallbackTransactions, revenueMonth: input.fallbackRevenue, bookingTotal: input.bookingTotal };
   const cancelledBookingIds = input.cancelledBookingIds ?? new Set<string>();
   const unique = uniqueDashboardPaymentEvents(input.paymentEvents).filter(
@@ -66,9 +68,10 @@ export function buildDashboardPaymentMetrics(input: { bookingTotal: number; fall
   );
   const amountsByBooking = dashboardPaymentAmountsByBooking(unique);
   const unlinked = unique.filter((event) => !event.bookingId);
+  const addonByBooking = input.racketAddonByBooking ?? new Map<string, number>();
   return {
     totalTransactions: amountsByBooking.size + unlinked.length,
-    revenueMonth: [...amountsByBooking.values()].reduce((sum, amount) => sum + amount, 0) + unlinked.reduce((sum, event) => sum + event.amount, 0),
+    revenueMonth: [...amountsByBooking].reduce((sum, [bookingId, amount]) => sum + Math.max(0, amount - (addonByBooking.get(bookingId) ?? 0)), 0) + unlinked.reduce((sum, event) => sum + event.amount, 0),
     bookingTotal: input.bookingTotal,
   };
 }

@@ -4,6 +4,7 @@ import { buildBookingFilter } from "@/lib/booking-query";
 import { mapStatus } from "@/lib/booking-mapper";
 import { collections, type BookingDocument, withMongo } from "@/lib/mongodb";
 import {
+  getRacketAddonAmount,
   getTransactionAmount,
   isCancelledTransaction,
   isDisplayEligibleTransaction,
@@ -14,19 +15,22 @@ import { isPaymentEventsReadEnabled } from "@/lib/ayo-payment-events-engine";
 import { buildDashboardPaymentMetrics, dashboardPaymentAmountsByBooking } from "@/lib/dashboard-payment-metrics";
 import { withCanonicalPaymentAmounts } from "@/lib/omzet-export";
 import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
+import { loadRacketAddonAmounts, withImportedRacketAddonAmounts } from "@/lib/ayo-racket-addon-store";
 
 /**
  * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
  * Sebelumnya isDisplayEligible/isCancelled/getRevenueAmount dipanggil terpisah
  * berkali-kali sehingga tiap booking di-traversal (deteksi internal/cancelled)
  * hingga 4-5x. Rule tetap identik: revenue = tampil & bukan cancelled.
+ * Revenue Dashboard = sewa lapangan saja; add-on sewa raket hanya dilaporkan
+ * di export Excel, jadi dikurangkan di sini.
  */
 type AnalyzedBooking = { booking: BookingDocument; display: boolean; cancelled: boolean; revenue: number };
 
 function analyzeBooking(booking: BookingDocument): AnalyzedBooking {
   const display = isDisplayEligibleTransaction(booking);
   const cancelled = isCancelledTransaction(booking);
-  const revenue = display && !cancelled ? getTransactionAmount(booking) : 0;
+  const revenue = display && !cancelled ? Math.max(0, getTransactionAmount(booking) - getRacketAddonAmount(booking)) : 0;
   return { booking, display, cancelled, revenue };
 }
 
@@ -66,7 +70,7 @@ export async function GET(request: Request) {
 
     const data = await withMongo(async () => {
       const { bookings, syncLogs, fields, ayoPaymentEventStagingRuns, ayoPaymentEventStagingEvents, ayoPaymentEventActivation } = await collections();
-      const [filteredBookings, courtNames, todayBookings, latestLogs, fieldCount] = await Promise.all([
+      const [rawFilteredBookings, courtNames, rawTodayBookings, latestLogs, fieldCount] = await Promise.all([
         bookings.find(dashboardFilter).sort({ date: -1, start_time: -1 }).toArray(),
         // distinct jauh lebih ringan daripada menarik s.d. 5000 dokumen hanya untuk daftar lapangan.
         bookings.distinct("field_name", courtOptionFilter),
@@ -74,6 +78,11 @@ export async function GET(request: Request) {
         syncLogs.find({}).sort({ startedAt: -1 }).limit(5).toArray(),
         fields.countDocuments({ status: "ACTIVE" }),
       ]);
+      const racketAddonAmounts = await loadRacketAddonAmounts(
+        rawFilteredBookings.concat(rawTodayBookings).map((booking) => booking.booking_id),
+      );
+      const filteredBookings = withImportedRacketAddonAmounts(rawFilteredBookings, racketAddonAmounts);
+      const todayBookings = withImportedRacketAddonAmounts(rawTodayBookings, racketAddonAmounts);
 
       const explicitStart = searchParams.get("date") || searchParams.get("start_date");
       const explicitEnd = searchParams.get("date") || searchParams.get("end_date");
@@ -124,6 +133,7 @@ export async function GET(request: Request) {
         fallbackRevenue: revenueFiltered,
         paymentEvents: validatedPaymentEvents?.events ?? null,
         cancelledBookingIds,
+        racketAddonByBooking: new Map(displayFiltered.map((item) => [item.booking.booking_id, getRacketAddonAmount(item.booking)])),
       });
 
       const analyzedToday = todayBookingsWithPayments.map(analyzeBooking);
@@ -153,7 +163,7 @@ export async function GET(request: Request) {
           (acc, booking) => {
             const name = booking.field_name;
             acc[name] ||= { name, branch: name, revenueValue: 0, revenue: "Rp 0", count: 0, progress: 0 };
-            acc[name].revenueValue += booking.total_price;
+            acc[name].revenueValue += Math.max(0, booking.total_price - getRacketAddonAmount(booking));
             acc[name].count += 1;
             return acc;
           },

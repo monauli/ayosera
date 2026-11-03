@@ -88,3 +88,9 @@ test("chart Pendapatan Bulanan menyediakan ruang penuh untuk label sumbu-Y tanpa
   assert.match(chart, /<Tooltip content=\{<RevenueTooltip \/>} cursor=\{\{ fill: "rgba\(255,255,255,0\.04\)" \}\} \/>/);
   assert.match(chart, /<Bar dataKey="amount" radius=\{\[5, 5, 0, 0\]\} maxBarSize=\{34\}/);
 });
+
+test("revenueMonth Dashboard tidak memuat add-on sewa raket (hanya di export Excel)", () => {
+  const events = [event("court3", 1_100_000), event("other", 400_000)];
+  const result = buildDashboardPaymentMetrics({ bookingTotal: 2, fallbackTransactions: 2, fallbackRevenue: 0, paymentEvents: events, racketAddonByBooking: new Map([["BK-court3", 550_000]]) });
+  assert.deepEqual(result, { totalTransactions: 2, revenueMonth: 950_000, bookingTotal: 2 });
+});

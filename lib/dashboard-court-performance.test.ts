@@ -212,6 +212,15 @@ test("app/api/dashboard/route.ts memakai helper shared yang sama untuk Court Per
   assert.match(route, /revenueMonth: toIdrFull\(paymentMetrics\.revenueMonth\)/);
 });
 
+test("app/api/dashboard/route.ts: pendapatan Dashboard dikurangi add-on sewa raket hasil import (hanya Excel yang memuatnya)", async () => {
+  const route = await readFile(new URL("../app/api/dashboard/route.ts", import.meta.url), "utf8");
+  assert.match(route, /withImportedRacketAddonAmounts\(rawFilteredBookings, racketAddonAmounts\)/);
+  assert.match(route, /withImportedRacketAddonAmounts\(rawTodayBookings, racketAddonAmounts\)/);
+  assert.match(route, /revenueValue \+= Math\.max\(0, booking\.total_price - getRacketAddonAmount\(booking\)\)/);
+  assert.match(route, /getTransactionAmount\(booking\) - getRacketAddonAmount\(booking\)/);
+  assert.match(route, /racketAddonByBooking:/);
+});
+
 // ---------------------------------------------------------------------------
 // Card "Performa Lapangan" — urutan tetap (bukan omzet) + "Total Pendapatan
 // Lapangan" (SUM dari data yang sama, bukan sumber baru). app/page.tsx adalah
