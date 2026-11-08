@@ -82,7 +82,7 @@ export type AyoPaymentPeriodDocument = AyoPaymentPeriodMetadata;
 export type AyoPaymentEventSyncStateDocument = { _id: "ayo-payment-events-auto-sync"; lastAttemptAt: Date | null; lastSuccessfulSyncAt: Date | null; periodStart: string | null; periodEnd: string | null; rowsFetched: number; inserted: number; updated: number; unchanged: number; duplicate: number; conflict: number; invalid: number; totalAmount: number; lastError: string | null; lockUntil: Date; source: "ayo-report-transactions"; runId: string };
 
 export type SyncLogDocument = {
-  type: "manual" | "scheduled" | "webhook" | "fields";
+  type: "manual" | "scheduled" | "backfill" | "webhook" | "fields";
   status: "success" | "partial" | "failed";
   recordsProcessed: number;
   message?: string;

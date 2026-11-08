@@ -40,7 +40,7 @@ export type ProductionSyncResult = {
 
 export type ProductionListBookingsSyncOptions = Omit<AyoBookingPayload, "token" | "signature"> & {
   startedAt?: Date;
-  type?: "manual" | "scheduled";
+  type?: "manual" | "scheduled" | "backfill";
   /** Tulis sample JSON respons API ke disk (lib lokal/dev). Default false karena
    *  filesystem Vercel read-only. */
   saveSamples?: boolean;
