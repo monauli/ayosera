@@ -24,8 +24,10 @@ function formatJakartaDate(date: Date) {
 
 /**
  * Re-pull one rotating slice of older dates (lib/ayo-backlog-sync.ts) so late
- * payments and price revisions on past bookings are picked up. The rotation
- * index is the number of scheduled runs so far; locked omzet periods are skipped.
+ * payments and price revisions on past bookings are picked up, both in
+ * bookings and in the payment events that Dashboard/Rekonsiliasi read. The
+ * rotation index is the number of scheduled runs so far; locked omzet periods
+ * are skipped.
  */
 async function syncAyoBacklog(today: string) {
   const runIndex = await withMongo(async () => (await collections()).syncLogs.countDocuments({ type: "scheduled" }));
@@ -36,8 +38,10 @@ async function syncAyoBacklog(today: string) {
   }
   const dates = ayoBacklogDates(today, runIndex).filter((date) => !lockedPeriods.has(date.slice(0, 7)));
   if (!dates.length) return { skipped: true, lockedPeriods: [...lockedPeriods] };
-  const result = await syncProductionListBookings({ start_date: dates[0], end_date: dates.at(-1), type: "backfill" });
-  return { range: { start_date: dates[0], end_date: dates.at(-1) }, inserted: result.inserted, updated: result.updated, error: result.error };
+  const range = { start_date: dates[0], end_date: dates.at(-1)! };
+  const result = await syncProductionListBookings({ ...range, type: "backfill" });
+  const paymentEvents = await maybeSyncAyoPaymentEvents({ forceWindow: { start: range.start_date, end: range.end_date } });
+  return { range, inserted: result.inserted, updated: result.updated, error: result.error, paymentEvents };
 }
 
 /**
