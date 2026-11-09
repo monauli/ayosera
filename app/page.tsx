@@ -80,6 +80,13 @@ type DashboardPayload = {
   occupancy: OccupancyPoint[];
   syncEvents: SyncEvent[];
   branchOptions: { label: string; value: string }[];
+  tokenWarning?: {
+    hasWarning: boolean;
+    status: string;
+    remainingDays: number | null;
+    expiresAt: string | null;
+    message: string;
+  } | null;
 };
 
 type TransactionRow = {
@@ -2240,6 +2247,41 @@ export default function DashboardPage() {
     >
         <div className="px-4 py-5 sm:px-6">
           {syncMessage && <p className="mb-4 text-sm text-slate-300">{syncMessage}</p>}
+
+          {dashboard?.tokenWarning?.hasWarning && (
+            <div
+              role="alert"
+              className={`mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border p-4 ${
+                dashboard.tokenWarning.status === "KEDALUWARSA" || dashboard.tokenWarning.status === "UNAUTHORIZED"
+                  ? "border-rose-500/40 bg-rose-950/40 text-rose-200"
+                  : "border-amber-500/40 bg-amber-950/40 text-amber-200"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold">
+                    {dashboard.tokenWarning.status === "KEDALUWARSA"
+                      ? "Token Olsera Kedaluwarsa"
+                      : `Peringatan: Token Olsera Berakhir dalam ${dashboard.tokenWarning.remainingDays} Hari`}
+                  </p>
+                  <p className="text-xs text-slate-300 mt-0.5">{dashboard.tokenWarning.message}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 border-white/20 bg-white/10 text-xs hover:bg-white/20 text-white"
+                  onClick={() => {
+                    setActiveNav("Audit");
+                  }}
+                >
+                  Buka Status Integrasi
+                </Button>
+              </div>
+            </div>
+          )}
 
           {!sessionUser && (
             <p className="py-10 text-center text-sm text-slate-400">Memuat sesi…</p>

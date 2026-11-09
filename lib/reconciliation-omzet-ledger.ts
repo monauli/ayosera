@@ -514,7 +514,13 @@ function classifyStatus(input: {
     return { status: "PERLU_DICEK", statusReason: "Ditemukan lebih dari satu kandidat jurnal penutup akun 40001 — tidak dipilih otomatis." };
   }
   if (input.courtFeesHasActivity && !input.courtFeesClosingFound) {
-    return { status: "PERLU_DICEK", statusReason: "Jurnal penutup akun 40001 (tutup buku) belum ditemukan untuk periode ini." };
+    const isNominalMatch = isWithinReconciliationTolerance(input.differenceRevenue);
+    return {
+      status: "PERLU_DICEK",
+      statusReason: isNominalMatch
+        ? "Nominal cocok (selisih Rp0). Menunggu tim akuntansi membuat jurnal tutup buku akun 40001 di Olsera sebelum periode dapat dikunci."
+        : "Jurnal penutup akun 40001 (tutup buku) belum ditemukan untuk periode ini.",
+    };
   }
   if (input.pickleballVerification.applicable && input.pickleballVerification.verified === false) {
     return { status: "PERLU_DICEK", statusReason: `Reklasifikasi akun 40004 belum terverifikasi ke akun 21003: ${input.pickleballVerification.reason}` };

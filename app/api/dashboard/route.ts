@@ -16,6 +16,7 @@ import { buildDashboardPaymentMetrics, dashboardPaymentAmountsByBooking } from "
 import { withCanonicalPaymentAmounts } from "@/lib/omzet-export";
 import { aggregateBookingPayments, withBookingPaymentTotals } from "@/lib/booking-payment-aggregate";
 import { loadRacketAddonAmounts, withImportedRacketAddonAmounts } from "@/lib/ayo-racket-addon-store";
+import { classifyTokenHealth } from "@/lib/private-integration-monitor";
 
 /**
  * Analisis rule revenue dilakukan SEKALI per booking lalu dipakai ulang.
@@ -243,6 +244,25 @@ export async function GET(request: Request) {
           .filter((name): name is string => Boolean(name))
           .sort((a, b) => a.localeCompare(b))
           .map((name) => ({ label: name, value: name })),
+        tokenWarning: (() => {
+          const health = classifyTokenHealth("olsera-bearer", process.env.OLSERA_INTERNAL_TOKEN);
+          if (health.status !== "AKAN_KEDALUWARSA" && health.status !== "KEDALUWARSA" && health.status !== "UNAUTHORIZED") {
+            return null;
+          }
+          const expDateStr = health.expiresAt ? health.expiresAt.slice(0, 10) : "";
+          return {
+            hasWarning: true,
+            status: health.status,
+            remainingDays: health.remainingDays,
+            expiresAt: health.expiresAt,
+            message:
+              health.status === "KEDALUWARSA"
+                ? `Token Olsera Laporan Keuangan telah kedaluwarsa (${expDateStr}). Segera perbarui di Vercel agar sinkronisasi tidak terhenti.`
+                : health.status === "UNAUTHORIZED"
+                ? "Token Olsera ditolak (Unauthorized). Mohon perbarui token di Vercel."
+                : `Token Olsera Laporan Keuangan akan kedaluwarsa dalam ${health.remainingDays} hari (${expDateStr}). Segera perbarui di Vercel sebelum expired.`,
+          };
+        })(),
         _meta: { processed: filteredBookings.length },
       };
     });

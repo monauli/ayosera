@@ -606,6 +606,19 @@ test("lebih dari satu kandidat jurnal penutup 40001 -> Perlu Dicek, tidak dipili
   assert.equal(result.status, "PERLU_DICEK");
 });
 
+test("nominal cocok tapi jurnal penutup 40001 belum ada -> statusReason ramah menyebut nominal cocok menunggu tutup buku", () => {
+  const entries40001 = [
+    entry({ transactionNo: "JU070", transactionDate: "2026-05-15", credit: 500_000 }),
+  ];
+  const result = computeOmzetOlseraLedger("2026-05", ayo(1, 500_000), entries40001, [], [], null, NOW);
+
+  assert.equal(result.differenceRevenue, 0);
+  assert.equal(result.courtFees.closingEntry, null);
+  assert.equal(result.status, "PERLU_DICEK");
+  assert.match(result.statusReason, /Nominal cocok \(selisih Rp0\)/);
+  assert.match(result.statusReason, /Menunggu tim akuntansi membuat jurnal tutup buku akun 40001/);
+});
+
 // ---------------------------------------------------------------------------
 // BK/MN/POS tidak pernah dipisah — engine tidak punya field/logic kategori sumber sama sekali
 // ---------------------------------------------------------------------------
