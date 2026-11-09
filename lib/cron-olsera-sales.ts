@@ -9,6 +9,7 @@ import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 import { acquireOlseraSyncLock, releaseOlseraSyncLock } from "@/lib/olsera-cron-lock";
 import { isDatabaseTimeoutError, withDatabaseRetry } from "@/lib/mongodb-errors";
 import { collections, withMongo } from "@/lib/mongodb";
+import { auditOlseraBacklog } from "@/lib/olsera-backlog-audit";
 
 function previousJakartaDate(date: string) {
   const value = new Date(`${date}T00:00:00Z`);
@@ -101,6 +102,14 @@ export async function runOlseraSalesCron(authHeader: string | null): Promise<Cro
       }
     }
 
+    // Order lama yang diedit/void setelah H-1 (lihat lib/olsera-backlog-audit.ts).
+    let backlog: Awaited<ReturnType<typeof auditOlseraBacklog>> | null = null;
+    try {
+      backlog = await auditOlseraBacklog(start_date);
+    } catch (error) {
+      console.warn(`[cron:olsera:sales] audit tanggal lama error — sync hari ini tetap sukses`, error);
+    }
+
     const failed = result.action === "failed";
     const safeErrorCode = failed && result.errorMessage ? classifySalesError(result.errorMessage) : null;
     console.log(
@@ -120,6 +129,7 @@ export async function runOlseraSalesCron(authHeader: string | null): Promise<Cro
         processedCount: result.processedOrderCount,
         reason: result.reason,
         yesterdayAction: yesterdayResult?.action ?? "skipped",
+        backlog,
         ...(safeErrorCode ? { safeErrorCode } : {}),
       },
     };

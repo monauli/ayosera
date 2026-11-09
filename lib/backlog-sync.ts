@@ -1,8 +1,8 @@
-// AYO bookings keep changing after their play date (late manual payments,
-// price revisions, cancellations), but the scheduled sync only pulls
-// yesterday -> today. Each cron run therefore also re-pulls one rotating slice
-// of older dates, from the 1st of the previous month up to two days ago, so
-// such edits land within a few runs instead of never.
+// AYO bookings and Olsera orders keep changing after their date (late manual
+// payments, price revisions, cancellations, voided orders), but the scheduled
+// syncs only cover today and yesterday. Each cron run therefore also revisits
+// older dates in the backlog window, from the 1st of the previous month up to
+// two days ago, so such edits land within a few runs instead of never.
 
 export const AYO_BACKLOG_DAYS_PER_RUN = 6;
 
@@ -25,4 +25,13 @@ export function ayoBacklogDates(today: string, runIndex: number, perRun = AYO_BA
   if (!dates.length) return [];
   const offset = (Math.abs(Math.trunc(runIndex)) % Math.ceil(dates.length / perRun)) * perRun;
   return dates.slice(offset, offset + perRun);
+}
+
+/** Date after `last` in the backlog window, wrapping to the window start. */
+export function nextBacklogDate(today: string, last: string | null | undefined): string | null {
+  const first = previousMonthStart(today);
+  const end = shiftDays(today, -2);
+  if (first > end) return null;
+  const next = last ? shiftDays(last, 1) : first;
+  return next < first || next > end ? first : next;
 }

@@ -128,7 +128,7 @@
     "test:mapping-excel-parser": "node --no-warnings --experimental-strip-types --test lib/mapping-excel-parser.test.ts",
     "test:mapping-compare": "node --no-warnings --experimental-strip-types --test lib/mapping-compare.test.ts",
     "test:ayo-racket-addon": "node --no-warnings --experimental-strip-types --test lib/ayo-racket-addon-import.test.ts",
-    "test:ayo-backlog-sync": "node --no-warnings --experimental-strip-types --test lib/ayo-backlog-sync.test.ts"
+    "test:backlog-sync": "node --no-warnings --experimental-strip-types --test lib/backlog-sync.test.ts"
   },
   "keywords": [],
   "author": "",
@@ -246,6 +246,6 @@
     "test:mapping-excel-parser",
     "test:mapping-compare",
     "test:ayo-racket-addon",
-    "test:ayo-backlog-sync"
+    "test:backlog-sync"
   ]
 }

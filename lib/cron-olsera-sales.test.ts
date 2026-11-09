@@ -40,6 +40,11 @@ mock.module("@/lib/olsera-sync", {
   },
 });
 
+const auditOlseraBacklogMock = mock.fn(async (_today: string) => [] as { date: string; action: string }[]);
+mock.module("@/lib/olsera-backlog-audit", {
+  namedExports: { auditOlseraBacklog: auditOlseraBacklogMock },
+});
+
 const acquireOlseraSyncLockMock = mock.fn(async () => ({ ok: true, runId: "run-sales-1" }));
 const releaseOlseraSyncLockMock = mock.fn(async (_runId: string) => true);
 
@@ -85,6 +90,17 @@ test("200 sukses: memanggil sync hari ini, melepas lock, runId disertakan", asyn
   assert.equal(res.body.runId, "run-sales-1");
   assert.equal(releaseOlseraSyncLockMock.mock.callCount(), 1);
   assert.equal(releaseOlseraSyncLockMock.mock.calls[0].arguments[0], "run-sales-1");
+  assert.equal(auditOlseraBacklogMock.mock.calls.at(-1)?.arguments[0], "2026-07-20");
+});
+
+test("audit tanggal lama error tidak menggagalkan sync hari ini", async () => {
+  auditOlseraBacklogMock.mock.mockImplementationOnce(async () => {
+    throw new Error("HTTP 429");
+  });
+  const res = await runOlseraSalesCron("Bearer test-secret");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.backlog, null);
 });
 
 test("idempotent: dua panggilan berturut-turut sama-sama sukses tanpa efek ganda berbahaya", async () => {

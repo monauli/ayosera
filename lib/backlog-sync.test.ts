@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ayoBacklogDates } from "./ayo-backlog-sync.ts";
+import { ayoBacklogDates, nextBacklogDate } from "./backlog-sync.ts";
 
 test("backlog covers 1 Oct .. 7 Nov on 9 Nov and every date exactly once per rotation", () => {
   const seen: string[] = [];
@@ -19,4 +19,11 @@ test("slices are contiguous and at most 6 days", () => {
 
 test("January wraps back to December of the previous year", () => {
   assert.equal(ayoBacklogDates("2027-01-05", 0)[0], "2026-12-01");
+});
+
+test("nextBacklogDate walks the window and wraps", () => {
+  assert.equal(nextBacklogDate("2026-11-09", null), "2026-10-01");
+  assert.equal(nextBacklogDate("2026-11-09", "2026-10-23"), "2026-10-24");
+  assert.equal(nextBacklogDate("2026-11-09", "2026-11-07"), "2026-10-01");
+  assert.equal(nextBacklogDate("2026-11-09", "2026-09-30"), "2026-10-01");
 });

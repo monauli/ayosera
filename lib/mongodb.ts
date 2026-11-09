@@ -386,6 +386,8 @@ export type OlseraSyncStateDocument = {
   lastFullySyncedDate: string | null;
   /** Tanggal H-1 terakhir yang berhasil diaudit cron. */
   lastDailyAuditDate?: string | null;
+  /** Tanggal lama terakhir yang diaudit ulang (lib/olsera-backlog-audit.ts). */
+  backlogAuditDate?: string | null;
   updatedAt: Date;
 };
 

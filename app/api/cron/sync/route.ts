@@ -3,7 +3,7 @@ import { logSyncFailure } from "@/lib/booking-sync";
 import { syncProductionListBookings } from "@/lib/production-sync";
 import { verifyCronSecret } from "@/lib/olsera-cron-auth";
 import { maybeSyncAyoPaymentEvents } from "@/lib/ayo-payment-events-auto-sync";
-import { ayoBacklogDates } from "@/lib/ayo-backlog-sync";
+import { ayoBacklogDates } from "@/lib/backlog-sync";
 import { collections, withMongo } from "@/lib/mongodb";
 import { currentStoreId } from "@/lib/olsera-store-id";
 import { getOmzetPeriodLock } from "@/lib/reconciliation-omzet-period-lock";
@@ -23,7 +23,7 @@ function formatJakartaDate(date: Date) {
 }
 
 /**
- * Re-pull one rotating slice of older dates (lib/ayo-backlog-sync.ts) so late
+ * Re-pull one rotating slice of older dates (lib/backlog-sync.ts) so late
  * payments and price revisions on past bookings are picked up, both in
  * bookings and in the payment events that Dashboard/Rekonsiliasi read. The
  * rotation index is the number of scheduled runs so far; locked omzet periods
